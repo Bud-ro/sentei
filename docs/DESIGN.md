@@ -106,3 +106,71 @@ Running record of decisions and deviations from `PLAN.md`. Newest milestone last
   identifier positions inside `export { a }` / `export { a as b } from` clauses)
   because those SCIP occurrences would otherwise count as internal references
   and turn every re-exported symbol into an `unexport_candidate`.
+
+### M1 — index refinements (learned from running the fixture)
+
+- **Links before indexing.** Module resolution is transitive: a consumer that
+  resolves org package A also resolves A's own org imports through A's
+  `node_modules`. The index stage therefore runs `Indexer.prepare` (install +
+  source links) for every org package, cached repos included, before running any
+  indexer. Indexing per package as it went produced wrong symbols for
+  `export { yThing as widgetY } from '@acme/y'` when the consumer was indexed
+  before the re-exporting lib.
+- **Type errors do not make a consumer opaque.** PLAN §6.2's "any diagnostic of
+  severity error → partial" is applied to the indexer's own diagnostics only.
+  For our TypeScript program, only resolution failures can hide references, so
+  the adapter checks syntactically (with checker resolution, never by parsing
+  messages): an **org module specifier that does not resolve** → `partial`
+  (`opaque_consumer`, fail closed); a **named import an org module does not
+  export** → sidecar `unresolvedImports` → `unresolved_refs` → reported as
+  `version_skew`, status unchanged; every other compiler error is a warning.
+  Without this, the fixture's version-skew consumer would have blocked every
+  verdict for the lib it imports, and most real repos would be opaque.
+- **Consumer flags come from the adapter, not from `analyze`.** `namespace_dynamic`
+  (a value use of `import * as X from '<org pkg>'` other than `X.member` /
+  `X['lit']`) and `dynamic_access` (`require()`/`import()` with a non-literal
+  specifier unless its leading literal is a relative or absolute path) are
+  detected by a syntax walk in `packages/cli/src/indexers/consumer-checks.ts`
+  and written to the sidecar; ingest turns them into `package_flags`.
+
+### M1 — ingest
+
+- **Whole org, one transaction.** PLAN §5.1 says one repo per transaction, but
+  consumer occurrences reference symbols defined in other repos' indexes, so
+  ingest processes all definitions (pass 1) before all references (pass 2) and
+  commits once. `defer_foreign_keys` is on; `foreign_key_check` runs before
+  commit. The drift trigger on `occurrences.def_package_id` requires symbols to
+  exist first, which the two-pass order guarantees.
+- **Only org symbols are stored.** Symbols of third-party packages and the
+  TypeScript lib are never interned; occurrences referencing them are dropped.
+  Parameters, type parameters and `local N` symbols are skipped too (otherwise
+  every parameter of a dead function would be a `private_dead` finding).
+- **Enclosing symbol** = innermost definition in the same document whose SCIP
+  `enclosing_range` contains the occurrence; scip-typescript 0.4.0 emits it for
+  declarations. Fallback is the file's module symbol (scip-typescript emits one
+  per module; a synthetic `sentei file <pkg> <file>` symbol is created otherwise).
+- **Parents** (`Foo#bar().` → `Foo#`) are only non-namespace descriptors, and
+  ingest adds `parent → member` edges so members are reachable when their owner
+  is. Files are never parents: a module→top-level edge would make private
+  islands reachable.
+- **Import bindings are role-0 references** in scip-typescript (the `Import`
+  role is never set), so an entry module's imports make module→symbol edges.
+  Combined with entry modules being reachability seeds, anything imported by an
+  entry file stays alive even if only dead code uses it. Fail-closed; the
+  sidecar records import bindings on the export chain as sites to limit this.
+- **`SymbolInformation.kind` is always 0** in scip-typescript 0.4.0 output, so
+  `symbols.kind` is empty for TypeScript. Nothing depends on it yet.
+- **Anonymous default exports get no SCIP symbol at all** (`export default () =>
+  ...`); an importer's default import is a `local`. Ingest creates a synthetic
+  `sentei default <pkg> <file>` symbol from the sidecar record and treats every
+  reference to that file's module symbol as a reference to it (any import of
+  the file keeps the default alive; over-approximation). This borders on the
+  "do not patch the indexer" rule but derives only from our own sidecar.
+- **Version skew**: a consumer's `import { removedFn }` comes out of SCIP as
+  `local 0`, so SCIP cannot report it; only the sidecar's `unresolvedImports`
+  can. Both paths land in `unresolved_refs`.
+- **Ingest owns four flags** (`opaque_consumer`, `index_failed`,
+  `dynamic_access`, `namespace_dynamic`) and rebuilds them each run; no
+  `index.json` / missing package / missing `.scip` → `index_failed`; missing
+  exports sidecar → `opaque_consumer` (an unknown export surface would be
+  fail-open otherwise).
