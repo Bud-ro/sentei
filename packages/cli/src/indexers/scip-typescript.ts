@@ -159,6 +159,10 @@ export const scipTypescript: Indexer = {
         orgPackageNames: new Set(
           input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'npm' && p.name !== null ? [p.name] : [])),
         ),
+        orgPackageDirs: input.orgPackages.flatMap(({ repo: r, pkg: p }) => {
+          const d = packageDir(r, p);
+          return p.manager === 'npm' && p.name !== null && existsSync(d) ? [{ name: p.name, dir: realpathSync(d) }] : [];
+        }),
       });
       writeFileSync(exportsFile, `${JSON.stringify(surface.sidecar, null, 2)}\n`);
       diagnostics.push(...surface.diagnostics);

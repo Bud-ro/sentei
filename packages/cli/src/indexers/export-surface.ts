@@ -7,7 +7,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { checkConsumerFiles } from './consumer-checks.ts';
+import { checkConsumerFiles, type OrgPackageDir } from './consumer-checks.ts';
 import type { ExportRecord, ExportsSidecar, SourcePosition } from './types.ts';
 
 export interface ExportSurfaceInput {
@@ -24,6 +24,8 @@ export interface ExportSurfaceInput {
   tsconfig: string | undefined;
   /** npm names of all org packages (imports of these are checked for resolution). */
   orgPackageNames: ReadonlySet<string>;
+  /** Org npm packages with their checkout dirs (realpath), for namespace member resolution. */
+  orgPackageDirs: readonly OrgPackageDir[];
 }
 
 export interface ExportSurfaceResult {
@@ -54,6 +56,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         unresolved: [],
         unresolvedImports: [],
         flags: [],
+        namespaceMemberRefs: [],
       },
       diagnostics,
       partial: true,
@@ -73,7 +76,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   // An org module that does not resolve drops references silently → partial.
   // A missing named import is version skew → recorded, status unchanged.
   const ownFiles = program.getSourceFiles().filter((sf) => isOwnFile(sf.fileName));
-  const consumer = checkConsumerFiles(ownFiles, checker, input.orgPackageNames, toRepoRel);
+  const consumer = checkConsumerFiles(ownFiles, checker, input.orgPackageNames, toRepoRel, input.orgPackageDirs);
   for (const m of consumer.unresolvedOrgModules) {
     partial = true;
     diagnostics.push(`error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`);
@@ -180,6 +183,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       unresolved: [...unresolved].sort(),
       unresolvedImports: consumer.unresolvedImports,
       flags: consumer.flags,
+      namespaceMemberRefs: consumer.namespaceMemberRefs,
     },
     diagnostics,
     partial,

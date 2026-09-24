@@ -234,6 +234,17 @@ describe('consumer checks and import sites', () => {
     chain.packages[0]!.deps = [{ name: '@acme/mid', manager: 'npm', resolvedPackageId: 'npm:@acme/mid' }];
     repos.unshift(chain);
     repos.push(mid);
+    // Namespace member access to an alias re-export (scip-typescript 0.4.0 gap).
+    writePkg(path.join(root, 'repos', 'nslib'), '@acme/nslib', {
+      'a.ts': `export function a(): number { return 1; }\n`,
+      'b.ts': `export function b(): number { return 2; }\n`,
+      'index.ts': `export { a } from './a';\nexport * from './b';\n`,
+    });
+    writePkg(path.join(root, 'repos', 'nsuser'), '@acme/nsuser', { 'main.ts': `import * as ns from '@acme/nslib';\nns.a();\nns.b();\nns['a']();\n` }, { '@acme/nslib': '^1.0.0' });
+    repos.push(libPkg('nslib', 'npm:@acme/nslib', '@acme/nslib', 'src/index.ts'));
+    const nsuser = libPkg('nsuser', 'npm:@acme/nsuser', '@acme/nsuser', 'src/main.ts');
+    nsuser.packages[0]!.deps = [{ name: '@acme/nslib', manager: 'npm', resolvedPackageId: 'npm:@acme/nslib' }];
+    repos.push(nsuser);
     cwork = path.join(root, 'work');
     mkdirSync(cwork);
     writeFileSync(path.join(cwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
@@ -288,6 +299,20 @@ describe('consumer checks and import sites', () => {
     const { index: ix, sidecar } = result('chain');
     expect(ix.status).toBe('ok');
     expect(sidecar.unresolvedImports).toEqual([]);
+  });
+
+  it('records namespace member accesses resolved to org declarations', () => {
+    const { index: ix, sidecar } = result('nsuser');
+    expect(ix.status).toBe('ok');
+    const target = (targetFile: string) => ({ targetPackage: '@acme/nslib', targetFile, targetLine: 0, targetCol: 16 });
+    expect(sidecar.namespaceMemberRefs).toEqual([
+      { file: 'src/main.ts', line: 1, col: 3, member: 'a', ...target('src/a.ts') },
+      { file: 'src/main.ts', line: 2, col: 3, member: 'b', ...target('src/b.ts') },
+      { file: 'src/main.ts', line: 3, col: 3, member: 'a', ...target('src/a.ts') }, // ns['a']: the string literal
+    ]);
+    expect(sidecar.flags).toEqual([]);
+    // A non-namespace package records none.
+    expect(result('skew').sidecar.namespaceMemberRefs).toEqual([]);
   });
 
   it('records import bindings in re-exporting entry files as sites', () => {

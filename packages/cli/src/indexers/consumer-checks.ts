@@ -14,13 +14,21 @@
 //     accessed members are not statically known → `flags`.
 import path from 'node:path';
 import ts from 'typescript';
-import type { ConsumerFlag, SourcePosition, UnresolvedImport } from './types.ts';
+import { realpathSync } from 'node:fs';
+import type { ConsumerFlag, NamespaceMemberRef, SourcePosition, UnresolvedImport } from './types.ts';
+
+/** An org npm package and its checkout dir (realpath). */
+export interface OrgPackageDir {
+  name: string;
+  dir: string;
+}
 
 export interface ConsumerCheckResult {
   /** Org module specifiers that did not resolve (fail closed: partial). */
   unresolvedOrgModules: Array<SourcePosition & { module: string }>;
   unresolvedImports: UnresolvedImport[];
   flags: ConsumerFlag[];
+  namespaceMemberRefs: NamespaceMemberRef[];
 }
 
 /** Bare package name of a module specifier (`@a/b/c` → `@a/b`, `x/y` → `x`), or undefined if relative/absolute. */
@@ -38,9 +46,12 @@ export function checkConsumerFiles(
   checker: ts.TypeChecker,
   orgPackageNames: ReadonlySet<string>,
   toRepoRel: (abs: string) => string,
+  orgPackageDirs: readonly OrgPackageDir[] = [],
 ): ConsumerCheckResult {
-  const result: ConsumerCheckResult = { unresolvedOrgModules: [], unresolvedImports: [], flags: [] };
-  for (const sf of files) checkFile(sf, checker, orgPackageNames, toRepoRel, result);
+  const result: ConsumerCheckResult = { unresolvedOrgModules: [], unresolvedImports: [], flags: [], namespaceMemberRefs: [] };
+  // Longest dir first, so a nested package wins over its parent.
+  const dirs = [...orgPackageDirs].sort((a, b) => b.dir.length - a.dir.length);
+  for (const sf of files) checkFile(sf, checker, orgPackageNames, toRepoRel, result, dirs);
   return result;
 }
 
@@ -50,6 +61,7 @@ function checkFile(
   orgNames: ReadonlySet<string>,
   toRepoRel: (abs: string) => string,
   out: ConsumerCheckResult,
+  orgDirs: readonly OrgPackageDir[],
 ): void {
   const pos = (node: ts.Node): SourcePosition => {
     const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
@@ -134,7 +146,18 @@ function checkFile(
           ...pos(node),
         });
       }
-    } else if (ts.isIdentifier(node) && namespaceNames.has(node.text)) {
+    } else if (
+      (ts.isPropertyAccessExpression(node) ||
+        (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression))) &&
+      ts.isIdentifier(node.expression) &&
+      namespaceNames.has(node.expression.text) &&
+      isNamespaceBinding(node.expression, checker, namespaceModules)
+    ) {
+      const member = ts.isPropertyAccessExpression(node) ? node.name : (node.argumentExpression as ts.StringLiteralLike);
+      const ref = memberRef(member, checker, orgDirs);
+      if (ref !== undefined) out.namespaceMemberRefs.push({ ...pos(member), ...ref });
+    }
+    if (ts.isIdentifier(node) && namespaceNames.has(node.text)) {
       const reason = namespaceValueUse(node, checker, namespaceModules, sf);
       if (reason !== undefined) out.flags.push({ flag: 'namespace_dynamic', reason, ...pos(node) });
     }
@@ -197,6 +220,48 @@ function namespaceValueUse(
   if (ts.isQualifiedName(parent) && parent.left === id) return undefined; // `X.Type`
   if (inTypePosition(id)) return undefined;
   return `namespace ${id.text} used as a value: ${truncate(parent.getText(sf))}`;
+}
+
+/** True when `id` (the object of a member access) is an org namespace-import binding. */
+function isNamespaceBinding(id: ts.Identifier, checker: ts.TypeChecker, modules: ReadonlySet<ts.Symbol>): boolean {
+  const sym = checker.getSymbolAtLocation(id);
+  if (sym === undefined) return false;
+  return modules.has(sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);
+}
+
+/** Resolves a namespace member to its declaration inside an org package, if any. */
+function memberRef(
+  member: ts.MemberName | ts.StringLiteralLike,
+  checker: ts.TypeChecker,
+  orgDirs: readonly OrgPackageDir[],
+): Omit<NamespaceMemberRef, 'file' | 'line' | 'col'> | undefined {
+  let sym = checker.getSymbolAtLocation(member);
+  for (let guard = 0; sym !== undefined && sym.flags & ts.SymbolFlags.Alias && guard < 100; guard++) {
+    sym = checker.getAliasedSymbol(sym);
+  }
+  for (const decl of sym?.declarations ?? []) {
+    const declSf = decl.getSourceFile();
+    let real: string;
+    try {
+      real = realpathSync(declSf.fileName);
+    } catch {
+      continue;
+    }
+    const owner = orgDirs.find((o) => real === o.dir || real.startsWith(o.dir + path.sep));
+    if (owner === undefined || real.split(path.sep).slice(owner.dir.split(path.sep).length).includes('node_modules')) {
+      continue;
+    }
+    const nameNode = ts.getNameOfDeclaration(decl) ?? decl;
+    const { line, character } = declSf.getLineAndCharacterOfPosition(nameNode.getStart(declSf));
+    return {
+      member: member.text,
+      targetPackage: owner.name,
+      targetFile: path.relative(owner.dir, real).split(path.sep).join(path.posix.sep),
+      targetLine: line,
+      targetCol: character,
+    };
+  }
+  return undefined;
 }
 
 /** True when the node sits inside a type annotation / type query (not a value). */

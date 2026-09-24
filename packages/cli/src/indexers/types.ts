@@ -118,6 +118,29 @@ export interface ExportsSidecar {
   unresolvedImports: UnresolvedImport[];
   /** Consumer-side constructs that hide which org members are used. */
   flags: ConsumerFlag[];
+  /**
+   * Every static member access `X.m` / `X['m']` on an org namespace import,
+   * resolved by the TypeScript checker to the member's declaration.
+   * Workaround for an upstream gap (PLAN.md §6.6: workarounds live at the
+   * indexer boundary): scip-typescript 0.4.0: namespace member access to an
+   * alias re-export yields a local symbol (e.g. `W.namespaceUsed` where the
+   * entry does `export { namespaceUsed } from './misc'`), so the reference is
+   * lost. Recorded for every access whether or not SCIP resolved it; ingest
+   * dedupes against existing occurrences.
+   */
+  namespaceMemberRefs: NamespaceMemberRef[];
+}
+
+export interface NamespaceMemberRef extends SourcePosition {
+  /** Member name as accessed. Position is the member identifier (or the string literal for `X['m']`). */
+  member: string;
+  /** npm name of the org package holding the declaration. */
+  targetPackage: string;
+  /** Declaration file relative to that package's dir, POSIX. */
+  targetFile: string;
+  /** 0-based position of the declaration's name identifier (declaration start if it has none). */
+  targetLine: number;
+  targetCol: number;
 }
 
 export interface UnresolvedImport extends SourcePosition {
