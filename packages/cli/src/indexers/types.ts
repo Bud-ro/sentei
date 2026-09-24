@@ -140,7 +140,16 @@ export interface ExportsSidecar {
   /** Entry points from discover that were not part of the program (status is partial). */
   missingEntryPoints: string[];
   exports: ExportRecord[];
-  /** Module specifiers (or entry files) whose exports could not be resolved. */
+  /**
+   * Module specifiers (or entry files) whose exports could not be resolved:
+   * an `export ... from` specifier that resolves to nothing, an export alias
+   * that resolves to the `unknown` symbol, a declaration in an own file no
+   * tsconfig lists, and (`<entry>#<name> (JavaScript entry outside the tsconfig
+   * program)`) the text-scanned exports of a JavaScript entry the program
+   * excludes. An export whose declaration lives outside the package (TypeScript
+   * lib `globalThis`, node_modules, another org package) is neither here nor in
+   * `exports`: consumers resolve to that external symbol.
+   */
   unresolved: string[];
   /**
    * Named imports from org modules that resolve to nothing: the org package
@@ -195,6 +204,12 @@ export interface ExportsSidecar {
    *  - an org package imported by name (`module` = the specifier): unscoped,
    *    ingest turns it into a targeted `unindexed_consumer` flag blocking
    *    `targetPackage` only; scoped (`scope` set), a `witness_files` row;
+   *  - this package imported by its own name (`module` = the specifier,
+   *    `targetPackage` = this package, no `relative`): from an unindexed file
+   *    (a root `build.config.ts` / `eslint.config.mjs` importing the package),
+   *    or from an indexed file where that self import does not resolve (so
+   *    SCIP links nothing; never an unresolved org module, never partial).
+   *    Core's self-witness covers the file (it imports P by name);
    *  - SFC files only, `relative: true`: a relative import of one of this
    *    package's own code files (`module` = that file, repo-relative POSIX;
    *    `targetPackage` = this package), whose declarations it uses.
@@ -257,7 +272,7 @@ export interface UnindexedImport {
    * (the relative specifier resolved, repo-relative POSIX).
    */
   module: string;
-  /** npm name of the org package it imports (this package's own name with `relative`). */
+  /** npm name of the org package it imports (this package's own name with `relative` or for a self import). */
   targetPackage: string;
   /**
    * Set when `file` is test (core TEST_GLOBS), else docs (DOCS_GLOBS), else

@@ -1,0 +1,43 @@
+{
+  "entryPoints": [
+    "src/main.ts"
+  ],
+  "entrySymbols": [
+    {
+      "col": 12,
+      "file": "src/jsx.d.ts",
+      "kind": "ambient",
+      "line": 5,
+      "name": "Element"
+    },
+    {
+      "col": 18,
+      "file": "src/jsx.d.ts",
+      "kind": "ambient",
+      "line": 3,
+      "name": "JSX"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [
+    {
+      "col": 53,
+      "file": "src/main.ts",
+      "line": 13,
+      "member": "namespaceUsed",
+      "targetCol": 16,
+      "targetFile": "src/misc.ts",
+      "targetLine": 13,
+      "targetPackage": "@acme/widgets"
+    }
+  ],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:@acme/consumer",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

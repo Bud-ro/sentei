@@ -149,7 +149,13 @@ export const scipTypescript: Indexer = {
   //   generatedFiles; heap retry without hover signatures; nuxt prepare.
   // +sentei.4: entrySymbols[].kind (`ambient`), members of `.d.ts` script
   //   namespaces, more generated-file headers and names (Wrangler, Go-style).
-  version: '0.4.0+sentei.4',
+  // +sentei.5: exports resolving to a declaration outside the package (lib
+  //   `globalThis`, node_modules, another org package) are neither records nor
+  //   `unresolved`; imports of the package by its own name that SCIP cannot
+  //   link (unindexed files, unresolved self modules) are `unindexedImports`
+  //   with `targetPackage` = self; JavaScript entries outside the program are
+  //   text-scanned into `unresolved`.
+  version: '0.4.0+sentei.5',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
@@ -451,21 +457,39 @@ export async function runSurfaceWorker(
 }
 
 /**
- * `: <last lines of stderr>` (up to 5 non-empty lines, ` | `-joined, capped);
- * stdout's last lines when stderr is empty (pnpm prints its errors on
- * stdout); '' when both are empty.
+ * `: <head and tail of stderr>`: the first `head` and last `tail` non-empty
+ * lines (all of them when there are no more than `head + tail`; `…` marks the
+ * lines dropped between), ` | `-joined. The head keeps the error that started
+ * a cascade (nuxt prepare: `Cannot find module …/fontaine/dist/index.cjs`
+ * followed by a long stack), the tail the final verdict. Each part is capped
+ * at `max / 2` characters (the head keeps its start, the tail its end).
+ * stdout is used when stderr is empty (pnpm prints its errors on stdout); ''
+ * when both are empty.
  */
-export function stderrTail(proc: Pick<ExecResult, 'stderr'> & Partial<Pick<ExecResult, 'stdout'>>, lines = 5, max = 1000): string {
-  const lastLines = (s: string): string =>
+export function stderrTail(
+  proc: Pick<ExecResult, 'stderr'> & Partial<Pick<ExecResult, 'stdout'>>,
+  head = 3,
+  tail = 5,
+  max = 1000,
+): string {
+  const nonEmpty = (s: string): string[] =>
     s
       .split(/\r?\n/)
       .map((l) => l.trim())
-      .filter((l) => l !== '')
-      .slice(-lines)
-      .join(' | ');
-  const tail = lastLines(proc.stderr) || lastLines(proc.stdout ?? '');
-  if (tail === '') return '';
-  return `: ${tail.length > max ? `…${tail.slice(tail.length - max)}` : tail}`;
+      .filter((l) => l !== '');
+  let lines = nonEmpty(proc.stderr);
+  if (lines.length === 0) lines = nonEmpty(proc.stdout ?? '');
+  if (lines.length === 0) return '';
+  const half = Math.floor(max / 2);
+  if (lines.length <= head + tail) {
+    const all = lines.join(' | ');
+    return `: ${all.length > max ? `${all.slice(0, half)}…${all.slice(all.length - half)}` : all}`;
+  }
+  let first = lines.slice(0, head).join(' | ');
+  let last = lines.slice(-tail).join(' | ');
+  if (first.length > half) first = `${first.slice(0, half)}…`;
+  if (last.length > half) last = `…${last.slice(last.length - half)}`;
+  return `: ${first} | … | ${last}`;
 }
 
 /**

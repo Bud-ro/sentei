@@ -7,7 +7,7 @@ import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, runNode, runSurfaceWorker, scipTypescript, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, runNode, runSurfaceWorker, scipTypescript, stderrTail, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -611,7 +611,7 @@ describe('real-org fixes (honojs dogfood)', () => {
     expect(prep.diagnostics.some((d) => d.includes('displaced') || d.includes('@acme/built'))).toBe(false); // symlink already right
   });
 
-  it('(4) records org imports from code and SFC files outside every tsconfig with their scope, skipping build output and self-imports', () => {
+  it('(4) records org imports from code and SFC files outside every tsconfig with their scope, skipping build output', () => {
     const { index: ix, sidecar } = result('consumer', 'acme__consumer');
     expect(sidecar.unindexedImports).toEqual([
       { file: 'docs/Demo.svelte', module: '@acme/built', targetPackage: '@acme/built', scope: 'docs' },
@@ -619,6 +619,9 @@ describe('real-org fixes (honojs dogfood)', () => {
       { file: 'docs/guide.mdx', module: '@acme/unbuilt', targetPackage: '@acme/unbuilt', scope: 'docs' },
       // A tool config is a real consumer: unscoped (a flag), although SCRIPT_GLOBS lists `*.config.*`.
       { file: 'eslint.config.mjs', module: '@acme/built', targetPackage: '@acme/built' },
+      // Self imports by name are recorded with the package itself as target (core: self-witness).
+      { file: 'eslint.config.mjs', module: '@acme/consumer/x', targetPackage: '@acme/consumer' },
+      { file: 'pages/playground.vue', module: '@acme/consumer', targetPackage: '@acme/consumer' },
       { file: 'pages/playground.vue', module: '@acme/unbuilt', targetPackage: '@acme/unbuilt' },
       // Relative imports of own code files from an SFC: resolved, targeting the package itself
       // (`.js` → `.ts`; other SFCs and unresolvable paths are not recorded).
@@ -1192,7 +1195,7 @@ describe('unjs fixes', () => {
     };
     const diagnostics: string[] = [];
     expect(await install(dir, dir, diagnostics, [], failing, root)).toBe(false);
-    expect(diagnostics).toEqual(['error: npm ci --ignore-scripts in . exited with code 1: line 2 | line 3 | line 4 | line 5 | npm error code EBADENGINE']);
+    expect(diagnostics).toEqual(['error: npm ci --ignore-scripts in . exited with code 1: npm warn one | line 2 | line 3 | line 4 | line 5 | npm error code EBADENGINE']);
     expect(envs[0]).toMatchObject({ npm_config_engine_strict: 'false', NPM_CONFIG_ENGINE_STRICT: 'false', pnpm_config_engine_strict: 'false' });
 
     // pnpm prints its errors on stdout: with an empty stderr, the stdout tail is used.
@@ -1200,6 +1203,138 @@ describe('unjs fixes', () => {
     const d2: string[] = [];
     expect(await install(dir, dir, d2, [], quiet, root)).toBe(false);
     expect(d2[0]).toMatch(/exited with code 1: Scope: all \| \[ERR_PNPM_OUTDATED_LOCKFILE\] Cannot install$/);
+  });
+});
+
+describe('unjs final verification (external re-exports, self imports, JS entries, diagnostic tails)', () => {
+  let root: string;
+  let vwork: string;
+  const TSCONFIG = {
+    compilerOptions: { strict: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler', noEmit: true, skipLibCheck: true, types: [] },
+    include: ['src'],
+  };
+  function write(repo: string, files: Record<string, string | object>): void {
+    for (const [f, body] of Object.entries(files)) {
+      const abs = path.join(root, 'repos', repo, ...f.split('/'));
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+    }
+  }
+  const pkg = (repo: string, name: string, entryPoints: string[]): DiscoverFile['repos'][number] => ({
+    repo: `acme/${repo}`,
+    localPath: path.join(root, 'repos', repo),
+    headSha: null,
+    packages: [{ packageId: `npm:${name}`, path: '.', manager: 'npm', name, version: '1.0.0', entryPoints, deps: [] }],
+  });
+  const result = (repo: string) => ({
+    index: readJson<RepoIndex>(vwork, 'index', `acme__${repo}`, 'index.json'),
+    sidecar: readJson<ExportsSidecar>(vwork, 'index', `acme__${repo}`, `npm__acme__${repo}.exports.json`),
+  });
+
+  beforeAll(async () => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-unjs-verify-')));
+    write('selfy', {
+      'package.json': { name: '@acme/selfy', version: '1.0.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': `export const a = 1;\n`,
+      // (1) unenv's polyfill: the default export is the lib's globalThis.
+      'src/polyfill.ts': `export default globalThis;\n`,
+      // (2) a self import by name that does not resolve (no exports map, no self link).
+      'src/loader.ts': `export const load = (): Promise<unknown> => import('@acme/selfy/runners/node');\n`,
+      // (2) a root config outside the program importing the package by name.
+      'build.config.ts': `import { a } from '@acme/selfy';\nexport default { a };\n`,
+    });
+    write('jsentry', {
+      'package.json': { name: '@acme/jsentry', version: '1.0.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      // (1) an alias that resolves to nothing stays unresolved.
+      'src/index.ts': `export const b = 1;\nexport { nope } from './other.ts';\n`,
+      'src/other.ts': `export const other = 1;\n`,
+      // (4) JavaScript entries the program excludes, and a declaration entry.
+      'lib/mock.cjs': `Object.defineProperty(exports, "__esModule", { value: true });\nexports.named = 1;\nmodule.exports = createMock("mock");\n`,
+      'lib/run.mjs': `#!/usr/bin/env node\nexport async function run() {}\nconst x = 1;\nexport { x as y };\nexport default run;\n`,
+      'lib/mock.d.cts': `export = unknown;\n`,
+    });
+    const repos = [
+      pkg('selfy', '@acme/selfy', ['src/index.ts', 'src/polyfill.ts']),
+      pkg('jsentry', '@acme/jsentry', ['src/index.ts', 'lib/mock.cjs', 'lib/run.mjs', 'lib/mock.d.cts']),
+    ];
+    vwork = path.join(root, 'work');
+    mkdirSync(vwork);
+    writeFileSync(path.join(vwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
+    await index({ work: vwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+  }, 120_000);
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('(1) an export resolving to a declaration outside the package is neither a record nor unresolved', () => {
+    const { index: ix, sidecar } = result('selfy');
+    expect(sidecar.exports.map((e) => [e.entry, e.exportedAs])).toEqual([['src/index.ts', 'a']]);
+    expect(sidecar.unresolved).toEqual([]);
+    expect(ix.packages[0]!.diagnostics).toContain(
+      'info: 1 export(s) resolve to declarations outside the package (lib, node_modules or another org package), not recorded: src/polyfill.ts#default',
+    );
+    // An alias to nothing (`unknown` symbol) is still unresolved.
+    expect(result('jsentry').sidecar.unresolved).toContain('src/index.ts#nope');
+  });
+
+  it('(2) self imports by name are unindexed imports of the package itself, never unresolved org modules', () => {
+    const { index: ix, sidecar } = result('selfy');
+    expect(sidecar.unindexedImports).toEqual([
+      { file: 'build.config.ts', module: '@acme/selfy', targetPackage: '@acme/selfy' },
+      { file: 'src/loader.ts', module: '@acme/selfy/runners/node', targetPackage: '@acme/selfy' },
+    ]);
+    expect(ix.status).toBe('ok');
+    const diags = ix.packages[0]!.diagnostics;
+    expect(diags.some((d) => d.startsWith('error:'))).toBe(false);
+    expect(diags).toContain("info: build.config.ts is in no tsconfig and imports this package by name ('@acme/selfy'; self-witness)");
+    expect(diags.some((d) => d.startsWith("warn: unresolved self import '@acme/selfy/runners/node' at src/loader.ts:1:"))).toBe(true);
+  });
+
+  it('(4) text-scans JavaScript entries outside the program into unresolved surface; declaration entries stay unknown', () => {
+    const { index: ix, sidecar } = result('jsentry');
+    expect(ix.status).toBe('partial');
+    expect(sidecar.missingEntryPoints).toEqual(['lib/mock.cjs', 'lib/run.mjs', 'lib/mock.d.cts']);
+    const why = '(JavaScript entry outside the tsconfig program)';
+    expect(sidecar.unresolved).toEqual([
+      `lib/mock.cjs#default ${why}`,
+      `lib/mock.cjs#named ${why}`,
+      `lib/run.mjs#default ${why}`,
+      `lib/run.mjs#run ${why}`,
+      `lib/run.mjs#y ${why}`,
+      'src/index.ts#nope',
+    ]);
+    const diags = ix.packages[0]!.diagnostics;
+    expect(diags).toContain('warn: entry lib/mock.cjs is JavaScript outside the tsconfig program; add it to include (exports: default, named)');
+    expect(diags).toContain('warn: entry point(s) not in the TypeScript program, export surface unknown: lib/mock.d.cts');
+  });
+
+  it('(3) subprocess diagnostics keep the first 3 and last 5 non-empty lines', () => {
+    const lines = Array.from({ length: 12 }, (_, i) => `l${i + 1}`);
+    lines[0] = 'ERROR  Cannot find module /x/fontaine/dist/index.cjs';
+    expect(stderrTail({ stderr: `${lines.join('\n\n')}\n` })).toBe(
+      ': ERROR  Cannot find module /x/fontaine/dist/index.cjs | l2 | l3 | … | l8 | l9 | l10 | l11 | l12',
+    );
+    // Up to 8 lines: all of them.
+    expect(stderrTail({ stderr: 'a\nb\nc\nd\ne\nf\ng\nh\n' })).toBe(': a | b | c | d | e | f | g | h');
+    // stdout when stderr is empty; '' when both are.
+    expect(stderrTail({ stderr: '', stdout: 'Scope: all\n' })).toBe(': Scope: all');
+    expect(stderrTail({ stderr: '\n', stdout: '' })).toBe('');
+    // Each part is capped: the head keeps its start, the tail its end.
+    const long = stderrTail({ stderr: [`H${'x'.repeat(900)}`, 'b', 'c', 'd', 'e', 'f', 'g', 'h', `${'y'.repeat(900)}T`].join('\n') });
+    expect(long.startsWith(': Hxxx')).toBe(true);
+    expect(long.endsWith('yyyT')).toBe(true);
+    expect(long.length).toBeLessThan(1020);
+  });
+
+  it('(3) nuxt prepare keeps the error head of a long stack', async () => {
+    const dir = path.join(root, 'nuxt-app');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'site', devDependencies: { nuxt: '^4' } }));
+    const stack = ['ERROR  Cannot find module /x/fontaine/dist/index.cjs', ...Array.from({ length: 20 }, (_, i) => `    at frame${i}`)];
+    const run: Runner = async () => ({ code: 1, signal: null, stdout: '', stderr: stack.join('\n') });
+    const diagnostics: string[] = [];
+    expect(await nuxtPrepare(dir, diagnostics, [], run, root)).toBe(false);
+    expect(diagnostics[0]).toMatch(/exited with code 1: ERROR {2}Cannot find module \/x\/fontaine\/dist\/index\.cjs \| at frame0 \| at frame1 \| … \| at frame15/);
   });
 });
 

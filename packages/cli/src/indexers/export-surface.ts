@@ -4,7 +4,7 @@
 // global symbols too), so this reads the package's export surface with the
 // TypeScript compiler API: the same typescript major/minor scip-typescript
 // bundles (5.9.3), so symbol resolution agrees with the `.scip` file.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import {
@@ -13,11 +13,12 @@ import {
   isExcludedConsumerFile,
   isGeneratedFile,
   scanUnindexedImports,
+  unindexedScope,
   walkPackageFiles,
   type ConsumerCheckResult,
   type OrgPackageDir,
 } from './consumer-checks.ts';
-import type { ConsumerPolicy, ExportRecord, ExportsSidecar, SourcePosition } from './types.ts';
+import type { ConsumerPolicy, ExportRecord, ExportsSidecar, SourcePosition, UnindexedImport } from './types.ts';
 
 export interface ExportSurfaceInput {
   packageId: string;
@@ -98,6 +99,8 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   const indexedFiles = new Set(specs.flatMap((spec) => spec.rootNames.map((f) => path.resolve(f))));
   const rootsKnown = input.tsconfig !== undefined && existsSync(input.tsconfig);
   const skipped = { bindings: 0, typedefs: 0, expandos: 0, json: new Set<string>() };
+  /** `entry#exportedAs` of exports whose declaration lives outside the package. */
+  const external = new Set<string>();
 
   const exports: ExportRecord[] = [];
   const readEntry = (entry: string, sf: ts.SourceFile, checker: ts.TypeChecker): void => {
@@ -121,8 +124,13 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       const target = exp.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exp) : exp;
       const decls = target.declarations ?? [];
       if (decls.length === 0) {
-        // An alias that resolves to nothing (`unknown` symbol).
-        unresolved.add(`${entry}#${exportedAs}`);
+        // An alias that resolves to nothing (`unknown` symbol): unknown surface.
+        // Any other declaration-less symbol is an intrinsic outside the package
+        // (`export default globalThis`, `undefined`, `arguments`): like a
+        // re-export of a lib or node_modules declaration, it is not a record,
+        // and consumers resolve to that external symbol.
+        if (checker.isUnknownSymbol(target)) unresolved.add(`${entry}#${exportedAs}`);
+        else external.add(`${entry}#${exportedAs}`);
         continue;
       }
       // `export * as ns from './x'` / `export { ns }` of a namespace import:
@@ -135,7 +143,14 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         }
         continue;
       }
-      for (const decl of expandAliasDeclarations(decls, checker)) {
+      const expanded = expandAliasDeclarations(decls, checker);
+      if (expanded.length > 0 && expanded.every((d) => !isOwnFile(d.getSourceFile().fileName))) {
+        // Declared outside the package (TypeScript lib, node_modules, another org
+        // package): not this package's surface, and not unresolved either.
+        external.add(`${entry}#${exportedAs}`);
+        continue;
+      }
+      for (const decl of expanded) {
         const declSf = decl.getSourceFile();
         if (!isOwnFile(declSf.fileName)) continue;
         // Declarations scip-typescript 0.4.0 gives no global definition at this
@@ -252,9 +267,22 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   // their references, so neither an unresolved org module nor a dynamic construct
   // there can hide a counted use.
   const excluded = (f: { file: string }): boolean => isExcludedConsumerFile(f.file, input.policy);
+  const selfName = input.packageName ?? null;
+  /** Program files importing this package by its own name where that does not resolve. */
+  const unresolvedSelf: UnindexedImport[] = [];
   for (const m of consumer.unresolvedOrgModules) {
     const where = `'${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`;
-    if (excluded(m)) {
+    if (selfName !== null && barePackageName(m.module) === selfName) {
+      // The package importing itself by name (`import('env-runner/runners/node')`,
+      // an example's `vite.config.ts` importing the package): SCIP links nothing,
+      // but no other package's use is hidden. Recorded like an unindexed file's
+      // import of the package (core's self-witness reads the file), never partial.
+      const scope = unindexedScope(m.file);
+      if (!unresolvedSelf.some((u) => u.file === m.file && u.module === m.module)) {
+        unresolvedSelf.push({ file: m.file, module: m.module, targetPackage: selfName, ...(scope !== undefined ? { scope } : {}) });
+      }
+      diagnostics.push(`warn: unresolved self import ${where} (the package imports itself by name; recorded as an unindexed import of ${selfName}, status unaffected)`);
+    } else if (excluded(m)) {
       diagnostics.push(`warn: unresolved org module ${where} (test/docs file, not a counted consumer; status unaffected)`);
     } else if (isDeepDistImport(m.module)) {
       // A deep dist import (`hono/dist/types/router`) is a private-path import
@@ -294,23 +322,26 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     nestedPackageDirs: input.nestedPackageDirs,
     ...(input.ignoredDirs !== undefined ? { ignoredDirs: input.ignoredDirs } : {}),
   });
-  const unindexedImports = scanUnindexedImports({
+  const scanned = scanUnindexedImports({
     repoRoot: input.repoRoot,
     pkgDir: input.pkgDir,
     nestedPackageDirs: input.nestedPackageDirs,
     indexedFiles,
     orgPackageNames: input.orgPackageNames,
-    selfName: input.packageName ?? null,
+    selfName,
     files: walked,
   });
-  for (const u of unindexedImports) {
+  for (const u of scanned) {
     const scoped = u.scope !== undefined ? ` (${u.scope} file: witness only)` : '';
     diagnostics.push(
       u.relative === true
         ? `info: ${u.file} is not indexed and imports own file ${u.module}${scoped}`
-        : `warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})${scoped}`,
+        : u.targetPackage === selfName
+          ? `info: ${u.file} is in no tsconfig and imports this package by name ('${u.module}'; self-witness)${scoped}`
+          : `warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})${scoped}`,
     );
   }
+  const unindexedImports = [...scanned, ...unresolvedSelf].sort((a, b) => cmp(a.file, b.file) || cmp(a.module, b.module));
 
   // Generated own files: every walked file plus every own file of the programs
   // (a program may hold files the walk skips, e.g. Nuxt's `.nuxt/*.d.ts`).
@@ -328,6 +359,13 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   }
   if (skipped.typedefs > 0) diagnostics.push(`info: ${skipped.typedefs} JSDoc @typedef/@callback export(s) not recorded: scip-typescript does not index JSDoc`);
   if (skipped.expandos > 0) diagnostics.push(`info: ${skipped.expandos} expando assignment declaration(s) (\`fn.prop = ...\`) not recorded`);
+  if (external.size > 0) {
+    const list = [...external].sort();
+    diagnostics.push(
+      `info: ${list.length} export(s) resolve to declarations outside the package (lib, node_modules or another org package), not recorded: ` +
+        `${list.slice(0, 5).join(', ')}${list.length > 5 ? ', ...' : ''}`,
+    );
+  }
   if (skipped.json.size > 0) diagnostics.push(`info: exports declared in JSON modules not recorded: ${[...skipped.json].sort().join(', ')}`);
 
   const entryPoints = input.entryPoints.filter((e) => found.has(e));
@@ -335,9 +373,25 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
 
   if (missingEntryPoints.length > 0) {
     partial = true;
-    diagnostics.push(
-      `warn: entry point(s) not in the TypeScript program, export surface unknown: ${missingEntryPoints.join(', ')}`,
-    );
+    // A plain JavaScript entry (`lib/mock.cjs`, a `.mjs` bin) the program excludes:
+    // its exports are read by a text scan and recorded as unresolved surface (SCIP
+    // has no symbol for them). Declaration entries (`.d.cts`) stay unknown.
+    const other: string[] = [];
+    for (const entry of missingEntryPoints) {
+      const abs = path.resolve(input.repoRoot, ...entry.split('/'));
+      const names = PLAIN_JS_ENTRY.test(entry) && existsSync(abs) ? scanJsExportNames(abs) : undefined;
+      if (names === undefined) {
+        other.push(entry);
+        continue;
+      }
+      const why = 'JavaScript entry outside the tsconfig program';
+      if (names.length === 0) unresolved.add(`${entry} (${why}; no exports found by text scan)`);
+      for (const name of names) unresolved.add(`${entry}#${name} (${why})`);
+      diagnostics.push(`warn: entry ${entry} is JavaScript outside the tsconfig program; add it to include (exports: ${names.length > 0 ? names.join(', ') : 'none found'})`);
+    }
+    if (other.length > 0) {
+      diagnostics.push(`warn: entry point(s) not in the TypeScript program, export surface unknown: ${other.join(', ')}`);
+    }
   }
   if (unresolved.size > 0) {
     partial = true;
@@ -375,6 +429,44 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     diagnostics,
     partial,
   };
+}
+
+/** A JavaScript entry file (not a declaration file) that a program could contain. */
+const PLAIN_JS_ENTRY = /\.(?:[cm]?js|jsx)$/;
+
+/**
+ * Export names of a JavaScript file found by a text scan (ESM `export`
+ * statements and CommonJS `exports.x =` / `module.exports =`), sorted and
+ * deduplicated; `default` for a default export or `module.exports = ...`,
+ * `* from '<m>'` for a star re-export. Undefined when the file cannot be read.
+ */
+export function scanJsExportNames(abs: string): string[] | undefined {
+  let text: string;
+  try {
+    text = readFileSync(abs, 'utf8');
+  } catch {
+    return undefined;
+  }
+  const names = new Set<string>();
+  const each = (re: RegExp, f: (m: RegExpMatchArray) => void): void => {
+    for (const m of text.matchAll(re)) f(m);
+  };
+  each(/\bexport\s+(?:async\s+)?function\s*\*?\s*([\w$]+)/g, (m) => names.add(m[1]!));
+  each(/\bexport\s+(?:const|let|var|class)\s+([\w$]+)/g, (m) => names.add(m[1]!));
+  each(/\bexport\s+default\b/g, () => names.add('default'));
+  each(/\bexport\s*\{([^}]*)\}/g, (m) => {
+    for (const part of m[1]!.split(',')) {
+      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name !== undefined && /^[\w$]+$/.test(name)) names.add(name);
+    }
+  });
+  each(/\bexport\s*\*\s*(?:as\s+([\w$]+)\s*)?from\s*['"]([^'"\n]+)['"]/g, (m) => names.add(m[1] ?? `* from '${m[2]}'`));
+  each(/\b(?:module\.)?exports\.([\w$]+)\s*=[^=]/g, (m) => names.add(m[1]!));
+  each(/\b(?:module\.)?exports\[\s*['"]([^'"\n]+)['"]\s*\]\s*=[^=]/g, (m) => names.add(m[1]!));
+  each(/Object\.defineProperty\(\s*(?:module\.)?exports\s*,\s*['"]([^'"\n]+)['"]/g, (m) => names.add(m[1]!));
+  each(/\bmodule\.exports\s*=[^=]/g, () => names.add('default'));
+  names.delete('__esModule');
+  return [...names].sort(cmp);
 }
 
 /**

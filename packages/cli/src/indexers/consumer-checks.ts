@@ -532,7 +532,7 @@ export interface UnindexedScanInput extends PackageWalkInput {
   /** Absolute paths of every file some indexed program has as a root file. */
   indexedFiles: ReadonlySet<string>;
   orgPackageNames: ReadonlySet<string>;
-  /** This package's own npm name (self-imports are not consumers; relative SFC imports target it). */
+  /** This package's own npm name (imports of it by name and relative SFC imports target it). */
   selfName: string | null;
   /** Files already walked (`walkPackageFiles`); walked here when absent. */
   files?: readonly string[];
@@ -543,9 +543,11 @@ export interface UnindexedScanInput extends PackageWalkInput {
  * SCIP cannot see (never a source of edges, PLAN.md §12):
  *  - code files outside every tsconfig (`eslint.config.mjs`, `scripts/*.mjs`,
  *    `test/*.mjs`) and SFC files (`.vue`, `.svelte`, `.astro`, `.marko`, `.mdx`):
- *    each import of another org package by name is recorded with the specifier
+ *    each import of an org package by name is recorded with the specifier
  *    as `module` (ingest: a targeted `unindexed_consumer` flag, or a witness file
- *    when `scope` is set);
+ *    when `scope` is set). An import of this package itself by name
+ *    (`eslint.config.mjs` importing the package) is recorded the same way with
+ *    `targetPackage` = `selfName` (core: the self-witness covers the file);
  *  - SFC files only: each relative import of one of the package's own code files
  *    (`import { x } from '../samples/components.ts'` in `pages/playground.vue`) is
  *    recorded with `relative: true`, `module` = the resolved file (repo-relative
@@ -585,7 +587,9 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
         if (module === undefined) continue;
         const target = barePackageName(module);
         if (target !== undefined) {
-          if (target === input.selfName || !input.orgPackageNames.has(target)) continue;
+          // The package imported by its own name counts too (`targetPackage` = self):
+          // core's self-witness reads such files, since SCIP never sees them.
+          if (target !== input.selfName && !input.orgPackageNames.has(target)) continue;
           push({ file, module, targetPackage: target, ...(scope !== undefined ? { scope } : {}) });
         } else if (sfc && input.selfName !== null && (module.startsWith('./') || module.startsWith('../'))) {
           const resolved = resolveRelative(path.dirname(abs), module);
