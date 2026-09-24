@@ -668,11 +668,22 @@ What the wrong rows taught, and the fixes adopted:
   `tool/dart_dev/config.dart#config`. Core stores them in `entry_symbols`: they
   seed reachability and never get a verdict.
 - **`dart pub get` conflicts with a source-linked HEAD** (an older pin on
-  analyzer, say) are retried once without the override for the named
-  dependency, restoring any user override, with a `warn:` naming the conflict.
+  analyzer, say) are retried up to three times, dropping the override for each
+  named dependency in turn and restoring any user override, with a `warn:`
+  per conflict.
 - **A `part` whose generated file is missing** (`uri_has_not_been_generated`,
-  `.over_react.g.dart` not committed) makes the package `partial`: the library
-  is incomplete and references inside the missing part are unknown.
+  `.over_react.g.dart` not committed) makes the package `partial` when the
+  declaring library is under `lib/` or `bin/`: the library is incomplete and
+  references inside the missing part are unknown. Missing parts in `web/`,
+  `example/`, `test/` or `tool/` only warn (over_react's `web/` demos would
+  otherwise block 451 findings); a missing part there can still hide a use.
+- **JS-only npm packages**: scip-typescript's `--infer-tsconfig` walks
+  `node_modules`, finds `.d.ts` files and writes an empty `tsconfig.json`
+  without `allowJs`, so nothing was indexed (react_testing_library's `js_src`).
+  sentei now writes the inferred tsconfig itself (skipping dependency and
+  build dirs, `allowJs` on), upgrades a stale empty one, and gives a package
+  with no code files an empty `ok` index with a warning instead of "no
+  indexer".
 - **Manager-aware document ownership**: a document from a Dart index belongs to
   the innermost pub package enclosing it, and vice versa for npm; only when no
   same-manager package encloses it does the longest-prefix rule apply.
