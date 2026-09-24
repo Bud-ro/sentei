@@ -1,0 +1,7 @@
+{
+  "org": "acme",
+  "repos": [
+    { "name": "app", "default_branch": "main" },
+    { "name": "lib-core", "default_branch": "main" }
+  ]
+}

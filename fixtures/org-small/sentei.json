@@ -1,0 +1,8 @@
+{
+  "minAgeDays": 0,
+  "trustPrivateRegistry": true,
+  "assumeClosedWorld": true,
+  "countTestsAsConsumers": false,
+  "countDocsAsConsumers": false,
+  "keep": []
+}

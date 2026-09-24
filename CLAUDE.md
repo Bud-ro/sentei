@@ -7,7 +7,8 @@ Read `PLAN.md` fully before touching anything. Decisions marked DECIDED are sett
 
 - **Node 26 is required** (`node:sqlite`). The system `node` is v18. Every shell
   command must first do:
-  `export PATH="$HOME/.nvm/versions/node/v26.10.0/bin:$PATH"`
+  `export PATH="$HOME/.nvm/versions/node/v26.10.0/bin:$PATH" npm_config_cache="$HOME/.cache/npm"`
+  (the default npm cache dir is read-only in the sandbox)
   Shell state does not persist between commands.
 - Dart SDK 3.11.3 is on PATH. `gh` is authenticated. Network egress is sandboxed;
   declare hosts you need (registry.npmjs.org, pub.dev, github.com, api.github.com).

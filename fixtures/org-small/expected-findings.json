@@ -1,0 +1,26 @@
+[
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "internalOnlyFn",
+    "verdict": "unexport_candidate",
+    "reasons": ["internal_refs_only"]
+  },
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "islandA",
+    "verdict": "private_dead",
+    "reasons": ["already_unreachable"]
+  },
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "islandB",
+    "verdict": "private_dead",
+    "reasons": ["already_unreachable"]
+  },
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "unusedFn",
+    "verdict": "deletion_candidate",
+    "reasons": ["no_refs"]
+  }
+]
