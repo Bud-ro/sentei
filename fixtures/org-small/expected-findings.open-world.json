@@ -1,14 +1,125 @@
 [
-  {"package_id": "npm:@acme/app-skew", "symbol": "removedFn", "file": "src/main.ts", "verdict": "version_skew", "reasons": ["target:npm:@acme/widgets"]},
-  {"package_id": "npm:@acme/core", "symbol": "internalOnlyFn", "file": "src/fns.ts", "verdict": "unexport_candidate", "reasons": ["internal_refs_only"]},
-  {"package_id": "npm:@acme/core", "symbol": "islandA", "file": "src/fns.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
-  {"package_id": "npm:@acme/core", "symbol": "islandB", "file": "src/fns.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
-  {"package_id": "npm:@acme/core", "symbol": "unusedFn", "file": "src/fns.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
-  {"package_id": "npm:@acme/dyn", "symbol": "dynA", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:@acme/app-dynamic:dynamic_access", "npm:@acme/app-dynamic:namespace_dynamic"]},
-  {"package_id": "npm:@acme/dyn", "symbol": "dynB", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:@acme/app-dynamic:dynamic_access", "npm:@acme/app-dynamic:namespace_dynamic"]},
-  {"package_id": "npm:@acme/widgets", "symbol": "default", "file": "src/unused-anon.ts", "verdict": "deprecation_candidate", "reasons": ["no_refs"]},
-  {"package_id": "npm:@acme/widgets", "symbol": "internalUnused", "file": "src/internal.ts", "verdict": "deprecation_candidate", "reasons": ["no_refs"]},
-  {"package_id": "npm:@acme/widgets", "symbol": "namespaceUnused", "file": "src/misc.ts", "verdict": "deprecation_candidate", "reasons": ["no_refs"]},
-  {"package_id": "npm:@acme/widgets", "symbol": "testOnlyFn", "file": "src/misc.ts", "verdict": "deprecation_candidate", "reasons": ["only_test_refs"]},
-  {"package_id": "npm:@acme/y", "symbol": "yUnused", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:@acme/broken:index_failed"]}
+  {
+    "package_id": "npm:@acme/app-skew",
+    "symbol": "removedFn",
+    "file": "src/main.ts",
+    "verdict": "version_skew",
+    "reasons": [
+      "target:npm:@acme/widgets"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "internalOnlyFn",
+    "file": "src/fns.ts",
+    "verdict": "unexport_candidate",
+    "reasons": [
+      "internal_refs_only"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "islandA",
+    "file": "src/fns.ts",
+    "verdict": "private_dead",
+    "reasons": [
+      "already_unreachable"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "islandB",
+    "file": "src/fns.ts",
+    "verdict": "private_dead",
+    "reasons": [
+      "already_unreachable"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/core",
+    "symbol": "unusedFn",
+    "file": "src/fns.ts",
+    "verdict": "deletion_candidate",
+    "reasons": [
+      "no_refs"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/dyn",
+    "symbol": "dynA",
+    "file": "src/index.ts",
+    "verdict": "blocked",
+    "reasons": [
+      "no_refs"
+    ],
+    "blocked_by": [
+      "npm:@acme/app-dynamic:dynamic_access",
+      "npm:@acme/app-dynamic:namespace_dynamic"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/dyn",
+    "symbol": "dynB",
+    "file": "src/index.ts",
+    "verdict": "blocked",
+    "reasons": [
+      "no_refs"
+    ],
+    "blocked_by": [
+      "npm:@acme/app-dynamic:dynamic_access",
+      "npm:@acme/app-dynamic:namespace_dynamic"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/widgets",
+    "symbol": "default",
+    "file": "src/unused-anon.ts",
+    "verdict": "deprecation_candidate",
+    "reasons": [
+      "no_refs",
+      "open_world"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/widgets",
+    "symbol": "internalUnused",
+    "file": "src/internal.ts",
+    "verdict": "deprecation_candidate",
+    "reasons": [
+      "no_refs",
+      "open_world"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/widgets",
+    "symbol": "namespaceUnused",
+    "file": "src/misc.ts",
+    "verdict": "deprecation_candidate",
+    "reasons": [
+      "no_refs",
+      "open_world"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/widgets",
+    "symbol": "testOnlyFn",
+    "file": "src/misc.ts",
+    "verdict": "deprecation_candidate",
+    "reasons": [
+      "only_test_refs",
+      "open_world"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/y",
+    "symbol": "yUnused",
+    "file": "src/index.ts",
+    "verdict": "blocked",
+    "reasons": [
+      "no_refs"
+    ],
+    "blocked_by": [
+      "npm:@acme/broken:index_failed"
+    ]
+  }
 ]
