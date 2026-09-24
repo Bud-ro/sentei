@@ -15,11 +15,20 @@
       "sites": []
     },
     {
+      "col": 13,
+      "entry": "src/worker.ts",
+      "exportedAs": "Room",
+      "file": "src/worker.ts",
+      "line": 36,
+      "name": "Room",
+      "sites": []
+    },
+    {
       "col": 7,
       "entry": "src/worker.ts",
       "exportedAs": "default",
       "file": "src/worker.ts",
-      "line": 35,
+      "line": 43,
       "name": "default",
       "note": "default-keyword",
       "sites": []

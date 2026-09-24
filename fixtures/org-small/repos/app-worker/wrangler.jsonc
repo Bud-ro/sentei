@@ -4,4 +4,8 @@
   "name": "worker",
   "main": "./src/worker.ts",
   "compatibility_date": "2025-04-01",
+  // A Durable Object: the runtime instantiates the exported class by this name.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "Room" }],
+  },
 }

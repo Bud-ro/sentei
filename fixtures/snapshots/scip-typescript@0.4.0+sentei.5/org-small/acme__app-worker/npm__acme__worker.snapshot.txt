@@ -18,7 +18,7 @@
 
 ## src/worker.ts
   // The Worker entry (wrangler.jsonc `main`): a runtime entry point by convention.
-//^ definition scip-typescript npm @acme/worker . src/`worker.ts`/ enclosing [1:0-40:0]
+//^ definition scip-typescript npm @acme/worker . src/`worker.ts`/ enclosing [1:0-48:0]
   import { lazyWidget } from '@acme/widgets/lazy';
 //         ^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`lazy.ts`/lazyWidget().
 //                           ^^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`lazy.ts`/
@@ -64,6 +64,16 @@
   function neverCalled(): number {
 //         ^^^^^^^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/neverCalled(). enclosing [30:0-32:1]
     return 2;
+  }
+
+  // Expected: alive, no finding (a Durable Object class named by wrangler.jsonc
+  // durable_objects.bindings[].class_name: instantiated by the runtime, never referenced).
+  export class Room {
+//             ^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/Room# enclosing [36:0-40:1]
+    fetch(): string {
+//  ^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/Room#fetch(). enclosing [37:2-39:3]
+      return 'room';
+    }
   }
 
   // Expected: alive, no finding (default export of a runtime entry: an entry symbol).

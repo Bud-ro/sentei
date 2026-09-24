@@ -62,6 +62,14 @@ export interface ManifestPackage {
    * for pub.
    */
   runtimeEntryPoints: string[];
+  /**
+   * Names of exported classes the RUNTIME instantiates by name (wrangler config
+   * `durable_objects.bindings[].class_name`, `migrations[].new_classes` /
+   * `new_sqlite_classes`, `workflows[].class_name`). Ingest makes every exported symbol
+   * with such a name declared in one of the package's entry / runtime entry files an
+   * entry_symbol (never a verdict). Sorted, deduplicated; omitted when none.
+   */
+  runtimeEntrySymbols?: string[];
   /** Sorted by name; one entry per name. */
   deps: ManifestDep[];
 }
@@ -346,7 +354,10 @@ export function readNpmPackage(
   const client = clientAll.filter((f) => !resolved.entryPoints.includes(f));
   if (client.length > 0) log(`${manifest}: client entry points from index.html / vite.config: ${client.join(', ')}`);
   const deps = npmDeps(json, manifest, warn);
-  const conventionAll = conventionEntryPoints(repoRoot, dir, files, new Set(deps.map((d) => d.name)));
+  const scripts = isObject(json['scripts'])
+    ? Object.values(json['scripts']).filter((v): v is string => typeof v === 'string') : [];
+  const conventionAll = conventionEntryPoints(repoRoot, dir, files, new Set(deps.map((d) => d.name)), scripts);
+  const runtimeEntrySymbols = wranglerRuntimeClasses(repoRoot, dir, files);
   const convention = conventionAll.filter((f) => !resolved.entryPoints.includes(f) && !clientAll.includes(f));
   if (convention.length > 0) {
     log(`${manifest}: ${convention.length} runtime entry point(s) by convention (wrangler main, functions/, routes/…): ${
@@ -354,9 +365,11 @@ export function readNpmPackage(
   }
   const entryPoints = [...new Set([...resolved.entryPoints, ...client, ...convention])].sort(cmp);
   if (resolved.noneResolved && entryPoints.length === 0) warn(`${manifest}: no entry points resolved`);
-  // Runtime-loaded files that are not also declared surface (main/exports/…).
+  // Runtime-loaded files that are not also declared surface (main/exports/…). The index
+  // fallback is a guess, not a declaration: a convention naming it (a wrangler main at
+  // src/index.ts, with no package.json entry) makes it a runtime entry.
   const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll, ...conventionAll])]
-    .filter((f) => !resolved.surface.includes(f)).sort(cmp);
+    .filter((f) => f === resolved.fallback || !resolved.surface.includes(f)).sort(cmp);
   return {
     manager: 'npm',
     name,
@@ -368,6 +381,7 @@ export function readNpmPackage(
     entryPoints,
     unresolvedEntryPoints: unresolved,
     runtimeEntryPoints,
+    ...(runtimeEntrySymbols.length > 0 ? { runtimeEntrySymbols } : {}),
     deps,
   };
 }
@@ -456,7 +470,7 @@ export function npmEntryPoints(
  */
 export function resolveNpmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
-): { entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; noneResolved: boolean } {
+): { entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; fallback: string | null; noneResolved: boolean } {
   // `entry`: the exports entry (subpath key) a leaf belongs to; undefined outside exports.
   const declared: Array<{ path: string; surface: boolean; entry?: string }> = [];
   const patterns: Array<{ path: string; entry: string }> = [];
@@ -543,10 +557,12 @@ export function resolveNpmEntryPoints(
     const r = resolveEntry(n, pkgFileSet);
     if (r !== null && (CODE_EXT.test(r) || posix.extname(r) === '')) binFiles.push(joinRel(dir, r));
   }
+  let fallback: string | null = null;
   if (found.size === 0 && binFiles.length === 0) {
     for (const f of ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'index.cjs', 'src/index.ts', 'src/index.tsx']) {
       if (pkgFileSet.has(f)) {
-        found.add(joinRel(dir, f));
+        fallback = joinRel(dir, f);
+        found.add(fallback);
         break;
       }
     }
@@ -574,7 +590,7 @@ export function resolveNpmEntryPoints(
   }
   const runtime = [...new Set([...[...found].filter((f) => !before.has(f)), ...binFiles.filter((f) => !found.has(f))])];
   return {
-    entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp), runtime: runtime.sort(cmp), surface: surface.sort(cmp), noneResolved,
+    entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp), runtime: runtime.sort(cmp), surface: surface.sort(cmp), fallback, noneResolved,
   };
 }
 
@@ -651,17 +667,26 @@ export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: read
  * Runtime entry conventions: files a platform or framework loads BY PATH, with no import
  * from code and no manifest field naming them. One row per convention: `files` = the
  * condition "one of these package-relative files exists" (omitted: unconditional),
- * `deps` = "one of these is a declared dependency" (any block, dev included), both
- * required when both are given; `globs` = the package-relative files it loads
+ * `deps` = "one of these is a declared dependency" (any block, dev included),
+ * `scripts` = "some package.json `scripts` value matches", all required when several are
+ * given, unless `any` (then one suffices); `globs` = the package-relative files it loads
  * (glob.ts syntax). Only code files (CODE_EXT), never a `.d.ts` (ambient declarations
  * are not loaded: they are the adapter's `entrySymbols` kind 'ambient'), never a test
  * file (TEST_GLOBS), a dot dir, `node_modules`, or a file inside a nested package.
  * Dumb on purpose: it only ever adds runtime entries. The wrangler `main` field is read
  * separately (wranglerMain).
  */
-const RUNTIME_ENTRY_CONVENTIONS: ReadonlyArray<{ what: string; files?: string[]; deps?: string[]; globs: string[] }> = [
-  // Cloudflare Pages Functions: file-based routes under functions/.
-  { what: 'Cloudflare Pages Functions', files: ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc', '_routes.json', 'public/_routes.json'], globs: ['functions/**'] },
+const RUNTIME_ENTRY_CONVENTIONS: ReadonlyArray<{
+  what: string; files?: string[]; deps?: string[]; scripts?: RegExp; any?: true; globs: string[];
+}> = [
+  // Cloudflare Pages Functions: file-based routes under functions/. A Pages project may
+  // have no wrangler config at all (honojs examples/pages-stack): a wrangler dependency
+  // or a `wrangler pages …` script is enough.
+  {
+    what: 'Cloudflare Pages Functions', any: true,
+    files: ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc', '_routes.json', 'public/_routes.json'],
+    deps: ['wrangler'], scripts: /\bwrangler\s+pages\b/, globs: ['functions/**'],
+  },
   // HonoX: app/server.ts and app/client.ts are the server / client entries; routes and
   // islands are loaded by the file router (app/global.d.ts is ambient, not an entry).
   { what: 'HonoX', deps: ['honox'], globs: ['app/server.*', 'app/client.*', 'app/routes/**', 'app/islands/**'] },
@@ -700,11 +725,58 @@ function wranglerMain(read: (rel: string) => string, cfg: string): string[] {
 }
 
 /**
- * Runtime entry points by convention (RUNTIME_ENTRY_CONVENTIONS, wrangler `main`) of the
- * npm package at `dir`, repo-relative, sorted.
+ * The entry module passed on a `wrangler dev <file>` / `wrangler deploy <file>` (or the
+ * legacy `publish`) command line in a package.json script, package-relative as written:
+ * the first non-flag argument that looks like code. `wrangler pages …` is not a Worker.
+ */
+function wranglerScriptMains(scripts: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const s of scripts) {
+    for (const m of s.matchAll(/\bwrangler\s+(?:dev|deploy|publish)\b([^&|;]*)/g)) {
+      const arg = m[1]!.trim().split(/\s+/).find((t) => t !== '' && !t.startsWith('-'));
+      const unq = arg?.replace(/^["']|["']$/g, '');
+      if (unq !== undefined && CODE_EXT.test(unq)) out.push(unq);
+    }
+  }
+  return out;
+}
+
+/**
+ * Class names a package-root wrangler config makes the runtime instantiate by name:
+ * `class_name` (Durable Object and Workflow bindings, TOML `[[durable_objects.bindings]]`
+ * blocks, inline tables or JSON objects, `env` overrides included) and the
+ * `new_classes` / `new_sqlite_classes` arrays of `migrations`. Text scanning, no parser;
+ * it only ever adds seeds (a `script_name` binding naming another Worker's class matches
+ * nothing here). Sorted, deduplicated.
+ */
+export function wranglerRuntimeClasses(repoRoot: string, dir: string, repoFiles: readonly string[]): string[] {
+  const fileSet = new Set(packageFiles(dir, repoFiles));
+  const out = new Set<string>();
+  for (const cfg of WRANGLER_CONFIGS.filter((f) => fileSet.has(f))) {
+    let text: string;
+    try {
+      text = readFileSync(join(repoRoot, joinRel(dir, cfg)), 'utf8');
+    } catch {
+      continue;
+    }
+    const toml = cfg.endsWith('.toml');
+    const name = toml ? /\bclass_name\s*=\s*["']([^"']+)["']/g : /"class_name"\s*:\s*"([^"]+)"/g;
+    for (const m of text.matchAll(name)) out.add(m[1]!);
+    const arr = toml ? /\bnew_(?:sqlite_)?classes\s*=\s*\[([^\]]*)\]/g : /"new_(?:sqlite_)?classes"\s*:\s*\[([^\]]*)\]/g;
+    for (const m of text.matchAll(arr)) {
+      for (const lit of m[1]!.matchAll(/["']([^"']+)["']/g)) out.add(lit[1]!);
+    }
+  }
+  return [...out].filter((n) => /^[A-Za-z_$][\w$]*$/.test(n)).sort(cmp);
+}
+
+/**
+ * Runtime entry points by convention (RUNTIME_ENTRY_CONVENTIONS, wrangler `main`, else a
+ * `wrangler dev|deploy <file>` script) of the npm package at `dir`, repo-relative, sorted.
+ * `scripts` = the package.json `scripts` values.
  */
 export function conventionEntryPoints(
-  repoRoot: string, dir: string, repoFiles: readonly string[], deps: ReadonlySet<string>,
+  repoRoot: string, dir: string, repoFiles: readonly string[], deps: ReadonlySet<string>, scripts: readonly string[] = [],
 ): string[] {
   const pkgFiles = packageFiles(dir, repoFiles);
   const fileSet = new Set(pkgFiles);
@@ -717,8 +789,11 @@ export function conventionEntryPoints(
     && !nested.some((n) => f.startsWith(n));
   const out = new Set<string>();
   for (const c of RUNTIME_ENTRY_CONVENTIONS) {
-    if (c.files && !c.files.some((f) => fileSet.has(f))) continue;
-    if (c.deps && !c.deps.some((d) => deps.has(d))) continue;
+    const conds: boolean[] = [];
+    if (c.files) conds.push(c.files.some((f) => fileSet.has(f)));
+    if (c.deps) conds.push(c.deps.some((d) => deps.has(d)));
+    if (c.scripts) conds.push(scripts.some((s) => c.scripts!.test(s)));
+    if (c.any ? conds.length > 0 && !conds.includes(true) : conds.includes(false)) continue;
     for (const f of pkgFiles) if (ok(f) && c.globs.some((g) => matchGlob(g, f))) out.add(f);
   }
   const read = (rel: string): string => {
@@ -728,12 +803,12 @@ export function conventionEntryPoints(
       return '';
     }
   };
-  for (const cfg of WRANGLER_CONFIGS.filter((f) => fileSet.has(f))) {
-    for (const main of wranglerMain(read, cfg)) {
-      const n = normalizeRel(main);
-      const r = n === null || n === '' ? null : resolveEntry(n, fileSet);
-      if (r !== null && ok(r)) out.add(r);
-    }
+  const mains = WRANGLER_CONFIGS.filter((f) => fileSet.has(f)).flatMap((cfg) => wranglerMain(read, cfg));
+  // No `main` in any config: the entry may be passed on the command line.
+  for (const main of mains.length > 0 ? mains : wranglerScriptMains(scripts)) {
+    const n = normalizeRel(main);
+    const r = n === null || n === '' ? null : resolveEntry(n, fileSet);
+    if (r !== null && ok(r)) out.add(r);
   }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
 }

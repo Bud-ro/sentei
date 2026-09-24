@@ -54,6 +54,12 @@ export interface DiscoverPackage {
    * Optional: absent in older discover.json files (= []).
    */
   runtimeEntryPoints?: string[];
+  /**
+   * Exported class names the runtime instantiates by name (ManifestPackage.
+   * runtimeEntrySymbols: wrangler Durable Object / Workflow `class_name`, migration
+   * `new_classes`). Optional: absent when none.
+   */
+  runtimeEntrySymbols?: string[];
   deps: DiscoverDep[];
   /** package_flags discover owns (`unindexed_consumer`, `opaque_consumer`); [] when none. */
   flags: DiscoverFlag[];
@@ -378,6 +384,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       entryPoints: m.entryPoints,
       unresolvedEntryPoints: m.unresolvedEntryPoints,
       runtimeEntryPoints: m.runtimeEntryPoints,
+      ...(m.runtimeEntrySymbols ? { runtimeEntrySymbols: m.runtimeEntrySymbols } : {}),
       deps: m.deps.map(resolveDep),
       // An exports/main/types leaf that looks like code but resolves to nothing: an entry
       // point (and every symbol only it exports) is missing from the surface, which would

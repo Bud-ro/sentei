@@ -493,6 +493,71 @@ describe('npm manifests', () => {
     expect(warnings.filter((w) => w.includes('no entry points'))).toEqual([]);
   });
 
+  it('Cloudflare Pages functions/ without a wrangler config: a wrangler dependency or a `wrangler pages` script', () => {
+    // honojs examples/pages-stack: no wrangler config, wrangler in devDependencies.
+    pkgJson('dep/package.json', { name: 'dep', private: true, devDependencies: { wrangler: '^4' } });
+    write('dep/functions/api/[[route]].ts');
+    pkgJson('scr/package.json', { name: 'scr', private: true, scripts: { deploy: 'vite build && wrangler pages deploy dist' } });
+    write('scr/functions/hello.ts');
+    // Neither: functions/ is just code.
+    pkgJson('none/package.json', { name: 'none', main: 'index.ts', scripts: { dev: 'vite' } });
+    write('none/index.ts');
+    write('none/functions/x.ts');
+    const byName = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(byName.get('dep')!.runtimeEntryPoints).toEqual(['dep/functions/api/[[route]].ts']);
+    expect(byName.get('scr')!.runtimeEntryPoints).toEqual(['scr/functions/hello.ts']);
+    expect(byName.get('none')!.runtimeEntryPoints).toEqual([]);
+  });
+
+  it('wrangler Durable Object classes (TOML bindings + migrations, JSON bindings) become runtimeEntrySymbols', () => {
+    pkgJson('t/package.json', { name: 't', private: true });
+    write('t/wrangler.toml', [
+      'name = "do"', 'main = "src/index.ts"', '',
+      '[[durable_objects.bindings]]', 'name = "COUNTER"', 'class_name = "Counter"', '',
+      '[[env.prod.durable_objects.bindings]]', "name = 'ROOM'", "class_name = 'Room'", '',
+      '[[migrations]]', 'tag = "v1"', 'new_classes = ["Counter", "Legacy"]', '',
+      '[[migrations]]', 'tag = "v2"', 'new_sqlite_classes = [', '  "Chat",', ']', '',
+    ].join('\n'));
+    write('t/src/index.ts');
+    pkgJson('j/package.json', { name: 'j', private: true });
+    write('j/wrangler.jsonc', `{
+  // comment
+  "main": "src/index.ts",
+  "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room", "Lobby"] }],
+}`);
+    write('j/src/index.ts');
+    pkgJson('n/package.json', { name: 'n', private: true });
+    write('n/wrangler.toml', 'name = "n"\nmain = "src/index.ts"\n');
+    write('n/src/index.ts');
+    const byName = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(byName.get('t')!.runtimeEntrySymbols).toEqual(['Chat', 'Counter', 'Legacy', 'Room']);
+    expect(byName.get('j')!.runtimeEntrySymbols).toEqual(['Lobby', 'Room']);
+    expect(byName.get('n')!.runtimeEntrySymbols).toBeUndefined();
+  });
+
+  it('wrangler main from a `wrangler dev|deploy <file>` script when no config names one', () => {
+    // honojs examples/durable-objects: wrangler.toml without `main`, the entry on the command line.
+    pkgJson('a/package.json', { name: 'a', private: true, scripts: { dev: 'wrangler dev src/index.ts', deploy: 'wrangler deploy --minify src/index.ts' } });
+    write('a/wrangler.toml', 'name = "a"\n[[durable_objects.bindings]]\nname = "C"\nclass_name = "Counter"\n');
+    write('a/src/index.ts');
+    // A config `main` wins over the script.
+    pkgJson('b/package.json', { name: 'b', private: true, scripts: { dev: 'wrangler dev other.ts' } });
+    write('b/wrangler.toml', 'main = "src/main.ts"\n');
+    write('b/src/main.ts');
+    write('b/other.ts');
+    // No config at all, still a script entry; `wrangler pages dev` is not a Worker entry.
+    pkgJson('c/package.json', { name: 'c', private: true, scripts: { start: 'wrangler dev ./worker.js --port 8787', p: 'wrangler pages dev ./dist.js' } });
+    write('c/worker.js');
+    write('c/dist.js');
+    const byName = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(byName.get('a')!.runtimeEntryPoints).toEqual(['a/src/index.ts']);
+    expect(byName.get('a')!.entryPoints).toEqual(['a/src/index.ts']);
+    expect(byName.get('a')!.runtimeEntrySymbols).toEqual(['Counter']);
+    expect(byName.get('b')!.runtimeEntryPoints).toEqual(['b/src/main.ts']);
+    expect(byName.get('c')!.runtimeEntryPoints).toEqual(['c/worker.js']);
+  });
+
   it('a convention never reaches into a nested package', () => {
     pkgJson('package.json', { name: 'root', dependencies: { nuxt: '3' } });
     write('pages/a.ts');

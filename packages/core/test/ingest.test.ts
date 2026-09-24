@@ -916,6 +916,33 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(db.prepare('SELECT s.name FROM entry_symbols e JOIN symbols s USING (symbol_id)').all()).toEqual([{ name: 'digest' }]);
   });
 
+  it('runtimeEntrySymbols (wrangler Durable Object class_name): exported symbols so named in entry files become entry_symbols', () => {
+    writeScip('acme/mono', 'lib.scip', [
+      { path: 'src/a.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 13, 20], symbol: `${LIB}src/\`a.ts\`/Counter#`, roles: 1, enclosing: [1, 0, 1, 30] },
+        { range: [2, 13, 19], symbol: `${LIB}src/\`a.ts\`/other().`, roles: 1, enclosing: [2, 0, 2, 30] },
+      ] },
+      { path: 'src/b.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`b.ts\`/`, roles: 1 },
+        { range: [1, 13, 20], symbol: `${LIB}src/\`b.ts\`/Counter#`, roles: 1, enclosing: [1, 0, 1, 30] },
+      ] },
+    ]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [
+      { ...exp('Counter', 'src/a.ts', 1, 13), entry: 'src/a.ts' },
+      { ...exp('other', 'src/a.ts', 2, 13), entry: 'src/a.ts' },
+      { ...exp('Counter', 'src/b.ts', 1, 13), entry: 'src/b.ts' },
+    ]));
+    const d = discover();
+    // src/a.ts is an entry point (not a runtime one); src/b.ts is not an entry file.
+    d.repos[0]!.packages[0]!.entryPoints.push('src/a.ts');
+    d.repos[0]!.packages[0]!.runtimeEntrySymbols = ['Counter', 'Missing'];
+    const c = run(d);
+    expect(c.runtimeEntrySymbols).toBe(1);
+    expect(db.prepare('SELECT s.name, s.file, e.kind FROM entry_symbols e JOIN symbols s USING (symbol_id)').all())
+      .toEqual([{ name: 'Counter', file: 'src/a.ts', kind: 'runtime' }]);
+  });
+
   it('a runtime entry that is not an entry point (a bin) is a seed document, with no entry_symbols of its own', () => {
     const d = discover();
     d.repos[0]!.packages[0]!.runtimeEntryPoints = ['src/a.ts'];

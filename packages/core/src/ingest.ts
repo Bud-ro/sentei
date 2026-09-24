@@ -51,6 +51,12 @@ export interface IngestDiscoverInput {
        * `bin` targets are here only. Optional.
        */
       runtimeEntryPoints?: string[];
+      /**
+       * Names the runtime instantiates (wrangler Durable Object classes): every exported
+       * top-level symbol so named in one of the package's entry / runtime entry files
+       * becomes an entry_symbol (kind runtime). Optional.
+       */
+      runtimeEntrySymbols?: string[];
     }>;
   }>;
 }
@@ -287,6 +293,7 @@ interface PkgInfo {
   path: string; // '' for the repo root, else 'a/b'
   entryPoints: Set<string>;
   runtimeEntryPoints: Set<string>;
+  runtimeEntrySymbols: Set<string>;
 }
 
 interface DocWork {
@@ -497,6 +504,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       pkgs.set(p.packageId, {
         packageId: p.packageId, manager: managerOf(p.packageId), repo: r.repo, path: normPkgPath(p.path), entryPoints: new Set(p.entryPoints),
         runtimeEntryPoints: new Set(p.runtimeEntryPoints ?? []),
+        runtimeEntrySymbols: new Set(p.runtimeEntrySymbols ?? []),
       });
     }
   }
@@ -1166,14 +1174,19 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     // importer must use, so they are entry_symbols (seeds, no verdict), like a Dart
     // `main`. Only exported top-level declarations; privates follow reachability.
     {
-      const exportedTop = db.prepare(`SELECT symbol_id FROM symbols
+      const exportedTop = db.prepare(`SELECT symbol_id, name FROM symbols
         WHERE package_id = ? AND file = ? AND is_exported = 1 AND parent_symbol_id IS NULL ORDER BY symbol_id`);
       for (const w of docs) {
         const pk = pkgs.get(w.packageId)!;
         // A bin (runtime only, not an entry point) is a seed document; the package's
         // exports that happen to be declared in it stay ordinary exports.
-        if (!pk.runtimeEntryPoints.has(w.file) || !pk.entryPoints.has(w.file)) continue;
-        for (const r of exportedTop.all(w.packageId, w.file) as Array<{ symbol_id: number }>) {
+        const runtimeFile = pk.runtimeEntryPoints.has(w.file) && pk.entryPoints.has(w.file);
+        // A Durable Object class is instantiated by the Workers runtime by its name (the
+        // wrangler binding's class_name), from whichever entry file exports it.
+        const byName = pk.runtimeEntrySymbols.size > 0 && (pk.entryPoints.has(w.file) || pk.runtimeEntryPoints.has(w.file));
+        if (!runtimeFile && !byName) continue;
+        for (const r of exportedTop.all(w.packageId, w.file) as Array<{ symbol_id: number; name: string }>) {
+          if (!runtimeFile && !pk.runtimeEntrySymbols.has(r.name)) continue;
           counts.runtimeEntrySymbols += Number(st.entrySymbol.run(r.symbol_id, 'runtime').changes);
         }
       }

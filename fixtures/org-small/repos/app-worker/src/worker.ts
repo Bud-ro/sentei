@@ -32,6 +32,14 @@ function neverCalled(): number {
   return 2;
 }
 
+// Expected: alive, no finding (a Durable Object class named by wrangler.jsonc
+// durable_objects.bindings[].class_name: instantiated by the runtime, never referenced).
+export class Room {
+  fetch(): string {
+    return 'room';
+  }
+}
+
 // Expected: alive, no finding (default export of a runtime entry: an entry symbol).
 export default {
   fetch(): string {
