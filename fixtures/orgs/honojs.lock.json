@@ -1,0 +1,102 @@
+{
+  "org": "honojs",
+  "generatedAt": "2026-09-24T06:18:36.000Z",
+  "repos": [
+    {
+      "name": ".github",
+      "defaultBranch": "main",
+      "headSha": "a5818c4b3602d50dce4386ea04c473502a55ebe0",
+      "fork": false
+    },
+    {
+      "name": "agent-dx",
+      "defaultBranch": "main",
+      "headSha": "8e85e3c3e8a91b0de55882671e09aea0c4e4ec7c",
+      "fork": false
+    },
+    {
+      "name": "cli",
+      "defaultBranch": "main",
+      "headSha": "c1b6028d8ea9bacaa1f08eed9345fb4301e9215c",
+      "fork": false
+    },
+    {
+      "name": "create-hono",
+      "defaultBranch": "main",
+      "headSha": "f0aa3af1beb0f76a96064bf28ab157549cfce1d5",
+      "fork": false
+    },
+    {
+      "name": "examples",
+      "defaultBranch": "main",
+      "headSha": "3b0b62875a0e1265763fea1c6388866d5697ef81",
+      "fork": false
+    },
+    {
+      "name": "hono",
+      "defaultBranch": "main",
+      "headSha": "8dcd52b92beada28962e818bdca8a137a6beb656",
+      "fork": false
+    },
+    {
+      "name": "honoconf",
+      "defaultBranch": "main",
+      "headSha": "08b0ddd768acb4eccd0fbf0d5aa1c898a288f74d",
+      "fork": false
+    },
+    {
+      "name": "honox",
+      "defaultBranch": "main",
+      "headSha": "ac84cded80f56d4b7e0913b7884ca225c9c4292f",
+      "fork": false
+    },
+    {
+      "name": "honox-website",
+      "defaultBranch": "main",
+      "headSha": "13ea697385480644b56898a6c9faf50a97a6bab8",
+      "fork": false
+    },
+    {
+      "name": "middleware",
+      "defaultBranch": "main",
+      "headSha": "3c8656ee5112361387dac130b1325859592c2650",
+      "fork": false
+    },
+    {
+      "name": "node-server",
+      "defaultBranch": "main",
+      "headSha": "64dc09e0c37eab30b51d33d61a3a2bae3fdee263",
+      "fork": false
+    },
+    {
+      "name": "skills",
+      "defaultBranch": "main",
+      "headSha": "8b1938be37331c68a02c3b75896b2ea3839d7d09",
+      "fork": false
+    },
+    {
+      "name": "starter",
+      "defaultBranch": "main",
+      "headSha": "cd2f95cb145d27ee9c5905b057e749491f2b4a12",
+      "fork": false
+    },
+    {
+      "name": "vite-plugins",
+      "defaultBranch": "main",
+      "headSha": "93b0840360ab250c096bf8493e284c3904603a9f",
+      "fork": false
+    },
+    {
+      "name": "vscode",
+      "defaultBranch": "main",
+      "headSha": "9c926b6560ed604ea01005f54f31125ad9b7b4ab",
+      "fork": false
+    },
+    {
+      "name": "website",
+      "defaultBranch": "main",
+      "headSha": "f607a0f037581b538332c65d1634cbf9a31c292a",
+      "fork": false
+    }
+  ]
+}

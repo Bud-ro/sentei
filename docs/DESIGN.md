@@ -485,3 +485,36 @@ adopted:
   those references are lost. Pre-existing; revisit if a spot-check blames it.
 - Targeted `unindexed_consumer` flags with no manifest dependency still block
   their target (a hoisted workspace dependency is still a use).
+
+### M2 — second honojs run (with installs): acceptance and spot checks
+
+16 repos, 76 packages, 47/48 middleware packages `ok` once pnpm/yarn ran
+(hono itself stayed partial: pnpm 12's store lock needs a writable home; the
+sandbox forbids it). 978 exported symbols blamed; 93 deletion candidates, 242
+unexport, 460 private_dead, 397 blocked. The witness passed all 93. Hand
+spot-check of 11 deletion candidates: 1 truly dead (`ua-blocker#__test`),
+7 public API hidden only by `assumeClosedWorld` (as designed), **3 wrong**:
+
+| symbol | why the pipeline missed the use | fix adopted |
+|---|---|---|
+| `cloudflarePagesBuildPlugin`, `cloudflareWorkersBuildPlugin` (vite-build) | consumers do `import build from '@hono/vite-build/cloudflare-pages'`; the symbol is `export default cloudflarePagesBuildPlugin`, so the witness searched the identifier, not the default-import form | ingest records every exported alias (`symbol_exports`); the witness searches aliases and applies its default-import rule whenever a symbol is exported as `default` |
+| `HonoXIsland` (honox) | honox's Vite plugin writes `import { HonoXIsland } from 'honox/vite/components'` into generated island files; the import exists only as a string at build time | self-witness: the defining package's own non-test sources are scanned for its own package name inside string literals that are not import statements; a symbol named in such a file is `needs_review` |
+
+Also found: scip-typescript emits only `PracticalTask#grade().` for a shorthand
+property `{ grade }` in a contextually typed object literal (no reference to the
+local `grade`), producing 12 false `private_dead` rows (adapter records
+checker-resolved shorthand references like namespace members); `mocks/`,
+`fixtures/`, `e2e/`, `__schemas__/` and in-package `examples/` are test/docs
+support and were reported dead (~160 rows; globs extended, shared between
+analyze and witness); Workers entry files' `export default app` and Durable
+Object classes came out `unexport_candidate` (a default export in an entry file
+of a package with no org consumers is now treated as a runtime entry); the
+`FC:PropsWithChildren:typeLiteralN:` chains still produced false version skew
+(any undefined reference passing through an anonymous descriptor is attributed
+to its nearest defined ancestor); `namespace_dynamic` on `import * as X from
+'hono/jsx'` blocked all 387 hono rows although its target is known (now
+targeted); ignored-manifest subtrees inside an org package were flagged by the
+out-of-program scan (now skipped there: they are witness-only); installs must be
+hermetic (pnpm/yarn write under `$HOME`; store and global dirs now live in the
+work dir and the proxy is passed to yarn). The honojs lockfile is committed at
+`fixtures/orgs/honojs.lock.json` (PLAN §13).
