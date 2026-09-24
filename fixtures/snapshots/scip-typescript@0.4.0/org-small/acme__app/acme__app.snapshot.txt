@@ -1,0 +1,21 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.ts
+  // Entry point of @acme/app, consumer of @acme/core.
+//^ definition scip-typescript npm @acme/app . src/`main.ts`/ enclosing [1:0-9:0]
+  import { usedFn } from '@acme/core';
+//         ^^^^^^ reference scip-typescript npm @acme/core . src/`fns.ts`/usedFn().
+//                       ^^^^^^^^^^^^ reference scip-typescript npm @acme/core . src/`index.ts`/
+
+  // Expected: alive, no finding (not exported; called from the entry file top level).
+  function main(): void {
+//         ^^^^ definition scip-typescript npm @acme/app . src/`main.ts`/main(). enclosing [4:0-6:1]
+    console.log(usedFn(41));
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//              ^^^^^^ reference scip-typescript npm @acme/core . src/`fns.ts`/usedFn().
+  }
+
+  main();
+//^^^^ reference scip-typescript npm @acme/app . src/`main.ts`/main().

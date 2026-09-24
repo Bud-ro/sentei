@@ -1,0 +1,41 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## bin/main.dart
+  // Entry point of acme_app (bin/), consumer of acme_x and acme_pub.
+//^ definition scip-dart pub acme_app . bin/`main.dart`/
+  // `show`: only these names come from the first import (shownOnly is shown, never called).
+  // ignore: unused_shown_name
+  import 'package:acme_x/acme_x.dart' show usedFn, Shown, implUsed, shownOnly;
+//                                         ^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/usedFn().
+//                                                 ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#
+//                                                        ^^^^^^^^ reference scip-dart pub acme_x . lib/src/`impl.dart`/implUsed().
+//                                                                  ^^^^^^^^^ reference scip-dart pub acme_x . lib/src/`impl.dart`/shownOnly().
+  // `hide`: every other acme_x name (the extension, partUsed, ...) comes from here.
+  import 'package:acme_x/acme_x.dart' hide usedFn;
+//                                         ^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/usedFn().
+  import 'package:acme_pub/acme_pub.dart';
+
+  // Expected: alive, no finding (bin/ entry point).
+  void main() {
+//     ^^^^ definition scip-dart pub acme_app . bin/`main.dart`/main(). enclosing [9:0-16:1]
+    print(usedFn()); // unqualified imported top-level function
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/usedFn().
+    print(3.doubled); // extension getter; the extension itself is never named here
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//          ^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/IntTimes#`<get>doubled`.
+    print(Shown().label); // class via `export ... show Shown`, implicit default constructor
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#`<constructor>`().
+//                ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#label.
+    print(implUsed()); // declared in src/impl.dart, reached through `export 'src/impl.dart'`
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^ reference scip-dart pub acme_x . lib/src/`impl.dart`/implUsed().
+    print(partUsed()); // declared in a part file
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^ reference scip-dart pub acme_x . lib/src/`part_a.dart`/partUsed().
+    print(pubUsed());
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^ reference scip-dart pub acme_pub . lib/`acme_pub.dart`/pubUsed().
+  }

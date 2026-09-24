@@ -1,0 +1,14 @@
+{
+  "entryPoints": [
+    "src/main.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "packageId": "npm:@acme/tool-py",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

@@ -1,0 +1,102 @@
+{
+  "entryPoints": [
+    "lib/acme_x.dart"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 10,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "IntTimes",
+      "file": "lib/acme_x.dart",
+      "line": 29,
+      "name": "IntTimes",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "implUnused",
+      "file": "lib/src/impl.dart",
+      "line": 6,
+      "name": "implUnused",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "implUsed",
+      "file": "lib/src/impl.dart",
+      "line": 3,
+      "name": "implUsed",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "partUnused",
+      "file": "lib/src/part_a.dart",
+      "line": 8,
+      "name": "partUnused",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "partUsed",
+      "file": "lib/src/part_a.dart",
+      "line": 5,
+      "name": "partUsed",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "shownOnly",
+      "file": "lib/src/impl.dart",
+      "line": 10,
+      "name": "shownOnly",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "unusedFn",
+      "file": "lib/acme_x.dart",
+      "line": 15,
+      "name": "unusedFn",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "usedFn",
+      "file": "lib/acme_x.dart",
+      "line": 12,
+      "name": "usedFn",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "Shown",
+      "file": "lib/src/shown.dart",
+      "line": 3,
+      "name": "Shown",
+      "sites": [
+        {
+          "col": 29,
+          "file": "lib/acme_x.dart",
+          "line": 6
+        }
+      ]
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "packageId": "pub:acme_x",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

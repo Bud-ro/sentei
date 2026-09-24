@@ -17,7 +17,8 @@
     "sentei": "node packages/cli/src/main.ts",
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "gen:scip": "buf generate"
+    "gen:scip": "buf generate",
+    "snapshots:update": "node scripts/update-snapshots.ts"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",

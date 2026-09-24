@@ -1,0 +1,30 @@
+{
+  "entryPoints": [
+    "src/load.cts",
+    "src/main.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [
+    {
+      "col": 12,
+      "file": "src/main.ts",
+      "flag": "namespace_dynamic",
+      "line": 6,
+      "reason": "namespace D indexed with a computed key: D[key]"
+    },
+    {
+      "col": 17,
+      "file": "src/load.cts",
+      "flag": "dynamic_access",
+      "line": 5,
+      "reason": "require() with a non-literal specifier: '@acme/' + pkgName"
+    }
+  ],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "packageId": "npm:@acme/app-dynamic",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

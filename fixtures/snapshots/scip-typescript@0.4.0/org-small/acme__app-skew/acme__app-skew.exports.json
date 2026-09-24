@@ -1,0 +1,22 @@
+{
+  "entryPoints": [
+    "src/main.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "packageId": "npm:@acme/app-skew",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": [
+    {
+      "col": 9,
+      "file": "src/main.ts",
+      "line": 3,
+      "module": "@acme/widgets",
+      "name": "removedFn"
+    }
+  ]
+}

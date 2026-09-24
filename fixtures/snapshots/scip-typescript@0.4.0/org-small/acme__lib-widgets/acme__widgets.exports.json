@@ -1,0 +1,165 @@
+{
+  "entryPoints": [
+    "src/anon.ts",
+    "src/deep/thing.ts",
+    "src/index.ts",
+    "src/lazy.ts",
+    "src/unused-anon.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/deep/thing.ts",
+      "exportedAs": "deepThing",
+      "file": "src/deep/thing.ts",
+      "line": 3,
+      "name": "deepThing",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "Widget",
+      "file": "src/widget.tsx",
+      "line": 5,
+      "name": "Widget",
+      "sites": [
+        {
+          "col": 9,
+          "file": "src/index.ts",
+          "line": 5
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "internalUnused",
+      "file": "src/internal.ts",
+      "line": 8,
+      "name": "internalUnused",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "internalUsed",
+      "file": "src/internal.ts",
+      "line": 3,
+      "name": "internalUsed",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "keptFn",
+      "file": "src/misc.ts",
+      "line": 8,
+      "name": "keptFn",
+      "sites": [
+        {
+          "col": 21,
+          "file": "src/index.ts",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "namespaceUnused",
+      "file": "src/misc.ts",
+      "line": 18,
+      "name": "namespaceUnused",
+      "sites": [
+        {
+          "col": 44,
+          "file": "src/index.ts",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "namespaceUsed",
+      "file": "src/misc.ts",
+      "line": 13,
+      "name": "namespaceUsed",
+      "sites": [
+        {
+          "col": 29,
+          "file": "src/index.ts",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "testOnlyFn",
+      "file": "src/misc.ts",
+      "line": 3,
+      "name": "testOnlyFn",
+      "sites": [
+        {
+          "col": 9,
+          "file": "src/index.ts",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/lazy.ts",
+      "exportedAs": "lazyWidget",
+      "file": "src/lazy.ts",
+      "line": 3,
+      "name": "lazyWidget",
+      "sites": []
+    },
+    {
+      "col": 17,
+      "entry": "src/index.ts",
+      "exportedAs": "WidgetOptions",
+      "file": "src/widget.tsx",
+      "line": 10,
+      "name": "WidgetOptions",
+      "sites": [
+        {
+          "col": 14,
+          "file": "src/index.ts",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "col": 7,
+      "entry": "src/anon.ts",
+      "exportedAs": "default",
+      "file": "src/anon.ts",
+      "line": 3,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "src/unused-anon.ts",
+      "exportedAs": "default",
+      "file": "src/unused-anon.ts",
+      "line": 3,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "packageId": "npm:@acme/widgets",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

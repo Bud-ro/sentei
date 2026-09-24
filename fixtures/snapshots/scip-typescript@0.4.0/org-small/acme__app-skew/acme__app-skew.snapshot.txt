@@ -1,0 +1,17 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.ts
+  // Entry point of @acme/app-skew, pinned to an old @acme/widgets.
+//^ definition scip-typescript npm @acme/app-skew . src/`main.ts`/ enclosing [3:0-7:0]
+  // removedFn existed in the pinned release but not at HEAD: expected version_skew
+  // (package_id npm:@acme/app-skew, symbol removedFn). Typecheck fails with TS2305 by design.
+  import { removedFn, internalUsed } from '@acme/widgets';
+//         ^^^^^^^^^ reference local 0
+//                    ^^^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`internal.ts`/internalUsed().
+//                                        ^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`index.ts`/
+
+  removedFn();
+//^^^^^^^^^ reference local 0
+  internalUsed();
+//^^^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`internal.ts`/internalUsed().

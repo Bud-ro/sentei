@@ -1,0 +1,25 @@
+{
+  "entryPoints": [
+    "src/main.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [
+    {
+      "col": 53,
+      "file": "src/main.ts",
+      "line": 13,
+      "member": "namespaceUsed",
+      "targetCol": 16,
+      "targetFile": "src/misc.ts",
+      "targetLine": 13,
+      "targetPackage": "@acme/widgets"
+    }
+  ],
+  "packageId": "npm:@acme/consumer",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

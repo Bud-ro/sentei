@@ -1,0 +1,21 @@
+{
+  "entryPoints": [
+    "bin/main.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "bin/main.dart",
+      "line": 9,
+      "name": "main"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "packageId": "pub:acme_app",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

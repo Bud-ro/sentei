@@ -1,0 +1,33 @@
+{
+  "entryPoints": [
+    "src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "dynA",
+      "file": "src/index.ts",
+      "line": 3,
+      "name": "dynA",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "dynB",
+      "file": "src/index.ts",
+      "line": 8,
+      "name": "dynB",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "packageId": "npm:@acme/dyn",
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}
