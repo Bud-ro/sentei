@@ -51,10 +51,58 @@ Running record of decisions and deviations from `PLAN.md`. Newest milestone last
 - **CLI** opens (and so creates) the DB for every subcommand, including no-op
   stages, so a broken schema fails at the first command.
 
-### Open concern (for ingest, M1)
+### M1 — discover (local org directory)
 
-`package_deps.resolved_package_id` is `ON DELETE SET NULL`. Re-indexing repo R
-(delete + insert) nulls the links *from other repos' consumers* to R's packages,
-which would silently drop blockers from `blocked_packages` (fail open). Ingest
-must re-resolve `resolved_package_id` for all `package_deps` rows in the same
-transaction that re-inserts R's packages.
+- **Whole-org rebuild.** `writeDiscoverToDb` runs `DELETE FROM repos` (the cascade
+  root) and re-inserts everything in one transaction. This resolves the M0
+  concern about `package_deps.resolved_package_id ON DELETE SET NULL` dropping
+  blockers when one repo is re-indexed: discover never re-indexes one repo, so
+  cross-repo links are always rebuilt together. `index` is the cached, per-repo,
+  expensive stage; `discover` and `ingest` are cheap and always whole-org.
+- **Unknown keys in `sentei.json` are errors** (org and repo level), as are wrong
+  types and malformed `keep` entries. A typo like `extraEntryPoint` would
+  otherwise silently drop entry points and make live code look dead. Per-repo
+  policy overrides (PLAN §6.5 "overridable per repo") are therefore rejected for
+  now; only overlays (`extraEntryPoints`, `extraEdges`, `keep`) are per-repo.
+- **Malformed manifests are hard errors** naming the file (skipping one could
+  hide a consumer). Real orgs may need a deny-list for intentionally broken
+  test-fixture manifests; revisit in M2.
+- **Every nested `package.json`/`pubspec.yaml` is an org package**, including ones
+  under `test/fixtures/`. In real orgs this may produce spurious duplicate-name
+  errors; revisit in M2 with evidence.
+- **npm entry points** go beyond §6.3: each declared path is tried as-is, then
+  with Node-style extension/`index` probing, then with a dist→src mapping
+  (`dist|lib|build|out/x.js` → `src/x.ts[x]`) so unbuilt TS repos still resolve.
+  `exports` `*` patterns are globbed against the filesystem (a `*` may span
+  slashes, as in Node). Non-code targets (`./package.json`) are ignored.
+- **npm deps:** `dependencies`, `peerDependencies`, `optionalDependencies`, then
+  `devDependencies`; first occurrence wins; the dev/prod distinction is not
+  stored. npm aliases (`"x": "npm:@acme/a@^1"`) resolve to the alias target.
+  `registry.yarnpkg.com` counts as the public registry.
+- **pubspec YAML** is read by a ~100-line subset parser (block maps, scalars,
+  comments, one-line flow maps); block sequences and block scalars are skipped.
+  No yaml dependency.
+
+### M1 — indexing model (settled by experiment, see `packages/cli/src/indexers/`)
+
+- **Org dependencies are source-linked.** Before indexing a consumer, every
+  manifest dep that resolves to an org package gets `node_modules/<name>`
+  symlinked to that package's checkout at HEAD. scip-typescript then emits the
+  consumer's references with exactly the lib's own definition symbol strings
+  (`scip-typescript npm @acme/core 1.0.0 src/\`fns.ts\`/usedFn().`), so
+  cross-repo linking is an exact string match, and the analysis is always
+  "does anyone use the lib *as it is at HEAD*". The installed/published copy is
+  never what gets indexed. Consequence: libs whose `types` point at unbuilt
+  `dist/` output must be built first or their consumers fail to resolve them
+  (which fails closed: the consumer becomes `partial`/opaque).
+- **Symbol versions are normalized to `.`** at ingest so a consumer that somehow
+  sees a different version string still links.
+- **SCIP carries no export information** (scip-typescript gives non-exported
+  top-level declarations global symbols too), so the TypeScript indexer adapter
+  emits a sidecar `<pkg>.exports.json` computed with the TypeScript compiler API
+  (`checker.getExportsOfModule` per entry point, aliases followed to the
+  declaration). This is language-specific but lives inside the indexer boundary
+  (§6.6), not in `analyze`. The sidecar also records **export sites** (the
+  identifier positions inside `export { a }` / `export { a as b } from` clauses)
+  because those SCIP occurrences would otherwise count as internal references
+  and turn every re-exported symbol into an `unexport_candidate`.
