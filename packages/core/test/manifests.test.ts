@@ -252,7 +252,7 @@ describe('npm manifests', () => {
     expect(readRepoManifests(root, warn)[0]!.entryPoints).toEqual(['src/a.ts', 'src/b.tsx']);
   });
 
-  it('bin as an object and as a string, browser only if a string', () => {
+  it('bin as an object and as a string (runtime entry points only, never surface), browser only if a string', () => {
     pkgJson('a/package.json', { name: 'a', bin: { one: './cli/one.js', two: 'cli/two' }, browser: { './x.js': false } });
     write('a/cli/one.js');
     write('a/cli/two');
@@ -261,8 +261,11 @@ describe('npm manifests', () => {
     write('b/cli.mjs');
     write('b/browser.js');
     const [a, b] = readRepoManifests(root, warn);
-    expect(a!.entryPoints).toEqual(['a/cli/one.js', 'a/cli/two']);
-    expect(b!.entryPoints).toEqual(['b/browser.js', 'b/cli.mjs']);
+    expect(a!.entryPoints).toEqual([]);
+    expect(a!.runtimeEntryPoints).toEqual(['a/cli/one.js', 'a/cli/two']);
+    expect(b!.entryPoints).toEqual(['b/browser.js']);
+    expect(b!.runtimeEntryPoints).toEqual(['b/cli.mjs']);
+    expect(warnings).toEqual([]); // a bin is an entry point: no "no entry points" warning, no index fallback
   });
 
   it('maps dist/lib/build/out paths to src .ts/.tsx when the built file is absent', () => {
@@ -274,7 +277,9 @@ describe('npm manifests', () => {
     write('src/esm/mod.ts');
     write('src/cli.ts');
     write('src/ui.tsx');
-    expect(readRepoManifests(root, warn)[0]!.entryPoints).toEqual(['src/cli.ts', 'src/esm/mod.ts', 'src/index.ts', 'src/ui.tsx']);
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['src/esm/mod.ts', 'src/index.ts', 'src/ui.tsx']);
+    expect(p!.runtimeEntryPoints).toEqual(['src/cli.ts']); // the bin
   });
 
   it('dist→src also tries index variants: dist/vue.mjs → src/vue/index.ts, dist/x/index.js → src/x.ts', () => {
@@ -428,6 +433,94 @@ describe('npm manifests', () => {
     expect(p!.entryPoints).toEqual(['lib/digest.mjs', 'lib/digest.node.mjs', 'src/index.ts', 'src/internal/a.ts']);
     expect(p!.runtimeEntryPoints).toEqual(['lib/digest.mjs', 'lib/digest.node.mjs', 'src/internal/a.ts']);
     expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('runtime entry conventions: wrangler main, Pages functions/, HonoX, Vercel api/, Next, SvelteKit, Nuxt, Netlify', () => {
+    // hono.dev: wrangler.jsonc `main`, no package.json entry; the generated .d.ts is not an entry.
+    pkgJson('site/package.json', { name: 'site', private: true, devDependencies: { wrangler: '^4' } });
+    write('site/wrangler.jsonc', '{\n  // comment\n  "name": "hono",\n  "main": "./worker.ts",\n}\n');
+    write('site/worker.ts');
+    write('site/worker-configuration.d.ts');
+    write('site/functions/api/[id].ts');
+    write('site/functions/_middleware.js');
+    write('site/functions/types.d.ts');
+    write('site/functions/x.test.ts');
+    // wrangler.toml: only a top-level `main` (a [[durable_objects]] table is not the entry).
+    pkgJson('toml/package.json', { name: 'toml', main: 'lib.ts' });
+    write('toml/lib.ts');
+    write('toml/wrangler.toml', 'name = "w"\nmain = "src/index.ts"\n[env.dev]\nmain = "src/dev.ts"\n');
+    write('toml/src/index.ts');
+    write('toml/src/dev.ts');
+    // HonoX by dependency.
+    pkgJson('x/package.json', { name: 'x', dependencies: { honox: '^0.1' } });
+    for (const f of ['app/server.ts', 'app/client.ts', 'app/routes/index.tsx', 'app/routes/_renderer.tsx', 'app/islands/counter.tsx', 'app/global.d.ts', 'app/lib/util.ts']) write(`x/${f}`);
+    // No honox dependency: app/routes is just code.
+    pkgJson('y/package.json', { name: 'y', main: 'index.ts' });
+    write('y/index.ts');
+    write('y/app/routes/index.tsx');
+    // Vercel, Next, SvelteKit, Nuxt, Netlify.
+    pkgJson('v/package.json', { name: 'v' });
+    write('v/vercel.json', '{}');
+    write('v/api/hello.ts');
+    pkgJson('n/package.json', { name: 'n', dependencies: { next: '15' } });
+    write('n/app/page.tsx');
+    write('n/src/pages/about.tsx');
+    pkgJson('k/package.json', { name: 'k', devDependencies: { '@sveltejs/kit': '2' } });
+    write('k/src/routes/+page.ts');
+    write('k/src/lib/x.ts');
+    pkgJson('u/package.json', { name: 'u', dependencies: { nuxt: '3' } });
+    write('u/pages/index.ts');
+    write('u/server/api/hello.ts');
+    pkgJson('l/package.json', { name: 'l' });
+    write('l/netlify/functions/hello.mts');
+    const logs: string[] = [];
+    const byName = new Map(readRepoManifests(root, warn, undefined, { log: (m) => logs.push(m) }).map((p) => [p.name, p]));
+    expect(byName.get('site')!.entryPoints).toEqual(['site/functions/_middleware.js', 'site/functions/api/[id].ts', 'site/worker.ts']);
+    expect(byName.get('site')!.runtimeEntryPoints).toEqual(byName.get('site')!.entryPoints);
+    expect(byName.get('toml')!.runtimeEntryPoints).toEqual(['toml/src/index.ts']);
+    expect(byName.get('x')!.runtimeEntryPoints).toEqual([
+      'x/app/client.ts', 'x/app/islands/counter.tsx', 'x/app/routes/_renderer.tsx', 'x/app/routes/index.tsx', 'x/app/server.ts',
+    ]);
+    expect(byName.get('y')!.entryPoints).toEqual(['y/index.ts']);
+    expect(byName.get('y')!.runtimeEntryPoints).toEqual([]);
+    expect(byName.get('v')!.runtimeEntryPoints).toEqual(['v/api/hello.ts']);
+    expect(byName.get('n')!.runtimeEntryPoints).toEqual(['n/app/page.tsx', 'n/src/pages/about.tsx']);
+    expect(byName.get('k')!.runtimeEntryPoints).toEqual(['k/src/routes/+page.ts']);
+    expect(byName.get('u')!.runtimeEntryPoints).toEqual(['u/pages/index.ts', 'u/server/api/hello.ts']);
+    expect(byName.get('l')!.runtimeEntryPoints).toEqual(['l/netlify/functions/hello.mts']);
+    expect(logs.some((l) => l.startsWith('site/package.json: 3 runtime entry point(s) by convention'))).toBe(true);
+    // No "no entry points resolved" warning when a convention supplies them.
+    expect(warnings.filter((w) => w.includes('no entry points'))).toEqual([]);
+  });
+
+  it('a convention never reaches into a nested package', () => {
+    pkgJson('package.json', { name: 'root', dependencies: { nuxt: '3' } });
+    write('pages/a.ts');
+    pkgJson('server/sub/package.json', { name: 'sub' });
+    write('server/sub/x.ts');
+    write('server/y.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.runtimeEntryPoints).toEqual(['pages/a.ts', 'server/y.ts']);
+  });
+
+  it('package.json files bounds what an exports `*` pattern matches (unctx: files ["dist"], "./*": "./*")', () => {
+    // (`dist` itself is skipped outside git, so `esm` plays its part here.)
+    pkgJson('a/package.json', { name: 'a', files: ['esm'], exports: { '.': './esm/index.mjs', './*': './*' } });
+    write('a/esm/index.mjs');
+    write('a/eslint.config.mjs');
+    write('a/test/x.test.ts');
+    write('a/esm/extra.mjs');
+    // A dist→src variant stands for the built file, which `files` covers.
+    pkgJson('b/package.json', { name: 'b', files: ['dist', '!dist/*.map'], exports: { './plugins/*': './dist/plugins/*.mjs' } });
+    write('b/src/plugins/p.ts');
+    // Not covered by `files`: no match, even through dist→src.
+    pkgJson('c/package.json', { name: 'c', files: ['lib/**/*.js'], exports: { '.': './lib/index.js', './x/*': './dist/x/*.mjs' } });
+    write('c/lib/index.js');
+    write('c/src/x/y.ts');
+    const [a, b, c] = readRepoManifests(root, warn);
+    expect(a!.entryPoints).toEqual(['a/esm/extra.mjs', 'a/esm/index.mjs']);
+    expect(b!.entryPoints).toEqual(['b/src/plugins/p.ts']);
+    expect(c!.entryPoints).toEqual(['c/lib/index.js']);
   });
 
   it('prefers the built file when it exists (no src mapping)', () => {

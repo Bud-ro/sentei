@@ -23,8 +23,21 @@
 // Plus witness_files (ingest, from scoped sidecar unindexedImports): unindexed script /
 // docs / test files of a consumer C importing P, scanned like C's own files (step 1 +
 // 2, names only) whether or not C declares a dependency on P, consumer label C; a row
-// with C = P (an own `.vue` / `.svelte` component importing own code relatively) needs
-// no import of P and is labelled `self`.
+// with C = P (an own `.vue` / `.svelte` component importing own code relatively, or an
+// own file importing P by name that SCIP could not follow: outside the program, or an
+// indexed file whose self-import did not resolve) needs no import of P, is scanned even
+// when it is an indexed document (the indexed-file rules below do not apply), and is
+// labelled `self`.
+// Comments never count: code files are read with comments blanked (not `.vue` / `.md`
+// witness_files, whose markup is not JS).
+// Entry vouching (npm): a file's import of P vouches for S only through a specifier that
+// reaches one of S's symbol_exports entries (the matching of the default-import rule
+// below: the bare specifier reaches the root entry, `P/react` the entry behind
+// `./react`); a symbol with no symbol_exports row is never vouched for. Pub: any import.
+// Indexed consumer files (documents of C): SCIP already resolved their identifiers, so a
+// name match does not count when it is a member access (`screen.findByTestId(…)`,
+// `x?.y`, Dart `..y`; not a `...spread`) or when SCIP has an occurrence of another
+// symbol with that name on that line and none of S (over_react's tests: 7 false rows).
 // The self steps read only P's own CODE files that are not generated
 // (documents.is_generated or GENERATED_GLOBS: capnp-es generated files quote names and
 // import P by name).
@@ -39,9 +52,12 @@
 // `*ImportDeclaration(` / `*ExportDeclaration(` (babel `importDeclaration`, TS
 // `factory.createImportDeclaration`) opening within the 300 characters before it
 // (honox's `importDeclaration([…HonoXIsland…], stringLiteral('honox/vite/components'))`).
-// A plain `name: '@acme/x/bun'` or a deprecation message does not qualify; a module
-// specifier never does (`import … from 'P'`). Only a name of S written INSIDE the
-// qualifying literal (template content, `${…}` blanked) or inside the builder call up
+// A plain `name: '@acme/x/bun'` does not qualify; a module specifier never does
+// (`import … from 'P'`); nor does a MESSAGE literal (isMessageLiteral: an argument of
+// `deprecated(` / `deprecate(` / `warn(` / `warning(` / `console.*(` / `logger.*(`, or
+// content opening with `[deprecated]` / `Deprecated:` / `Warning:`), for the
+// SELF-STRING step too: clerk-auth's deprecation notice quotes the import it retires.
+// Only a name of S written INSIDE the qualifying literal (template content, `${…}` blanked) or inside the builder call up
 // to the literal is a hit, consumer `self` (not every symbol of the file:
 // `ClerkAuthVariables` beside a template importing `@hono/clerk-auth`).
 // P is also its OWN consumer: P's own files (same walk and rules) that import P by its
@@ -55,10 +71,13 @@
 // SELF-STRING step: a literal in P's own files (same walk and rules) whose content,
 // with `${…}` interpolations blanked, holds a name of S in an import-clause shape
 // (`{ N`, `N }`, `N as`, `as N`, `, N,`; e.g.
-// `` `import { executeAsync as __x } from "${mod}"` ``), or IS the name while the same
-// file holds a codegen-shaped literal (a template as above naming any module, or an
-// AST-builder argument: unctx's `helperName: "executeAsync"` next to its import
-// template; not `c.set('sentry', …)` or `name = 'MedleyRouter'`), is a hit, consumer
+// `` `import { executeAsync as __x } from "${mod}"` ``), or holds the name as a whole
+// word while SOME own file of P holds a codegen-shaped literal (package-wide: a
+// template as above naming any module, `from ${JSON.stringify(m)}` included, or an
+// AST-builder argument: unctx's `helperName: "executeAsync"`, capnp-es's
+// `mask: "getFloat32Mask"` / `"$.BoolList"` in constants.ts with the template in
+// generators/struct.ts; not `c.set('sentry', …)` or `name = 'MedleyRouter'` in a
+// package that builds no import text), is a hit, consumer
 // `self-string`: code we cannot follow may name S. Never a module specifier
 // (`import { Enforcer } from 'casbin'` does not name `casbin` the symbol), never S's own
 // definition line (`component = 'component'`). `'executeAsyncMode'` is not a hit.
@@ -81,7 +100,14 @@
 // `P/<subpath>`. For each file F that defines S as `default` (S.file when S is
 // named `default`) or is an entry exporting S as `default` (symbol_exports.entry_file),
 // with F' = F relative to P's dir, a hit is (dumb and over-inclusive on purpose):
-//   - the bare specifier P (no subpath): matches every default of P;
+//   - the bare specifier P (no subpath): matches only a default of P's ROOT entry: F' is
+//     the target of `main` / `module` / `types` / `typings` or of `exports['.']` (a
+//     conditions object or string `exports` too), compared like the exports-map rule
+//     below; with none of those, an index file (`index.*`, `src/index.*`: manifests'
+//     fallback);
+//     an unreadable package.json matches every default (fail closed).
+//     `import devServer from '@hono/vite-dev-server'` names `src/index.ts`'s default,
+//     not the `bun` / `node` adapters' defaults (subpaths `./bun`, `./node`);
 //   - a subpath whose last segment (extension stripped) is F's base name, or F's
 //     parent dir name when F is an index file (`@acme/lib/d` for `src/d/index.ts`);
 //   - a subpath equal (extension stripped) to F' minus a leading `src/` and its
@@ -325,6 +351,8 @@ const stripPathExt = (f: string): string => f.replace(/(?:\.d)?\.[cm]?[jt]sx?$/,
 
 /** What a default-import subpath of P may be to bind a given `default` (header comment). */
 interface DefaultTargets {
+  /** Some default file is P's root entry: the bare specifier P binds it. */
+  root: boolean;
   /** Last-segment names (base names, index parent dirs). */
   segs: Set<string>;
   /** Whole subpaths, extension-stripped, without leading `/`. */
@@ -344,11 +372,38 @@ function exportLeaves(v: unknown, out: string[]): void {
   else if (v !== null && typeof v === 'object') Object.values(v).forEach((x) => exportLeaves(x, out));
 }
 
+/** Normalized target and entry path name the same file (the exports-map comparison). */
+function sameEntry(target: string, want: string): boolean {
+  const n = normEntryPath(target);
+  return n === want || n.endsWith(`/${want}`) || (n !== '' && want.endsWith(`/${n}`));
+}
+
+/**
+ * Whether package-relative `rel` is P's root entry (what the bare specifier P loads):
+ * a `main` / `module` / `types` / `typings` target or an `exports['.']` leaf (a string,
+ * array or conditions-object `exports` is all `.`); with none declared, an index file
+ * (`index.*`, `src/index.*`). `manifest` undefined (unreadable): true, fail closed.
+ */
+function isRootEntry(rel: string, manifest: Record<string, unknown> | undefined): boolean {
+  if (manifest === undefined) return true;
+  const leaves: string[] = [];
+  for (const k of ['main', 'module', 'types', 'typings']) if (typeof manifest[k] === 'string') leaves.push(manifest[k]);
+  const ex = manifest['exports'];
+  if (ex !== null && typeof ex === 'object' && !Array.isArray(ex) && Object.keys(ex).some((k) => k.startsWith('.'))) {
+    exportLeaves((ex as Record<string, unknown>)['.'], leaves);
+  } else {
+    exportLeaves(ex, leaves);
+  }
+  const want = normEntryPath(rel);
+  if (leaves.length === 0) return want === ''; // index.ts, src/index.ts (as manifests' fallback)
+  return leaves.some((l) => sameEntry(l, want));
+}
+
 /**
  * Add the subpaths that bind a `default` defined in / exported from repo-relative
- * `file` of P (package dir `pkgPath`, P's parsed package.json `exportsMap` or undefined).
+ * `file` of P (package dir `pkgPath`, P's parsed package.json `manifest` or undefined).
  */
-function addDefaultTargets(t: DefaultTargets, file: string, pkgPath: string | null, exportsMap: unknown): void {
+function addDefaultTargets(t: DefaultTargets, file: string, pkgPath: string | null, manifest: Record<string, unknown> | undefined): void {
   const base = stripExt(file);
   t.segs.add(base);
   const isIndex = base === 'index';
@@ -356,9 +411,17 @@ function addDefaultTargets(t: DefaultTargets, file: string, pkgPath: string | nu
     const parent = basename(dirname(file));
     if (parent && parent !== '.') t.segs.add(parent);
   }
-  if (pkgPath === null) return;
+  if (pkgPath === null) {
+    t.root = true; // P's location unknown: fail closed
+    return;
+  }
   const rel = pkgPath === '.' ? file : file.startsWith(`${pkgPath}/`) ? file.slice(pkgPath.length + 1) : null;
-  if (rel === null) return;
+  if (rel === null) {
+    t.root = true;
+    return;
+  }
+  if (isRootEntry(rel, manifest)) t.root = true;
+  const exportsMap = manifest?.['exports'];
   const noSrc = stripPathExt(rel.replace(/^src\//, ''));
   t.paths.add(noSrc);
   if (isIndex) t.paths.add(noSrc.replace(/(?:^|\/)index$/, ''));
@@ -379,11 +442,7 @@ function addDefaultTargets(t: DefaultTargets, file: string, pkgPath: string | nu
       }
       continue;
     }
-    const hit = leaves.some((l) => {
-      const n = normEntryPath(l);
-      return n === want || n.endsWith(`/${want}`) || (n !== '' && want.endsWith(`/${n}`));
-    });
-    if (hit) t.paths.add(stripPathExt(k));
+    if (leaves.some((l) => sameEntry(l, want))) t.paths.add(stripPathExt(k));
   }
 }
 
@@ -395,9 +454,14 @@ const SELF_DIRECTIVE_LINE_RES: Record<'npm' | 'pub', RegExp[]> = {
 
 /** Text right before a literal that makes it a module specifier (import/export … from, require(, import(, Dart part). */
 const SPECIFIER_BEFORE_RE = /(?:\bfrom|\bimport|\bexport|\bpart(?:\s+of)?|\brequire\s*\(|\bimport\s*\(|\bmodule)\s*$/;
-/** A literal's content shaped like generated import/export code (interpolations blanked). */
+/**
+ * A literal's raw content (interpolations kept) shaped like generated import/export code.
+ * The module after `from` may be quoted or computed: a `${…}` interpolation,
+ * `JSON.stringify(…)`, a variable or a concatenation (unctx:
+ * `` `import { ${x} as __x } from ${JSON.stringify(m)};` ``).
+ */
 const CODEGEN_CONTENT_RES = [
-  /\b(?:import|export)\s*(?:type\s+)?[{*\w$][\s\S]*?\bfrom\s*['"]/, // import { a } from "…" / export * from "…"
+  /\b(?:import|export)\s*(?:type\s+)?[{*\w$][\s\S]*?\bfrom\s*(?:['"`]|\$\{|JSON\.stringify|[A-Za-z_$])/, // import { a } from "…" / from ${m} / export * from "…"
   /\b(?:import|export)\s+['"][^'"\n]+['"]/, // import 'package:x/y.dart' (Dart) / side-effect import
   /\brequire\s*\(\s*['"]/, // require("…")
   /\bimport\s*\(\s*['"]/, // import("…")
@@ -405,14 +469,58 @@ const CODEGEN_CONTENT_RES = [
 /** An AST builder for an import/export declaration (babel `importDeclaration(`, TS `factory.createImportDeclaration(`). */
 const BUILDER_RE = /\w*(?:Import|Export|import|export)\w*Declaration\s*\(/g;
 
+/** Callees whose string arguments are messages for people, not code (last name of the chain). */
+const MESSAGE_CALLEES: ReadonlySet<string> = new Set(['deprecated', 'deprecate', 'warn', 'warning']);
+/** Objects whose method arguments are messages (`console.warn(…)`, `this.logger.info(…)`). */
+const MESSAGE_OBJECTS: ReadonlySet<string> = new Set(['console', 'logger']);
+/** A literal that opens like a warning (`[deprecated] …`, `Deprecated: …`, `Warning: …`). */
+const MESSAGE_PREFIX_RE = /^\s*(?:\[(?:deprecated|deprecation|warn|warning)\]|(?:deprecated|deprecation|warning)\s*:)/i;
+
+/**
+ * Whether the literal at `start` is a message for people: its content opens like a
+ * warning (MESSAGE_PREFIX_RE), or it is an argument (possibly inside an object or array
+ * argument) of a call to `deprecated` / `deprecate` / `warn` / `warning` (the last name
+ * of the callee chain) or to a `console.*` / `logger.*` method. `skeleton` is the file
+ * with comments and every literal's content blanked (same offsets), so the backward
+ * bracket walk sees code only. A block body (`{` after `)` or `=>`), a `;` at depth 0 or
+ * 2000 characters end the walk: the literal is a statement's, not an argument. clerk-auth's
+ * `deprecated('@hono/clerk-auth', 'Use … - import { clerkMiddleware } from
+ * "@hono/clerk-auth" …')` shows the import it deprecates; it generates no code.
+ */
+function isMessageLiteral(skeleton: string, start: number, content: string): boolean {
+  if (MESSAGE_PREFIX_RE.test(content)) return true;
+  let depth = 0;
+  for (let i = start - 1; i >= Math.max(0, start - 2000); i -= 1) { // (bounded: files without `;`)
+    const c = skeleton[i]!;
+    if (c === ')' || c === ']' || c === '}') {
+      depth += 1;
+    } else if (c === '(' || c === '[' || c === '{') {
+      if (depth > 0) {
+        depth -= 1;
+        continue;
+      }
+      const before = skeleton.slice(Math.max(0, i - 200), i);
+      if (c === '{' && /(?:\)|=>)\s*$/.test(before)) return false; // a block body
+      if (c !== '(') continue; // an object / array argument: look further out
+      const m = /([\w$.]+)\s*$/.exec(before);
+      if (!m) return false;
+      const parts = m[1]!.split('.');
+      return MESSAGE_CALLEES.has(parts.at(-1)!) || parts.slice(0, -1).some((p) => MESSAGE_OBJECTS.has(p));
+    } else if (c === ';' && depth === 0) {
+      return false;
+    }
+  }
+  return false;
+}
+
 /**
  * Whether a literal is codegen-shaped, and the region that is "generated code": the
- * literal itself for a code template (content matches CODEGEN_CONTENT_RES), or the
+ * literal itself for a code template (raw content matches CODEGEN_CONTENT_RES), or the
  * text from the nearest AST-builder call opening within the 300 characters before it
  * to the end of the literal. null otherwise.
  */
-function codegenRegion(text: string, start: number, length: number, content: string): { start: number; end: number } | null {
-  if (CODEGEN_CONTENT_RES.some((re) => re.test(content))) return { start, end: start + length };
+function codegenRegion(text: string, start: number, length: number, raw: string): { start: number; end: number } | null {
+  if (CODEGEN_CONTENT_RES.some((re) => re.test(raw))) return { start, end: start + length };
   const from = Math.max(0, start - 300);
   const window = text.slice(from, start);
   let last = -1;
@@ -457,6 +565,51 @@ interface SearchPlan {
   names: string[];
   /** Default-import targets, or null when S is not a default export (or pub). */
   defaults: DefaultTargets | null;
+  /**
+   * npm: the specifiers of P that reach S by name (every symbol_exports entry of S, same
+   * matching as defaults): a file importing P only through other entries does not vouch
+   * for S. Empty targets (S has no symbol_exports row) are never reached. null (pub):
+   * any import of P vouches (Dart imports `package:P/src/…` directly).
+   */
+  entries: DefaultTargets | null;
+}
+
+/** The `/subpath` (or undefined for the bare specifier) of every module specifier of P in `text`. */
+function specifiersOf(text: string, manager: 'npm' | 'pub', name: string): Array<string | undefined> {
+  const out: Array<string | undefined> = [];
+  for (const re of mentionRegexes(manager, name)) {
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) out.push(m[1]);
+  }
+  return out;
+}
+
+/** Whether a specifier subpath of P (undefined = bare) binds an entry of `t` (header: default-import rule). */
+function subpathMatches(t: DefaultTargets, sub: string | undefined): boolean {
+  if (sub === undefined) return t.root;
+  const segs = sub.split('/').filter(Boolean);
+  const seg = stripExt(segs.at(-1) ?? '');
+  const whole = segs.join('/');
+  return seg === '' || t.segs.has(seg) || t.paths.has(whole) || t.paths.has(stripPathExt(whole));
+}
+
+/** Offsets where each line starts (for many offset -> line lookups). */
+function lineStarts(text: string): number[] {
+  const out = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) out.push(i + 1);
+  return out;
+}
+
+/** 1-based line of `index` given lineStarts. */
+function lineOf(starts: number[], index: number): number {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid]! <= index) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
 }
 
 function policyBool(db: DatabaseSync, key: string): boolean {
@@ -566,11 +719,17 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     let t = codeCache.get(key);
     if (t === undefined) {
       const dart = extname(rel) === '.dart';
-      t = blankComments(readText(consumer, rel), dart);
-      for (const lit of stringLiterals(t, dart)) {
-        if (SPECIFIER_BEFORE_RE.test(t.slice(Math.max(0, lit.start - 40), lit.start))) continue;
-        t = t.slice(0, lit.start) + lit.text.replace(/[^\n]/g, ' ') + t.slice(lit.start + lit.text.length);
+      const code = blankComments(readText(consumer, rel), dart);
+      // Linear rebuild (a slice-and-concat per literal was quadratic: 10 s on Workiva).
+      const parts: string[] = [];
+      let at = 0;
+      for (const lit of stringLiterals(code, dart)) {
+        if (SPECIFIER_BEFORE_RE.test(code.slice(Math.max(0, lit.start - 40), lit.start))) continue;
+        parts.push(code.slice(at, lit.start), lit.text.replace(/[^\n]/g, ' '));
+        at = lit.start + lit.text.length;
       }
+      parts.push(code.slice(at));
+      t = parts.join('');
       codeCache.set(key, t);
     }
     return t;
@@ -630,6 +789,62 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return set.has(file) || GENERATED_GLOBS.some((g) => matchGlob(g, file));
   };
 
+  /** readText with comments blanked (lines and offsets kept), per consumer file. */
+  const noCommentCache = new Map<string, string>();
+  const readNoComments = (consumer: string, rel: string): string => {
+    const key = `${consumer}\0${rel}`;
+    let t = noCommentCache.get(key);
+    if (t === undefined) noCommentCache.set(key, (t = blankComments(readText(consumer, rel), extname(rel) === '.dart')));
+    return t;
+  };
+
+  /**
+   * SCIP occurrences in consumer C's file, by 0-based line: the names (symbols.name) and
+   * symbol ids the indexer resolved there.
+   */
+  const occAt = db.prepare(`SELECT o.line, s.name, o.symbol_id FROM occurrences o JOIN symbols s ON s.symbol_id = o.symbol_id
+    WHERE o.package_id = ? AND o.file = ? AND o.line IS NOT NULL`);
+  const occCache = new Map<string, Map<number, Array<{ name: string; id: number }>>>();
+  const occurrencesOf = (consumer: string, file: string): Map<number, Array<{ name: string; id: number }>> => {
+    const key = `${consumer}\0${file}`;
+    let m = occCache.get(key);
+    if (!m) {
+      m = new Map();
+      for (const r of occAt.all(consumer, file) as Array<{ line: number; name: string; symbol_id: number }>) {
+        let list = m.get(r.line);
+        if (!list) m.set(r.line, (list = []));
+        list.push({ name: r.name, id: r.symbol_id });
+      }
+      occCache.set(key, m);
+    }
+    return m;
+  };
+
+  /**
+   * nameLines for a file that is an INDEXED document of consumer C: SCIP already
+   * resolved its identifiers, so a match does not count when it is a member access
+   * (preceded by `.`, `?.`, Dart `..`: `screen.findByTestId(…)` is
+   * `ScreenQueries#findByTestId`, not the top-level `findByTestId`), or when SCIP has an
+   * occurrence of a symbol with that name on that line and none of S itself (SCIP knows
+   * what the identifier is). A name SCIP has nothing for still counts.
+   */
+  const indexedNameLines = (consumer: string, file: string, text: string, names: readonly string[], symbolId: number): number[] => {
+    if (names.length === 0) return [];
+    const re = new RegExp(`(?<!\\w)(?:${names.map(escapeRe).join('|')})(?![\\w$])`, 'g');
+    const starts = lineStarts(text);
+    const occ = occurrencesOf(consumer, file);
+    const out = new Set<number>();
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      // Member access (`.x`, `?.x`, Dart `..x`), not a spread (`...x`).
+      if (/(?:^|[^.])\.{1,2}\s*$/.test(text.slice(Math.max(0, m.index - 80), m.index))) continue;
+      const line = lineOf(starts, m.index);
+      const here = (occ.get(line - 1) ?? []).filter((o) => o.name === m![0]);
+      if (here.length > 0 && !here.some((o) => o.id === symbolId)) continue; // SCIP resolved it elsewhere
+      out.add(line);
+    }
+    return [...out].sort((a, b) => a - b);
+  };
+
   /**
    * Hits in consumer C (`label`: the consumer named in the reason; default C itself).
    * `label` 'self' (P scanned as its own consumer) reads the files with comments
@@ -648,10 +863,15 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       files = files.filter((f) => !indexed.has(f) && !isGenerated(consumer, f));
     }
     const read = self ? readCode : readText;
+    const indexed = self ? null : indexedFiles(consumer);
     const hits: Hit[] = [];
     for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests, read)) {
-      const text = read(consumer, f);
-      let named = nameLines(text, plan.names);
+      // Comments never count (a commented-out import or use is not code).
+      const text = self ? readCode(consumer, f) : readNoComments(consumer, f);
+      // Named hits only in a file importing P through a specifier that reaches S.
+      const vouched = plan.entries === null
+        || specifiersOf(text, row.manager, row.pkg_name).some((sub) => subpathMatches(plan.entries!, sub));
+      let named = !vouched ? [] : indexed?.has(f) ? indexedNameLines(consumer, f, text, plan.names, row.symbol_id) : nameLines(text, plan.names);
       if (self) {
         const res = SELF_DIRECTIVE_LINE_RES[row.manager];
         const src = text.split(/\r?\n/);
@@ -663,14 +883,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         for (const re of defaultRegexes(row.pkg_name)) {
           re.lastIndex = 0;
           for (let m = re.exec(text); m; m = re.exec(text)) {
-            const sub = m[1];
-            const segs = sub === undefined ? [] : sub.split('/').filter(Boolean);
-            const seg = sub === undefined ? undefined : stripExt(segs.at(-1) ?? '');
-            const whole = segs.join('/');
-            if (sub === undefined || seg === '' || t.segs.has(seg!) || t.paths.has(whole) || t.paths.has(stripPathExt(whole))
-) {
-              lines.add(lineAt(text, m.index));
-            }
+            if (subpathMatches(t, m[1])) lines.add(lineAt(text, m.index));
           }
         }
       }
@@ -692,6 +905,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     content: string;
     /** The target of `import`/`export … from`/`require(`/`import(`/Dart `part`: never a quoted name. */
     specifier: boolean;
+    /**
+     * A message for people (isMessageLiteral: a deprecation / warning / log argument):
+     * never codegen, never a self-string hit, whatever import text it quotes.
+     */
+    message: boolean;
     /** A code template (import-clause shape) or an AST-builder argument (codegenRegion). */
     codegen: { start: number; end: number } | null;
   }
@@ -710,14 +928,27 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     const dart = row.manager === 'pub';
     out = files === null ? null : files.filter((f) => (extname(f) === '.dart') === dart && !isGenerated(row.package_id, f)).flatMap((f) => {
       const text = readText(row.package_id, f);
-      return stringLiterals(text, dart).map((lit): OwnLiteral => {
+      const lits = stringLiterals(text, dart);
+      // Comments and literal contents blanked (offsets kept): the message-call walk's view.
+      const code = blankComments(text, dart);
+      const parts: string[] = [];
+      let at = 0;
+      for (const lit of lits) {
+        parts.push(code.slice(at, lit.start), lit.text.replace(/[^\n]/g, ' '));
+        at = lit.start + lit.text.length;
+      }
+      parts.push(code.slice(at));
+      const skeleton = parts.join('');
+      return lits.map((lit): OwnLiteral => {
         const q = dart && (lit.text.startsWith("'''") || lit.text.startsWith('"""')) ? 3 : 1;
         const close = lit.text.length >= 2 * q && lit.text.endsWith(lit.text.slice(0, q)) ? q : 0;
-        const content = blankInterpolations(lit.text.slice(q, lit.text.length - close));
+        const raw = lit.text.slice(q, lit.text.length - close);
+        const content = blankInterpolations(raw);
         const specifier = SPECIFIER_BEFORE_RE.test(text.slice(Math.max(0, lit.start - 40), lit.start));
+        const message = !specifier && isMessageLiteral(skeleton, lit.start, content);
         return {
-          file: f, start: lit.start, offset: lit.start + q, text: lit.text, content, specifier,
-          codegen: specifier ? null : codegenRegion(text, lit.start, lit.text.length, content),
+          file: f, start: lit.start, offset: lit.start + q, text: lit.text, content, specifier, message,
+          codegen: specifier || message ? null : codegenRegion(text, lit.start, lit.text.length, raw),
         };
       });
     });
@@ -761,31 +992,30 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   /**
    * SELF-STRING step: a literal in P's own sources that quotes a name of S (header):
    * it holds the name in an import-clause shape (`{ N`, `N }`, `N as`, `as N`, `, N,`),
-   * i.e. generated code naming S with a module path we cannot follow; or its content IS
-   * the name (`helperName: "executeAsync"`) AND the same file holds a codegen-shaped
-   * literal (so `c.set('sentry', …)`, `name = 'MedleyRouter'` or a default title do
-   * not count). Module specifiers never count (`import { Enforcer } from 'casbin'` is
+   * i.e. generated code naming S with a module path we cannot follow; or it holds the
+   * name as a whole word (`"executeAsync"`, `mask: "getFloat32Mask"`, `"$.BoolList"`,
+   * an auto-imports list) while SOME own file of P (non-test, non-generated) holds a
+   * codegen-shaped literal: P builds import text, so any quoted name may end up in it
+   * (capnp-es: the template in generators/struct.ts, the names in constants.ts). Without
+   * one, `c.set('sentry', …)`, `name = 'MedleyRouter'` or a default title do not count.
+   * Module specifiers and messages never count (`import { Enforcer } from 'casbin'` is
    * no mention of `casbin`), nor does S's own definition line (`component = 'component'`).
    */
   const selfStringHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
     const lits = ownLiterals(row);
     if (lits === null) return [{ consumer: 'self-string', file: null, line: 0 }];
-    const codegenFiles = new Set(lits.filter((l) => l.codegen !== null).map((l) => l.file));
+    const codegenPackage = lits.some((l) => l.codegen !== null);
     const hits: Hit[] = [];
     for (const name of plan.names) {
       const e = escapeRe(name);
       const clause = new RegExp(
         `\\{\\s*${e}(?![\\w$])|(?<![\\w$])${e}\\s*\\}|(?<![\\w$])${e}\\s+as\\b|\\bas\\s+${e}(?![\\w$])|,\\s*${e}\\s*,`,
       );
+      const word = new RegExp(`(?<![\\w$])${e}(?![\\w$])`);
       for (const lit of lits) {
-        if (lit.specifier || !lit.content.includes(name)) continue;
-        let at = -1;
-        if (lit.content === name) {
-          if (codegenFiles.has(lit.file)) at = 0;
-        } else {
-          const m = clause.exec(lit.content);
-          if (m) at = m.index;
-        }
+        if (lit.specifier || lit.message || !lit.content.includes(name)) continue;
+        const m = clause.exec(lit.content) ?? (codegenPackage ? word.exec(lit.content) : null);
+        const at = m ? m.index : -1;
         if (at < 0) continue;
         const line = lineAt(readText(row.package_id, lit.file), lit.offset + at);
         if (lit.file === row.file && row.line !== null && line === row.line + 1) continue;
@@ -795,21 +1025,21 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return hits;
   };
 
-  /** P's package.json `exports` (undefined if absent/unreadable), per package. */
-  const exportsMapCache = new Map<string, unknown>();
-  const exportsMapOf = (packageId: string): unknown => {
-    if (exportsMapCache.has(packageId)) return exportsMapCache.get(packageId);
-    let v: unknown;
+  /** P's parsed package.json (undefined if unreadable or not an object), per package. */
+  const manifestCache = new Map<string, Record<string, unknown> | undefined>();
+  const manifestOf = (packageId: string): Record<string, unknown> | undefined => {
+    if (manifestCache.has(packageId)) return manifestCache.get(packageId);
+    let v: Record<string, unknown> | undefined;
     const loc = locs.get(packageId);
     if (loc) {
       try {
-        const json = JSON.parse(readFileSync(join(loc.repoDir, loc.pkgPath, 'package.json'), 'utf8')) as Record<string, unknown>;
-        v = json['exports'];
+        const json: unknown = JSON.parse(readFileSync(join(loc.repoDir, loc.pkgPath, 'package.json'), 'utf8'));
+        if (json !== null && typeof json === 'object' && !Array.isArray(json)) v = json as Record<string, unknown>;
       } catch {
         v = undefined;
       }
     }
-    exportsMapCache.set(packageId, v);
+    manifestCache.set(packageId, v);
     return v;
   };
 
@@ -819,18 +1049,20 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   const planFor = (row: PendingRow): SearchPlan => {
     const aliases = aliasesOf.all(row.symbol_id) as Array<{ entry_file: string; exported_as: string }>;
     const all = [...new Set([row.name, ...aliases.map((a) => a.exported_as)])];
-    if (row.manager !== 'npm') return { names: all, defaults: null };
+    if (row.manager !== 'npm') return { names: all, defaults: null, entries: null };
+    const pkgPath = locs.get(row.package_id)?.pkgPath ?? null;
+    const entries: DefaultTargets = { root: false, segs: new Set(), paths: new Set() };
+    for (const f of new Set(aliases.map((a) => a.entry_file))) addDefaultTargets(entries, f, pkgPath, manifestOf(row.package_id));
     const defaultFiles = [
       ...(row.name === 'default' ? [row.file] : []),
       ...aliases.filter((a) => a.exported_as === 'default').map((a) => a.entry_file),
     ];
     let defaults: DefaultTargets | null = null;
     if (defaultFiles.length > 0) {
-      defaults = { segs: new Set(), paths: new Set() };
-      const pkgPath = locs.get(row.package_id)?.pkgPath ?? null;
-      for (const f of new Set(defaultFiles)) addDefaultTargets(defaults, f, pkgPath, exportsMapOf(row.package_id));
+      defaults = { root: false, segs: new Set(), paths: new Set() };
+      for (const f of new Set(defaultFiles)) addDefaultTargets(defaults, f, pkgPath, manifestOf(row.package_id));
     }
-    return { names: all.filter((n) => n !== 'default'), defaults };
+    return { names: all.filter((n) => n !== 'default'), defaults, entries };
   };
 
   const pending = db
@@ -855,8 +1087,9 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
    * (ingest, scoped sidecar unindexedImports). Scanned like C's own files (the file
    * must import P; a name of S on any line is a hit; test/docs files only under the
    * same policy / dev-dependency rules), whether or not C declares P as a dependency.
-   * A row with C = P (an own SFC importing own code relatively) needs no import of P
-   * and is reported as consumer `self`.
+   * A row with C = P (an own SFC importing own code relatively, or an own file importing
+   * P by name, indexed or not) needs no import of P and is reported as consumer `self`.
+   * Otherwise the import must reach an entry of S (entry vouching).
    */
   const witnessFilesOf = db.prepare(
     'SELECT consumer_package_id AS c, file FROM witness_files WHERE target_package_id = ? ORDER BY consumer_package_id, file',
@@ -874,18 +1107,21 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       if (excluded(file, loc.globBase, dev)) continue;
       let text: string;
       try {
-        text = readText(c, file);
+        // Comments blanked in code files (not in `.vue` / `.svelte` / `.md`: their
+        // markup is not JS, and a `//` in text would blank a real use).
+        text = CODE_EXTS.has(extname(file)) ? readNoComments(c, file) : readText(c, file);
       } catch {
         hits.push({ consumer: c, file: null, line: 0 }); // listed but unreadable: fail closed
         continue;
       }
       // A self row (consumer = P: an own `.vue` / `.svelte` component importing an own
       // module relatively) names P's code without naming P: no import-of-P check.
-      const res = mentionRegexes(row.manager, row.pkg_name);
-      if (c !== row.package_id && !res.some((re) => {
-        re.lastIndex = 0;
-        return re.test(text);
-      })) continue;
+      // Otherwise the file must import P through a specifier that reaches S.
+      if (c !== row.package_id) {
+        const subs = specifiersOf(text, row.manager, row.pkg_name);
+        if (subs.length === 0) continue;
+        if (plan.entries !== null && !subs.some((sub) => subpathMatches(plan.entries!, sub))) continue;
+      }
       for (const line of nameLines(text, plan.names)) hits.push({ consumer: c === row.package_id ? 'self' : c, file, line });
     }
     return hits;

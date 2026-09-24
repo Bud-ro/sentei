@@ -5,6 +5,7 @@
     { "name": "app-consumer", "default_branch": "main" },
     { "name": "app-dynamic", "default_branch": "main" },
     { "name": "app-skew", "default_branch": "main" },
+    { "name": "app-worker", "default_branch": "main" },
     { "name": "lib-cascade", "default_branch": "main" },
     { "name": "lib-core", "default_branch": "main" },
     { "name": "lib-dyn", "default_branch": "main" },

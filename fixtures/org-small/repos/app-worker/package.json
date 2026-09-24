@@ -1,0 +1,12 @@
+{
+  "name": "@acme/worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "worker-cli": "./bin/cli.mjs"
+  },
+  "dependencies": {
+    "@acme/widgets": "^1.0.0"
+  }
+}

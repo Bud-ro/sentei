@@ -41,6 +41,7 @@ Findings rows: `package_id`, `symbol`, `file` (repo-relative), `verdict`,
 | `repo-broken` | `@acme/broken` | private | invalid `tsconfig.json` → index fails |
 | `tool-py` | `@acme/tool-py` | private | consumer of y with a Python file (`scripts/build.py`) → `unindexed_consumer` |
 | `lib-cascade` | `@acme/cascade` | private | no org consumer; exercises the witness → analyze cascade, `exports` conditions, the `imports` map and a Vite `index.html` entry (see below) |
+| `app-worker` | `@acme/worker` | private | Cloudflare Worker app, no `main`/`exports`: runtime entries by convention (wrangler `main`, Pages `functions/`), a `bin` outside the program, TS namespaces, and a consumer of `@acme/widgets/lazy` naming a widgets candidate (see below) |
 
 Note: `lib-widgets` imports `@acme/y`, so it typechecks only with
 `node_modules/@acme/y` linked (as the indexer does). `app-skew` fails typecheck
@@ -80,8 +81,14 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | `exports` entry with one unresolvable condition | `lib-cascade/package.json` `"."`: `import` → `src/index.ts`, `require` → unbuilt `dist/cjs/index.cjs` | not `opaque_consumer` (one condition resolves) |
 | `imports` map arms are runtime entries | `lib-cascade/package.json` `#impl` → `src/impl.node.ts` (never picked by tsc) / `src/impl.ts` | both `digest`s alive (entry_symbols), no private_dead |
 | Vite `index.html` `<script src>` is an entry | `lib-cascade/index.html` → `src/client.ts` (`boot()` called at top level) | `boot` alive |
+| Runtime entries by convention: wrangler `main`, Pages Functions | `app-worker/wrangler.jsonc` `main` → `src/worker.ts`; `functions/api/hello.ts` (a wrangler config exists) | both entry points; `default` / `onRequest` alive (entry_symbols), `handle` / `greet` alive; the package is eligible for private_dead: `neverCalled` private_dead |
+| TS namespace members are owned by their namespace | `app-worker/src/worker.ts`: `Routes` (used) with `unusedRoute`; `Legacy` (unused) with `oldHandler` | `unusedRoute` alive (owner edge); only `Legacy` private_dead (its member is nested) |
+| `bin` is a runtime entry, never surface | `app-worker/package.json` `bin` → `bin/cli.mjs` (outside the program) | not in the adapter's entry points: repo index `ok`, not `partial` |
+| An import vouches only for what its specifier reaches | `app-worker/src/worker.ts` imports only `@acme/widgets/lazy` and has a local `internalUnused` | `@acme/widgets#internalUnused` stays deletion_candidate (the `./lazy` entry does not export it) |
 | Dart items | `fixtures/org-dart` (see [`org-dart/README.md`](org-dart/README.md) for the §8 Dart checklist) | `org-dart/expected-findings*.json` |
 
 Consumer files that import `@acme/widgets` deliberately never mention the names
 of its would-be deletion candidates (including the word `default`) outside of
-test files, so the §9 text witness passes on them.
+test files, so the §9 text witness passes on them. The one exception is
+`app-worker/src/worker.ts`, whose import of the `./lazy` entry cannot vouch for
+`internalUnused` (exported only from `./`).

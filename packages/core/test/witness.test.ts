@@ -15,7 +15,10 @@ interface OrgSpec {
   manager?: 'npm' | 'pub';
   /** Consumer files, relative to the consumer package dir. */
   files?: Record<string, string>;
-  /** Symbols of P: name + defining file (default src/index.ts) + symbol_exports rows [entry, exportedAs]. */
+  /**
+   * Symbols of P: name + defining file (default src/index.ts) + symbol_exports rows
+   * [entry, exportedAs] (default [['src/index.ts', name]]).
+   */
   symbols: Array<{ name: string; file?: string; line?: number; exports?: Array<[string, string]> }>;
   /** Library (P) files, relative to P's dir (the acme/lib repo root). */
   libFiles?: Record<string, string>;
@@ -90,7 +93,9 @@ function buildOrg(spec: OrgSpec): Org {
     const id = Number(r.lastInsertRowid);
     ids[`${file}#${s.name}`] = id;
     ids[s.name] ??= id;
-    for (const [entry, as] of s.exports ?? []) {
+    // Default: exported under its own name from the root entry (every real candidate has
+    // symbol_exports rows; a symbol with none is never vouched for by an import).
+    for (const [entry, as] of s.exports ?? [['src/index.ts', s.name]]) {
       run('INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)', id, entry, as);
     }
     run("INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, 'needs_review', ?, '[]')", id, JSON.stringify(['no_refs', 'witness_pending']));
@@ -170,13 +175,13 @@ describe('runWitness', () => {
     expect(witnessOk(org, id)).toBe(false);
   });
 
-  it('downgrades a named hit in an importing file, with consumer:file:line', () => {
+  it('downgrades a named hit in an importing file, with consumer:file:line; comments never count', () => {
     const org = buildOrg({
       symbols: [{ name: 'deadFn' }],
-      files: { 'src/main.ts': "import { liveFn } from '@acme/lib';\n\n// deadFn is gone\nconst x = liveFn();\n" },
+      files: { 'src/main.ts': "import { liveFn } from '@acme/lib';\n\n// deadFn is gone\nconst x = liveFn(deadFn); /* deadFn */\n" },
     });
     expect(witness(org)).toEqual({ checked: 1, passed: 0, mismatched: 1 });
-    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:3']);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:4']);
     expect(org.log.some((l) => l.includes('mismatch npm:@acme/lib#deadFn'))).toBe(true);
   });
 
@@ -254,7 +259,7 @@ describe('runWitness', () => {
   it('detects a multi-line import statement', () => {
     const org = buildOrg({
       symbols: [{ name: 'deadFn' }],
-      files: { 'src/main.ts': "import {\n  liveFn,\n  deadFn,\n} from '@acme/lib/sub';\n" },
+      files: { 'src/main.ts': "import {\n  liveFn,\n  deadFn,\n} from '@acme/lib';\n" },
     });
     witness(org);
     expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:3']);
@@ -262,7 +267,10 @@ describe('runWitness', () => {
 
   it('detects require(), import(), side-effect import and export-from forms', () => {
     const org = buildOrg({
-      symbols: [{ name: 'a' }, { name: 'b' }, { name: 'c' }, { name: 'd' }, { name: 'e' }],
+      symbols: [
+        { name: 'a' }, { name: 'b', exports: [['src/deep/x.ts', 'b']] }, { name: 'c', exports: [['src/register.ts', 'c']] },
+        { name: 'd' }, { name: 'e' },
+      ],
       files: {
         'src/req.cjs': "const lib = require( '@acme/lib' );\nlib.a();\n",
         'src/dyn.ts': "const m = await import('@acme/lib/deep/x.js');\nm.b();\n",
@@ -375,7 +383,7 @@ describe('runWitness', () => {
       files: {
         'src/a.ts': "import build from '@acme/lib/cloudflare-pages';\nbuild();\n", // subpath = parent dir of the index entry
         'src/b.ts': "import build from '@acme/lib/adapter/cloudflare-workers';\n", // subpath = entry minus src/ and /index.ts
-        'src/c.ts': "import { bunPlugin as x } from '@acme/lib/other';\n", // named import of the declared name
+        'src/c.ts': "import { bunPlugin as x } from '@acme/lib/bun';\n", // named import of the declared name
         'src/d.ts': "import nodeBuild from '@acme/lib/node-server';\n", // unrelated subpath
       },
     });
@@ -643,8 +651,9 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
     });
     witness(org);
     expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self-string:src/transform.ts:2']);
-    // A bare quoted name in a file with no codegen-shaped literal is not a hit (round 3).
-    expectPass(org, org.ids['HeadStream']!);
+    // P builds import text (transform.ts), so a quoted name in any own file is a hit
+    // (an auto-imports / preset list of names).
+    expectMismatch(org, org.ids['HeadStream']!, ['witness_mismatch:self-string:src/tags.ts:1']);
     expectMismatch(org, org.ids['impl']!, ['witness_mismatch:self-string:src/alias.ts:1']);
     expectMismatch(org, org.ids['withCtx']!, ['witness_mismatch:self-string:src/gen.ts:1']);
     expectMismatch(org, org.ids['listed']!, ['witness_mismatch:self-string:src/gen.ts:2']);
@@ -674,28 +683,69 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
     expectPass(org, org.ids['lazy']!);
   });
 
-  it('a bare quoted name needs a codegen-shaped literal in the same file (sentry, MedleyRouter vs unctx)', () => {
-    const org = buildOrg({
-      symbols: [
-        { name: 'sentry', file: 'src/a.ts' },
-        { name: 'MedleyRouter', file: 'src/b.ts' },
-        { name: 'executeAsync', file: 'src/c.ts' },
-        { name: 'built', file: 'src/c.ts' },
-      ],
+  it('a quoted name needs a package that builds import text (sentry, MedleyRouter vs unctx)', () => {
+    // No own file builds import text: quoted names are data (round-3 negatives).
+    const plain = buildOrg({
+      symbols: [{ name: 'sentry', file: 'src/a.ts' }, { name: 'MedleyRouter', file: 'src/b.ts' }],
       libFiles: {
         'src/sentry.ts': "export const mw = (c) => { c.set('sentry', 1); };\n",
         'src/router.ts': "export class R { name = 'MedleyRouter'; }\n",
-        // unctx: the transform builds import text (with a variable module path).
-        'src/transform.ts': 'const helperName = "executeAsync";\nexport const gen = (x, mod) => `import { ${x} } from "${mod}"`;\n',
-        // An AST-builder call qualifies the file too.
-        'src/ast.ts': "const n = 'built';\nt.importDeclaration([], t.stringLiteral('x'));\n",
+        'src/msg.ts': "console.warn(`import { sentry } from '@acme/lib' is deprecated`);\n", // a message: not codegen
+      },
+    });
+    witness(plain);
+    expectPass(plain, plain.ids['sentry']!);
+    expectPass(plain, plain.ids['MedleyRouter']!);
+
+    const org = buildOrg({
+      symbols: [
+        { name: 'executeAsync', file: 'src/c.ts' },
+        { name: 'built', file: 'src/c.ts' },
+        { name: 'withAsyncContext', file: 'src/c.ts' },
+      ],
+      libFiles: {
+        // unctx's exact template: the module is `${JSON.stringify(…)}`, not a quoted string.
+        'src/transform.ts': [
+          'const helperName = "executeAsync";',
+          'export const gen = (imports, m) => `import { ${imports.map(i => `${i} as __${i}`).join(", ")} } from ${JSON.stringify(m)};`;',
+          'export const opts = { asyncFunctions: ["withAsyncContext"] };',
+        ].join('\n'),
+        // A quoted name in a file with no codegen literal of its own still counts.
+        'src/ast.ts': "const n = 'built';\n",
       },
     });
     witness(org);
-    expectPass(org, org.ids['sentry']!);
-    expectPass(org, org.ids['MedleyRouter']!);
     expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self-string:src/transform.ts:1']);
+    expectMismatch(org, org.ids['withAsyncContext']!, ['witness_mismatch:self-string:src/transform.ts:3']);
     expectMismatch(org, org.ids['built']!, ['witness_mismatch:self-string:src/ast.ts:1']);
+  });
+
+  it('package-wide codegen: names quoted in another own file are hits, as whole words only (capnp-es)', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'getFloat32Mask', file: 'src/serialization/mask.ts' },
+        { name: 'BoolList', file: 'src/serialization/pointers/list/list.ts' },
+        { name: 'getUint8', file: 'src/serialization/mask.ts' },
+        { name: 'Struct', file: 'src/serialization/pointers/struct.ts', line: 0 },
+      ],
+      libFiles: {
+        // The template lives in generators/struct.ts ...
+        'src/compiler/generators/struct.ts': 'export const header = (m) => `import * as $ from ${JSON.stringify(m)};`;\n',
+        // ... the names in constants.ts.
+        'src/compiler/constants.ts': [
+          'export const ConcreteListType = { 1: "$.BoolList" };',
+          'export const Primitives = { 9: { byteLength: 4, getter: "getFloat32", mask: "getFloat32Mask" } };',
+          "export const u8 = 'getUint8s';", // not a whole word
+        ].join('\n'),
+        // S's own definition line is never a hit, even though it quotes the name.
+        'src/serialization/pointers/struct.ts': "export class Struct { static readonly _capnp = { displayName: 'Struct' }; }\n",
+      },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['BoolList']!, ['witness_mismatch:self-string:src/compiler/constants.ts:1']);
+    expectMismatch(org, org.ids['getFloat32Mask']!, ['witness_mismatch:self-string:src/compiler/constants.ts:2']);
+    expectPass(org, org.ids['getUint8']!);
+    expectPass(org, org.ids['Struct']!);
   });
 
   it('codegen: only names inside the qualifying literal / builder call are hits (ClerkAuthVariables)', () => {
@@ -801,6 +851,25 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
     witness(sfc);
     expectMismatch(sfc, sfc.ids['CardProps']!, ['witness_mismatch:self:components/Card.vue:2']);
     expectPass(sfc, sfc.ids['unnamed']!);
+
+    // Self rows from own files importing P by name (ingest: unindexedImports targeting P):
+    // an own file outside the program, and an INDEXED own file whose self-import SCIP could
+    // not resolve: both scanned (the indexed-file rules do not apply to witness_files).
+    const selfImp = buildOrg({
+      symbols: [{ name: 'defineBuildConfig' }, { name: 'nodeRunner' }, { name: 'untouched' }],
+      libFiles: {
+        'build.config.ts': "import { defineBuildConfig } from '@acme/lib';\nexport default defineBuildConfig({});\n",
+        'src/runner.ts': "export const load = () => import('@acme/lib/runners/node').then((m) => m.nodeRunner);\n",
+      },
+    });
+    const selfIns = selfImp.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/lib', 'npm:@acme/lib', ?)");
+    for (const f of ['build.config.ts', 'src/runner.ts']) selfIns.run(f);
+    const m = Number(selfImp.db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('mod r', 'npm:@acme/lib', 'src/runner.ts', 'src/runner.ts', 'file')").run().lastInsertRowid);
+    selfImp.db.prepare("INSERT INTO documents (package_id, file, module_symbol_id) VALUES ('npm:@acme/lib', 'src/runner.ts', ?)").run(m);
+    witness(selfImp);
+    expectMismatch(selfImp, selfImp.ids['defineBuildConfig']!, ['witness_mismatch:self:build.config.ts:1', 'witness_mismatch:self:build.config.ts:2']);
+    expectMismatch(selfImp, selfImp.ids['nodeRunner']!, ['witness_mismatch:self:src/runner.ts:1']);
+    expectPass(selfImp, selfImp.ids['untouched']!);
 
     // A listed file that is gone from the checkout fails closed.
     const gone = buildOrg({ symbols: [{ name: 'x' }] });
@@ -919,5 +988,116 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
     org.discover.repos.find((r) => r.repo === 'acme/lib')!.packages.push({ packageId: 'npm:@acme/real', path: 'examples/demo/real' });
     witness(org);
     expectPass(org, org.ids['deadFn']!);
+  });
+});
+
+describe('runWitness: round 4 (entry vouching, messages, indexed consumer files)', () => {
+  const LIB_MANIFEST = JSON.stringify({
+    name: '@acme/lib',
+    module: './dist/index.mjs',
+    exports: { '.': './dist/index.mjs', './bun': './dist/adapter/bun.mjs', './react': './dist/react.mjs' },
+  });
+
+  it('a default import via the bare specifier binds only the root entry\'s default (@hono/vite-dev-server)', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'devServer', file: 'src/dev-server.ts', exports: [['src/index.ts', 'default']] },
+        { name: 'bunAdapter', file: 'src/adapter/bun.ts', exports: [['src/adapter/bun.ts', 'default']] },
+      ],
+      libFiles: { 'package.json': LIB_MANIFEST },
+      files: { 'vite.config.ts': "import dev from '@acme/lib';\nexport default dev();\n" },
+    });
+    expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+    expectMismatch(org, org.ids['devServer']!, ['witness_mismatch:npm:@acme/app:pkg/vite.config.ts:1']);
+    expectPass(org, org.ids['bunAdapter']!);
+  });
+
+  it('an import vouches only for symbols its specifier reaches (symbol_exports entries); unexported ones never', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'useHead', file: 'src/react.ts', exports: [['src/react.ts', 'useHead']] },
+        { name: 'defineThing', file: 'src/thing.ts', exports: [['src/index.ts', 'defineThing']] },
+        { name: 'notExported', file: 'src/thing.ts', exports: [] },
+      ],
+      libFiles: { 'package.json': LIB_MANIFEST },
+      files: {
+        'src/a.ts': "import { useHead, defineThing, notExported } from '@acme/lib/react';\n",
+        'src/b.ts': "import { defineThing } from '@acme/lib';\nnotExported();\n",
+      },
+    });
+    expect(witness(org)).toEqual({ checked: 3, passed: 1, mismatched: 2 });
+    expectMismatch(org, org.ids['useHead']!, ['witness_mismatch:npm:@acme/app:pkg/src/a.ts:1']);
+    expectMismatch(org, org.ids['defineThing']!, ['witness_mismatch:npm:@acme/app:pkg/src/b.ts:1']);
+    expectPass(org, org.ids['notExported']!);
+  });
+
+  it('deprecation / warning messages are not codegen, nor self-string hits (clerk-auth)', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'getAuth', file: 'src/clerk-auth.ts', line: 18 },
+        { name: 'clerkMiddleware', file: 'src/clerk-auth.ts', line: 36 },
+        { name: 'Prefixed', file: 'src/other.ts' },
+        { name: 'Logged', file: 'src/other.ts' },
+      ],
+      libFiles: {
+        'src/clerk-auth.ts': [
+          "import { deprecated } from '@clerk/shared/deprecated'",
+          'export const getAuth = ((c) => {',
+          '  deprecated(',
+          "    '@acme/lib',",
+          "    'Use `@clerk/hono` instead.\\n\\n- import { clerkMiddleware, getAuth } from \"@acme/lib\"\\n+ import { clerkMiddleware, getAuth } from \"@clerk/hono\"'",
+          '  )',
+          '})',
+        ].join('\n'),
+        'src/other.ts': [
+          "export const MSG = '[deprecated] import { Prefixed } from \"@acme/lib\"';",
+          "this.logger.warn({ hint: `import { Logged } from '@acme/lib'` });",
+        ].join('\n'),
+      },
+    });
+    expect(witness(org)).toEqual({ checked: 4, passed: 4, mismatched: 0 });
+  });
+
+  it('an indexed consumer file: member access and identifiers SCIP resolved to another symbol are not hits', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'findByTestId' }, { name: 'findByText' }, { name: 'queryAll' }, { name: 'getBy' }],
+      files: {
+        'src/t.ts': [
+          "import { screen, render } from '@acme/lib';", // 1
+          "await screen.findByTestId('x'); screen?.findByTestId('y');", // 2: member access
+          'const r = findByText;', // 3: SCIP says this is another findByText
+          'const q = queryAll;', // 4: SCIP has nothing here: counts
+          'const g = getBy;', // 5: SCIP has S itself (and another getBy): counts
+          'const s = { ...findByTestId };', // 6: a spread is not member access, but SCIP resolved it elsewhere
+        ].join('\n'),
+      },
+    });
+    const { db, ids } = org;
+    const run = (sql: string, ...p: Array<string | number>): number => Number(db.prepare(sql).run(...p).lastInsertRowid);
+    const mod = run("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('mod t', 'npm:@acme/app', 'pkg/src/t.ts', 'pkg/src/t.ts', 'file')");
+    run("INSERT INTO documents (package_id, file, module_symbol_id) VALUES ('npm:@acme/app', 'pkg/src/t.ts', ?)", mod);
+    const occ = (symbolId: number, line: number): void => {
+      run(`INSERT INTO occurrences (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id)
+        VALUES (?, 'npm:@acme/app', 'npm:@acme/lib', 'pkg/src/t.ts', ?, 10, 8, ?)`, symbolId, line, mod);
+    };
+    for (const [name, line] of [['findByText', 2], ['getBy', 4], ['findByTestId', 5]] as const) {
+      const other = run("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES (?, 'npm:@acme/lib', 'src/queries.ts', ?)", `ScreenQueries#${name}`, name);
+      occ(other, line);
+    }
+    occ(ids['getBy']!, 4);
+    witness(org);
+    expectPass(org, ids['findByTestId']!);
+    expectPass(org, ids['findByText']!);
+    expectMismatch(org, ids['queryAll']!, ['witness_mismatch:npm:@acme/app:pkg/src/t.ts:4']);
+    expectMismatch(org, ids['getBy']!, ['witness_mismatch:npm:@acme/app:pkg/src/t.ts:5']);
+  });
+
+  it('the same member access in an unindexed consumer file still counts (the current rule)', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'findByTestId' }],
+      files: { 'src/t.ts': "import { screen } from '@acme/lib';\nscreen.findByTestId('x');\n" },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['findByTestId']!, ['witness_mismatch:npm:@acme/app:pkg/src/t.ts:2']);
   });
 });

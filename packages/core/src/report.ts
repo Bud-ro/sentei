@@ -189,18 +189,36 @@ export function buildReport(opts: BuildReportOptions): Report {
   if (policy.minAgeDays === 0) {
     warnings.push('minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates');
   }
-  // Name the packages that failed (untargeted index_failed / opaque_consumer flags of
-  // the repo's packages): usually one tooling package, not the whole repo.
+  // Name the packages behind a failed / partial repo (untargeted index_failed /
+  // opaque_consumer flags of the repo's packages): usually one tooling package, not the
+  // whole repo. Each is named for what happened to IT (a repo is `failed` when any
+  // package failed; its other packages may only be partial, e.g. unifont):
+  // index_failed → "index failed", an ingest opaque_consumer (partial index) → "index
+  // partial", a discover opaque_consumer (unresolved entry points) → "opaque".
   const failedPkgRows = db.prepare(`
-    SELECT DISTINCT p.repo, f.package_id FROM package_flags f JOIN packages p ON p.package_id = f.package_id
-    WHERE f.target_package_id IS NULL AND f.flag IN ('index_failed', 'opaque_consumer')`).all() as Array<{ repo: string; package_id: string }>;
+    SELECT DISTINCT p.repo, f.package_id, f.flag, coalesce(f.reason, '') LIKE 'discover: %' AS from_discover
+    FROM package_flags f JOIN packages p ON p.package_id = f.package_id
+    WHERE f.target_package_id IS NULL AND f.flag IN ('index_failed', 'opaque_consumer')`).all() as Array<{
+    repo: string; package_id: string; flag: string; from_discover: number;
+  }>;
   for (const r of repos) {
     if (r.index_status !== 'failed' && r.index_status !== 'partial') continue;
-    const failed = uniqSorted(failedPkgRows.filter((f) => f.repo === r.repo).map((f) => f.package_id));
-    warnings.push(failed.length === 0
+    const rows = failedPkgRows.filter((f) => f.repo === r.repo);
+    const failed = uniqSorted(rows.filter((f) => f.flag === 'index_failed').map((f) => f.package_id));
+    const partial = uniqSorted(rows.filter((f) => f.flag === 'opaque_consumer' && f.from_discover === 0 && !failed.includes(f.package_id))
+      .map((f) => f.package_id));
+    const opaque = uniqSorted(rows.filter((f) => f.flag === 'opaque_consumer' && f.from_discover === 1
+      && !failed.includes(f.package_id) && !partial.includes(f.package_id)).map((f) => f.package_id));
+    const n = failed.length + partial.length + opaque.length;
+    const parts = [
+      failed.length > 0 ? `index failed for ${failed.join(', ')}` : '',
+      partial.length > 0 ? `index partial for ${partial.join(', ')}` : '',
+      opaque.length > 0 ? `opaque (discover) for ${opaque.join(', ')}` : '',
+    ].filter(Boolean);
+    warnings.push(n === 0
       ? `repo ${r.repo}: index ${r.index_status}; its packages are opaque and block verdicts for every org package they depend on`
-      : `repo ${r.repo}: index ${r.index_status} for ${failed.join(', ')}; ${failed.length === 1 ? 'it is' : 'they are'} opaque and ${
-        failed.length === 1 ? 'blocks' : 'block'} verdicts for every org package ${failed.length === 1 ? 'it depends' : 'they depend'} on`);
+      : `repo ${r.repo}: ${parts.join('; ')}; ${n === 1 ? 'it is' : 'they are'} opaque and ${
+        n === 1 ? 'blocks' : 'block'} verdicts for every org package ${n === 1 ? 'it depends' : 'they depend'} on`);
   }
 
   // ---- findings -----------------------------------------------------------------

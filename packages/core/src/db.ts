@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 /** Bump when schema.sql changes incompatibly; old work DBs are rebuilt, not migrated. */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const SCHEMA_URL = new URL('../sql/schema.sql', import.meta.url);
 

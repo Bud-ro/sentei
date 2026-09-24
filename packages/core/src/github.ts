@@ -45,6 +45,8 @@ export interface GithubRepo {
   headSha: string;
   archived: boolean;
   fork: boolean;
+  /** A template repo (`is_template`); only listed with `includeTemplates`. */
+  template: boolean;
   cloneUrl: string;
   pushedAt: string | null;
 }
@@ -58,6 +60,12 @@ export interface ListReposOptions {
   log?: (line: string) => void;
   /** Archived repos are dropped unless this is set (PLAN §6.1). */
   includeArchived?: boolean;
+  /**
+   * Template repos are dropped (with a log line) unless this is set; then they are
+   * listed with `template: true` and the caller skips them (discoverGithub, so the
+   * lockfile records them like forks).
+   */
+  includeTemplates?: boolean;
   /** Parallel branch lookups (default 8). */
   concurrency?: number;
 }
@@ -178,10 +186,10 @@ export async function listRepos(opts: ListReposOptions): Promise<GithubRepo[]> {
   const archived = listed.filter((r) => r.archived);
   if (archived.length > 0 && !opts.includeArchived) log(`skipping ${archived.length} archived repo(s)`);
   const templates = listed.filter((r) => r.is_template === true && (opts.includeArchived || !r.archived));
-  if (templates.length > 0) {
+  if (templates.length > 0 && !opts.includeTemplates) {
     log(`skipping ${templates.length} template repo(s): ${templates.map((r) => r.name).sort().join(', ')}`);
   }
-  const wanted = listed.filter((r) => (opts.includeArchived || !r.archived) && r.is_template !== true).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const wanted = listed.filter((r) => (opts.includeArchived || !r.archived) && (opts.includeTemplates || r.is_template !== true)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
   const withSha = await mapPool(wanted, opts.concurrency ?? 8, async (r): Promise<GithubRepo | null> => {
     const [owner, name] = r.full_name.split('/').map(encodeURIComponent);
@@ -201,6 +209,7 @@ export async function listRepos(opts: ListReposOptions): Promise<GithubRepo[]> {
       headSha: sha,
       archived: r.archived,
       fork: r.fork,
+      template: r.is_template === true,
       cloneUrl: r.clone_url,
       pushedAt: r.pushed_at ?? null,
     };
@@ -215,8 +224,12 @@ export interface Lockfile {
   org: string;
   /** ISO timestamp of the listing. */
   generatedAt: string;
-  /** Every non-archived repo (include/exclude/fork filters are applied at run time). */
-  repos: Array<{ name: string; defaultBranch: string; headSha: string; fork?: boolean }>;
+  /**
+   * Every non-archived repo (include/exclude/fork/template filters are applied at run
+   * time). `template: true` marks a template repo (skipped like a live listing skips
+   * it); absent in older lockfiles, which then behave as before.
+   */
+  repos: Array<{ name: string; defaultBranch: string; headSha: string; fork?: boolean; template?: boolean }>;
 }
 
 const REPO_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -237,14 +250,15 @@ export function readLockfile(file: string): Lockfile {
   const seen = new Set<string>();
   const repos = o['repos'].map((r: unknown, i) => {
     const e = (typeof r === 'object' && r !== null ? r : {}) as Record<string, unknown>;
-    const { name, defaultBranch, headSha, fork } = e;
+    const { name, defaultBranch, headSha, fork, template } = e;
     if (typeof name !== 'string' || !REPO_NAME_RE.test(name) || name === '.' || name === '..') throw bad(`repos[${i}].name must be a plain repo name`);
     if (seen.has(name)) throw bad(`repo "${name}" listed twice`);
     seen.add(name);
     if (typeof defaultBranch !== 'string' || defaultBranch === '') throw bad(`repos[${i}].defaultBranch must be a string`);
     if (typeof headSha !== 'string' || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(headSha)) throw bad(`repos[${i}].headSha must be a commit sha`);
     if (fork !== undefined && typeof fork !== 'boolean') throw bad(`repos[${i}].fork must be a boolean`);
-    return { name, defaultBranch, headSha, ...(fork !== undefined ? { fork } : {}) };
+    if (template !== undefined && typeof template !== 'boolean') throw bad(`repos[${i}].template must be a boolean`);
+    return { name, defaultBranch, headSha, ...(fork !== undefined ? { fork } : {}), ...(template === true ? { template } : {}) };
   });
   return { org: o['org'], generatedAt: o['generatedAt'], repos };
 }
@@ -300,6 +314,7 @@ interface Pinned {
   defaultBranch: string;
   headSha: string;
   fork: boolean;
+  template: boolean;
   cloneUrl: string;
 }
 
@@ -323,6 +338,7 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
     pinned = lock.repos.map((r) => ({
       ...r,
       fork: r.fork ?? false,
+      template: r.template ?? false,
       cloneUrl: `https://github.com/${opts.org}/${r.name}.git`,
     }));
     // Public repos clone without a token; use one if we happen to have it (private orgs).
@@ -331,21 +347,30 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
     if (token === undefined) token = await resolveToken();
     if (token === null) throw new Error('sentei: listing GitHub repos needs a token (or an existing --lockfile)');
     const listed = await listRepos({
-      org: opts.org, token, apiUrl, log,
+      org: opts.org, token, apiUrl, log, includeTemplates: true,
       ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
     });
     log(`listed ${listed.length} non-archived repo(s) for ${opts.org}`);
-    pinned = listed.map((r) => ({ name: r.name, defaultBranch: r.defaultBranch, headSha: r.headSha, fork: r.fork, cloneUrl: r.cloneUrl }));
+    pinned = listed.map((r) => ({
+      name: r.name, defaultBranch: r.defaultBranch, headSha: r.headSha, fork: r.fork, template: r.template, cloneUrl: r.cloneUrl,
+    }));
     if (lockfile !== null) {
       writeLockfile(lockfile, {
         org: opts.org,
         generatedAt: new Date((opts.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
-        repos: pinned.map((r) => ({ name: r.name, defaultBranch: r.defaultBranch, headSha: r.headSha, fork: r.fork })),
+        repos: pinned.map((r) => ({
+          name: r.name, defaultBranch: r.defaultBranch, headSha: r.headSha, fork: r.fork, ...(r.template ? { template: true } : {}),
+        })),
       });
       log(`wrote lockfile ${lockfile}`);
     }
   }
 
+  // Template repos: scaffolds whose copies are the real repos (skipped, from a live
+  // listing or a lockfile alike).
+  const templates = pinned.filter((r) => r.template);
+  if (templates.length > 0) log(`skipping ${templates.length} template repo(s): ${templates.map((r) => r.name).sort().join(', ')}`);
+  pinned = pinned.filter((r) => !r.template);
   const forks = pinned.filter((r) => r.fork && !opts.includeForks).length;
   if (forks > 0) log(`skipping ${forks} fork(s) (use --include-forks to keep them)`);
   const selected = pinned.filter((r) => selectRepo(r, opts));

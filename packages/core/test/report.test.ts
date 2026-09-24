@@ -324,6 +324,30 @@ describe('buildReport guards and skew filtering', () => {
   });
 });
 
+describe('buildReport: failed / partial repo warnings name what happened to each package', () => {
+  it('a failed repo with one failed and one partial package says so for each (unifont)', () => {
+    const d = openDb(':memory:');
+    try {
+      d.exec(`INSERT INTO repos (repo, index_status) VALUES ('acme/fonts', 'failed');
+        INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES
+          ('npm:unifont', 'acme/fonts', '.', 'npm', 'unifont', 'private'),
+          ('npm:tools', 'acme/fonts', 'tools', 'npm', 'tools', 'private'),
+          ('npm:docs', 'acme/fonts', 'docs', 'npm', 'docs', 'private');
+        INSERT INTO package_flags (package_id, flag, reason) VALUES
+          ('npm:unifont', 'opaque_consumer', 'warn: 3 missing entry points'),
+          ('npm:tools', 'index_failed', 'error: tsc crashed'),
+          ('npm:docs', 'opaque_consumer', 'discover: unresolved entry point ./dist/x.js');`);
+      markAnalyzed(d);
+      expect(buildReport({ db: d, now: NOW }).warnings).toContain(
+        'repo acme/fonts: index failed for npm:tools; index partial for npm:unifont; opaque (discover) for npm:docs; '
+        + 'they are opaque and block verdicts for every org package they depend on',
+      );
+    } finally {
+      d.close();
+    }
+  });
+});
+
 describe('formatTable', () => {
   it('pads columns and right-aligns numbers', () => {
     expect(formatTable(['A', 'NUM'], [['long-name', '1'], ['x', '100']], ['l', 'r'])).toEqual([

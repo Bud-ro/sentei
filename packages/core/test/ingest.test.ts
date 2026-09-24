@@ -800,10 +800,17 @@ describe('ingestOrg (synthetic SCIP)', () => {
       unindexedImports: [
         { file: 'apps/app/eslint.config.mjs', module: '@acme/lib/eslint', targetPackage: '@acme/lib' },
         { file: 'apps/app/eslint.config.mjs', module: 'left-pad', targetPackage: 'left-pad' },
+        // Self imports by name: an own file outside the program, and an indexed file whose
+        // self-import did not resolve. Self witness_files rows, never flags or warnings.
         { file: 'apps/app/vite.config.mjs', module: '@acme/app', targetPackage: '@acme/app' },
+        { file: 'apps/app/src/main.ts', module: '@acme/app/runners/x', targetPackage: '@acme/app' },
       ],
     });
     const c = run();
+    expect(db.prepare('SELECT consumer_package_id AS c, target_package_id AS t, file FROM witness_files ORDER BY file').all()).toEqual([
+      { c: 'npm:@acme/app', t: 'npm:@acme/app', file: 'apps/app/src/main.ts' },
+      { c: 'npm:@acme/app', t: 'npm:@acme/app', file: 'apps/app/vite.config.mjs' },
+    ]);
     const rows = () => db.prepare('SELECT package_id, flag, reason, file, target_package_id FROM package_flags ORDER BY target_package_id').all();
     const expected = [
       { package_id: 'npm:@acme/app', flag: 'unindexed_consumer', reason: 'build.py', file: null, target_package_id: null },
@@ -811,7 +818,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
         file: 'apps/app/eslint.config.mjs', target_package_id: 'npm:@acme/lib' },
     ];
     expect(rows()).toEqual(expected);
-    expect(c.warnings).toBe(2);
+    expect(c.warnings).toBe(1); // left-pad only
     run();
     expect(rows()).toEqual(expected);
   });
@@ -909,6 +916,16 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(db.prepare('SELECT s.name FROM entry_symbols e JOIN symbols s USING (symbol_id)').all()).toEqual([{ name: 'digest' }]);
   });
 
+  it('a runtime entry that is not an entry point (a bin) is a seed document, with no entry_symbols of its own', () => {
+    const d = discover();
+    d.repos[0]!.packages[0]!.runtimeEntryPoints = ['src/a.ts'];
+    run(d);
+    expect(db.prepare("SELECT file, is_entry FROM documents WHERE package_id = 'npm:@acme/lib' ORDER BY file").all()).toEqual([
+      { file: 'src/a.ts', is_entry: 1 },
+    ]);
+    expect(count(db, 'SELECT count(*) AS n FROM entry_symbols')).toBe(0);
+  });
+
   it('relative unindexedImports (own SFC importing own code): self witness_files row, the module\'s privates kept, no flag', () => {
     writeScip('acme/mono', 'lib.scip', [
       { path: 'src/a.ts', occurrences: [
@@ -1004,6 +1021,98 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(c.unmatchedEntrySymbols).toBe(1);
     expect(db.prepare('SELECT symbol_id FROM entry_symbols').all()).toEqual([{ symbol_id: bar }]);
     expect(logs.some((l) => /warning: 1 sidecar entry symbol\(s\) match no SCIP definition: npm:@acme\/lib nope at src\/a\.ts:41:1/.test(l))).toBe(true);
+  });
+
+  it('stores sidecar entrySymbols kind (default runtime; runtime wins over ambient) and rejects an unknown kind', () => {
+    writeJson('acme/mono', 'lib.exports.json', {
+      ...sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
+      entrySymbols: [
+        { file: 'src/a.ts', line: 2, col: 2, name: 'bar', kind: 'ambient' },
+        { file: 'src/a.ts', line: 5, col: 2, name: 'baz', kind: 'ambient' },
+        { file: 'src/a.ts', line: 5, col: 2, name: 'baz' },
+        { file: 'src/a.ts', line: 8, col: 9, name: 'helper', kind: 'runtime' },
+      ],
+    });
+    run();
+    expect(db.prepare('SELECT s.name, e.kind FROM entry_symbols e JOIN symbols s USING (symbol_id) ORDER BY s.name').all()).toEqual([
+      { name: 'bar', kind: 'ambient' }, { name: 'baz', kind: 'runtime' }, { name: 'helper', kind: 'runtime' },
+    ]);
+    writeJson('acme/mono', 'lib.exports.json', {
+      ...sidecar('npm:@acme/lib'),
+      entrySymbols: [{ file: 'src/a.ts', line: 2, col: 2, name: 'bar', kind: 'global' }],
+    });
+    expect(() => run()).toThrow(/unknown entry symbol kind "global"/);
+  });
+
+  it('makes a namespace declared in the same document the parent of its members; files, other documents and Dart modules never are', () => {
+    const NS = SymbolInformation_Kind.Namespace;
+    const W = `${LIB}\`worker-configuration.d.ts\`/`;
+    writeScip('acme/mono', 'lib.scip', [
+      {
+        path: 'worker-configuration.d.ts',
+        occurrences: [
+          { range: [0, 0, 0], symbol: W, roles: 1 },
+          { range: [1, 18, 29], symbol: `${W}WebAssembly/`, roles: 1, enclosing: [1, 0, 9, 1] },
+          { range: [2, 8, 20], symbol: `${W}WebAssembly/CompileError#`, roles: 1, enclosing: [2, 2, 4, 3] },
+          { range: [3, 4, 9], symbol: `${W}WebAssembly/CompileError#stack.`, roles: 1 },
+          { range: [5, 19, 26], symbol: `${W}WebAssembly/Inner/`, roles: 1, enclosing: [5, 2, 7, 3] },
+          { range: [6, 13, 18], symbol: `${W}WebAssembly/Inner/deep().`, roles: 1 },
+          { range: [8, 11, 19], symbol: `${W}WebAssembly/validate().`, roles: 1 },
+          { range: [10, 9, 12], symbol: `${W}top().`, roles: 1 },
+        ],
+        symbols: [{ symbol: W, kind: NS }, { symbol: `${W}WebAssembly/`, kind: NS }],
+      },
+      {
+        // A member of a namespace declared in ANOTHER document (merged declaration): no owner.
+        path: 'src/b.ts',
+        occurrences: [
+          { range: [0, 0, 0], symbol: `${LIB}src/\`b.ts\`/`, roles: 1 },
+          { range: [1, 0, 3], symbol: `${W}WebAssembly/Extra#`, roles: 1 },
+        ],
+      },
+    ]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    // Dart: members of a library are never parented by its module namespace.
+    db.prepare("INSERT INTO repos (repo) VALUES ('acme/dart')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:d', 'acme/dart', '.', 'pub', 'd', 'private')").run();
+    const D = 'scip-dart pub d 1.0.0 lib/`a.dart`/';
+    writeScip('acme/dart', 'd.scip', [{
+      path: 'lib/a.dart',
+      occurrences: [
+        { range: [0, 0, 0], symbol: D, roles: 1 },
+        { range: [1, 20, 21], symbol: `${D}p.`, roles: 1 }, // import prefix
+        { range: [2, 6, 9], symbol: `${D}Foo#`, roles: 1 },
+        { range: [3, 2, 5], symbol: `${D}Foo#bar().`, roles: 1 },
+      ],
+      symbols: [{ symbol: D, kind: NS }, { symbol: `${D}p.`, kind: NS }],
+    }]);
+    writeJson('acme/dart', 'd.exports.json', sidecar('pub:d'));
+    indexJson('acme/dart', [{ packageId: 'pub:d', indexer: 'scip-dart', scip: 'd.scip', exports: 'd.exports.json' }]);
+    const d = discover();
+    d.repos.push({ repo: 'acme/dart', packages: [{ packageId: 'pub:d', path: '.', entryPoints: ['lib/a.dart'] }] });
+    run(d);
+    const rows = db.prepare(`SELECT s.name, p.name AS parent FROM symbols s LEFT JOIN symbols p ON p.symbol_id = s.parent_symbol_id
+      WHERE s.package_id IN ('npm:@acme/lib', 'pub:d') AND s.kind IS NOT 'file' ORDER BY s.package_id, s.symbol_id`).all();
+    expect(rows).toEqual([
+      { name: 'worker-configuration.d.ts', parent: null },
+      { name: 'WebAssembly', parent: null },
+      { name: 'CompileError', parent: 'WebAssembly' },
+      { name: 'stack', parent: 'CompileError' },
+      { name: 'Inner', parent: 'WebAssembly' },
+      { name: 'deep', parent: 'Inner' },
+      { name: 'validate', parent: 'WebAssembly' },
+      { name: 'top', parent: null },
+      { name: 'src/b.ts', parent: null },
+      { name: 'Extra', parent: null },
+      { name: 'lib/a.dart', parent: null },
+      { name: 'p', parent: null },
+      { name: 'Foo', parent: null },
+      { name: 'bar', parent: 'Foo' },
+    ]);
+    // Owner -> member edges make the members reachable from the namespace.
+    const ns = id(`scip-typescript npm @acme/lib . \`worker-configuration.d.ts\`/WebAssembly/`);
+    const ce = id(`scip-typescript npm @acme/lib . \`worker-configuration.d.ts\`/WebAssembly/CompileError#`);
+    expect(count(db, 'SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ?', ns, ce)).toBe(1);
   });
 
   it('flags a package whose index has unparseable symbols index_failed and ingests the rest of the org', () => {

@@ -265,6 +265,23 @@ describe('runBlame', () => {
     expect(logs.some((l) => l.includes('shallow clone; fetching history'))).toBe(true);
   });
 
+  it('a partial clone whose promisor fetch fails: ages stay NULL, one warning per repo, `network?` in the summary', async () => {
+    const root = tmp();
+    const origin = join(root, 'origin');
+    makeRepo(origin);
+    git(origin, ['config', 'uploadpack.allowFilter', 'true']);
+    const clone = join(root, 'clone');
+    git(root, ['clone', '-q', '--filter=blob:none', '--no-checkout', `file://${origin}`, clone]);
+    rmSync(origin, { recursive: true, force: true });
+    const { db, ids } = makeDb(['acme/lib'], [{ repo: 'acme/lib', name: 'a', line: 0 }, { repo: 'acme/lib', name: 'b', line: 2 }]);
+    const logs: string[] = [];
+    const r = await runBlame({ db, discover: { repos: [{ repo: 'acme/lib', localPath: clone, headSha: null }] }, workDir: join(root, 'w'), log: (l) => logs.push(l) });
+    expect(r).toEqual({ symbols: 2, blamed: 0, skippedRepos: 0, cached: 0 });
+    expect(ages(db, ids['acme/lib:a']!)).toEqual({ sha: null, at: null });
+    expect(logs.filter((l) => l.startsWith('[blame] warning: acme/lib: 2 symbol(s) undated') && l.includes('network?'))).toHaveLength(1);
+    expect(logs.at(-1)).toMatch(/2 undated \(2 network\?\)/);
+  });
+
   it('skips a shallow repo whose history cannot be fetched (ages stay NULL)', async () => {
     const root = tmp();
     const origin = join(root, 'origin');

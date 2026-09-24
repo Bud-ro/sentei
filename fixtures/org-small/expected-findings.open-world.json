@@ -158,6 +158,24 @@
     ]
   },
   {
+    "package_id": "npm:@acme/worker",
+    "symbol": "Legacy",
+    "file": "src/worker.ts",
+    "verdict": "private_dead",
+    "reasons": [
+      "already_unreachable"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/worker",
+    "symbol": "neverCalled",
+    "file": "src/worker.ts",
+    "verdict": "private_dead",
+    "reasons": [
+      "already_unreachable"
+    ]
+  },
+  {
     "package_id": "npm:@acme/y",
     "symbol": "yUnused",
     "file": "src/index.ts",

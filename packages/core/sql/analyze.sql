@@ -588,7 +588,10 @@ SELECT origin_id, symbol_id FROM reach;
 -- test/docs file (not entry points, so everything in them is "unreachable"), a
 -- generated file (regenerated, never reported) or a script file (runnable code), not kept, and in a package we can see
 -- into (not opaque, not blocked) that has at least one reachability seed (no entry and
--- no export means the entry points are unknown, not that everything is dead).
+-- no export means the entry points are unknown, not that everything is dead). Ambient
+-- entry symbols (entry_symbols.kind 'ambient': global `.d.ts` declarations) are seeds
+-- but do not count here: 711 of them in hono.dev's worker-configuration.d.ts said
+-- nothing about how the app is run.
 CREATE VIEW private_dead_eligible (symbol_id) AS
 SELECT s.symbol_id
 FROM symbols s
@@ -610,7 +613,8 @@ WHERE s.is_exported = 0
     UNION
     SELECT package_id FROM documents WHERE is_entry = 1
     UNION
-    SELECT x.package_id FROM entry_symbols e JOIN symbols x ON x.symbol_id = e.symbol_id);
+    SELECT x.package_id FROM entry_symbols e JOIN symbols x ON x.symbol_id = e.symbol_id
+    WHERE e.kind = 'runtime');
 
 -- Already dead before any removal: the private islands per-repo lints miss.
 CREATE VIEW unreachable_before (symbol_id) AS

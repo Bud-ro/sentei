@@ -128,8 +128,13 @@ CREATE TABLE IF NOT EXISTS symbol_exports (
 -- Declarations the runtime or a tool invokes by name with no code reference (sidecar
 -- `entrySymbols`: Dart `main` of a script, a build.yaml builder factory, dart_dev's
 -- `config`). Reachability seeds; never given a verdict or a private_dead row.
+-- kind 'ambient': a global declaration the type checker sees with no import (a
+-- `worker-configuration.d.ts` `declare namespace`, a `global.d.ts`): still a seed, but
+-- it says nothing about how the package is run, so it never makes a package eligible
+-- for private_dead (analyze.sql private_dead_eligible). 'runtime' (default) does.
 CREATE TABLE IF NOT EXISTS entry_symbols (
-  symbol_id INTEGER PRIMARY KEY REFERENCES symbols (symbol_id) ON DELETE CASCADE
+  symbol_id INTEGER PRIMARY KEY REFERENCES symbols (symbol_id) ON DELETE CASCADE,
+  kind      TEXT NOT NULL DEFAULT 'runtime' CHECK (kind IN ('runtime', 'ambient'))
 ) STRICT;
 
 -- Reachability graph: enclosing symbol -> referenced symbol, from SCIP or explicit overlays.

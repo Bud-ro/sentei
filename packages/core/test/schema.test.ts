@@ -86,7 +86,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(8);
+    expect(SCHEMA_VERSION).toBe(9);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -94,7 +94,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 8/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 9/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });

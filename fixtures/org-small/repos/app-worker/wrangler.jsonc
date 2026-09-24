@@ -1,0 +1,7 @@
+{
+  // Cloudflare Worker: `main` is the entry module the runtime loads (no package.json
+  // field names it). Its presence also makes functions/ Pages Functions.
+  "name": "worker",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2025-04-01",
+}

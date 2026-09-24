@@ -52,8 +52,8 @@ describe('listRepos', () => {
     const logs: string[] = [];
     const repos = await listRepos({ org: 'acme', token: 'tok', fetchImpl, log: (l) => logs.push(l) });
     expect(repos).toEqual([
-      { name: 'alpha', defaultBranch: 'trunk', headSha: sha('b'), archived: false, fork: true, cloneUrl: 'https://github.com/acme/alpha.git', pushedAt: '2026-01-01T00:00:00Z' },
-      { name: 'zed', defaultBranch: 'main', headSha: sha('a'), archived: false, fork: false, cloneUrl: 'https://github.com/acme/zed.git', pushedAt: '2026-01-01T00:00:00Z' },
+      { name: 'alpha', defaultBranch: 'trunk', headSha: sha('b'), archived: false, fork: true, template: false, cloneUrl: 'https://github.com/acme/alpha.git', pushedAt: '2026-01-01T00:00:00Z' },
+      { name: 'zed', defaultBranch: 'main', headSha: sha('a'), archived: false, fork: false, template: false, cloneUrl: 'https://github.com/acme/zed.git', pushedAt: '2026-01-01T00:00:00Z' },
     ]);
     expect(calls.some((c) => c.url.includes('/old/'))).toBe(false);
     expect(logs).toContain('skipping 1 archived repo(s)');
@@ -224,6 +224,36 @@ describe('discoverGithub (file:// clones, fake API)', () => {
     expect(updated.repos.map((r) => [r.repo, r.headSha])).toEqual([['acme/lib', lib.shas[1]]]);
     expect(logs3.some((l) => l.startsWith(`acme/lib: updated ${lib.shas[1].slice(0, 12)}`))).toBe(true);
     expect(JSON.parse(readFileSync(lockfile, 'utf8')).repos).toEqual([{ name: 'lib', defaultBranch: 'main', headSha: lib.shas[1], fork: false }]);
+  });
+
+  it('records template repos in the lockfile (template: true) and skips them live and from the lockfile', async () => {
+    const lib = makeBareRepo(tmp, 'lib');
+    const { fetchImpl } = fakeFetch({
+      [`${API}/orgs/acme/repos?type=all&per_page=100`]: {
+        body: [repo('lib', { clone_url: lib.url }), repo('starter', { is_template: true, clone_url: 'file:///nonexistent' })],
+      },
+      ...branch('lib', lib.shas[1]),
+      ...branch('starter', sha('e')),
+    });
+    const lockfile = join(tmp, 'acme.lock.json');
+    const clonesDir = join(tmp, 'clones');
+    const logs: string[] = [];
+    const model = await discoverGithub({ org: 'acme', token: 'tok', fetchImpl, lockfile, clonesDir, orgConfigDir: null, log: (l) => logs.push(l) });
+    expect(model.repos.map((r) => r.repo)).toEqual(['acme/lib']);
+    expect(logs).toContain('skipping 1 template repo(s): starter');
+    expect(readLockfile(lockfile).repos).toEqual([
+      { name: 'lib', defaultBranch: 'main', headSha: lib.shas[1], fork: false },
+      { name: 'starter', defaultBranch: 'main', headSha: sha('e'), fork: false, template: true },
+    ]);
+    const logs2: string[] = [];
+    const again = await discoverGithub({ org: 'acme', token: null, lockfile, clonesDir, orgConfigDir: null, log: (l) => logs2.push(l) });
+    expect(again.repos.map((r) => r.repo)).toEqual(['acme/lib']);
+    expect(logs2).toContain('skipping 1 template repo(s): starter');
+    // An older lockfile without the field: the repo is an ordinary one (as before).
+    writeFileSync(lockfile, JSON.stringify({ org: 'acme', generatedAt: 'x', repos: [{ name: 'starter', defaultBranch: 'main', headSha: sha('e') }] }));
+    expect(readLockfile(lockfile).repos).toEqual([{ name: 'starter', defaultBranch: 'main', headSha: sha('e') }]);
+    writeFileSync(lockfile, JSON.stringify({ org: 'acme', generatedAt: 'x', repos: [{ name: 'x', defaultBranch: 'main', headSha: sha('e'), template: 'yes' }] }));
+    expect(() => readLockfile(lockfile)).toThrow(/template must be a boolean/);
   });
 
   it('rejects a lockfile with an unsafe repo name or sha', async () => {

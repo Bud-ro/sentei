@@ -1,0 +1,78 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## functions/api/hello.ts
+  // Cloudflare Pages Function (functions/ next to a wrangler config): loaded by path.
+//^ definition scip-typescript npm @acme/worker . functions/api/`hello.ts`/ enclosing [3:0-9:0]
+
+  // Expected: alive, no finding (called by onRequest).
+  function greet(): string {
+//         ^^^^^ definition scip-typescript npm @acme/worker . functions/api/`hello.ts`/greet(). enclosing [3:0-5:1]
+    return 'hello';
+  }
+
+  // Expected: alive, no finding (exported by a runtime entry file: an entry symbol).
+  export const onRequest = (): string => greet();
+//             ^^^^^^^^^ definition scip-typescript npm @acme/worker . functions/api/`hello.ts`/onRequest. enclosing [8:25-8:46]
+//                                       ^^^^^ reference scip-typescript npm @acme/worker . functions/api/`hello.ts`/greet().
+
+## src/worker.ts
+  // The Worker entry (wrangler.jsonc `main`): a runtime entry point by convention.
+//^ definition scip-typescript npm @acme/worker . src/`worker.ts`/ enclosing [1:0-40:0]
+  import { lazyWidget } from '@acme/widgets/lazy';
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`lazy.ts`/lazyWidget().
+//                           ^^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`lazy.ts`/
+
+  // A declared namespace: its members are owned by it (parent), like class members.
+  // Expected: alive, no finding (Routes is used below; its members live with it).
+  namespace Routes {
+//          ^^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/Routes/
+    // Expected: alive, no finding (member of a live namespace).
+    export const home = '/';
+//               ^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/Routes/home.
+    // Expected: alive, no finding (member of a live namespace, kept through its owner).
+    export function unusedRoute(): string {
+//                  ^^^^^^^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/Routes/unusedRoute(). enclosing [9:2-11:3]
+      return '/old';
+    }
+  }
+
+  // Expected: private_dead already_unreachable (only the namespace is reported, not its member).
+  namespace Legacy {
+//          ^^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/Legacy/
+    // Expected: no finding (nested in the dead namespace Legacy, reported there).
+    export function oldHandler(): number {
+//                  ^^^^^^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/Legacy/oldHandler(). enclosing [17:2-19:3]
+      return 1;
+    }
+  }
+
+  // Expected: alive, no finding (called by the default export).
+  function handle(path: string): string {
+//         ^^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/handle(). enclosing [23:0-27:1]
+//                ^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/handle().(path)
+    // Not a use of @acme/widgets' internalUnused: this file imports only the `./lazy` entry.
+    const internalUnused = lazyWidget();
+//        ^^^^^^^^^^^^^^ definition local 2
+//                         ^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`lazy.ts`/lazyWidget().
+    return `${path}:${internalUnused}`;
+//            ^^^^ reference scip-typescript npm @acme/worker . src/`worker.ts`/handle().(path)
+//                    ^^^^^^^^^^^^^^ reference local 2
+  }
+
+  // Expected: private_dead already_unreachable (the package has a runtime entry, so it is eligible).
+  function neverCalled(): number {
+//         ^^^^^^^^^^^ definition scip-typescript npm @acme/worker . src/`worker.ts`/neverCalled(). enclosing [30:0-32:1]
+    return 2;
+  }
+
+  // Expected: alive, no finding (default export of a runtime entry: an entry symbol).
+  export default {
+    fetch(): string {
+//  ^^^^^ definition local 5
+      return handle(Routes.home);
+//           ^^^^^^ reference scip-typescript npm @acme/worker . src/`worker.ts`/handle().
+//                  ^^^^^^ reference scip-typescript npm @acme/worker . src/`worker.ts`/Routes/
+//                         ^^^^ reference scip-typescript npm @acme/worker . src/`worker.ts`/Routes/home.
+    },
+  };

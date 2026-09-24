@@ -21,6 +21,10 @@
 // (line = 1-based blame line). Entries are only trusted when the cache sha equals the
 // repo's current sha; a file is re-blamed when any of its target lines is missing.
 // All git runs go through execFile (never a shell) with GIT_TERMINAL_PROMPT=0.
+// A partial (`--filter=blob:none`) clone fetches blobs from its promisor remote during
+// `git blame`; when that fetch fails (no network) the file's symbols stay NULL, and the
+// repo gets one `warning:` line with the count at the end (NETWORK_ERROR_RE), counted
+// as `(N network?)` in the summary line.
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,6 +72,9 @@ export interface BlameCache {
   sha: string;
   files: Record<string, Record<string, BlameLine>>;
 }
+
+/** git stderr of a blob / history fetch that failed for lack of a remote (network). */
+const NETWORK_ERROR_RE = /promisor remote|could not read from remote|unable to access|could not resolve host|connection (?:refused|timed out)|network is unreachable/i;
 
 const HEADER_RE = /^([0-9a-f]{40}|[0-9a-f]{64}) (\d+) (\d+)(?: (\d+))?$/;
 
@@ -220,6 +227,8 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
   const counts: BlameCounts = { symbols: targets.length, blamed: 0, skippedRepos: 0, cached: 0 };
   let noLine = 0;
   let undated = 0;
+  /** Per repo: symbols left undated because a blame's promisor fetch failed. */
+  const networkUndated = new Map<string, number>();
 
   for (const [repo, files] of byRepo) {
     const d = discoverByRepo.get(repo);
@@ -297,7 +306,9 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
       try {
         lines = parseBlamePorcelain(await git(dir, ['blame', '--porcelain', cache.sha, '--', file]));
       } catch (e) {
-        log(`[blame] ${repo}: ${(e as Error).message}; ages unknown for ${list.length} symbol(s)`);
+        const msg = (e as Error).message;
+        log(`[blame] ${repo}: ${msg}; ages unknown for ${list.length} symbol(s)`);
+        if (NETWORK_ERROR_RE.test(msg)) networkUndated.set(repo, (networkUndated.get(repo) ?? 0) + list.length);
         return;
       }
       const entry: Record<string, BlameLine> = { ...(cache.files[file] ?? {}) };
@@ -339,9 +350,15 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
     throw e;
   }
 
+  let network = 0;
+  for (const [repo, n] of networkUndated) {
+    network += n;
+    log(`[blame] warning: ${repo}: ${n} symbol(s) undated: git could not fetch file contents from the promisor remote (network?); ages unknown`);
+  }
+  const notes = [noLine ? `${noLine} without a line` : '', network ? `${network} network?` : ''].filter(Boolean);
   log(
     `[blame] ${counts.symbols} symbol(s): ${counts.blamed} blamed, ${counts.cached} cached, ` +
-      `${undated} undated${noLine ? ` (${noLine} without a line)` : ''}; ${counts.skippedRepos} repo(s) skipped`,
+      `${undated} undated${notes.length ? ` (${notes.join(', ')})` : ''}; ${counts.skippedRepos} repo(s) skipped`,
   );
   return counts;
 }

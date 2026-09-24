@@ -48,9 +48,10 @@ export interface DiscoverPackage {
    */
   unresolvedEntryPoints?: string[];
   /**
-   * The entryPoints loaded by the runtime / a bundler rather than imported
+   * Files loaded by the runtime / a bundler rather than imported
    * (ManifestPackage.runtimeEntryPoints: `imports` map arms, Vite / HTML client
-   * entries). Optional: absent in older discover.json files (= []).
+   * entries, convention entries, `bin` targets; all but the bins are also entryPoints).
+   * Optional: absent in older discover.json files (= []).
    */
   runtimeEntryPoints?: string[];
   deps: DiscoverDep[];

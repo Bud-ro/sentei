@@ -7,6 +7,8 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
+import { matchGlob } from './glob.ts';
+import { TEST_GLOBS } from './globs.ts';
 
 export type Manager = 'npm' | 'pub';
 export type Visibility = 'private' | 'published-private' | 'published-public';
@@ -48,11 +50,16 @@ export interface ManifestPackage {
    */
   unresolvedEntryPoints: string[];
   /**
-   * The subset of entryPoints the RUNTIME or a bundler loads, not importers: npm
-   * `imports` map targets (every condition arm) and Vite / HTML client entries
-   * (clientEntryPoints). Ingest makes the exported declarations of these files
-   * entry_symbols (seeds, never a verdict): an `imports` arm's `digest` is wired by
-   * Node's condition, not consumed through the export surface. Sorted; [] for pub.
+   * Files the RUNTIME or a bundler loads, not importers: npm `imports` map targets
+   * (every condition arm), Vite / HTML client entries (clientEntryPoints), files loaded
+   * by path by convention (conventionEntryPoints: wrangler `main`, Pages `functions/`,
+   * HonoX / Next / SvelteKit / Nuxt routes…), all also in entryPoints; and `bin`
+   * targets, which are NOT in entryPoints (run, never imported: no export surface, and a
+   * bin outside the TS program must not make the package `partial`). Ingest makes these
+   * documents seeds (documents.is_entry) and the exported declarations of the
+   * entryPoints among them entry_symbols (never a verdict): an `imports` arm's `digest`
+   * is wired by Node's condition, not consumed through the export surface. Sorted; []
+   * for pub.
    */
   runtimeEntryPoints: string[];
   /** Sorted by name; one entry per name. */
@@ -338,9 +345,17 @@ export function readNpmPackage(
   const clientAll = clientEntryPoints(repoRoot, dir, files);
   const client = clientAll.filter((f) => !resolved.entryPoints.includes(f));
   if (client.length > 0) log(`${manifest}: client entry points from index.html / vite.config: ${client.join(', ')}`);
-  const entryPoints = [...new Set([...resolved.entryPoints, ...client])].sort(cmp);
+  const deps = npmDeps(json, manifest, warn);
+  const conventionAll = conventionEntryPoints(repoRoot, dir, files, new Set(deps.map((d) => d.name)));
+  const convention = conventionAll.filter((f) => !resolved.entryPoints.includes(f) && !clientAll.includes(f));
+  if (convention.length > 0) {
+    log(`${manifest}: ${convention.length} runtime entry point(s) by convention (wrangler main, functions/, routes/…): ${
+      convention.slice(0, 5).join(', ')}${convention.length > 5 ? ', ...' : ''}`);
+  }
+  const entryPoints = [...new Set([...resolved.entryPoints, ...client, ...convention])].sort(cmp);
+  if (resolved.noneResolved && entryPoints.length === 0) warn(`${manifest}: no entry points resolved`);
   // Runtime-loaded files that are not also declared surface (main/exports/…).
-  const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll])]
+  const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll, ...conventionAll])]
     .filter((f) => !resolved.surface.includes(f)).sort(cmp);
   return {
     manager: 'npm',
@@ -353,7 +368,7 @@ export function readNpmPackage(
     entryPoints,
     unresolvedEntryPoints: unresolved,
     runtimeEntryPoints,
-    deps: npmDeps(json, manifest, warn),
+    deps,
   };
 }
 
@@ -426,7 +441,9 @@ export function npmVisibility(json: Record<string, unknown>, manifest = 'package
 export function npmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
 ): string[] {
-  return resolveNpmEntryPoints(dir, json, repoFiles, warn).entryPoints;
+  const r = resolveNpmEntryPoints(dir, json, repoFiles, warn);
+  if (r.noneResolved) warn(`${joinRel(dir, 'package.json')}: no entry points resolved`);
+  return r.entryPoints;
 }
 
 /**
@@ -439,7 +456,7 @@ export function npmEntryPoints(
  */
 export function resolveNpmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
-): { entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[] } {
+): { entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; noneResolved: boolean } {
   // `entry`: the exports entry (subpath key) a leaf belongs to; undefined outside exports.
   const declared: Array<{ path: string; surface: boolean; entry?: string }> = [];
   const patterns: Array<{ path: string; entry: string }> = [];
@@ -447,9 +464,13 @@ export function resolveNpmEntryPoints(
     const v = json[key];
     if (typeof v === 'string') declared.push({ path: v, surface: true });
   }
+  // `bin` targets are run, never imported: runtime entry points only (never in
+  // entryPoints, so a bin outside the TS program cannot make the adapter report a missing
+  // entry and the package `partial`); ingest seeds their documents.
+  const bins: string[] = [];
   const bin = json['bin'];
-  if (typeof bin === 'string') declared.push({ path: bin, surface: false });
-  else if (isObject(bin)) for (const v of Object.values(bin)) if (typeof v === 'string') declared.push({ path: v, surface: false });
+  if (typeof bin === 'string') bins.push(bin);
+  else if (isObject(bin)) for (const v of Object.values(bin)) if (typeof v === 'string') bins.push(v);
   if (typeof json['browser'] === 'string') declared.push({ path: json['browser'], surface: false });
   for (const [entry, value] of exportEntries(json['exports'])) {
     collectExportLeaves(value, (leaf) => {
@@ -488,16 +509,21 @@ export function resolveNpmEntryPoints(
     if (!noteEntry(entry, p, r !== null, CODE_EXT.test(n)) && r === null && surface && CODE_EXT.test(n)) unresolved.add(p);
     add(r);
   }
+  // `files` (what npm publishes) bounds what an exports `*` pattern can match: with
+  // `files: ["dist"]`, `"./*": "./*"` does not publish `eslint.config.mjs` or tests.
+  const published = publishedFilter(json['files']);
   for (const { path: p, entry } of patterns) {
     const n = normalizeRel(p);
     if (n === null) continue;
     // The pattern as written; only if it matches nothing, its dist→src variants, one group
     // at a time (.ts and .tsx together; the index variants only if those match nothing: a
     // `*` spans `/`, so `src/x/*.ts` for `dist/x/*/index.mjs` would also catch helpers).
+    // A dist→src variant stands for the written (built) path, so `files` is checked on that.
     let matched = false;
-    for (const variants of [[n], ...distToSrcGroups(n)]) {
+    for (const [i, variants] of [[n], ...distToSrcGroups(n)].entries()) {
       const res = variants.map(exportPatternRegExp);
-      const hits = pkgFiles.filter((f) => patternFileOk(f, variants) && res.some((re) => re.test(f)));
+      const ok = (f: string): boolean => (i === 0 ? published(f) : published(n.replaceAll('*', 'x')));
+      const hits = pkgFiles.filter((f) => patternFileOk(f, variants) && ok(f) && res.some((re) => re.test(f)));
       hits.forEach(add);
       if (hits.length > 0) {
         matched = true;
@@ -507,7 +533,17 @@ export function resolveNpmEntryPoints(
     noteEntry(entry, p, matched, CODE_EXT.test(n));
   }
   for (const [entry, misses] of entryMisses) if (!entryOk.has(entry)) misses.forEach((m) => unresolved.add(m));
-  if (found.size === 0) {
+  const binFiles: string[] = [];
+  for (const b of bins) {
+    const n = normalizeRel(b);
+    if (n === null) {
+      warn(`${joinRel(dir, 'package.json')}: bin ${JSON.stringify(b)} escapes the package, ignored`);
+      continue;
+    }
+    const r = resolveEntry(n, pkgFileSet);
+    if (r !== null && (CODE_EXT.test(r) || posix.extname(r) === '')) binFiles.push(joinRel(dir, r));
+  }
+  if (found.size === 0 && binFiles.length === 0) {
     for (const f of ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'index.cjs', 'src/index.ts', 'src/index.tsx']) {
       if (pkgFileSet.has(f)) {
         found.add(joinRel(dir, f));
@@ -515,7 +551,9 @@ export function resolveNpmEntryPoints(
       }
     }
   }
-  if (found.size === 0) warn(`${joinRel(dir, 'package.json')}: no entry points resolved`);
+  // (The "no entry points resolved" warning is the caller's: a runtime convention may
+  // still supply entries, e.g. a wrangler `main`.)
+  const noneResolved = found.size === 0 && binFiles.length === 0;
   // Subpath imports (`imports: { "#crypto": { node: "./lib/digest.node.mjs", default:
   // "./lib/digest.mjs" } }`): every condition target is a file the package may load at
   // runtime, and TypeScript follows only one of them, so each one that resolves to a
@@ -534,8 +572,10 @@ export function resolveNpmEntryPoints(
       add(resolveEntry(n, pkgFileSet));
     }
   }
-  const runtime = [...found].filter((f) => !before.has(f));
-  return { entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp), runtime: runtime.sort(cmp), surface: surface.sort(cmp) };
+  const runtime = [...new Set([...[...found].filter((f) => !before.has(f)), ...binFiles.filter((f) => !found.has(f))])];
+  return {
+    entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp), runtime: runtime.sort(cmp), surface: surface.sort(cmp), noneResolved,
+  };
 }
 
 /**
@@ -605,6 +645,113 @@ export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: read
     }
   }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/**
+ * Runtime entry conventions: files a platform or framework loads BY PATH, with no import
+ * from code and no manifest field naming them. One row per convention: `files` = the
+ * condition "one of these package-relative files exists" (omitted: unconditional),
+ * `deps` = "one of these is a declared dependency" (any block, dev included), both
+ * required when both are given; `globs` = the package-relative files it loads
+ * (glob.ts syntax). Only code files (CODE_EXT), never a `.d.ts` (ambient declarations
+ * are not loaded: they are the adapter's `entrySymbols` kind 'ambient'), never a test
+ * file (TEST_GLOBS), a dot dir, `node_modules`, or a file inside a nested package.
+ * Dumb on purpose: it only ever adds runtime entries. The wrangler `main` field is read
+ * separately (wranglerMain).
+ */
+const RUNTIME_ENTRY_CONVENTIONS: ReadonlyArray<{ what: string; files?: string[]; deps?: string[]; globs: string[] }> = [
+  // Cloudflare Pages Functions: file-based routes under functions/.
+  { what: 'Cloudflare Pages Functions', files: ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc', '_routes.json', 'public/_routes.json'], globs: ['functions/**'] },
+  // HonoX: app/server.ts and app/client.ts are the server / client entries; routes and
+  // islands are loaded by the file router (app/global.d.ts is ambient, not an entry).
+  { what: 'HonoX', deps: ['honox'], globs: ['app/server.*', 'app/client.*', 'app/routes/**', 'app/islands/**'] },
+  // Netlify Functions (the directory name is the convention; no config needed).
+  { what: 'Netlify Functions', globs: ['netlify/functions/**', 'netlify/edge-functions/**'] },
+  // Vercel Functions: api/ at the project root.
+  { what: 'Vercel Functions', files: ['vercel.json'], globs: ['api/**'] },
+  // Next.js: pages router and app router, at the root or under src/.
+  { what: 'Next.js', deps: ['next'], globs: ['pages/**', 'app/**', 'src/pages/**', 'src/app/**'] },
+  // SvelteKit / SolidStart file routers.
+  { what: 'SvelteKit / SolidStart', deps: ['@sveltejs/kit', '@solidjs/start'], globs: ['src/routes/**'] },
+  // Nuxt: pages/ (file router) and server/ (Nitro api/routes/middleware/plugins).
+  { what: 'Nuxt', deps: ['nuxt'], globs: ['pages/**', 'server/**'] },
+];
+
+/** Wrangler config files whose `main` is the Worker's entry module. */
+const WRANGLER_CONFIGS = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
+
+/**
+ * The `main` of a package-root wrangler config (package-relative, as written): in TOML
+ * only top-level keys (before the first `[table]`); in JSON/JSONC any `"main": "…"`
+ * (an `env` override adds another). Text scanning, no parser.
+ */
+function wranglerMain(read: (rel: string) => string, cfg: string): string[] {
+  const text = read(cfg);
+  if (cfg.endsWith('.toml')) {
+    const out: string[] = [];
+    for (const line of text.split(/\r?\n/)) {
+      if (/^\s*\[/.test(line)) break;
+      const m = /^\s*main\s*=\s*["']([^"']+)["']/.exec(line);
+      if (m) out.push(m[1]!);
+    }
+    return out;
+  }
+  return [...text.matchAll(/"main"\s*:\s*"([^"]+)"/g)].map((m) => m[1]!);
+}
+
+/**
+ * Runtime entry points by convention (RUNTIME_ENTRY_CONVENTIONS, wrangler `main`) of the
+ * npm package at `dir`, repo-relative, sorted.
+ */
+export function conventionEntryPoints(
+  repoRoot: string, dir: string, repoFiles: readonly string[], deps: ReadonlySet<string>,
+): string[] {
+  const pkgFiles = packageFiles(dir, repoFiles);
+  const fileSet = new Set(pkgFiles);
+  const nested = pkgFiles
+    .filter((f) => f.includes('/') && MANIFEST_NAMES.includes(posix.basename(f)))
+    .map((f) => `${posix.dirname(f)}/`);
+  const ok = (f: string): boolean => CODE_EXT.test(f) && !/\.d\.[cm]?ts$/.test(f)
+    && !f.split('/').some((s) => s.startsWith('.') || s === 'node_modules')
+    && !TEST_GLOBS.some((g) => matchGlob(g, f))
+    && !nested.some((n) => f.startsWith(n));
+  const out = new Set<string>();
+  for (const c of RUNTIME_ENTRY_CONVENTIONS) {
+    if (c.files && !c.files.some((f) => fileSet.has(f))) continue;
+    if (c.deps && !c.deps.some((d) => deps.has(d))) continue;
+    for (const f of pkgFiles) if (ok(f) && c.globs.some((g) => matchGlob(g, f))) out.add(f);
+  }
+  const read = (rel: string): string => {
+    try {
+      return readFileSync(join(repoRoot, joinRel(dir, rel)), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  for (const cfg of WRANGLER_CONFIGS.filter((f) => fileSet.has(f))) {
+    for (const main of wranglerMain(read, cfg)) {
+      const n = normalizeRel(main);
+      const r = n === null || n === '' ? null : resolveEntry(n, fileSet);
+      if (r !== null && ok(r)) out.add(r);
+    }
+  }
+  return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/**
+ * The package.json `files` field as a filter on package-relative paths: a listed dir
+ * covers everything under it, a listed file itself, a glob (glob.ts syntax, plus a
+ * bare `*.ext` for any depth) its matches; `!` negations are ignored. Absent or not
+ * an array of strings: everything is published.
+ */
+function publishedFilter(files: unknown): (f: string) => boolean {
+  if (!Array.isArray(files) || files.length === 0) return () => true;
+  const entries = files.filter((e): e is string => typeof e === 'string' && !e.startsWith('!'))
+    .map((e) => normalizeRel(e)).filter((e): e is string => e !== null && e !== '');
+  if (entries.length === 0) return () => true;
+  return (f) => entries.some((e) => (e.includes('*')
+    ? matchGlob(e, f) || (!e.includes('/') && matchGlob(`**/${e}`, f))
+    : f === e || f.startsWith(`${e}/`)));
 }
 
 /** Local string targets of a package.json `imports` map (`#x` keys; bare package targets skipped). */

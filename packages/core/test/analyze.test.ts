@@ -353,6 +353,28 @@ describe('analyzeOrg on hand-built rows', () => {
     for (const id of [main, work, builder, helper]) expect(reachable(id)).toBe(1);
   });
 
+  it('ambient entry symbols are seeds but never make a package eligible for private_dead (hono.dev)', () => {
+    aliveExport('used');
+    // An app package: no exports, no entry document, only a wrangler-types .d.ts.
+    const site = pkg('site');
+    doc(site, 'worker-configuration.d.ts');
+    const ns = sym(site, 'worker-configuration.d.ts', 'WebAssembly');
+    const member = sym(site, 'worker-configuration.d.ts', 'CompileError', { parent: ns });
+    doc(site, 'worker.ts');
+    const appDecl = sym(site, 'worker.ts', 'app');
+    run("INSERT INTO entry_symbols (symbol_id, kind) VALUES (?, 'ambient')", ns);
+    analyze();
+    expect(findings()).toEqual([]);
+    const reachable = (id: number): number => (db.prepare('SELECT is_entry_reachable AS r FROM symbols WHERE symbol_id = ?').get(id) as { r: number }).r;
+    expect(reachable(member)).toBe(1); // seeded through its namespace owner
+
+    // A runtime entry symbol (or an entry document) does make it eligible.
+    run("INSERT INTO entry_symbols (symbol_id, kind) VALUES (?, 'runtime')", sym(site, 'worker.ts', 'fetchHandler'));
+    analyze();
+    expect(findings()).toEqual([f('app', 'private_dead', ['already_unreachable'])]);
+    expect(() => run("INSERT INTO entry_symbols (symbol_id, kind) VALUES (?, 'other')", appDecl)).toThrow(/CHECK/);
+  });
+
   it('refuses to run before ingest, and marks the DB analyzed even with zero findings', () => {
     const empty = openDb(':memory:');
     try {
@@ -755,7 +777,8 @@ describe('analyzeOrg on hand-built rows', () => {
     try {
       mkdirSync(join(root, 'app/src'), { recursive: true });
       mkdirSync(join(root, 'lib/src'), { recursive: true });
-      writeFileSync(join(root, 'app/src/main.ts'), "import { live } from '@acme/lib';\n// dead1 too\n");
+      db.prepare("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/index.ts', 'dead1')").run(dead1);
+      writeFileSync(join(root, 'app/src/main.ts'), "import { live } from '@acme/lib';\nconst later = 'dead1', dead1 = live;\n");
       writeFileSync(join(root, 'lib/src/fns.ts'), 'export const x = 1;\n');
       const out: string[] = [];
       runWitness({

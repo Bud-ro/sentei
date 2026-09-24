@@ -45,7 +45,11 @@ export interface IngestDiscoverInput {
       path: string;
       /** Repo-relative POSIX. */
       entryPoints: string[];
-      /** Subset of entryPoints loaded by the runtime / a bundler (DiscoverPackage). Optional. */
+      /**
+       * Loaded by the runtime / a bundler (DiscoverPackage): seeds (documents.is_entry);
+       * the exported declarations of those also in entryPoints become entry_symbols.
+       * `bin` targets are here only. Optional.
+       */
       runtimeEntryPoints?: string[];
     }>;
   }>;
@@ -127,7 +131,10 @@ export interface ExportsSidecar {
    * TEST_GLOBS) it becomes a `witness_files` row instead: no flag (unhead's `bench/`
    * blocked 377 findings), the witness scans the file as a consumer of the target.
    * With `relative: true` (own code imported by an unindexed own file) see
-   * IngestCounts.relativeUnindexedImports. Optional.
+   * IngestCounts.relativeUnindexedImports. A `targetPackage` / module naming the package
+   * itself (an own file importing it by name: outside the program, or inside it with
+   * the self-import unresolved) becomes a self `witness_files` row (consumer = target),
+   * whatever its scope. Optional.
    */
   unindexedImports?: Array<{
     file: string; module: string; targetPackage: string; scope?: 'script' | 'docs' | 'test';
@@ -159,8 +166,13 @@ export interface ExportsSidecar {
    * reachability seed that never gets a verdict or a private_dead row, whether or not
    * its file is an entry or it is exported) and keeps an edge from its document's
    * module symbol. Optional.
+   *
+   * `kind` (default 'runtime'): 'ambient' for a global declaration the checker sees
+   * without an import (`declare namespace` / `declare global` in a `.d.ts` such as
+   * wrangler's `worker-configuration.d.ts`). Ambient entry symbols are seeds too, but
+   * never make their package eligible for private_dead (entry_symbols.kind).
    */
-  entrySymbols?: Array<{ file: string; line: number; col: number; name: string }>;
+  entrySymbols?: Array<{ file: string; line: number; col: number; name: string; kind?: 'runtime' | 'ambient' }>;
 }
 
 export interface IngestOptions {
@@ -536,7 +548,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         VALUES (?, ?, ?, ?, ?, ?)`),
       exported: db.prepare('UPDATE symbols SET is_exported = 1 WHERE symbol_id = ?'),
       exportAlias: db.prepare('INSERT OR IGNORE INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)'),
-      entrySymbol: db.prepare('INSERT OR IGNORE INTO entry_symbols (symbol_id) VALUES (?)'),
+      // 'runtime' wins over 'ambient' when a symbol is seeded both ways.
+      entrySymbol: db.prepare(`INSERT INTO entry_symbols (symbol_id, kind) VALUES (?, ?)
+        ON CONFLICT (symbol_id) DO UPDATE SET kind = 'runtime' WHERE excluded.kind = 'runtime' AND kind <> 'runtime'`),
     };
     const addFlag = (packageId: string, flag: IngestFlag, reason: string, file: string | null, target: string | null = null): void => {
       st.flag.run(packageId, flag, reason, file, target);
@@ -782,16 +796,23 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         symbols.set(norm, { symbolId: w.moduleSymbolId, packageId: w.packageId });
         counts.symbols += 1;
       }
-      const isEntry = pkgs.get(w.packageId)!.entryPoints.has(w.file) ? 1 : 0;
+      const pk = pkgs.get(w.packageId)!;
+      const isEntry = pk.entryPoints.has(w.file) || pk.runtimeEntryPoints.has(w.file) ? 1 : 0;
       const isGenerated = generated.has(`${w.repo}\0${w.file}`) || GENERATED_GLOBS.some((g) => matchGlob(g, w.file)) ? 1 : 0;
       st.document.run(w.packageId, w.file, w.moduleSymbolId, isEntry, isGenerated);
       counts.documents += 1;
       counts.generatedDocuments += isGenerated;
     }
 
-    // Parents: nearest enclosing non-namespace descriptor that is an org symbol of
-    // the same package (Foo#bar(). -> Foo#). Files/namespaces are never parents:
-    // a module is not a declaration that keeps its top-level functions alive.
+    // Parents: nearest enclosing descriptor that is an org symbol of the same package
+    // (Foo#bar(). -> Foo#). A file is never a parent: a module is not a declaration that
+    // keeps its top-level functions alive. A namespace descriptor is a parent only when
+    // it is a real declaration (a TS `namespace X {}` / `declare namespace X {}`:
+    // `WebAssembly/CompileError#` -> `WebAssembly/`): defined in the same document, not
+    // that document's module symbol, not a scip-dart import prefix. The walk stops at
+    // the first namespace descriptor either way (Dart module paths, TS file paths).
+    const moduleIds = new Set(docs.map((w) => w.moduleSymbolId));
+    const symbolFile = db.prepare('SELECT file, kind FROM symbols WHERE symbol_id = ?');
     for (const [norm, row] of symbols) {
       if (norm.startsWith('sentei file ')) continue;
       const g = parseScipSymbol(norm);
@@ -799,8 +820,15 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       const ds = parseDescriptors(g.descriptors);
       const head = norm.slice(0, norm.length - g.descriptors.length);
       for (let i = ds.length - 1; i >= 1; i -= 1) {
-        if (ds[i - 1]!.suffix === 'namespace') break;
         const parent = symbols.get(head + ds.slice(0, i).map((d) => d.text).join(''));
+        if (ds[i - 1]!.suffix === 'namespace') {
+          if (parent && parent.packageId === row.packageId && !moduleIds.has(parent.symbolId)) {
+            const pf = symbolFile.get(parent.symbolId) as { file: string; kind: string };
+            const rf = symbolFile.get(row.symbolId) as { file: string; kind: string };
+            if (pf.file === rf.file && pf.kind !== 'import-prefix') st.parent.run(parent.symbolId, row.symbolId);
+          }
+          break;
+        }
         if (parent && parent.packageId === row.packageId) {
           st.parent.run(parent.symbolId, row.symbolId);
           break;
@@ -1032,8 +1060,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           unmatchedEntry.push(`${packageId} ${e.name} at ${e.file}:${e.line + 1}:${e.col + 1}`);
           continue;
         }
+        const kind = e.kind ?? 'runtime';
+        if (kind !== 'runtime' && kind !== 'ambient') {
+          throw new Error(`sentei: ${packageId} exports sidecar: unknown entry symbol kind ${JSON.stringify(kind)}`);
+        }
         edgeRun(st.edge, byId.get(w.moduleSymbolId)!, byId.get(id)!, 'scip');
-        st.entrySymbol.run(id); // a seed on its own: the file need not be an entry
+        st.entrySymbol.run(id, kind); // a seed on its own: the file need not be an entry
       }
       for (const u of data.unresolved) {
         const reason = typeof u === 'string' ? u : (u.reason ?? JSON.stringify(u));
@@ -1062,7 +1094,16 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           continue;
         }
         const target = `npm:${barePackageName(u.module)}`;
-        if (!pkgs.has(target) || target === packageId) {
+        // A self import by name the program could not follow: an own file outside the
+        // program (`build.config.ts`, `eslint.config.mjs`), or an indexed file whose
+        // self-import did not resolve (`import('env-runner/runners/x')`): a self
+        // witness_files row; the witness name-searches the file even when indexed (the
+        // references through that import are missing from SCIP). Never a flag.
+        if (target === packageId) {
+          counts.witnessFiles += Number(st.witnessFile.run(packageId, packageId, u.file).changes);
+          continue;
+        }
+        if (!pkgs.has(target)) {
           warn(`${packageId}: unindexed import of ${JSON.stringify(u.module)} at ${u.file}`
             + ` does not name another org package, ignored`);
           continue;
@@ -1128,9 +1169,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       const exportedTop = db.prepare(`SELECT symbol_id FROM symbols
         WHERE package_id = ? AND file = ? AND is_exported = 1 AND parent_symbol_id IS NULL ORDER BY symbol_id`);
       for (const w of docs) {
-        if (!pkgs.get(w.packageId)!.runtimeEntryPoints.has(w.file)) continue;
+        const pk = pkgs.get(w.packageId)!;
+        // A bin (runtime only, not an entry point) is a seed document; the package's
+        // exports that happen to be declared in it stay ordinary exports.
+        if (!pk.runtimeEntryPoints.has(w.file) || !pk.entryPoints.has(w.file)) continue;
         for (const r of exportedTop.all(w.packageId, w.file) as Array<{ symbol_id: number }>) {
-          counts.runtimeEntrySymbols += Number(st.entrySymbol.run(r.symbol_id).changes);
+          counts.runtimeEntrySymbols += Number(st.entrySymbol.run(r.symbol_id, 'runtime').changes);
         }
       }
     }
@@ -1151,7 +1195,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           warn(`${r.packageId}: unindexed ${r.file} imports own module ${JSON.stringify(r.module)}, which is not an indexed document`);
           continue;
         }
-        for (const t of topPrivate.all(w.packageId, w.file, w.moduleSymbolId) as Array<{ symbol_id: number }>) st.entrySymbol.run(t.symbol_id);
+        for (const t of topPrivate.all(w.packageId, w.file, w.moduleSymbolId) as Array<{ symbol_id: number }>) st.entrySymbol.run(t.symbol_id, 'runtime');
       }
     }
 
