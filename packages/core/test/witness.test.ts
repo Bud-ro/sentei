@@ -643,7 +643,8 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
     });
     witness(org);
     expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self-string:src/transform.ts:2']);
-    expectMismatch(org, org.ids['HeadStream']!, ['witness_mismatch:self-string:src/tags.ts:1']);
+    // A bare quoted name in a file with no codegen-shaped literal is not a hit (round 3).
+    expectPass(org, org.ids['HeadStream']!);
     expectMismatch(org, org.ids['impl']!, ['witness_mismatch:self-string:src/alias.ts:1']);
     expectMismatch(org, org.ids['withCtx']!, ['witness_mismatch:self-string:src/gen.ts:1']);
     expectMismatch(org, org.ids['listed']!, ['witness_mismatch:self-string:src/gen.ts:2']);
@@ -653,7 +654,162 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
     expectPass(org, org.ids['gone']!); // test files are skipped
   });
 
-  it('the codegen template case: a self hit, reported once per line', () => {
+  it('module specifiers are never quoted names (@hono/casbin#casbin)', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'casbin', file: 'src/index.ts' }, { name: 'dep', file: 'src/index.ts' }, { name: 'lazy', file: 'src/index.ts' }],
+      libFiles: {
+        // A codegen literal in the same file, so a bare quoted name WOULD qualify.
+        'src/index.ts': [
+          "import { Enforcer } from 'casbin';",
+          "export * from 'dep';",
+          "const l = require('lazy');",
+          "const m = import('lazy');",
+          'const code = `import { x } from "y"`;',
+        ].join('\n'),
+      },
+    });
+    witness(org);
+    expectPass(org, org.ids['casbin']!);
+    expectPass(org, org.ids['dep']!);
+    expectPass(org, org.ids['lazy']!);
+  });
+
+  it('a bare quoted name needs a codegen-shaped literal in the same file (sentry, MedleyRouter vs unctx)', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'sentry', file: 'src/a.ts' },
+        { name: 'MedleyRouter', file: 'src/b.ts' },
+        { name: 'executeAsync', file: 'src/c.ts' },
+        { name: 'built', file: 'src/c.ts' },
+      ],
+      libFiles: {
+        'src/sentry.ts': "export const mw = (c) => { c.set('sentry', 1); };\n",
+        'src/router.ts': "export class R { name = 'MedleyRouter'; }\n",
+        // unctx: the transform builds import text (with a variable module path).
+        'src/transform.ts': 'const helperName = "executeAsync";\nexport const gen = (x, mod) => `import { ${x} } from "${mod}"`;\n',
+        // An AST-builder call qualifies the file too.
+        'src/ast.ts': "const n = 'built';\nt.importDeclaration([], t.stringLiteral('x'));\n",
+      },
+    });
+    witness(org);
+    expectPass(org, org.ids['sentry']!);
+    expectPass(org, org.ids['MedleyRouter']!);
+    expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self-string:src/transform.ts:1']);
+    expectMismatch(org, org.ids['built']!, ['witness_mismatch:self-string:src/ast.ts:1']);
+  });
+
+  it('codegen: only names inside the qualifying literal / builder call are hits (ClerkAuthVariables)', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'clerkMiddleware', file: 'src/index.ts' },
+        { name: 'ClerkAuthVariables', file: 'src/index.ts' },
+        { name: 'Wrapped', file: 'src/index.ts' },
+        { name: 'Near', file: 'src/index.ts' },
+      ],
+      libFiles: {
+        'src/gen.ts': [
+          'type X = ClerkAuthVariables;',
+          "export const tpl = `import { clerkMiddleware } from '@acme/lib'`;",
+          'const Near = 1;',
+          "t.importDeclaration([spec('Wrapped')], t.stringLiteral('@acme/lib'));",
+        ].join('\n'),
+      },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['clerkMiddleware']!, ['witness_mismatch:self:src/gen.ts:2']);
+    expectMismatch(org, org.ids['Wrapped']!, ['witness_mismatch:self:src/gen.ts:4']);
+    expectPass(org, org.ids['ClerkAuthVariables']!);
+    expectPass(org, org.ids['Near']!);
+  });
+
+  it('self consumer: indexed own files and directive lines do not count; self-string skips other languages and the definition line', () => {
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [
+        { name: 'MockClient', file: 'lib/src/mock_client.dart', line: 0 },
+        { name: 'UsedUnindexed', file: 'lib/src/x.dart', line: 0 },
+        { name: 'component', file: 'lib/src/tags.dart', line: 0 },
+        { name: 'viewerApp', file: 'lib/src/x.dart', line: 1 },
+      ],
+      libFiles: {
+        // Indexed: the indexer saw these uses.
+        'lib/mock.dart': "export 'package:lib_pub/src/mock_client.dart' show MockClient;\n",
+        'lib/src/user.dart': "import 'package:lib_pub/src/mock_client.dart';\nfinal c = MockClient();\n",
+        // Unindexed (tool/ is outside lib/): a real use, but directive lines never count.
+        'bin/run.dart': "import 'package:lib_pub/src/x.dart'\n    show UsedUnindexed;\nexport 'package:lib_pub/src/mock_client.dart' show MockClient;\nvoid main() => UsedUnindexed();\n",
+        // Definition line naming itself: opentracing `component = 'component'`; a codegen
+        // literal in the file would otherwise qualify the bare name.
+        'lib/src/tags.dart': "const component = 'component';\nfinal s = \"import 'package:other/x.dart';\";\n",
+        // A vendored JS bundle in a pub package is not read by self-string.
+        'lib/static/viewer.js': "const code = `import { viewerApp } from 'x'`;\n",
+      },
+    });
+    for (const f of ['lib/mock.dart', 'lib/src/user.dart', 'lib/src/tags.dart']) {
+      org.db.prepare("INSERT INTO documents (package_id, file) VALUES ('pub:lib_pub', ?)").run(f);
+    }
+    witness(org);
+    expectPass(org, org.ids['MockClient']!);
+    expectMismatch(org, org.ids['UsedUnindexed']!, ['witness_mismatch:self:bin/run.dart:4']);
+    expectPass(org, org.ids['component']!);
+    expectPass(org, org.ids['viewerApp']!);
+  });
+
+  it('generated files of P (documents.is_generated, GENERATED_GLOBS) are never self-scanned (capnp-es)', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'Person', file: 'src/schema.ts' }, { name: 'Address', file: 'src/schema.ts' }, { name: 'Real', file: 'src/schema.ts' }],
+      libFiles: {
+        // Sidecar-listed generated file: quotes names, imports P by name, has a template.
+        'src/person.capnp.ts': "import { Struct } from '@acme/lib';\nexport const n = { displayName: 'Person' };\nconst t = `import { Person } from '@acme/lib'`;\nPerson;\n",
+        // Unindexed, generated by path.
+        'src/address.generated.ts': "import { Address } from '@acme/lib';\nAddress();\n",
+        // Control: a real unindexed own importer.
+        'tools/run.ts': "import { Real } from '@acme/lib';\nReal();\n",
+      },
+    });
+    org.db.prepare("INSERT INTO documents (package_id, file, is_generated) VALUES ('npm:@acme/lib', 'src/person.capnp.ts', 1)").run();
+    // An indexed, generated document is skipped by is_generated even though it is indexed.
+    witness(org);
+    expectPass(org, org.ids['Person']!);
+    expectPass(org, org.ids['Address']!);
+    expectMismatch(org, org.ids['Real']!, ['witness_mismatch:self:tools/run.ts:1', 'witness_mismatch:self:tools/run.ts:2']);
+  });
+
+  it('scans witness_files rows (scoped unindexed imports) as consumer files, under the test/docs policy', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'benched' }, { name: 'documented' }, { name: 'quiet' }],
+      files: {
+        // @acme/nested declares no dependency on P; its bench file imports it.
+        'nested/bench/run.ts': "import { benched } from '@acme/lib';\nbenched();\n",
+        'nested/docs/x.ts': "import { documented } from '@acme/lib';\ndocumented();\n",
+        'nested/bench/other.ts': "import { quiet } from '@acme/lib';\n",
+      },
+    });
+    const ins = org.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/nested', 'npm:@acme/lib', ?)");
+    for (const f of ['pkg/nested/bench/run.ts', 'pkg/nested/docs/x.ts']) ins.run(f);
+    witness(org);
+    expectMismatch(org, org.ids['benched']!, [
+      'witness_mismatch:npm:@acme/nested:pkg/nested/bench/run.ts:1',
+      'witness_mismatch:npm:@acme/nested:pkg/nested/bench/run.ts:2',
+    ]);
+    // docs files do not count (countDocsAsConsumers off); other.ts is not a witness_files row.
+    expectPass(org, org.ids['documented']!);
+    expectPass(org, org.ids['quiet']!);
+
+    // A self row (an own .vue component importing own code relatively): no import of P needed.
+    const sfc = buildOrg({ symbols: [{ name: 'CardProps' }, { name: 'unnamed' }], libFiles: { 'components/Card.vue': "<script setup lang=\"ts\">\nimport { CardProps } from '../src/index';\n</script>\n" } });
+    sfc.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/lib', 'npm:@acme/lib', 'components/Card.vue')").run();
+    witness(sfc);
+    expectMismatch(sfc, sfc.ids['CardProps']!, ['witness_mismatch:self:components/Card.vue:2']);
+    expectPass(sfc, sfc.ids['unnamed']!);
+
+    // A listed file that is gone from the checkout fails closed.
+    const gone = buildOrg({ symbols: [{ name: 'x' }] });
+    gone.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/nested', 'npm:@acme/lib', 'pkg/nested/bench/gone.ts')").run();
+    witness(gone);
+    expectMismatch(gone, gone.ids['x']!, ['witness_mismatch:npm:@acme/nested:checkout missing']);
+  });
+
+  it('the codegen template case: the quoted helper name is a self-string hit (names outside the template are not self hits)', () => {
     const org = buildOrg({
       symbols: [{ name: 'executeAsync', file: 'src/ctx.ts' }, { name: 'executeAsyncMode', file: 'src/ctx.ts' }],
       libFiles: {
@@ -661,7 +817,7 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
       },
     });
     witness(org);
-    expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self:src/transform.ts:1']);
+    expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self-string:src/transform.ts:1']);
     expectPass(org, org.ids['executeAsyncMode']!);
   });
 

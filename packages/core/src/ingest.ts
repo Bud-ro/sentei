@@ -13,6 +13,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, posix } from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { DISCOVER_REASON_PREFIX } from './discover.ts';
+import { matchGlob } from './glob.ts';
+import { GENERATED_GLOBS } from './globs.ts';
 import {
   normalizeSymbolVersion,
   occurrenceEnclosingSpan,
@@ -43,6 +45,8 @@ export interface IngestDiscoverInput {
       path: string;
       /** Repo-relative POSIX. */
       entryPoints: string[];
+      /** Subset of entryPoints loaded by the runtime / a bundler (DiscoverPackage). Optional. */
+      runtimeEntryPoints?: string[];
     }>;
   }>;
 }
@@ -118,9 +122,36 @@ export interface ExportsSidecar {
    * JS/TS files of the package outside every tsconfig program (so not indexed) that
    * import an org package, e.g. `eslint.config.mjs` importing `@acme/eslint-config`.
    * `file` is repo-relative; `targetPackage` the bare npm name imported. Each becomes a
-   * targeted `unindexed_consumer` flag: it blocks verdicts of that package only. Optional.
+   * targeted `unindexed_consumer` flag: it blocks verdicts of that package only. With a
+   * `scope` (the file is script / docs / test code: SCRIPT_GLOBS / DOCS_GLOBS /
+   * TEST_GLOBS) it becomes a `witness_files` row instead: no flag (unhead's `bench/`
+   * blocked 377 findings), the witness scans the file as a consumer of the target.
+   * With `relative: true` (own code imported by an unindexed own file) see
+   * IngestCounts.relativeUnindexedImports. Optional.
    */
-  unindexedImports?: Array<{ file: string; module: string; targetPackage: string }>;
+  unindexedImports?: Array<{
+    file: string; module: string; targetPackage: string; scope?: 'script' | 'docs' | 'test';
+    /**
+     * true: `module` is a repo-relative file of the package's OWN code (a `.vue` /
+     * `.svelte` single-file component importing `./components`), `targetPackage` the
+     * package itself. Never a package name: see IngestCounts.relativeUnindexedImports.
+     */
+    relative?: boolean;
+  }>;
+  /**
+   * `{ ...ns }` spreads of an org namespace import (`import * as _pkg from './utils/pkg';
+   * export const utils = Object.freeze({ ..._pkg })`): the object carries every export
+   * of the module, which SCIP records only as a use of the local `_pkg`. file/line/col
+   * are the consumer position (repo-relative); targetFile is relative to the target
+   * package dir. Optional.
+   */
+  namespaceSpreadRefs?: Array<{ file: string; line: number; col: number; targetPackage: string; targetFile: string }>;
+  /**
+   * Repo-relative files of the package that are generated (`@generated` / "automatically
+   * generated" / "do not edit" headers, or GENERATED_GLOBS): documents.is_generated.
+   * Optional.
+   */
+  generatedFiles?: string[];
   /**
    * Declarations the runtime or a tool invokes without any code reference (Dart `main()`
    * of a script, a build.yaml builder factory, dart_dev's `config`), at their name
@@ -166,6 +197,36 @@ export interface IngestCounts {
   resolvedUnresolvedImports: number;
   /** Sidecar entrySymbols that matched no definition (warned). */
   unmatchedEntrySymbols: number;
+  /** Sidecar namespaceSpreadRefs applied (edges to every symbol of the target module). */
+  namespaceSpreadRefs: number;
+  /** namespaceSpreadRefs whose consumer or target module is not an indexed document (warned). */
+  unmatchedNamespaceSpreadRefs: number;
+  /**
+   * SCIP references into another org package whose symbol has only namespace
+   * descriptors (a module symbol such as `…/\`utils.d.ts\`/`): not a reference to a
+   * declaration, so not version skew; dropped instead of an unresolved_refs row.
+   */
+  droppedModuleRefs: number;
+  /** witness_files rows (scoped sidecar unindexedImports). */
+  witnessFiles: number;
+  /** Documents marked is_generated (sidecar generatedFiles or GENERATED_GLOBS). */
+  generatedDocuments: number;
+  /**
+   * Exported top-level declarations of runtime entry files (discover
+   * runtimeEntryPoints: `imports` map arms, Vite / HTML client entries) made
+   * entry_symbols: loaded by the runtime or a bundler, never a verdict.
+   */
+  runtimeEntrySymbols: number;
+  /**
+   * Sidecar unindexedImports with `relative: true`: an unindexed own file (a `.vue` /
+   * `.svelte` component) importing the package's own module `module`. Each becomes a
+   * self `witness_files` row (consumer = target = the package: the witness name-searches
+   * the component, so a package export it names is downgraded), and the imported
+   * module's top-level declarations that are not package exports become entry_symbols
+   * (we cannot see which names the component uses: keep them all alive, fail closed).
+   * An imported module that is not an indexed document is warned about.
+   */
+  relativeUnindexedImports: number;
   /**
    * Packages whose .scip could not be used (undecodable, or containing unparseable SCIP
    * symbols): flagged index_failed and skipped, the rest of the org ingested (warned).
@@ -213,6 +274,7 @@ interface PkgInfo {
   repo: string;
   path: string; // '' for the repo root, else 'a/b'
   entryPoints: Set<string>;
+  runtimeEntryPoints: Set<string>;
 }
 
 interface DocWork {
@@ -422,6 +484,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       }
       pkgs.set(p.packageId, {
         packageId: p.packageId, manager: managerOf(p.packageId), repo: r.repo, path: normPkgPath(p.path), entryPoints: new Set(p.entryPoints),
+        runtimeEntryPoints: new Set(p.runtimeEntryPoints ?? []),
       });
     }
   }
@@ -430,7 +493,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0,
     namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, shorthandRefs: 0, unmatchedShorthandRefs: 0, exportAliases: 0,
     resolvedUnresolvedImports: 0,
-    unmatchedEntrySymbols: 0, packageErrors: 0, skippedInvalidOccurrences: 0, warnings: 0,
+    unmatchedEntrySymbols: 0, namespaceSpreadRefs: 0, unmatchedNamespaceSpreadRefs: 0, droppedModuleRefs: 0, witnessFiles: 0,
+    generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -442,6 +506,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     db.exec('DELETE FROM edges');
     db.exec('DELETE FROM occurrences');
     db.exec('DELETE FROM unresolved_refs');
+    db.exec('DELETE FROM witness_files');
     db.exec('DELETE FROM documents');
     db.exec('DELETE FROM entry_symbols');
     db.exec('DELETE FROM symbols');
@@ -460,7 +525,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       repoStatus: db.prepare('UPDATE repos SET index_status = ?, indexed_at = ? WHERE repo = ?'),
       symbol: db.prepare('INSERT INTO symbols (symbol_str, package_id, file, line, col, kind, name) VALUES (?, ?, ?, ?, ?, ?, ?)'),
       parent: db.prepare('UPDATE symbols SET parent_symbol_id = ? WHERE symbol_id = ?'),
-      document: db.prepare('INSERT INTO documents (package_id, file, module_symbol_id, is_entry) VALUES (?, ?, ?, ?)'),
+      document: db.prepare('INSERT INTO documents (package_id, file, module_symbol_id, is_entry, is_generated) VALUES (?, ?, ?, ?, ?)'),
+      witnessFile: db.prepare('INSERT OR IGNORE INTO witness_files (consumer_package_id, target_package_id, file) VALUES (?, ?, ?)'),
       occurrence: db.prepare(`INSERT INTO occurrences
         (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -705,6 +771,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     }
 
     // Documents (+ synthetic file symbols where the indexer emitted no module symbol).
+    // is_generated: listed in a sidecar's generatedFiles, or a GENERATED_GLOBS path (so
+    // Dart, whose adapter has no such field, keeps working).
+    const generated = new Set(sidecars.flatMap(({ repo, data }) => (data.generatedFiles ?? []).map((f) => `${repo}\0${f}`)));
     for (const w of docs) {
       if (w.moduleSymbolId === 0) {
         const norm = `sentei file ${w.packageId} ${w.file}`;
@@ -714,8 +783,10 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         counts.symbols += 1;
       }
       const isEntry = pkgs.get(w.packageId)!.entryPoints.has(w.file) ? 1 : 0;
-      st.document.run(w.packageId, w.file, w.moduleSymbolId, isEntry);
+      const isGenerated = generated.has(`${w.repo}\0${w.file}`) || GENERATED_GLOBS.some((g) => matchGlob(g, w.file)) ? 1 : 0;
+      st.document.run(w.packageId, w.file, w.moduleSymbolId, isEntry, isGenerated);
       counts.documents += 1;
+      counts.generatedDocuments += isGenerated;
     }
 
     // Parents: nearest enclosing non-namespace descriptor that is an org symbol of
@@ -807,6 +878,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         if (!row) {
           const target = symbolPackage(p);
           if (target !== undefined && target !== w.packageId) {
+            // A module / namespace symbol (`…/\`utils.d.ts\`/`) names a file, not a
+            // declaration: skew residue, not a missing symbol.
+            if (p.descriptors.every((d) => d.suffix === 'namespace')) {
+              counts.droppedModuleRefs += 1;
+              continue;
+            }
             st.unresolved.run(w.packageId, target, norm, w.file, start.line, start.col);
             counts.unresolved += 1;
           }
@@ -926,6 +1003,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     const unmatched: string[] = [];
     const unmatchedEntry: string[] = [];
     const exportedIds = new Set<number>();
+    /** Sidecar unindexedImports with `relative: true` (handled after the export surface). */
+    const relativeImports: Array<{ packageId: string; repo: string; file: string; module: string }> = [];
     const docByFile = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
     for (const { packageId, repo, data } of sidecars) {
       for (const e of data.exports) {
@@ -975,11 +1054,21 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       }
       // Unindexed files importing an org package: we cannot see what they use, so the
       // target gets no verdict (blocked_packages); the consumer itself stays transparent.
+      // Scoped ones (script / docs / test files) go to witness_files instead: they must
+      // not block a whole package, the witness reads them.
       for (const u of data.unindexedImports ?? []) {
+        if (u.relative === true) {
+          relativeImports.push({ packageId, repo, file: u.file, module: u.module });
+          continue;
+        }
         const target = `npm:${barePackageName(u.module)}`;
         if (!pkgs.has(target) || target === packageId) {
           warn(`${packageId}: unindexed import of ${JSON.stringify(u.module)} at ${u.file}`
             + ` does not name another org package, ignored`);
+          continue;
+        }
+        if (u.scope !== undefined) {
+          counts.witnessFiles += Number(st.witnessFile.run(packageId, target, u.file).changes);
           continue;
         }
         addFlag(packageId, 'unindexed_consumer', `unindexed file imports ${u.module}`, u.file, target);
@@ -1030,6 +1119,96 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       }
     }
 
+    // ---- Runtime entry files (after the export surface is known) ------------
+    // An `imports` map arm (`#crypto` → digest.node.mjs / digest.mjs) or a Vite input is
+    // loaded by the runtime / bundler: its exports are not package surface that some
+    // importer must use, so they are entry_symbols (seeds, no verdict), like a Dart
+    // `main`. Only exported top-level declarations; privates follow reachability.
+    {
+      const exportedTop = db.prepare(`SELECT symbol_id FROM symbols
+        WHERE package_id = ? AND file = ? AND is_exported = 1 AND parent_symbol_id IS NULL ORDER BY symbol_id`);
+      for (const w of docs) {
+        if (!pkgs.get(w.packageId)!.runtimeEntryPoints.has(w.file)) continue;
+        for (const r of exportedTop.all(w.packageId, w.file) as Array<{ symbol_id: number }>) {
+          counts.runtimeEntrySymbols += Number(st.entrySymbol.run(r.symbol_id).changes);
+        }
+      }
+    }
+
+    // ---- Relative unindexed imports (own SFC files importing own modules) -----
+    {
+      const docAt = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
+      const topPrivate = db.prepare(`SELECT symbol_id FROM symbols
+        WHERE package_id = ? AND file = ? AND parent_symbol_id IS NULL AND is_exported = 0 AND symbol_id <> ? ORDER BY symbol_id`);
+      for (const r of relativeImports) {
+        counts.witnessFiles += Number(st.witnessFile.run(r.packageId, r.packageId, r.file).changes);
+        counts.relativeUnindexedImports += 1;
+        const mod = posix.normalize(r.module);
+        const w = ['', '.ts', '.tsx', '.js', '.mjs', '.jsx', '/index.ts', '/index.js']
+          .map((ext) => docAt.get(`${r.repo}\0${mod}${ext}`))
+          .find((d) => d !== undefined && d.packageId === r.packageId);
+        if (!w) {
+          warn(`${r.packageId}: unindexed ${r.file} imports own module ${JSON.stringify(r.module)}, which is not an indexed document`);
+          continue;
+        }
+        for (const t of topPrivate.all(w.packageId, w.file, w.moduleSymbolId) as Array<{ symbol_id: number }>) st.entrySymbol.run(t.symbol_id);
+      }
+    }
+
+    // ---- Sidecar namespaceSpreadRefs (after the export surface is known) -------
+    // `{ ..._pkg }` of `import * as _pkg from './utils/pkg'` hands out every export of the
+    // module; SCIP sees only the local `_pkg`. Edges (reachability) from the enclosing
+    // symbol at the consumer position to EVERY symbol defined in the target document
+    // (top-level and nested, not the module symbol). Occurrences (reference counting)
+    // for the target's top-level exported symbols (is_exported: those are the ones that
+    // get verdicts; a namespace object holds only the module's exports): in the same
+    // package (an entry export used only through the spread is used, not dead), and
+    // across packages unless the consumer already has a namespace_dynamic flag targeted
+    // at the target package (the index adapter pairs every cross-package spread / `D[k]`
+    // with one): that flag already withholds the target's verdicts (`blocked`, which
+    // names the blocker to fix), and counting would silently turn them into "alive".
+    {
+      const docAt = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
+      const occAt = db.prepare('SELECT 1 FROM occurrences WHERE symbol_id = ? AND package_id = ? AND file = ? AND line = ? AND col = ? LIMIT 1');
+      const inDoc = db.prepare(`SELECT symbol_id, parent_symbol_id IS NULL AND is_exported = 1 AS counted
+        FROM symbols WHERE package_id = ? AND file = ? AND symbol_id <> ? ORDER BY symbol_id`);
+      const nsFlagged = db.prepare(`SELECT 1 FROM package_flags
+        WHERE package_id = ? AND target_package_id = ? AND flag = 'namespace_dynamic' LIMIT 1`);
+      const unmatchedSpread: string[] = [];
+      for (const { packageId, repo, data } of sidecars) {
+        for (const r of data.namespaceSpreadRefs ?? []) {
+          const label = `${packageId} ${r.file}:${r.line + 1}:${r.col + 1} ...${r.targetPackage}/${r.targetFile}`;
+          const target = pkgs.get(`npm:${r.targetPackage}`);
+          if (!target) {
+            warn(`namespace spread ref ${label}: target is not an org package, ignored`);
+            continue;
+          }
+          const w = docAt.get(`${repo}\0${r.file}`);
+          const tw = docAt.get(`${target.repo}\0${posix.normalize(posix.join(target.path || '.', r.targetFile))}`);
+          if (!w || w.packageId !== packageId || !tw || tw.packageId !== target.packageId) {
+            unmatchedSpread.push(label);
+            continue;
+          }
+          const from = byId.get(enclosingAt(w, r.line, r.col))!;
+          const rows = inDoc.all(tw.packageId, tw.file, tw.moduleSymbolId) as Array<{ symbol_id: number; counted: number }>;
+          const count = tw.packageId === w.packageId || !nsFlagged.get(w.packageId, tw.packageId);
+          for (const t of rows) {
+            const to = byId.get(t.symbol_id)!;
+            edgeRun(st.edge, from, to, 'scip');
+            if (count && t.counted === 1 && !occAt.get(t.symbol_id, w.packageId, w.file, r.line, r.col)) {
+              st.occurrence.run(t.symbol_id, w.packageId, to.packageId, w.file, r.line, r.col, 0, from.symbolId, 0);
+              counts.occurrences += 1;
+            }
+          }
+          counts.namespaceSpreadRefs += 1;
+        }
+      }
+      counts.unmatchedNamespaceSpreadRefs = unmatchedSpread.length;
+      if (unmatchedSpread.length > 0) {
+        warn(`${unmatchedSpread.length} namespace spread ref(s) match no indexed document: ${unmatchedSpread.join('; ')}`);
+      }
+    }
+
     counts.exported = exportedIds.size;
     counts.unmatchedExports = unmatched.length;
     if (unmatched.length > 0) warn(`${unmatched.length} sidecar export(s) match no SCIP definition: ${unmatched.join('; ')}`);
@@ -1077,6 +1256,10 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     + `exported=${counts.exported} unresolved=${counts.unresolved} flags=${counts.flags} unmatchedExports=${counts.unmatchedExports} `
     + `namespaceMemberRefs=${counts.namespaceMemberRefs} shorthandRefs=${counts.shorthandRefs} exportAliases=${counts.exportAliases}`
     + (counts.resolvedUnresolvedImports > 0 ? ` resolvedUnresolvedImports=${counts.resolvedUnresolvedImports}` : '')
+    + (counts.namespaceSpreadRefs > 0 ? ` namespaceSpreadRefs=${counts.namespaceSpreadRefs}` : '')
+    + (counts.droppedModuleRefs > 0 ? ` droppedModuleRefs=${counts.droppedModuleRefs}` : '')
+    + (counts.witnessFiles > 0 ? ` witnessFiles=${counts.witnessFiles}` : '')
+    + (counts.generatedDocuments > 0 ? ` generatedDocuments=${counts.generatedDocuments}` : '')
     + (counts.packageErrors > 0 ? ` packageErrors=${counts.packageErrors}` : '')
     + (counts.skippedInvalidOccurrences > 0 ? ` skippedInvalidOccurrences=${counts.skippedInvalidOccurrences}` : ''));
   return counts;

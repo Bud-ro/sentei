@@ -9,7 +9,10 @@
 //   `**/<dir>/**`        a directory segment anywhere in the path
 // Patterns are matched against repo-relative POSIX paths.
 
-/** Files that are tests or test support (mocks, fixtures, e2e, stories…). */
+/**
+ * Files that are tests or test support (mocks, fixtures, e2e, stories, vitest type
+ * tests `*.test-d.ts`, test-utils / testing helpers…).
+ */
 export const TEST_GLOBS: readonly string[] = Object.freeze([
   '**/*.test.*',
   '**/*_test.dart',
@@ -25,6 +28,12 @@ export const TEST_GLOBS: readonly string[] = Object.freeze([
   '**/e2e/**',
   '**/test-integration/**',
   '**/__schemas__/**',
+  '**/mocks.*',
+  '**/*.test-d.*',
+  '**/test-utils.*',
+  '**/test-utils/**',
+  '**/testing/**',
+  '**/*.mock.*',
 ]);
 
 /** Files that are documentation or examples. */
@@ -58,7 +67,9 @@ export const GENERATED_GLOBS: readonly string[] = Object.freeze([
 
 /**
  * Runnable code that is neither library surface nor a test: playgrounds, benchmarks,
- * sandboxes, scripts and tools. Their references count like any other file's, their
+ * sandboxes, scripts and tools, and tool configs (`vitest.config.ts`, `vite.config.ts`,
+ * `eslint.config.mjs`, `tsup.config.ts`, `rollup.config.js`, `vitest.workspace.ts`: run
+ * by the tool, not imported). Their references count like any other file's, their
  * documents are reachability seeds (they are run directly), and nothing DEFINED in them
  * gets a verdict or a private_dead row. Same shapes as above; the `script_files` view in
  * analyze.sql spells the same list.
@@ -73,4 +84,7 @@ export const SCRIPT_GLOBS: readonly string[] = Object.freeze([
   '**/scripts/**',
   '**/tool/**',
   '**/tools/**',
+  '**/script/**',
+  '**/*.config.*',
+  '**/*.workspace.*',
 ]);

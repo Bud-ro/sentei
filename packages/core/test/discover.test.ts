@@ -35,11 +35,14 @@ describe('discoverLocal on fixtures/org-small', () => {
   it('builds the model and writes it to the DB', () => {
     const logs: string[] = [];
     const model = discoverLocal({ orgDir: FIXTURE, log: (l) => logs.push(l), now: 1_700_000_000 });
-    expect(logs).toEqual(['acme/tool-py: npm:@acme/tool-py flagged unindexed_consumer (1 .py file(s), e.g. scripts/build.py)']);
+    expect(logs).toEqual([
+      'acme/lib-cascade: package.json: client entry points from index.html / vite.config: src/client.ts',
+      'acme/tool-py: npm:@acme/tool-py flagged unindexed_consumer (1 .py file(s), e.g. scripts/build.py)',
+    ]);
     expect(model.org).toBe('acme');
     expect(model.source).toEqual({ kind: 'local', dir: FIXTURE });
     expect(model.generatedAt).toBe(1_700_000_000);
-    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'lib-core', 'lib-dyn', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'tool-py'];
+    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'lib-cascade', 'lib-core', 'lib-dyn', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'tool-py'];
     expect(model.repos.map((r) => r.repo)).toEqual(REPOS.map((n) => `acme/${n}`));
     expect(model.repos[0]!.localPath).toBe(join(FIXTURE, 'repos', 'app'));
 
@@ -52,6 +55,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:@acme/app-dynamic', repo: 'acme/app-dynamic', path: '.', manager: 'npm', name: '@acme/app-dynamic', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/load.cts","src/main.ts"]' },
       { package_id: 'npm:@acme/app-skew', repo: 'acme/app-skew', path: '.', manager: 'npm', name: '@acme/app-skew', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       { package_id: 'npm:@acme/broken', repo: 'acme/repo-broken', path: '.', manager: 'npm', name: '@acme/broken', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
+      // exports "." with an unbuilt `require` arm (fine: `import` resolves), `imports` map arms, index.html client entry
+      { package_id: 'npm:@acme/cascade', repo: 'acme/lib-cascade', path: '.', manager: 'npm', name: '@acme/cascade', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/client.ts","src/impl.node.ts","src/impl.ts","src/index.ts"]' },
       { package_id: 'npm:@acme/consumer', repo: 'acme/app-consumer', path: '.', manager: 'npm', name: '@acme/consumer', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       { package_id: 'npm:@acme/core', repo: 'acme/lib-core', path: '.', manager: 'npm', name: '@acme/core', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       { package_id: 'npm:@acme/dyn', repo: 'acme/lib-dyn', path: '.', manager: 'npm', name: '@acme/dyn', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
@@ -94,7 +99,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/gone')").run();
     db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:@acme/core', 'src/index.ts', 'x')").run();
     writeDiscoverToDb(db, model);
-    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 11 }]);
+    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 12 }]);
     expect(all("SELECT count(*) AS n FROM repos WHERE repo = 'acme/gone'")).toEqual([{ n: 0 }]);
     expect(all('SELECT count(*) AS n FROM symbols')).toEqual([{ n: 0 }]);
   });
@@ -408,7 +413,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 11 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 12 }]);
   });
 });
 

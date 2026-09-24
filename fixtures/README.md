@@ -40,6 +40,7 @@ Findings rows: `package_id`, `symbol`, `file` (repo-relative), `verdict`,
 | `app-skew` | `@acme/app-skew` | private | pinned to widgets `1.0.0`, names a removed export |
 | `repo-broken` | `@acme/broken` | private | invalid `tsconfig.json` → index fails |
 | `tool-py` | `@acme/tool-py` | private | consumer of y with a Python file (`scripts/build.py`) → `unindexed_consumer` |
+| `lib-cascade` | `@acme/cascade` | private | no org consumer; exercises the witness → analyze cascade, `exports` conditions, the `imports` map and a Vite `index.html` entry (see below) |
 
 Note: `lib-widgets` imports `@acme/y`, so it typechecks only with
 `node_modules/@acme/y` linked (as the indexer does). `app-skew` fails typecheck
@@ -75,6 +76,10 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | `keep` list suppresses a finding | `sentei.json` keep `npm:@acme/widgets#keptFn` (`lib-widgets/src/misc.ts`) | no row |
 | Non-indexed-language consumer → `unindexed_consumer` | `tool-py/scripts/build.py` (flag set by discover; `.sh`/YAML/JSON/Markdown do not count) → `@acme/y#yUnused` | blocked, `blocked_by ["npm:@acme/broken:index_failed", "npm:@acme/tool-py:unindexed_consumer"]` |
 | Witness: corrupted `.scip` drops a ref → `needs_review` / `witness_mismatch` | — | TODO (needs checked-in `.scip` snapshots) |
+| Witness downgrade propagates: a candidate kept by the witness stops unlocking its helpers, and the dead island it alone used reverts to an unexport | `lib-cascade/src/index.ts`: `viewer` (named by the unindexed `bin/viewer.mjs`, which imports the package by name) uses `initParams`, `helperC`; `initParams` uses `helperA` | `viewer` needs_review `witness_mismatch:self:bin/viewer.mjs:*`; `initParams` unexport_candidate (a dead island at analyze time); `helperA`/`helperC` alive; control `dropped` deletion_candidate + `helperB` private_dead `unlocked_by:dropped` |
+| `exports` entry with one unresolvable condition | `lib-cascade/package.json` `"."`: `import` → `src/index.ts`, `require` → unbuilt `dist/cjs/index.cjs` | not `opaque_consumer` (one condition resolves) |
+| `imports` map arms are runtime entries | `lib-cascade/package.json` `#impl` → `src/impl.node.ts` (never picked by tsc) / `src/impl.ts` | both `digest`s alive (entry_symbols), no private_dead |
+| Vite `index.html` `<script src>` is an entry | `lib-cascade/index.html` → `src/client.ts` (`boot()` called at top level) | `boot` alive |
 | Dart items | `fixtures/org-dart` (see [`org-dart/README.md`](org-dart/README.md) for the §8 Dart checklist) | `org-dart/expected-findings*.json` |
 
 Consumer files that import `@acme/widgets` deliberately never mention the names

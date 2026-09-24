@@ -47,6 +47,12 @@ export interface DiscoverPackage {
    * `opaque_consumer` flag. Optional: absent in older discover.json files (= []).
    */
   unresolvedEntryPoints?: string[];
+  /**
+   * The entryPoints loaded by the runtime / a bundler rather than imported
+   * (ManifestPackage.runtimeEntryPoints: `imports` map arms, Vite / HTML client
+   * entries). Optional: absent in older discover.json files (= []).
+   */
+  runtimeEntryPoints?: string[];
   deps: DiscoverDep[];
   /** package_flags discover owns (`unindexed_consumer`, `opaque_consumer`); [] when none. */
   flags: DiscoverFlag[];
@@ -370,6 +376,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       isLibrary: m.isLibrary,
       entryPoints: m.entryPoints,
       unresolvedEntryPoints: m.unresolvedEntryPoints,
+      runtimeEntryPoints: m.runtimeEntryPoints,
       deps: m.deps.map(resolveDep),
       // An exports/main/types leaf that looks like code but resolves to nothing: an entry
       // point (and every symbol only it exports) is missing from the surface, which would

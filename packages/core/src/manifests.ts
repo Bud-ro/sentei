@@ -47,6 +47,14 @@ export interface ManifestPackage {
    * partly unknown: discover flags it `opaque_consumer` (fail closed). [] for pub.
    */
   unresolvedEntryPoints: string[];
+  /**
+   * The subset of entryPoints the RUNTIME or a bundler loads, not importers: npm
+   * `imports` map targets (every condition arm) and Vite / HTML client entries
+   * (clientEntryPoints). Ingest makes the exported declarations of these files
+   * entry_symbols (seeds, never a verdict): an `imports` arm's `digest` is wired by
+   * Node's condition, not consumed through the export surface. Sorted; [] for pub.
+   */
+  runtimeEntryPoints: string[];
   /** Sorted by name; one entry per name. */
   deps: ManifestDep[];
 }
@@ -239,7 +247,7 @@ export function readRepoManifestsWithIgnored(
       continue;
     }
     const pkg = base === 'package.json'
-      ? readNpmPackage(repoRoot, dir, files, warn)
+      ? readNpmPackage(repoRoot, dir, files, warn, opts.log)
       : readPubPackage(repoRoot, dir, files, warn);
     if (pkg) pkgs.push(pkg);
   }
@@ -306,7 +314,7 @@ const CODE_EXT = /\.[cm]?[jt]sx?$/;
 
 /** Parse one package.json. `dir` is the package dir relative to the repo root. */
 export function readNpmPackage(
-  repoRoot: string, dir: string, repoFiles: readonly string[] | null, warn: Warn = () => {},
+  repoRoot: string, dir: string, repoFiles: readonly string[] | null, warn: Warn = () => {}, log: Warn = () => {},
 ): ManifestPackage | null {
   const manifest = joinRel(dir, 'package.json');
   let json: unknown;
@@ -325,7 +333,15 @@ export function readNpmPackage(
   const version = typeof json['version'] === 'string' ? json['version'] : null;
 
   const files = repoFiles ?? listFiles(repoRoot);
-  const { entryPoints, unresolved } = resolveNpmEntryPoints(dir, json, files, warn);
+  const resolved = resolveNpmEntryPoints(dir, json, files, warn);
+  const { unresolved } = resolved;
+  const clientAll = clientEntryPoints(repoRoot, dir, files);
+  const client = clientAll.filter((f) => !resolved.entryPoints.includes(f));
+  if (client.length > 0) log(`${manifest}: client entry points from index.html / vite.config: ${client.join(', ')}`);
+  const entryPoints = [...new Set([...resolved.entryPoints, ...client])].sort(cmp);
+  // Runtime-loaded files that are not also declared surface (main/exports/…).
+  const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll])]
+    .filter((f) => !resolved.surface.includes(f)).sort(cmp);
   return {
     manager: 'npm',
     name,
@@ -336,6 +352,7 @@ export function readNpmPackage(
     manifest,
     entryPoints,
     unresolvedEntryPoints: unresolved,
+    runtimeEntryPoints,
     deps: npmDeps(json, manifest, warn),
   };
 }
@@ -395,7 +412,8 @@ export function npmVisibility(json: Record<string, unknown>, manifest = 'package
  *      (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) replaced by `.ts .tsx .mts .cts`;
  *   3. dist→src mapping for unbuilt TS repos: if `<p>` starts with `dist/`, `lib/`,
  *      `build/` or `out/`, replace that first segment with `src/` and the
- *      extension (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) with `.ts`, then `.tsx`,
+ *      extension (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) with `.ts`, then `.tsx`
+ *      (then `.d.ts` for a declaration leaf: `dist/types.d.mts` → `src/types.d.ts`),
  *      then `/index.ts`, `/index.tsx` (`dist/vue.mjs` → `src/vue/index.ts`); a stem
  *      ending in `/index` also tries the parent (`dist/x/index.js` → `src/x.ts`).
  * Paths that resolve to nothing are dropped from the entry points (npm manifests
@@ -413,15 +431,18 @@ export function npmEntryPoints(
 
 /**
  * npmEntryPoints plus `unresolved`: every code-looking (CODE_EXT) `main` / `module` /
- * `types` / `typings` / `exports` leaf (a `*` pattern included) that resolved to no
- * file, as written, sorted, deduplicated. `bin` and `browser` are not checked (bins
+ * `types` / `typings` leaf that resolved to no file, and the code-looking leaves (a `*`
+ * pattern included) of every `exports` ENTRY (subpath key) none of whose conditions
+ * resolved (one resolving condition makes the entry fine), as written, sorted,
+ * deduplicated. `bin` and `browser` are not checked (bins
  * are scripts run by name, not import surface). The index fallback does not clear them.
  */
 export function resolveNpmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
-): { entryPoints: string[]; unresolved: string[] } {
-  const declared: Array<{ path: string; surface: boolean }> = [];
-  const patterns: string[] = [];
+): { entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[] } {
+  // `entry`: the exports entry (subpath key) a leaf belongs to; undefined outside exports.
+  const declared: Array<{ path: string; surface: boolean; entry?: string }> = [];
+  const patterns: Array<{ path: string; entry: string }> = [];
   for (const key of ['main', 'module', 'types', 'typings'] as const) {
     const v = json[key];
     if (typeof v === 'string') declared.push({ path: v, surface: true });
@@ -430,11 +451,24 @@ export function resolveNpmEntryPoints(
   if (typeof bin === 'string') declared.push({ path: bin, surface: false });
   else if (isObject(bin)) for (const v of Object.values(bin)) if (typeof v === 'string') declared.push({ path: v, surface: false });
   if (typeof json['browser'] === 'string') declared.push({ path: json['browser'], surface: false });
-  collectExportLeaves(json['exports'], (leaf) => {
-    if (leaf.includes('*')) patterns.push(leaf);
-    else declared.push({ path: leaf, surface: true });
-  });
+  for (const [entry, value] of exportEntries(json['exports'])) {
+    collectExportLeaves(value, (leaf) => {
+      if (leaf.includes('*')) patterns.push({ path: leaf, entry });
+      else declared.push({ path: leaf, surface: true, entry });
+    });
+  }
   const unresolved = new Set<string>();
+  // Per exports entry: its code-looking leaves that resolved to nothing, and whether any
+  // leaf resolved. An entry is unresolved only when NONE of its conditions resolves
+  // (hono: `require` → ./dist/cjs/… is unbuilt, `import` → src/… resolves: fine).
+  const entryMisses = new Map<string, string[]>();
+  const entryOk = new Set<string>();
+  const noteEntry = (entry: string | undefined, leaf: string, ok: boolean, code: boolean): boolean => {
+    if (entry === undefined) return false;
+    if (ok) entryOk.add(entry);
+    else if (code) entryMisses.set(entry, [...(entryMisses.get(entry) ?? []), leaf]);
+    return true;
+  };
 
   const pkgFiles = packageFiles(dir, repoFiles);
   const pkgFileSet = new Set(pkgFiles);
@@ -444,17 +478,17 @@ export function resolveNpmEntryPoints(
     if (!CODE_EXT.test(rel) && posix.extname(rel) !== '') return;
     found.add(joinRel(dir, rel));
   };
-  for (const { path: p, surface } of declared) {
+  for (const { path: p, surface, entry } of declared) {
     const n = normalizeRel(p);
     if (n === null) {
       warn(`${joinRel(dir, 'package.json')}: entry ${JSON.stringify(p)} escapes the package, ignored`);
       continue;
     }
     const r = resolveEntry(n, pkgFileSet);
-    if (r === null && surface && CODE_EXT.test(n)) unresolved.add(p);
+    if (!noteEntry(entry, p, r !== null, CODE_EXT.test(n)) && r === null && surface && CODE_EXT.test(n)) unresolved.add(p);
     add(r);
   }
-  for (const p of patterns) {
+  for (const { path: p, entry } of patterns) {
     const n = normalizeRel(p);
     if (n === null) continue;
     // The pattern as written; only if it matches nothing, its dist→src variants, one group
@@ -463,15 +497,16 @@ export function resolveNpmEntryPoints(
     let matched = false;
     for (const variants of [[n], ...distToSrcGroups(n)]) {
       const res = variants.map(exportPatternRegExp);
-      const hits = pkgFiles.filter((f) => res.some((re) => re.test(f)));
+      const hits = pkgFiles.filter((f) => patternFileOk(f, variants) && res.some((re) => re.test(f)));
       hits.forEach(add);
       if (hits.length > 0) {
         matched = true;
         break;
       }
     }
-    if (!matched && CODE_EXT.test(n)) unresolved.add(p);
+    noteEntry(entry, p, matched, CODE_EXT.test(n));
   }
+  for (const [entry, misses] of entryMisses) if (!entryOk.has(entry)) misses.forEach((m) => unresolved.add(m));
   if (found.size === 0) {
     for (const f of ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'index.cjs', 'src/index.ts', 'src/index.tsx']) {
       if (pkgFileSet.has(f)) {
@@ -481,7 +516,121 @@ export function resolveNpmEntryPoints(
     }
   }
   if (found.size === 0) warn(`${joinRel(dir, 'package.json')}: no entry points resolved`);
-  return { entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp) };
+  // Subpath imports (`imports: { "#crypto": { node: "./lib/digest.node.mjs", default:
+  // "./lib/digest.mjs" } }`): every condition target is a file the package may load at
+  // runtime, and TypeScript follows only one of them, so each one that resolves to a
+  // local code file is an entry point (ocache: the arm tsc did not pick was
+  // private_dead). Internal wiring, not surface: never `unresolved`; after the index
+  // fallback, which is about the package's declared surface.
+  const surface = [...found];
+  const before = new Set(found);
+  for (const leaf of importsLeaves(json['imports'])) {
+    const n = normalizeRel(leaf);
+    if (n === null || !CODE_EXT.test(n)) continue;
+    if (n.includes('*')) {
+      const re = exportPatternRegExp(n);
+      pkgFiles.filter((f) => patternFileOk(f, [n]) && re.test(f)).forEach(add);
+    } else {
+      add(resolveEntry(n, pkgFileSet));
+    }
+  }
+  const runtime = [...found].filter((f) => !before.has(f));
+  return { entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp), runtime: runtime.sort(cmp), surface: surface.sort(cmp) };
+}
+
+/**
+ * Browser entry points a bundler (Vite) loads with no import from code: every
+ * `<script … src="…">` of an HTML file at the package root (`index.html`, other
+ * `*.html`), and every string value after `input:` in a package-root `vite.config.*`
+ * (`input: 'x'`, `input: { a: 'x', b: 'y' }`, `input: ['x']`, also inside
+ * `resolve(__dirname, 'x')`); an `input` that is itself an HTML file of the package
+ * contributes its scripts (resolved relative to that file; a leading `/` means the
+ * package root, as in Vite). Only targets that resolve to a local code file are kept
+ * (repo-relative, sorted). Dumb text scanning on purpose: it only ever adds entries.
+ */
+export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: readonly string[]): string[] {
+  const pkgFiles = packageFiles(dir, repoFiles);
+  const fileSet = new Set(pkgFiles);
+  const out = new Set<string>();
+  const read = (rel: string): string => {
+    try {
+      return readFileSync(join(repoRoot, joinRel(dir, rel)), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  /** Resolve `target` (from a file in package dir `base`) to a package file; null if not local code. */
+  const resolveLocal = (target: string, base: string): string | null => {
+    if (/^[a-z][\w+.-]*:|^\/\//i.test(target)) return null; // URL
+    const clean = target.split(/[?#]/)[0]!;
+    const n = normalizeRel(clean.startsWith('/') ? clean.slice(1) : base === '' ? clean : `${base}/${clean}`);
+    if (n === null || n === '') return null;
+    return fileSet.has(n) ? n : resolveEntry(n, fileSet);
+  };
+  const scripts = (html: string): void => {
+    const base = posix.dirname(html) === '.' ? '' : posix.dirname(html);
+    const re = /<script\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
+    const text = read(html);
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const r = resolveLocal(m[1]!, base);
+      if (r !== null && CODE_EXT.test(r)) out.add(r);
+    }
+  };
+  for (const f of pkgFiles) if (!f.includes('/') && f.endsWith('.html')) scripts(f);
+  for (const cfg of pkgFiles.filter((f) => /^vite\.config\.[cm]?[jt]s$/.test(f))) {
+    const text = read(cfg);
+    const inputRe = /\binput\s*:\s*/g;
+    for (let m = inputRe.exec(text); m; m = inputRe.exec(text)) {
+      const at = m.index + m[0].length;
+      let end = at;
+      const open = text[at];
+      if (open === '{' || open === '[') {
+        const close = open === '{' ? '}' : ']';
+        let depth = 0;
+        for (end = at; end < text.length; end += 1) {
+          if (text[end] === open) depth += 1;
+          else if (text[end] === close && --depth === 0) break;
+        }
+      } else {
+        end = text.slice(at).search(/[,\n}]/);
+        end = end === -1 ? text.length : at + end;
+      }
+      for (const lit of text.slice(at, end + 1).matchAll(/(['"`])([^'"`\n]+)\1/g)) {
+        const target = lit[2]!;
+        const r = resolveLocal(target, '');
+        if (r === null) continue;
+        if (r.endsWith('.html')) scripts(r);
+        else if (CODE_EXT.test(r)) out.add(r);
+      }
+    }
+  }
+  return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/** Local string targets of a package.json `imports` map (`#x` keys; bare package targets skipped). */
+function importsLeaves(v: unknown): string[] {
+  const out: string[] = [];
+  if (!isObject(v)) return out;
+  for (const [k, target] of Object.entries(v)) {
+    if (!k.startsWith('#')) continue;
+    collectExportLeaves(target, (leaf) => {
+      if (leaf.startsWith('./')) out.push(leaf);
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of an `exports` value: [subpath key, value] for a subpath map (keys
+ * starting with `.`), else one entry `.` for the whole value (a string, an array, or a
+ * conditions object).
+ */
+function exportEntries(v: unknown): Array<[string, unknown]> {
+  if (v === undefined || v === null) return [];
+  if (isObject(v) && Object.keys(v).some((k) => k.startsWith('.'))) {
+    return Object.entries(v).filter(([k]) => k.startsWith('.'));
+  }
+  return [['.', v]];
 }
 
 function collectExportLeaves(v: unknown, out: (leaf: string) => void): void {
@@ -519,7 +668,8 @@ const BUILT_EXT = /(?:\.d\.[cm]?ts|\.[cm]?js|\.jsx)$/;
 function distToSrcGroups(p: string): string[][] {
   if (!BUILD_DIR.test(p) || !BUILT_EXT.test(p)) return [];
   const stem = p.replace(BUILD_DIR, 'src/').replace(BUILT_EXT, '');
-  const out = [[`${stem}.ts`, `${stem}.tsx`]];
+  // A declaration leaf (`dist/types.d.mts`) may come from a hand-written `src/types.d.ts`.
+  const out = [/\.d\.[cm]?ts$/.test(p) ? [`${stem}.ts`, `${stem}.tsx`, `${stem}.d.ts`] : [`${stem}.ts`, `${stem}.tsx`]];
   if (stem.endsWith('/index')) {
     const parent = stem.slice(0, -'/index'.length);
     if (parent !== 'src') out.push([`${parent}.ts`, `${parent}.tsx`]);
@@ -527,6 +677,24 @@ function distToSrcGroups(p: string): string[][] {
     out.push([`${stem}/index.ts`, `${stem}/index.tsx`]);
   }
   return out;
+}
+
+/**
+ * Whether a package file may be matched by an `exports` / `imports` `*` pattern: a code
+ * file (CODE_EXT; `"./*": "./*"` must not make `LICENSE` or `.eslintrc` entry points),
+ * no dotfile / dot-dir segment, never under `node_modules`, and under a build output dir
+ * (`dist`/`build`/`out`/`lib` output of a build) only when the pattern itself starts
+ * there (`./dist/*.js` against a committed dist).
+ */
+function patternFileOk(f: string, patterns: readonly string[]): boolean {
+  if (!CODE_EXT.test(f)) return false;
+  const segs = f.split('/');
+  if (segs.some((s) => s.startsWith('.') || s === 'node_modules')) return false;
+  const top = segs[0]!;
+  if (segs.length > 1 && (top === 'dist' || top === 'build' || top === 'out')) {
+    return patterns.some((p) => p.startsWith(`${top}/`));
+  }
+  return true;
 }
 
 /** Node `exports` target pattern: every `*` stands for the same (possibly slash-containing) string. */
@@ -574,6 +742,7 @@ export function readPubPackage(
     manifest,
     entryPoints,
     unresolvedEntryPoints: [],
+    runtimeEntryPoints: [],
     deps: pubDeps(doc, manifest, warn),
   };
 }

@@ -102,6 +102,7 @@ function seed(): void {
   addModule(util, 'src/index.ts');
   addFinding(addSymbol(util, 'unusedFn', { file: 'src/fns.ts', line: 8, col: 16 }), 'deletion_candidate', ['no_refs']);
   addFinding(addSymbol(util, 'internalOnly', { line: 2, col: 16, kind: null }), 'unexport_candidate', ['internal_refs_only']);
+  addFinding(addSymbol(util, 'islandFn', { file: 'src/fns.ts', line: 30, col: 16 }), 'deletion_candidate', ['internal_refs_only', 'dead_island']);
   addFinding(addSymbol(util, 'helper', { file: 'src/fns.ts', line: 20, col: 9, exported: false }), 'private_dead', ['unlocked_by:unusedFn']);
   addFinding(addSymbol(util, '_island', { file: 'src/fns.ts', line: null, col: null, exported: false }), 'private_dead', ['already_unreachable']);
   addSymbol(util, 'aliveFn');
@@ -135,7 +136,7 @@ describe('buildReport', () => {
   it('produces the exact report JSON', () => {
     const report = buildReport({ db, now: NOW });
     const counts = (o: Partial<Record<string, number>>): Record<string, number> => ({
-      deletion_candidate: 0, unexport_candidate: 0, deprecation_candidate: 0, private_dead: 0, needs_review: 0, blocked: 0, ...o,
+      deletion_candidate: 0, dead_island: 0, unexport_candidate: 0, deprecation_candidate: 0, private_dead: 0, needs_review: 0, blocked: 0, ...o,
     });
     const blockedCounts = (n: number, review = 0): Record<string, number> =>
       BLOCKED === 'blocked' ? counts({ blocked: n, needs_review: review }) : counts({ needs_review: n + review });
@@ -148,7 +149,7 @@ describe('buildReport', () => {
         ASSUME_CLOSED_WORLD_WARNING,
         'minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates',
         'repo acme/app-dyn: index partial; its packages are opaque and block verdicts for every org package they depend on',
-        'repo acme/repo-broken: index failed; its packages are opaque and block verdicts for every org package they depend on',
+        'repo acme/repo-broken: index failed for npm:@acme/broken; it is opaque and blocks verdicts for every org package it depends on',
       ],
       findings: [
         { package_id: 'npm:@acme/core', repo: 'acme/lib-core', symbol: 'coreDead', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
@@ -165,6 +166,8 @@ describe('buildReport', () => {
           verdict: 'private_dead', reasons: ['unlocked_by:unusedFn'], blocked_by: [] },
         { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: 'internalOnly', file: 'src/index.ts', line: 3, col: 17, kind: '',
           verdict: 'unexport_candidate', reasons: ['internal_refs_only'], blocked_by: [] },
+        { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: 'islandFn', file: 'src/fns.ts', line: 31, col: 17, kind: 'Function',
+          verdict: 'deletion_candidate', reasons: ['internal_refs_only', 'dead_island'], blocked_by: [] },
         { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: 'unusedFn', file: 'src/fns.ts', line: 9, col: 17, kind: 'Function',
           verdict: 'deletion_candidate', reasons: ['no_refs'], blocked_by: [] },
       ],
@@ -193,7 +196,7 @@ describe('buildReport', () => {
           counts: blockedCounts(2), exported: 2, symbols: 2 },
         { package_id: 'npm:@acme/util', repo: 'acme/lib-core', visibility: 'private', closed_world: true, opaque: false, flags: [],
           consumers: ['npm:@acme/app'], blocked_by: [],
-          counts: counts({ deletion_candidate: 1, unexport_candidate: 1, private_dead: 2 }), exported: 3, symbols: 5 },
+          counts: counts({ deletion_candidate: 1, dead_island: 1, unexport_candidate: 1, private_dead: 2 }), exported: 4, symbols: 6 },
       ],
       blockers: [
         { blocker_package_id: 'npm:@acme/dyn', repo: 'acme/app-dyn', flags: ['dynamic_access', 'namespace_dynamic'],
@@ -259,15 +262,17 @@ describe('formatSummary', () => {
     // eslint-disable-next-line no-control-regex
     expect(text).toMatch(/^[\x20-\x7e\n]*$/);
 
-    const header = lines.indexOf('Packages (6), 8 finding(s)');
+    const header = lines.indexOf('Packages (6), 9 finding(s)');
     expect(header).toBeGreaterThan(8);
-    expect(lines[header + 1]).toMatch(/^PACKAGE +VISIBILITY +WORLD +OPAQUE +DELETE +UNEXPORT +DEPRECATE +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
+    expect(lines[header + 1]).toMatch(/^PACKAGE +VISIBILITY +WORLD +OPAQUE +DELETE +ISLAND +UNEXPORT +DEPRECATE +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
     const util = lines.find((l) => l.startsWith('npm:@acme/util '));
-    expect(util).toMatch(/^npm:@acme\/util +private +closed +1 +1 +0 +2 +0 +0$/);
+    expect(util).toMatch(/^npm:@acme\/util +private +closed +1 +1 +1 +0 +2 +0 +0$/);
     const pub = lines.find((l) => l.startsWith('npm:@acme/pub '));
     expect(pub).toMatch(/published-public +closed .*npm:@acme\/dyn:dynamic_access, npm:@acme\/dyn:namespace_dynamic$/);
     expect(lines.find((l) => l.startsWith('npm:@acme/broken '))).toMatch(/ +closed +yes +0/);
-    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(BLOCKED === 'blocked' ? /^TOTAL +1 +1 +0 +2 +1 +3$/ : /^TOTAL +1 +1 +0 +2 +4 +0$/);
+    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(BLOCKED === 'blocked' ? /^TOTAL +1 +1 +1 +0 +2 +1 +3$/ : /^TOTAL +1 +1 +1 +0 +2 +4 +0$/);
+    const total = lines.findIndex((l) => l.startsWith('TOTAL '));
+    expect(lines[total + 1]).toBe('DELETE: exports with no counted use; ISLAND: exports used only by other candidates (delete them together).');
     // Every row of the package table has its BLOCKED BY column at the same offset.
     const col = lines[header + 1]!.indexOf('BLOCKED BY');
     expect(pub!.indexOf('npm:@acme/dyn:')).toBe(col);

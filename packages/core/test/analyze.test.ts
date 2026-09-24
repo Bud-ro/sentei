@@ -1,6 +1,10 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
-import { analyzeOrg, type AnalyzeCounts } from '../src/analyze.ts';
+import { analyzeOrg, insertPrivateDead, reconcileDeadIslands, type AnalyzeCounts } from '../src/analyze.ts';
+import { runWitness } from '../src/witness.ts';
 import { openDb } from '../src/db.ts';
 import { ingestOrg } from '../src/ingest.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
@@ -227,7 +231,7 @@ describe('analyzeOrg on hand-built rows', () => {
     analyze();
     const files = (view: string): string[] =>
       (db.prepare(`SELECT file FROM ${view} WHERE package_id = ? ORDER BY file`).all(app) as Array<{ file: string }>).map((r) => r.file);
-    expect(files('test_files')).toEqual(['b.test.js', 'lib/f_test.dart', 'src/__tests__/e.ts', 'src/a.test.ts', 'src/test/d.ts', 'test/c.ts']);
+    expect(files('test_files')).toEqual(['b.test.js', 'lib/f_test.dart', 'src/__tests__/e.ts', 'src/a.test.ts', 'src/test/d.ts', 'src/testing/i.ts', 'test/c.ts']);
     expect(files('doc_files')).toEqual(['docs/g.ts', 'src/docs/h.ts']);
   });
 
@@ -648,6 +652,131 @@ describe('analyzeOrg on hand-built rows', () => {
     setPolicy('countTestsAsConsumers', true);
     analyze();
     expect(findings().find((r) => r.name === 'createTar')).toEqual(f('createTar', 'unexport_candidate', ['internal_refs_only']));
+  });
+
+  /** What the witness does to a pending finding it downgrades, then the shared propagation step. */
+  function downgradeAndPropagate(...names: string[]): void {
+    db.exec('BEGIN');
+    for (const name of names) {
+      const r = db.prepare("SELECT f.symbol_id, f.reasons FROM findings f JOIN symbols s USING (symbol_id) WHERE s.name = ? AND f.verdict = 'needs_review'")
+        .get(name) as { symbol_id: number; reasons: string };
+      const base = (JSON.parse(r.reasons) as string[]).filter((x) => x !== 'witness_pending');
+      run("DELETE FROM findings WHERE symbol_id = ? AND verdict = 'needs_review'", r.symbol_id);
+      run("INSERT INTO findings (symbol_id, verdict, reasons) VALUES (?, 'needs_review', ?)", r.symbol_id,
+        JSON.stringify([...base, 'witness_mismatch:npm:@acme/app:src/main.ts:1']));
+    }
+    reconcileDeadIslands(db);
+    insertPrivateDead(db);
+    db.exec('COMMIT');
+  }
+
+  it('a candidate the witness downgrades no longer unlocks its private helpers (vite-build, honox IslandContext)', () => {
+    aliveExport('live');
+    const dead1 = sym(lib, 'src/fns.ts', 'dead1', { exported: true });
+    const dead2 = sym(lib, 'src/fns.ts', 'dead2', { exported: true });
+    const h1 = sym(lib, 'src/fns.ts', 'h1');
+    const shared = sym(lib, 'src/fns.ts', 'shared');
+    use(dead1, h1, 'src/fns.ts');
+    use(dead1, shared, 'src/fns.ts');
+    use(dead2, shared, 'src/fns.ts');
+    analyze();
+    expect(findings()).toEqual([
+      f('dead1', 'needs_review', DELETE),
+      f('dead2', 'needs_review', DELETE),
+      f('h1', 'private_dead', ['unlocked_by:dead1']),
+      f('shared', 'private_dead', ['unlocked_by:dead1', 'unlocked_by:dead2']),
+    ]);
+    downgradeAndPropagate('dead1');
+    // dead1 is a seed again: h1 and shared are alive; dead2 alone no longer unlocks shared.
+    expect(findings()).toEqual([
+      f('dead1', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
+      f('dead2', 'needs_review', DELETE),
+    ]);
+  });
+
+  it('a dead island whose only user the witness downgrades reverts to unexport_candidate (pdfjs)', () => {
+    // pdfjs: PDFJS (exported, no refs) uses DocumentInitParameters (exported, used only by PDFJS).
+    aliveExport('live');
+    const pdfjs = sym(lib, 'src/fns.ts', 'PDFJS', { exported: true });
+    const params = sym(lib, 'src/fns.ts', 'DocumentInitParameters', { exported: true });
+    const helper = sym(lib, 'src/fns.ts', 'paramHelper');
+    use(pdfjs, params, 'src/fns.ts');
+    use(params, helper, 'src/fns.ts');
+    analyze();
+    const island = ['internal_refs_only', 'dead_island', 'witness_pending'];
+    expect(findings()).toEqual([
+      f('DocumentInitParameters', 'needs_review', island),
+      f('PDFJS', 'needs_review', DELETE),
+      f('paramHelper', 'private_dead', ['unlocked_by:DocumentInitParameters', 'unlocked_by:PDFJS']),
+    ]);
+    // Analyze itself is a fixed point of the shared step.
+    db.exec('BEGIN');
+    expect(reconcileDeadIslands(db)).toBe(0);
+    db.exec('ROLLBACK');
+
+    // Witness: DocumentInitParameters passes first (deletion_candidate), PDFJS is downgraded.
+    db.exec('BEGIN');
+    const pr = db.prepare('SELECT reasons FROM findings WHERE symbol_id = ?').get(params) as { reasons: string };
+    run('DELETE FROM findings WHERE symbol_id = ?', params);
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, 0)', params);
+    run("INSERT INTO findings (symbol_id, verdict, reasons) VALUES (?, 'deletion_candidate', ?)", params,
+      JSON.stringify((JSON.parse(pr.reasons) as string[]).filter((x) => x !== 'witness_pending')));
+    db.exec('COMMIT');
+    downgradeAndPropagate('PDFJS');
+    expect(findings()).toEqual([
+      f('DocumentInitParameters', 'unexport_candidate', ['internal_refs_only']),
+      f('PDFJS', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
+    ]);
+  });
+
+  it('a witness-mismatched dead island whose user is downgraded stays needs_review, minus dead_island', () => {
+    aliveExport('live');
+    const a = sym(lib, 'src/fns.ts', 'A', { exported: true });
+    const b = sym(lib, 'src/fns.ts', 'B', { exported: true });
+    use(a, b, 'src/fns.ts');
+    analyze();
+    downgradeAndPropagate('A', 'B');
+    expect(findings()).toEqual([
+      f('A', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
+      f('B', 'needs_review', ['internal_refs_only', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
+    ]);
+  });
+
+  it('runWitness propagates its outcome: helpers of a downgraded candidate are alive, islands revert', () => {
+    aliveExport('live');
+    const dead1 = sym(lib, 'src/fns.ts', 'dead1', { exported: true });
+    const island = sym(lib, 'src/fns.ts', 'islandUser', { exported: true });
+    const h1 = sym(lib, 'src/fns.ts', 'h1');
+    use(dead1, h1, 'src/fns.ts');
+    use(dead1, island, 'src/fns.ts');
+    analyze();
+    expect(findings().map((r) => `${r.name}:${r.verdict}`)).toEqual(['dead1:needs_review', 'h1:private_dead', 'islandUser:needs_review']);
+    const root = mkdtempSync(join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-analyze-witness-'));
+    try {
+      mkdirSync(join(root, 'app/src'), { recursive: true });
+      mkdirSync(join(root, 'lib/src'), { recursive: true });
+      writeFileSync(join(root, 'app/src/main.ts'), "import { live } from '@acme/lib';\n// dead1 too\n");
+      writeFileSync(join(root, 'lib/src/fns.ts'), 'export const x = 1;\n');
+      const out: string[] = [];
+      runWitness({
+        db,
+        now: NOW,
+        log: (l) => out.push(l),
+        discover: {
+          repos: [
+            { repo: 'acme/lib', localPath: join(root, 'lib'), packages: [{ packageId: lib, path: '.' }] },
+            { repo: 'acme/app', localPath: join(root, 'app'), packages: [{ packageId: app, path: '.' }] },
+          ],
+        },
+      });
+      expect(findings()).toEqual([
+        f('dead1', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:2']),
+        f('islandUser', 'unexport_candidate', ['internal_refs_only']),
+      ]);
+      expect(out.some((l) => l.includes('1 dead island(s) reverted'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('script files (playground, bench, scripts, tools…): no verdicts or private_dead for their declarations; they seed reachability', () => {

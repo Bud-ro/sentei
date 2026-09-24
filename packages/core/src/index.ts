@@ -8,7 +8,7 @@ export type { RunWitnessOptions, WitnessCounts, WitnessDiscoverInput } from './w
 export { buildReport, formatSummary } from './report.ts';
 export type { Report, ReportBlocker, ReportFinding, ReportPackage, ReportRepo, ReportVersionSkew } from './report.ts';
 export * from './sarif.ts';
-export { analyzeOrg, analyzeSql } from './analyze.ts';
+export { analyzeOrg, analyzeSql, insertPrivateDead, reconcileDeadIslands } from './analyze.ts';
 export type { AnalyzeCounts, AnalyzeOptions } from './analyze.ts';
 export { DEFAULT_API_URL, discoverGithub, findToken, listRepos, readLockfile, resolveToken, selectRepo, writeLockfile } from './github.ts';
 export type { DiscoverGithubOptions, GithubRepo, ListReposOptions, Lockfile, RepoFilter } from './github.ts';
@@ -16,5 +16,5 @@ export { ensureClone, git, headSha, isShallow } from './git.ts';
 export type { EnsureCloneOptions, EnsureCloneResult, GitOptions } from './git.ts';
 export { runBlame, parseBlamePorcelain } from './blame.ts';
 export type { BlameCache, BlameCounts, BlameDiscoverInput, BlameLine, RunBlameOptions } from './blame.ts';
-export { DOCS_GLOBS, SCRIPT_GLOBS, TEST_GLOBS } from './globs.ts';
+export { DOCS_GLOBS, GENERATED_GLOBS, SCRIPT_GLOBS, TEST_GLOBS } from './globs.ts';
 export { matchGlob } from './glob.ts';

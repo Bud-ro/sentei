@@ -58,6 +58,10 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
       'lib/g.dart', 'lib/pb.dart', 'src/generator/l.ts', 'src/generated.ts', 'lib/x.g.dart.bak',
       'playground/p.ts', 'src/playgrounds/q.ts', 'bench/r.ts', 'benchmark/s.ts', 'x/benchmarks/t.ts', 'sandbox/u.ts',
       'scripts/v.ts', 'tool/w.dart', 'src/tools/x.ts', 'src/scripting/y.ts', 'src/toolsy/z.ts', 'scripts.ts',
+      // Round 3 additions (honojs): test support and tool configs.
+      'src/mocks.ts', 'src/types.test-d.ts', 'src/test-utils.ts', 'test-utils/setup.ts', 'src/helper/testing/index.ts',
+      'src/api.mock.ts', 'src/mocksy.ts', 'src/my-test-utils.ts', 'script/build.ts', 'vitest.config.ts', 'packages/a/vite.config.mts',
+      'eslint.config.mjs', 'vitest.workspace.ts', 'src/config.ts', 'src/configure.ts', 'src/workspace.ts', 'src/scripted/a.ts',
     ];
     const db = openDb(':memory:');
     try {
@@ -74,8 +78,14 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
       expect(inView('generated_files')).toEqual(byGlob(GENERATED_GLOBS));
       expect(inView('script_files')).toEqual(byGlob(SCRIPT_GLOBS));
       expect(inView('script_files')).toEqual([
-        'bench/r.ts', 'benchmark/s.ts', 'playground/p.ts', 'sandbox/u.ts', 'scripts/v.ts', 'src/playgrounds/q.ts',
-        'src/tools/x.ts', 'tool/w.dart', 'x/benchmarks/t.ts',
+        'bench/r.ts', 'benchmark/s.ts', 'eslint.config.mjs', 'packages/a/vite.config.mts', 'playground/p.ts', 'sandbox/u.ts',
+        'script/build.ts', 'scripts/v.ts', 'src/playgrounds/q.ts', 'src/tools/x.ts', 'tool/w.dart', 'vitest.config.ts',
+        'vitest.workspace.ts', 'x/benchmarks/t.ts',
+      ]);
+      expect(inView('test_files').filter((f) => f.startsWith('src/') || f.startsWith('test-utils/'))).toEqual([
+        'src/Button.stories.tsx', 'src/__schemas__/s.ts', 'src/__tests__/e.ts', 'src/a.test.ts', 'src/api.mock.ts',
+        'src/helper/testing/index.ts', 'src/mocks.ts', 'src/mocks/h.ts', 'src/test-utils.ts', 'src/test/d.ts',
+        'src/testing/i.ts', 'src/types.test-d.ts', 'test-utils/setup.ts',
       ]);
       expect(inView('generated_files')).toEqual([
         'c.pbenum.dart', 'generated/j.ts', 'lib/a.g.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart',

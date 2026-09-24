@@ -11,9 +11,16 @@ import type { DatabaseSync } from 'node:sqlite';
 import { requireAnalyzed } from './analyze.ts';
 import { parseDescriptors, parseScipSymbol } from './scip/read.ts';
 
-/** Verdicts every package row counts, in summary column order. */
+/**
+ * What every package row counts, in summary column order: the verdicts, with
+ * deletion_candidate split in two. `deletion_candidate` counts plain deletions (reason
+ * no_refs / only_test_refs) and `dead_island` the deletion candidates with reason
+ * dead_island (exports used only by other candidates). report.json `findings` keeps the
+ * real verdict (deletion_candidate + reason dead_island).
+ */
 export const REPORT_VERDICTS = [
   'deletion_candidate',
+  'dead_island',
   'unexport_candidate',
   'deprecation_candidate',
   'private_dead',
@@ -182,12 +189,18 @@ export function buildReport(opts: BuildReportOptions): Report {
   if (policy.minAgeDays === 0) {
     warnings.push('minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates');
   }
+  // Name the packages that failed (untargeted index_failed / opaque_consumer flags of
+  // the repo's packages): usually one tooling package, not the whole repo.
+  const failedPkgRows = db.prepare(`
+    SELECT DISTINCT p.repo, f.package_id FROM package_flags f JOIN packages p ON p.package_id = f.package_id
+    WHERE f.target_package_id IS NULL AND f.flag IN ('index_failed', 'opaque_consumer')`).all() as Array<{ repo: string; package_id: string }>;
   for (const r of repos) {
-    if (r.index_status === 'failed') {
-      warnings.push(`repo ${r.repo}: index failed; its packages are opaque and block verdicts for every org package they depend on`);
-    } else if (r.index_status === 'partial') {
-      warnings.push(`repo ${r.repo}: index partial; its packages are opaque and block verdicts for every org package they depend on`);
-    }
+    if (r.index_status !== 'failed' && r.index_status !== 'partial') continue;
+    const failed = uniqSorted(failedPkgRows.filter((f) => f.repo === r.repo).map((f) => f.package_id));
+    warnings.push(failed.length === 0
+      ? `repo ${r.repo}: index ${r.index_status}; its packages are opaque and block verdicts for every org package they depend on`
+      : `repo ${r.repo}: index ${r.index_status} for ${failed.join(', ')}; ${failed.length === 1 ? 'it is' : 'they are'} opaque and ${
+        failed.length === 1 ? 'blocks' : 'block'} verdicts for every org package ${failed.length === 1 ? 'it depends' : 'they depend'} on`);
   }
 
   // ---- findings -----------------------------------------------------------------
@@ -283,7 +296,10 @@ export function buildReport(opts: BuildReportOptions): Report {
     .map((p) => {
       const counts: Record<string, number> = Object.fromEntries(REPORT_VERDICTS.map((v) => [v, 0]));
       const mine = findings.filter((f) => f.package_id === p.package_id);
-      for (const f of mine) counts[f.verdict] = (counts[f.verdict] ?? 0) + 1;
+      for (const f of mine) {
+        const key = f.verdict === 'deletion_candidate' && f.reasons.includes('dead_island') ? 'dead_island' : f.verdict;
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
       return {
         package_id: p.package_id,
         repo: p.repo,
@@ -365,6 +381,7 @@ export function formatTable(headers: string[], rows: string[][], align: Align[])
 
 const SHORT: Record<string, string> = {
   deletion_candidate: 'DELETE',
+  dead_island: 'ISLAND',
   unexport_candidate: 'UNEXPORT',
   deprecation_candidate: 'DEPRECATE',
   private_dead: 'PRIV-DEAD',
@@ -413,6 +430,7 @@ export function formatSummary(report: Report): string {
     pkgRows,
     ['l', 'l', 'l', 'l', ...verdicts.map((): Align => 'r'), 'l'],
   ));
+  out.push('DELETE: exports with no counted use; ISLAND: exports used only by other candidates (delete them together).');
 
   // Top blockers.
   out.push('', 'Top blockers (opaque consumers preventing verdicts; fix these first)');

@@ -85,6 +85,10 @@ CREATE TABLE IF NOT EXISTS documents (
   file             TEXT NOT NULL,
   module_symbol_id INTEGER REFERENCES symbols (symbol_id) ON DELETE CASCADE,
   is_entry         INTEGER NOT NULL DEFAULT 0 CHECK (is_entry IN (0, 1)),
+  -- 1 = a generated file (sidecar generatedFiles: `@generated` / "do not edit" headers,
+  -- or a GENERATED_GLOBS path, set by ingest): analyze.sql `generated_files` reads it,
+  -- and the witness never self-scans it.
+  is_generated     INTEGER NOT NULL DEFAULT 0 CHECK (is_generated IN (0, 1)),
   PRIMARY KEY (package_id, file)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS documents_module ON documents (module_symbol_id);
@@ -193,6 +197,18 @@ CREATE TABLE IF NOT EXISTS keep_rules (
   package_id  TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
   symbol_name TEXT NOT NULL,
   PRIMARY KEY (package_id, symbol_name)
+) STRICT;
+
+-- Unindexed files of a consumer package that import a target org package and are
+-- script / docs / test code (sidecar unindexedImports with a `scope`: under
+-- SCRIPT_GLOBS / DOCS_GLOBS / TEST_GLOBS, e.g. unhead's `bench/`). They do not block
+-- the target (unlike a targeted unindexed_consumer flag); the witness scans them as
+-- consumer files of the target instead (name search, same rules). Repo-relative file.
+CREATE TABLE IF NOT EXISTS witness_files (
+  consumer_package_id TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
+  target_package_id   TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
+  file                TEXT NOT NULL,
+  PRIMARY KEY (consumer_package_id, target_package_id, file)
 ) STRICT;
 
 -- Presence = the text witness (PLAN.md §9) ran for this symbol and found no mention.

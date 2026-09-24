@@ -332,6 +332,104 @@ describe('npm manifests', () => {
     expect(p!.unresolvedEntryPoints).toEqual(['./dist/gone.d.ts', './dist/gone/*.js', './dist/vue.mjs']);
   });
 
+  it('an exports entry is unresolved only when none of its conditions resolves (hono require → dist/cjs)', () => {
+    pkgJson('package.json', {
+      name: 'hono',
+      exports: {
+        '.': { types: './dist/types/index.d.ts', import: './dist/index.js', require: './dist/cjs/index.js' },
+        './jsx': { import: './dist/jsx/index.js', require: './dist/cjs/jsx/index.js' },
+        './gone': { import: './dist/gone.js', require: './dist/cjs/gone.js' },
+        './adapter/*': { import: './dist/adapter/*/index.js', require: './dist/cjs/adapter/*/index.js' },
+      },
+    });
+    write('src/index.ts');
+    write('src/jsx/index.ts');
+    write('src/adapter/bun/index.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['src/adapter/bun/index.ts', 'src/index.ts', 'src/jsx/index.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual(['./dist/cjs/gone.js', './dist/gone.js']);
+  });
+
+  it('* patterns never match dotfiles, node_modules, build output or non-code files (scule "./*": "./*")', () => {
+    pkgJson('package.json', { name: 'scule', exports: { '.': './src/index.ts', './*': './*', './d/*': './dist/*.js' } });
+    for (const f of ['src/index.ts', 'src/extra.ts', 'LICENSE', '.eslintrc', '.github/x.js', 'README.md', 'dist/built.js', 'build/b.js']) write(f);
+    // A git checkout (so the committed dist/ and build/ are listed): a build dir is matched
+    // only by a pattern that starts there.
+    execFileSync('git', ['-c', 'init.defaultBranch=main', 'init', '-q'], { cwd: root, stdio: 'ignore' });
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['dist/built.js', 'src/extra.ts', 'src/index.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('a conditions-object exports (no subpath keys) is one entry', () => {
+    pkgJson('package.json', { name: 'x', exports: { import: './dist/index.mjs', require: './dist/cjs/index.cjs' } });
+    write('src/index.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['src/index.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('maps dist/x.d.mts / .d.cts / .d.ts declaration leaves to src/x.ts or src/x.d.ts (vite-dev-server ./types)', () => {
+    pkgJson('package.json', {
+      name: 'x',
+      exports: {
+        '.': './dist/index.mjs',
+        './types': { types: './dist/types.d.mts' },
+        './env': { types: './dist/env.d.cts' },
+        './glob': { types: './dist/glob.d.ts' },
+      },
+    });
+    write('src/index.ts');
+    write('src/types.d.ts');
+    write('src/env.ts');
+    write('src/glob.d.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['src/env.ts', 'src/glob.d.ts', 'src/index.ts', 'src/types.d.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('adds Vite/HTML client entries: index.html scripts and vite.config input values that resolve to local code', () => {
+    pkgJson('app/package.json', { name: 'app', private: true });
+    write('app/index.html', '<html><head><script type="module" src="/src/main.tsx"></script>\n<script src="https://cdn.x/y.js"></script>\n<script src="./src/missing.ts"></script></head></html>');
+    write('app/admin.html', "<script type='module' src='src/admin.ts'></script>");
+    write('app/vite.config.ts', [
+      "export default defineConfig({ build: { rollupOptions: {",
+      "  input: { main: 'index.html', worker: resolve(__dirname, 'src/worker.ts'), page: 'pages/p.html', nope: 'src/nope.ts' },",
+      "}}, ssr: { input: 'src/entry-server.ts' }, other: { input: ['src/a.ts', 'README.md'] } });",
+    ].join('\n'));
+    write('app/pages/p.html', '<script src="./p.ts"></script><script src="/src/root.ts"></script>');
+    for (const f of ['src/main.tsx', 'src/admin.ts', 'src/worker.ts', 'src/entry-server.ts', 'src/a.ts', 'pages/p.ts', 'src/root.ts', 'src/unused.ts']) write(`app/${f}`);
+    write('app/README.md');
+    const logs: string[] = [];
+    const [p] = readRepoManifests(root, warn, undefined, { log: (m) => logs.push(m) });
+    expect(p!.entryPoints).toEqual([
+      'app/pages/p.ts', 'app/src/a.ts', 'app/src/admin.ts', 'app/src/entry-server.ts', 'app/src/main.tsx', 'app/src/root.ts', 'app/src/worker.ts',
+    ]);
+    expect(logs.some((l) => l.startsWith('app/package.json: client entry points from index.html / vite.config: app/pages/p.ts'))).toBe(true);
+    expect(p!.runtimeEntryPoints).toEqual(p!.entryPoints);
+  });
+
+  it('package.json imports: every condition target that resolves to local code is an entry point (ocache #crypto)', () => {
+    pkgJson('package.json', {
+      name: 'ocache',
+      exports: './dist/index.mjs',
+      imports: {
+        '#crypto': { node: './lib/digest.node.mjs', default: './lib/digest.mjs' },
+        '#internal/*': './src/internal/*.ts',
+        '#dep': 'some-package',
+        '#gone': './lib/gone.mjs',
+      },
+    });
+    write('src/index.ts');
+    write('lib/digest.node.mjs');
+    write('lib/digest.mjs');
+    write('src/internal/a.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['lib/digest.mjs', 'lib/digest.node.mjs', 'src/index.ts', 'src/internal/a.ts']);
+    expect(p!.runtimeEntryPoints).toEqual(['lib/digest.mjs', 'lib/digest.node.mjs', 'src/internal/a.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
   it('prefers the built file when it exists (no src mapping)', () => {
     pkgJson('package.json', { name: 'x', main: 'lib/index.js' });
     write('lib/index.js');

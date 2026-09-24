@@ -9,6 +9,44 @@
     ]
   },
   {
+    "package_id": "npm:@acme/cascade",
+    "symbol": "dropped",
+    "file": "src/index.ts",
+    "verdict": "deletion_candidate",
+    "reasons": [
+      "no_refs"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/cascade",
+    "symbol": "helperB",
+    "file": "src/index.ts",
+    "verdict": "private_dead",
+    "reasons": [
+      "unlocked_by:dropped"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/cascade",
+    "symbol": "initParams",
+    "file": "src/index.ts",
+    "verdict": "unexport_candidate",
+    "reasons": [
+      "internal_refs_only"
+    ]
+  },
+  {
+    "package_id": "npm:@acme/cascade",
+    "symbol": "viewer",
+    "file": "src/index.ts",
+    "verdict": "needs_review",
+    "reasons": [
+      "no_refs",
+      "witness_mismatch:self:bin/viewer.mjs:3",
+      "witness_mismatch:self:bin/viewer.mjs:4"
+    ]
+  },
+  {
     "package_id": "npm:@acme/core",
     "symbol": "internalOnlyFn",
     "file": "src/fns.ts",

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { create, toBinary } from '@bufbuild/protobuf';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { analyzeOrg } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { ingestOrg, repoSlug, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
 import { IndexSchema, SymbolInformation_Kind } from '../src/scip/scip_pb.ts';
@@ -813,6 +814,178 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(c.warnings).toBe(2);
     run();
     expect(rows()).toEqual(expected);
+  });
+
+  it('namespaceSpreadRefs: edges to every symbol of the target module; occurrences for its exports unless a namespace_dynamic flag covers them (codeup)', () => {
+    // codeup: `import * as _pkg from './pkg'; export const utils = Object.freeze({ ..._pkg })`.
+    writeScip('acme/mono', 'lib.scip', [
+      { path: 'src/index.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`index.ts\`/`, roles: 1 },
+        { range: [1, 13, 18], symbol: `${LIB}src/\`index.ts\`/utils.`, roles: 1, enclosing: [1, 0, 1, 60] },
+      ] },
+      { path: 'src/pkg.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`pkg.ts\`/`, roles: 1 },
+        { range: [1, 16, 20], symbol: `${LIB}src/\`pkg.ts\`/pkgA().`, roles: 1, enclosing: [1, 0, 1, 30] },
+        { range: [2, 16, 20], symbol: `${LIB}src/\`pkg.ts\`/pkgB().`, roles: 1, enclosing: [2, 0, 4, 1] },
+        { range: [3, 8, 13], symbol: `${LIB}src/\`pkg.ts\`/pkgB().inner.`, roles: 1 },
+      ] },
+    ]);
+    writeScip('acme/mono', 'app.scip', [{ path: 'src/main.ts', occurrences: [
+      { range: [0, 0, 0], symbol: `${APP}src/\`main.ts\`/`, roles: 1 },
+      { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 4, 1] },
+    ] }]);
+    writeJson('acme/mono', 'lib.exports.json', {
+      ...sidecar('npm:@acme/lib', [exp('utils', 'src/index.ts', 1, 13), exp('pkgA', 'src/pkg.ts', 1, 16)]),
+      namespaceSpreadRefs: [
+        { file: 'src/index.ts', line: 1, col: 40, targetPackage: '@acme/lib', targetFile: 'src/pkg.ts' },
+        { file: 'src/index.ts', line: 1, col: 50, targetPackage: '@acme/lib', targetFile: 'src/nope.ts' },
+      ],
+    });
+    const spreadFromApp = { file: 'apps/app/src/main.ts', line: 3, col: 4, targetPackage: '@acme/lib', targetFile: 'src/pkg.ts' };
+    writeJson('acme/mono', 'app.exports.json', { ...sidecar('npm:@acme/app'), namespaceSpreadRefs: [spreadFromApp] });
+    const c = run();
+    const utils = id(`${'scip-typescript npm @acme/lib . '}src/\`index.ts\`/utils.`);
+    const main = id('scip-typescript npm @acme/app . src/`main.ts`/main().');
+    const [pkgA, pkgB, inner] = ['pkgA().', 'pkgB().', 'pkgB().inner.'].map((d) => id(`scip-typescript npm @acme/lib . src/\`pkg.ts\`/${d}`));
+    const edgesFrom = (from: number): number[] =>
+      (db.prepare('SELECT to_symbol_id AS t FROM edges WHERE from_symbol_id = ? ORDER BY t').all(from) as Array<{ t: number }>).map((r) => r.t);
+    expect(edgesFrom(utils)).toEqual([pkgA!, pkgB!, inner!].sort((a, b) => a - b));
+    expect(edgesFrom(main)).toEqual([pkgA!, pkgB!, inner!].sort((a, b) => a - b));
+    // Same package: an occurrence for the exported top-level pkgA only. Cross-package (no flag): pkgA too.
+    const occ = (sid: number): unknown[] => db.prepare('SELECT package_id, file, line, col, enclosing_symbol_id FROM occurrences WHERE symbol_id = ? AND role = 0 ORDER BY package_id').all(sid);
+    expect(occ(pkgA!)).toEqual([
+      { package_id: 'npm:@acme/app', file: 'apps/app/src/main.ts', line: 3, col: 4, enclosing_symbol_id: main },
+      { package_id: 'npm:@acme/lib', file: 'src/index.ts', line: 1, col: 40, enclosing_symbol_id: utils },
+    ]);
+    expect(occ(pkgB!)).toEqual([]);
+    expect(c.namespaceSpreadRefs).toBe(2);
+    expect(c.unmatchedNamespaceSpreadRefs).toBe(1);
+    expect(logs.some((l) => /warning: 1 namespace spread ref\(s\) match no indexed document: .*src\/nope\.ts/.test(l))).toBe(true);
+    // pkgB is private, reached only through the spread: not already_unreachable; it goes
+    // only with `utils` (itself an unused export here: a candidate).
+    db.prepare("INSERT OR REPLACE INTO policy (key, value) VALUES ('minAgeDays', '0')").run();
+    analyzeOrg({ db, now: 1_800_000_000, log: () => {} });
+    expect(db.prepare("SELECT s.name, f.reasons FROM findings f JOIN symbols s USING (symbol_id) WHERE f.verdict = 'private_dead' AND s.package_id = 'npm:@acme/lib'").all())
+      .toEqual([{ name: 'pkgB', reasons: '["unlocked_by:utils"]' }]);
+
+    // A namespace_dynamic flag of the consumer on the target: edges only (the flag blocks).
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:@acme/app'),
+      namespaceSpreadRefs: [spreadFromApp],
+      flags: [{ flag: 'namespace_dynamic', reason: 'D[key]', file: 'apps/app/src/main.ts', targetPackage: '@acme/lib' }],
+    });
+    run();
+    expect(occ(id('scip-typescript npm @acme/lib . src/`pkg.ts`/pkgA().'))).toEqual([
+      { package_id: 'npm:@acme/lib', file: 'src/index.ts', line: 1, col: 40, enclosing_symbol_id: id(`scip-typescript npm @acme/lib . src/\`index.ts\`/utils.`) },
+    ]);
+    expect(edgesFrom(id('scip-typescript npm @acme/app . src/`main.ts`/main().'))).toHaveLength(3);
+  });
+
+  it('drops SCIP references to a missing module symbol of another org package (skew residue, not a symbol)', () => {
+    writeScip('acme/mono', 'app.scip', [{ path: 'src/main.ts', occurrences: [
+      { range: [0, 17, 30], symbol: `${LIB_OLD}src/\`utils.d.ts\`/` },
+      { range: [1, 0, 6], symbol: `${LIB_OLD}src/\`a.ts\`/goneFn().` },
+    ] }]);
+    const c = run();
+    expect(c.droppedModuleRefs).toBe(1);
+    expect(db.prepare('SELECT symbol_str FROM unresolved_refs').all()).toEqual([{ symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/goneFn().' }]);
+    expect(logs.some((l) => l.includes('droppedModuleRefs=1'))).toBe(true);
+  });
+
+  it('makes the exported top-level declarations of runtime entry files entry_symbols (imports map arms, Vite inputs)', () => {
+    writeScip('acme/mono', 'lib.scip', [
+      { path: 'src/a.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 13, 19], symbol: `${LIB}src/\`a.ts\`/digest().`, roles: 1, enclosing: [1, 0, 1, 30] },
+        { range: [2, 13, 19], symbol: `${LIB}src/\`a.ts\`/priv().`, roles: 1, enclosing: [2, 0, 2, 30] },
+      ] },
+    ]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [{ ...exp('digest', 'src/a.ts', 1, 13), entry: 'src/a.ts' }]));
+    const d = discover();
+    d.repos[0]!.packages[0]!.entryPoints.push('src/a.ts');
+    d.repos[0]!.packages[0]!.runtimeEntryPoints = ['src/a.ts'];
+    const c = run(d);
+    expect(c.runtimeEntrySymbols).toBe(1);
+    expect(db.prepare('SELECT s.name FROM entry_symbols e JOIN symbols s USING (symbol_id)').all()).toEqual([{ name: 'digest' }]);
+  });
+
+  it('relative unindexedImports (own SFC importing own code): self witness_files row, the module\'s privates kept, no flag', () => {
+    writeScip('acme/mono', 'lib.scip', [
+      { path: 'src/a.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 13, 19], symbol: `${LIB}src/\`a.ts\`/shown().`, roles: 1, enclosing: [1, 0, 1, 30] },
+        { range: [2, 13, 19], symbol: `${LIB}src/\`a.ts\`/Api#`, roles: 1, enclosing: [2, 0, 4, 1] },
+        { range: [3, 2, 5], symbol: `${LIB}src/\`a.ts\`/Api#run().`, roles: 1 },
+        { range: [5, 13, 19], symbol: `${LIB}src/\`a.ts\`/pub().`, roles: 1, enclosing: [5, 0, 5, 30] },
+      ] },
+    ]);
+    writeJson('acme/mono', 'lib.exports.json', {
+      ...sidecar('npm:@acme/lib', [exp('pub', 'src/a.ts', 5, 13)]),
+      unindexedImports: [
+        { file: 'components/Card.vue', module: 'src/a', targetPackage: '@acme/lib', relative: true },
+        { file: 'components/Gone.vue', module: 'src/missing.ts', targetPackage: '@acme/lib', relative: true },
+      ],
+    });
+    const c = run();
+    expect(c.relativeUnindexedImports).toBe(2);
+    expect(db.prepare('SELECT consumer_package_id, target_package_id, file FROM witness_files ORDER BY file').all()).toEqual([
+      { consumer_package_id: 'npm:@acme/lib', target_package_id: 'npm:@acme/lib', file: 'components/Card.vue' },
+      { consumer_package_id: 'npm:@acme/lib', target_package_id: 'npm:@acme/lib', file: 'components/Gone.vue' },
+    ]);
+    // Top-level non-exported declarations of the imported module: entry_symbols (members and exports not).
+    expect(db.prepare('SELECT s.name FROM entry_symbols e JOIN symbols s USING (symbol_id) ORDER BY s.name').all()).toEqual([{ name: 'Api' }, { name: 'shown' }]);
+    expect(count(db, "SELECT count(*) AS n FROM package_flags WHERE flag = 'unindexed_consumer'")).toBe(0);
+    expect(logs.some((l) => l.includes('does not name another org package'))).toBe(false);
+    expect(logs.some((l) => /components\/Gone\.vue imports own module "src\/missing\.ts", which is not an indexed document/.test(l))).toBe(true);
+  });
+
+  it('routes scoped unindexedImports (script/docs/test files) to witness_files instead of flags', () => {
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:@acme/app'),
+      unindexedImports: [
+        { file: 'apps/app/bench/run.ts', module: '@acme/lib', targetPackage: '@acme/lib', scope: 'script' },
+        { file: 'apps/app/docs/x.ts', module: '@acme/lib/deep', targetPackage: '@acme/lib', scope: 'docs' },
+        { file: 'apps/app/eslint.config.mjs', module: '@acme/lib', targetPackage: '@acme/lib' },
+      ],
+    });
+    const c = run();
+    expect(db.prepare('SELECT consumer_package_id, target_package_id, file FROM witness_files ORDER BY file').all()).toEqual([
+      { consumer_package_id: 'npm:@acme/app', target_package_id: 'npm:@acme/lib', file: 'apps/app/bench/run.ts' },
+      { consumer_package_id: 'npm:@acme/app', target_package_id: 'npm:@acme/lib', file: 'apps/app/docs/x.ts' },
+    ]);
+    expect(db.prepare("SELECT file FROM package_flags WHERE flag = 'unindexed_consumer'").all()).toEqual([{ file: 'apps/app/eslint.config.mjs' }]);
+    expect(c.witnessFiles).toBe(2);
+    run();
+    expect(count(db, 'SELECT count(*) AS n FROM witness_files')).toBe(2);
+  });
+
+  it('marks sidecar generatedFiles and GENERATED_GLOBS documents is_generated; their declarations get no verdicts', () => {
+    writeScip('acme/mono', 'lib.scip', [
+      { path: 'src/a.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 13, 16], symbol: `${LIB}src/\`a.ts\`/Gen#`, roles: 1, enclosing: [1, 0, 1, 20] },
+      ] },
+      { path: 'src/b.generated.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`b.generated.ts\`/`, roles: 1 },
+        { range: [1, 13, 16], symbol: `${LIB}src/\`b.generated.ts\`/Glob#`, roles: 1, enclosing: [1, 0, 1, 20] },
+      ] },
+      { path: 'src/c.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`c.ts\`/`, roles: 1 },
+        { range: [1, 13, 16], symbol: `${LIB}src/\`c.ts\`/Plain#`, roles: 1, enclosing: [1, 0, 1, 20] },
+      ] },
+    ]);
+    writeJson('acme/mono', 'lib.exports.json', {
+      ...sidecar('npm:@acme/lib', [exp('Gen', 'src/a.ts', 1, 13), exp('Glob', 'src/b.generated.ts', 1, 13), exp('Plain', 'src/c.ts', 1, 13)]),
+      generatedFiles: ['src/a.ts'],
+    });
+    const c = run();
+    expect(c.generatedDocuments).toBe(2);
+    expect(db.prepare("SELECT file, is_generated FROM documents WHERE package_id = 'npm:@acme/lib' ORDER BY file").all()).toEqual([
+      { file: 'src/a.ts', is_generated: 1 }, { file: 'src/b.generated.ts', is_generated: 1 }, { file: 'src/c.ts', is_generated: 0 },
+    ]);
+    db.prepare("INSERT OR REPLACE INTO policy (key, value) VALUES ('minAgeDays', '0')").run();
+    analyzeOrg({ db, now: 1_800_000_000, log: () => {} });
+    expect(db.prepare("SELECT s.name FROM findings f JOIN symbols s USING (symbol_id) WHERE s.package_id = 'npm:@acme/lib' ORDER BY s.name").all()).toEqual([{ name: 'Plain' }]);
   });
 
   it('adds module -> symbol edges for sidecar entrySymbols without exporting them, warning on unmatched ones', () => {

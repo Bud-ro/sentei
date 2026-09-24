@@ -21,6 +21,31 @@ CREATE TABLE IF NOT EXISTS run_params (
   value TEXT NOT NULL
 ) STRICT;
 
+-- Materialized reachability (PLAN.md §6.3.6). The recursive views `reachable` and
+-- `reachable_after` below are the single definition of the recursion; these tables
+-- hold their result for the current run so that every downstream view reads a set
+-- instead of re-running a recursive CTE (honojs analyze: 25 s -> 1.8 s). analyze.ts fills them,
+-- in order: mat_reachable (from `reachable`, before any finding exists), then, once the
+-- verdicts are in `findings`, mat_reachable_after (from `reachable_after`, whose seeds
+-- depend on candidate_symbols, i.e. on `findings`). insertPrivateDead (analyze.ts)
+-- refills mat_reachable_after whenever the candidate set changes (after the witness).
+-- They are scratch tables of the analyze/witness transaction, not ingested data.
+-- mat_base_verdicts holds `base_verdicts` (the decision tree, ~1 s of reference views
+-- on honojs) so that staging the candidates and the final `verdicts` do not each
+-- recompute it; analyze.ts fills it first thing after mat_reachable.
+CREATE TABLE IF NOT EXISTS mat_reachable (
+  symbol_id INTEGER PRIMARY KEY
+) STRICT;
+CREATE TABLE IF NOT EXISTS mat_reachable_after (
+  symbol_id INTEGER PRIMARY KEY
+) STRICT;
+CREATE TABLE IF NOT EXISTS mat_base_verdicts (
+  symbol_id  INTEGER PRIMARY KEY,
+  verdict    TEXT NOT NULL,
+  reasons    TEXT NOT NULL,
+  blocked_by TEXT NOT NULL
+) STRICT;
+
 -- Dependents first, so every DROP succeeds.
 DROP VIEW IF EXISTS verdicts;
 DROP VIEW IF EXISTS private_dead;
@@ -87,7 +112,7 @@ FROM occurrences
 WHERE (role & 1) = 0 AND is_export_site = 0;
 
 -- PLAN.md §6.5 test globs, extended with test support dirs/files (mocks, fixtures,
--- e2e, schemas, specs, stories). The SAME lists as packages/core/src/globs.ts
+-- e2e, schemas, specs, stories, vitest type tests, test-utils / testing helpers). The SAME lists as packages/core/src/globs.ts
 -- (TEST_GLOBS / DOCS_GLOBS): test/globs.test.ts parses the GLOB patterns below and
 -- asserts equality, so edit both together. A `**/<file pattern>` glob is matched
 -- against the base name (everything after the last '/'; GLOB's * crosses '/'), a
@@ -109,7 +134,13 @@ WHERE substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.test
    OR ('/' || file) GLOB '*/__fixtures__/*'
    OR ('/' || file) GLOB '*/e2e/*'
    OR ('/' || file) GLOB '*/test-integration/*'
-   OR ('/' || file) GLOB '*/__schemas__/*';
+   OR ('/' || file) GLOB '*/__schemas__/*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'mocks.*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.test-d.*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'test-utils.*'
+   OR ('/' || file) GLOB '*/test-utils/*'
+   OR ('/' || file) GLOB '*/testing/*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.mock.*';
 
 -- Docs globs: docs and in-package examples / demos.
 CREATE VIEW doc_files (package_id, file) AS
@@ -120,14 +151,17 @@ WHERE ('/' || file) GLOB '*/docs/*'
    OR ('/' || file) GLOB '*/example/*'
    OR ('/' || file) GLOB '*/demo/*';
 
--- Generated files (build_runner / protoc / freezed / mockito output, generated dirs):
--- the SAME list as GENERATED_GLOBS in globs.ts (test/globs.test.ts checks). Nothing
+-- Generated files: documents ingest marked is_generated (sidecar generatedFiles:
+-- `@generated` / "do not edit" headers), plus build_runner / protoc / freezed / mockito
+-- output and generated dirs by path: the SAME list as GENERATED_GLOBS in globs.ts
+-- (test/globs.test.ts checks). Nothing
 -- defined in them gets a verdict or a private_dead row (their declarations regenerate);
 -- references FROM them still count like any other file's.
 CREATE VIEW generated_files (package_id, file) AS
 SELECT package_id, file
 FROM documents
-WHERE substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.g.dart'
+WHERE is_generated = 1
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.g.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pb.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbenum.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbjson.dart'
@@ -139,7 +173,8 @@ WHERE substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.g.da
    OR ('/' || file) GLOB '*/generated/*'
    OR ('/' || file) GLOB '*/__generated__/*';
 
--- Script files (playgrounds, benchmarks, sandboxes, scripts, tools): the SAME list as
+-- Script files (playgrounds, benchmarks, sandboxes, scripts, tools, tool configs such
+-- as vitest.config.ts / vitest.workspace.ts): the SAME list as
 -- SCRIPT_GLOBS in globs.ts (test/globs.test.ts checks). Runnable code: references FROM
 -- them count like any other file's and their documents seed reachability (they are run
 -- directly, not imported), but nothing defined in them gets a verdict or a private_dead row.
@@ -154,7 +189,10 @@ WHERE ('/' || file) GLOB '*/playground/*'
    OR ('/' || file) GLOB '*/sandbox/*'
    OR ('/' || file) GLOB '*/scripts/*'
    OR ('/' || file) GLOB '*/tool/*'
-   OR ('/' || file) GLOB '*/tools/*';
+   OR ('/' || file) GLOB '*/tools/*'
+   OR ('/' || file) GLOB '*/script/*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.config.*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.workspace.*';
 
 -- Structural owner of a symbol: its descriptor parent (Foo#bar(). -> Foo#), or the
 -- declaration whose body contains its definition (e.g. an object-literal property
@@ -318,6 +356,8 @@ WHERE k.symbol_name = '*' OR k.symbol_name = s.name;
 --   reachable        seeds reach_seeds_before
 --   reachable_after  seeds reach_seeds_after (= before minus candidate_symbols)
 --   candidate_reach  seeds each candidate separately, keyed by origin
+-- `reachable` / `reachable_after` are materialized into mat_reachable /
+-- mat_reachable_after (top of file) by analyze.ts; every view below reads the tables.
 -- ---------------------------------------------------------------------------
 
 -- Intra-package graph: same-package edges, owner -> nested declaration, and nested
@@ -420,18 +460,20 @@ WHERE x.exported_as = 'default'
 -- keeping the base reasons, with blocked_by = sorted distinct '<blocker>:<flag>'.
 -- The age rule gates only closed-world verdicts, exactly as in the §6.5 tree.
 CREATE VIEW base_verdicts (symbol_id, verdict, reasons, blocked_by) AS
-WITH base AS (
+-- (`base` is MATERIALIZED and uses uncorrelated `IN (SELECT …)`: otherwise SQLite
+-- inlines each flag at every use below and recomputes the ref views per use and per row.)
+WITH base AS MATERIALIZED (
   SELECT s.symbol_id, s.package_id,
-         EXISTS (SELECT 1 FROM internal_refs i WHERE i.symbol_id = s.symbol_id) AS has_internal,
-         EXISTS (SELECT 1 FROM test_only_refs t WHERE t.symbol_id = s.symbol_id) AS test_only,
-         EXISTS (SELECT 1 FROM closed_world_packages c WHERE c.package_id = s.package_id) AS closed,
-         EXISTS (SELECT 1 FROM symbol_age_ok g WHERE g.symbol_id = s.symbol_id) AS age_ok
+         s.symbol_id IN (SELECT symbol_id FROM internal_refs) AS has_internal,
+         s.symbol_id IN (SELECT symbol_id FROM test_only_refs) AS test_only,
+         s.package_id IN (SELECT package_id FROM closed_world_packages) AS closed,
+         s.symbol_id IN (SELECT symbol_id FROM symbol_age_ok) AS age_ok
   FROM symbols s
   WHERE s.is_exported = 1
-    AND NOT EXISTS (SELECT 1 FROM external_refs x WHERE x.symbol_id = s.symbol_id)
-    AND NOT EXISTS (SELECT 1 FROM kept_symbols k WHERE k.symbol_id = s.symbol_id)
-    AND NOT EXISTS (SELECT 1 FROM runtime_entry_defaults r WHERE r.symbol_id = s.symbol_id)
-    AND NOT EXISTS (SELECT 1 FROM entry_symbols e WHERE e.symbol_id = s.symbol_id)
+    AND s.symbol_id NOT IN (SELECT symbol_id FROM external_refs)
+    AND s.symbol_id NOT IN (SELECT symbol_id FROM kept_symbols)
+    AND s.symbol_id NOT IN (SELECT symbol_id FROM runtime_entry_defaults)
+    AND s.symbol_id NOT IN (SELECT symbol_id FROM entry_symbols)
     AND NOT EXISTS (SELECT 1 FROM generated_files g WHERE g.package_id = s.package_id AND g.file = s.file)
     AND NOT EXISTS (SELECT 1 FROM script_files sf WHERE sf.package_id = s.package_id AND sf.file = s.file)
 ),
@@ -472,15 +514,22 @@ WHERE c.verdict IS NOT NULL;
 -- Private dead code (PLAN.md §6.5, second half)
 -- ---------------------------------------------------------------------------
 
--- Exports that the verdicts propose to delete or unexport: they stop being seeds.
--- (base_verdicts, not verdicts: a dead island is a candidate either way.)
+-- Exports that the findings propose to delete or unexport: they stop being seeds.
+-- Read from `findings` (not from base_verdicts) so that the witness stage's outcome
+-- propagates: a candidate the witness downgrades to needs_review (witness_mismatch, no
+-- witness_pending) is no longer a candidate, stays a seed, and so no longer unlocks
+-- its private helpers. At analyze time `findings` holds the verdicts; a dead island is
+-- a candidate either way (needs_review + witness_pending).
 CREATE VIEW candidate_symbols (symbol_id, package_id, name) AS
 SELECT s.symbol_id, s.package_id, s.name
-FROM base_verdicts v
-JOIN symbols s ON s.symbol_id = v.symbol_id
-WHERE v.verdict = 'unexport_candidate'
-   OR (v.verdict = 'needs_review'
-       AND EXISTS (SELECT 1 FROM json_each(v.reasons) j WHERE j.value = 'witness_pending'));
+FROM symbols s
+WHERE EXISTS (
+  SELECT 1 FROM findings f
+  WHERE f.symbol_id = s.symbol_id
+    AND (f.verdict IN ('deletion_candidate', 'unexport_candidate')
+         OR (f.verdict = 'needs_review'
+             AND EXISTS (SELECT 1 FROM json_each(f.reasons) j WHERE j.value = 'witness_pending')))
+);
 
 CREATE VIEW reach_seeds_after (symbol_id) AS
 SELECT symbol_id FROM reach_seeds_before
@@ -502,32 +551,31 @@ SELECT symbol_id FROM reach;
 -- deletion instead: needs_review with reasons [internal_refs_only(, only_test_refs),
 -- dead_island, witness_pending], which the witness promotes or downgrades like any
 -- other would-be deletion. candidate_symbols is the same set either way, so the
--- private_dead cascade (unlocked_by) already agrees.
+-- private_dead cascade (unlocked_by) already agrees. Reads mat_base_verdicts and
+-- mat_reachable_after, which analyze.ts fills after staging the base verdicts in
+-- `findings` (same candidate set).
 CREATE VIEW verdicts (symbol_id, verdict, reasons, blocked_by) AS
 SELECT v.symbol_id,
-       CASE WHEN i.symbol_id IS NOT NULL THEN 'needs_review' ELSE v.verdict END,
+       CASE WHEN v.verdict = 'unexport_candidate' AND r.symbol_id IS NULL THEN 'needs_review' ELSE v.verdict END,
        CASE
-         WHEN i.symbol_id IS NOT NULL
+         WHEN v.verdict = 'unexport_candidate' AND r.symbol_id IS NULL
            THEN json_insert(json_insert(v.reasons, '$[#]', 'dead_island'), '$[#]', 'witness_pending')
          ELSE v.reasons
        END,
        v.blocked_by
-FROM base_verdicts v
-LEFT JOIN (
-  SELECT symbol_id FROM base_verdicts WHERE verdict = 'unexport_candidate'
-  EXCEPT
-  SELECT symbol_id FROM reachable_after
-) i ON i.symbol_id = v.symbol_id;
+FROM mat_base_verdicts v
+LEFT JOIN (SELECT symbol_id FROM mat_reachable_after) r ON r.symbol_id = v.symbol_id;
 
 -- What each candidate reaches that nothing else still reaches (the walk stops at
 -- symbols in reachable_after, which cannot be unlocked by anything).
+-- The one recursion that stays a view: it is read once, by private_dead_unlocked.
 CREATE VIEW candidate_reach (origin_id, symbol_id) AS
 WITH RECURSIVE reach (origin_id, symbol_id) AS (
   SELECT symbol_id, symbol_id FROM candidate_symbols
   UNION
   SELECT r.origin_id, e.to_symbol_id
   FROM reach_edges e JOIN reach r ON e.from_symbol_id = r.symbol_id
-  WHERE e.to_symbol_id NOT IN (SELECT symbol_id FROM reachable_after)
+  WHERE e.to_symbol_id NOT IN (SELECT symbol_id FROM mat_reachable_after)
 )
 SELECT origin_id, symbol_id FROM reach;
 
@@ -556,14 +604,18 @@ WHERE s.is_exported = 0
   AND s.symbol_id NOT IN (SELECT symbol_id FROM kept_symbols)
   AND s.package_id NOT IN (SELECT package_id FROM opaque_packages)
   AND s.package_id NOT IN (SELECT package_id FROM verdict_blockers)
-  AND (EXISTS (SELECT 1 FROM symbols x WHERE x.package_id = s.package_id AND x.is_exported = 1)
-       OR EXISTS (SELECT 1 FROM documents d WHERE d.package_id = s.package_id AND d.is_entry = 1)
-       OR EXISTS (SELECT 1 FROM entry_symbols e JOIN symbols x ON x.symbol_id = e.symbol_id WHERE x.package_id = s.package_id));
+  -- (uncorrelated IN: a correlated EXISTS rescans a package's symbols per symbol)
+  AND s.package_id IN (
+    SELECT package_id FROM symbols WHERE is_exported = 1
+    UNION
+    SELECT package_id FROM documents WHERE is_entry = 1
+    UNION
+    SELECT x.package_id FROM entry_symbols e JOIN symbols x ON x.symbol_id = e.symbol_id);
 
 -- Already dead before any removal: the private islands per-repo lints miss.
 CREATE VIEW unreachable_before (symbol_id) AS
 SELECT symbol_id FROM private_dead_eligible
-WHERE symbol_id NOT IN (SELECT symbol_id FROM reachable);
+WHERE symbol_id NOT IN (SELECT symbol_id FROM mat_reachable);
 
 -- Reachable now, unreachable once the candidates are gone, with the candidates
 -- that unlock it.
@@ -574,8 +626,8 @@ FROM (
   FROM candidate_reach cr
   JOIN candidate_symbols c ON c.symbol_id = cr.origin_id
   WHERE cr.symbol_id IN (SELECT symbol_id FROM private_dead_eligible)
-    AND cr.symbol_id IN (SELECT symbol_id FROM reachable)
-    AND cr.symbol_id NOT IN (SELECT symbol_id FROM reachable_after)
+    AND cr.symbol_id IN (SELECT symbol_id FROM mat_reachable)
+    AND cr.symbol_id NOT IN (SELECT symbol_id FROM mat_reachable_after)
 )
 GROUP BY symbol_id;
 
@@ -584,7 +636,7 @@ GROUP BY symbol_id;
 -- or is a candidate (a class's members go with the class). Members of a live
 -- exported class are reachable through the owner edge and never get here.
 CREATE VIEW private_dead (symbol_id, verdict, reasons, blocked_by) AS
-WITH dead (symbol_id, reasons) AS (
+WITH dead (symbol_id, reasons) AS MATERIALIZED (
   SELECT symbol_id, json_array('already_unreachable') FROM unreachable_before
   UNION ALL
   SELECT symbol_id, reasons FROM private_dead_unlocked

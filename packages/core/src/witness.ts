@@ -20,31 +20,48 @@
 //      identifier (npm); instead, when S is named `default` (anonymous default export)
 //      or exported as `default`, a default import of a matching module specifier is a
 //      hit (the default-import rule below).
-// Plus the SELF step: P's own files (same walk and test/docs rules) that generate
-// import statements of P at build time. A file qualifies when one of its string
-// literals is a CODE TEMPLATE naming P: the literal contains P's package name (`P`,
-// `P/…`; pub `package:P/…`) and one of the words import / require / from / export
-// (e.g. `` `import { X } from 'honox/vite/components'` ``). Literals come
-// from a loose scanner (stringLiterals: comments skipped, so JSDoc code fences do not
-// count; '…' / "…" single-line; backtick templates span lines, `${…}` skipped by brace
-// counting; pub: also '''…''' / """…""").
-// Also a literal naming P passed to an AST builder: `*ImportDeclaration(` /
-// `*ExportDeclaration(` (babel `importDeclaration`, TS `factory.createImportDeclaration`)
-// opening within the 300 characters before it (honox's
-// `importDeclaration([…HonoXIsland…], stringLiteral('honox/vite/components'))`).
-// A plain `name: '@acme/x/bun'` or a deprecation message does not qualify; a real
-// `import … from 'P'` does not either (the literal `'P'` has no keyword). In a
-// qualifying file, a line naming S (any name) is a hit, consumer `self`.
+// Plus witness_files (ingest, from scoped sidecar unindexedImports): unindexed script /
+// docs / test files of a consumer C importing P, scanned like C's own files (step 1 +
+// 2, names only) whether or not C declares a dependency on P, consumer label C; a row
+// with C = P (an own `.vue` / `.svelte` component importing own code relatively) needs
+// no import of P and is labelled `self`.
+// The self steps read only P's own CODE files that are not generated
+// (documents.is_generated or GENERATED_GLOBS: capnp-es generated files quote names and
+// import P by name).
+// SELF (codegen) step: P's own string literals that are CODE TEMPLATES naming P: the
+// literal contains P's package name (`P`, `P/…`; pub `package:P/…`) and is shaped like
+// generated import code (CODEGEN_CONTENT_RES: `import { X } from '…'`, `export * from`,
+// Dart `import 'package:…'`, `require('…')`, `import('…')`; e.g.
+// `` `import { X } from 'honox/vite/components'` ``). Literals come from a loose
+// scanner (stringLiterals: comments skipped, so JSDoc code fences do not count; '…' /
+// "…" single-line; backtick templates span lines, `${…}` skipped by brace counting;
+// pub: also '''…''' / """…"""). Also a literal naming P passed to an AST builder:
+// `*ImportDeclaration(` / `*ExportDeclaration(` (babel `importDeclaration`, TS
+// `factory.createImportDeclaration`) opening within the 300 characters before it
+// (honox's `importDeclaration([…HonoXIsland…], stringLiteral('honox/vite/components'))`).
+// A plain `name: '@acme/x/bun'` or a deprecation message does not qualify; a module
+// specifier never does (`import … from 'P'`). Only a name of S written INSIDE the
+// qualifying literal (template content, `${…}` blanked) or inside the builder call up
+// to the literal is a hit, consumer `self` (not every symbol of the file:
+// `ClerkAuthVariables` beside a template importing `@hono/clerk-auth`).
 // P is also its OWN consumer: P's own files (same walk and rules) that import P by its
-// package name are scanned like any consumer's (step 1 + 2), with consumer `self`. Such
-// files are usually outside the tsconfig program (codeup's `actions/*.ts` doing
-// `import { defineAction } from "codeup"`), so the indexer never saw the use. Own files
-// importing only relatively do not mention P and are unaffected (they are indexed).
-// SELF-STRING step: any literal in P's own files (same walk and rules) whose content,
-// with `${…}` interpolations blanked, IS a name of S (`helperName: "executeAsync"`,
-// auto-import lists) or holds it in an import-clause shape (`{ N`, `N }`, `N as`,
-// `as N`, `, N,`; e.g. `` `import { executeAsync as __x } from "${mod}"` ``) is a hit,
-// consumer `self-string`: code we cannot follow may name S. `'executeAsyncMode'` is not.
+// package name are scanned like any consumer's (step 1 + 2), with consumer `self`, but
+// only files that are NOT indexed documents of P (usually outside the tsconfig
+// program: codeup's `actions/*.ts` doing `import { defineAction } from "codeup"`; an
+// indexed Dart `lib/` file importing `package:P/src/…` was seen by the indexer), with
+// comments and non-specifier string literals blanked (an import inside a code template
+// is the codegen step's business), and never counting directive lines
+// (SELF_DIRECTIVE_LINE_RES: Dart `export`/`part`/`show`/`hide`, a TS re-export line).
+// SELF-STRING step: a literal in P's own files (same walk and rules) whose content,
+// with `${…}` interpolations blanked, holds a name of S in an import-clause shape
+// (`{ N`, `N }`, `N as`, `as N`, `, N,`; e.g.
+// `` `import { executeAsync as __x } from "${mod}"` ``), or IS the name while the same
+// file holds a codegen-shaped literal (a template as above naming any module, or an
+// AST-builder argument: unctx's `helperName: "executeAsync"` next to its import
+// template; not `c.set('sentry', …)` or `name = 'MedleyRouter'`), is a hit, consumer
+// `self-string`: code we cannot follow may name S. Never a module specifier
+// (`import { Enforcer } from 'casbin'` does not name `casbin` the symbol), never S's own
+// definition line (`component = 'component'`). `'executeAsyncMode'` is not a hit.
 // Any hit (or a consumer dir we cannot read) → needs_review with reasons
 //   witness_mismatch:<consumer>:<file>:<line>      (1-based line, repo-relative file)
 //   witness_mismatch:<consumer>:checkout missing
@@ -86,12 +103,16 @@
 // countTestsAsConsumers says (a test-support library is consumed by tests).
 // No hit → witness_ok row and a deletion_candidate (the schema triggers still guard
 // that insert).
+// Then, in the same transaction, the outcomes propagate (analyze.ts): dead islands
+// whose users the witness downgraded revert to unexport_candidate
+// (reconcileDeadIslands), and the private_dead cascade is recomputed from the new
+// findings (insertPrivateDead), so a downgraded candidate no longer unlocks helpers.
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { requireAnalyzed } from './analyze.ts';
+import { analyzeSql, insertPrivateDead, reconcileDeadIslands, requireAnalyzed } from './analyze.ts';
 import { matchGlob } from './glob.ts';
-import { DOCS_GLOBS, TEST_GLOBS } from './globs.ts';
+import { DOCS_GLOBS, GENERATED_GLOBS, TEST_GLOBS } from './globs.ts';
 import { listFiles } from './manifests.ts';
 
 /** The part of work/discover.json (DiscoverModel) the witness reads. */
@@ -366,6 +387,40 @@ function addDefaultTargets(t: DefaultTargets, file: string, pkgPath: string | nu
   }
 }
 
+/** Directive lines never counted for the `self` consumer (P naming S in its own export/part directives). */
+const SELF_DIRECTIVE_LINE_RES: Record<'npm' | 'pub', RegExp[]> = {
+  pub: [/^\s*(?:export|part)\b/, /^\s*(?:show|hide)\b/, /^\s*import\s+['"].*\b(?:show|hide)\b/],
+  npm: [/^\s*export\b.*\bfrom\s*['"]/],
+};
+
+/** Text right before a literal that makes it a module specifier (import/export … from, require(, import(, Dart part). */
+const SPECIFIER_BEFORE_RE = /(?:\bfrom|\bimport|\bexport|\bpart(?:\s+of)?|\brequire\s*\(|\bimport\s*\(|\bmodule)\s*$/;
+/** A literal's content shaped like generated import/export code (interpolations blanked). */
+const CODEGEN_CONTENT_RES = [
+  /\b(?:import|export)\s*(?:type\s+)?[{*\w$][\s\S]*?\bfrom\s*['"]/, // import { a } from "…" / export * from "…"
+  /\b(?:import|export)\s+['"][^'"\n]+['"]/, // import 'package:x/y.dart' (Dart) / side-effect import
+  /\brequire\s*\(\s*['"]/, // require("…")
+  /\bimport\s*\(\s*['"]/, // import("…")
+];
+/** An AST builder for an import/export declaration (babel `importDeclaration(`, TS `factory.createImportDeclaration(`). */
+const BUILDER_RE = /\w*(?:Import|Export|import|export)\w*Declaration\s*\(/g;
+
+/**
+ * Whether a literal is codegen-shaped, and the region that is "generated code": the
+ * literal itself for a code template (content matches CODEGEN_CONTENT_RES), or the
+ * text from the nearest AST-builder call opening within the 300 characters before it
+ * to the end of the literal. null otherwise.
+ */
+function codegenRegion(text: string, start: number, length: number, content: string): { start: number; end: number } | null {
+  if (CODEGEN_CONTENT_RES.some((re) => re.test(content))) return { start, end: start + length };
+  const from = Math.max(0, start - 300);
+  const window = text.slice(from, start);
+  let last = -1;
+  BUILDER_RE.lastIndex = 0;
+  for (let m = BUILDER_RE.exec(window); m; m = BUILDER_RE.exec(window)) last = m.index;
+  return last === -1 ? null : { start: from + last, end: start + length };
+}
+
 interface Hit {
   consumer: string;
   /** Repo-relative POSIX path, or null when the checkout is missing. */
@@ -499,13 +554,23 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return t;
   };
 
-  /** readText with comments blanked (blankComments), for P's own files. */
+  /**
+   * readText with comments blanked (blankComments) and every string literal that is not
+   * a module specifier blanked too, for P's own files scanned as the `self` consumer: an
+   * import of P written inside a code template (`` `import { X } from 'P'` ``) is
+   * generated code (the self codegen step's business), not an import by this file.
+   */
   const codeCache = new Map<string, string>();
   const readCode = (consumer: string, rel: string): string => {
     const key = `${consumer}\0${rel}`;
     let t = codeCache.get(key);
     if (t === undefined) {
-      t = blankComments(readText(consumer, rel), extname(rel) === '.dart');
+      const dart = extname(rel) === '.dart';
+      t = blankComments(readText(consumer, rel), dart);
+      for (const lit of stringLiterals(t, dart)) {
+        if (SPECIFIER_BEFORE_RE.test(t.slice(Math.max(0, lit.start - 40), lit.start))) continue;
+        t = t.slice(0, lit.start) + lit.text.replace(/[^\n]/g, ' ') + t.slice(lit.start + lit.text.length);
+      }
       codeCache.set(key, t);
     }
     return t;
@@ -544,19 +609,55 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return out;
   };
 
+  /** Indexed documents of a package (repo-relative files), per package. */
+  const docsOf = db.prepare('SELECT file FROM documents WHERE package_id = ?');
+  const indexedCache = new Map<string, Set<string>>();
+  const indexedFiles = (packageId: string): Set<string> => {
+    let out = indexedCache.get(packageId);
+    if (!out) indexedCache.set(packageId, (out = new Set((docsOf.all(packageId) as Array<{ file: string }>).map((r) => r.file))));
+    return out;
+  };
+  /**
+   * Generated files of P (documents.is_generated, or a GENERATED_GLOBS path for files
+   * the indexer never saw): never self-scanned. capnp-es generated files carry
+   * `displayName: "X"` strings and import the package by name.
+   */
+  const generatedOf = db.prepare('SELECT file FROM documents WHERE package_id = ? AND is_generated = 1');
+  const generatedCache = new Map<string, Set<string>>();
+  const isGenerated = (packageId: string, file: string): boolean => {
+    let set = generatedCache.get(packageId);
+    if (!set) generatedCache.set(packageId, (set = new Set((generatedOf.all(packageId) as Array<{ file: string }>).map((r) => r.file))));
+    return set.has(file) || GENERATED_GLOBS.some((g) => matchGlob(g, file));
+  };
+
   /**
    * Hits in consumer C (`label`: the consumer named in the reason; default C itself).
    * `label` 'self' (P scanned as its own consumer) reads the files with comments
-   * blanked: a JSDoc `@example import { S } from 'P'` on S itself is not a use.
+   * blanked (a JSDoc `@example import { S } from 'P'` on S itself is not a use), scans
+   * only P's files that are NOT indexed documents of P (the point of the step: files
+   * outside the program; an indexed Dart `lib/` file routinely imports/exports
+   * `package:P/src/…` and the indexer already saw it), and ignores directive lines
+   * (SELF_DIRECTIVE_LINE_RES: `export '…' show S`, `part`, a re-export `export … from`).
    */
   const findHits = (row: PendingRow, plan: SearchPlan, consumer: string, withTests = false, label = consumer): Hit[] => {
-    const files = consumerFiles(consumer, withTests);
+    let files = consumerFiles(consumer, withTests);
     if (files === null) return [{ consumer: label, file: null, line: 0 }];
-    const read = label === 'self' ? readCode : readText;
+    const self = label === 'self';
+    if (self) {
+      const indexed = indexedFiles(consumer);
+      files = files.filter((f) => !indexed.has(f) && !isGenerated(consumer, f));
+    }
+    const read = self ? readCode : readText;
     const hits: Hit[] = [];
     for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests, read)) {
       const text = read(consumer, f);
-      const lines = new Set<number>(nameLines(text, plan.names));
+      let named = nameLines(text, plan.names);
+      if (self) {
+        const res = SELF_DIRECTIVE_LINE_RES[row.manager];
+        const src = text.split(/\r?\n/);
+        named = named.filter((l) => !res.some((re) => re.test(src[l - 1] ?? '')));
+      }
+      const lines = new Set<number>(named);
       if (plan.defaults) {
         const t = plan.defaults;
         for (const re of defaultRegexes(row.pkg_name)) {
@@ -578,59 +679,46 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return hits;
   };
 
-  /** P's own files holding a code template (or AST-builder literal) naming P (header), per package; null if P's checkout is missing. */
-  const selfCache = new Map<string, string[] | null>();
-  const selfGenFiles = (row: PendingRow): string[] | null => {
-    let out = selfCache.get(row.package_id);
-    if (out !== undefined) return out;
-    const files = consumerFiles(row.package_id);
-    if (files === null) {
-      out = null;
-    } else {
-      const p = escapeRe(row.pkg_name);
-      // P as a whole specifier inside the literal: not part of a longer name (`@acme/lib-x`).
-      const nameRe = row.manager === 'pub'
-        ? new RegExp(`package:${p}(?![\\w])`)
-        : new RegExp(`(?<![\\w@./-])${p}(?![\\w.-])`);
-      const keywordRe = /\b(?:import|require|from|export)\b/;
-      const builderRe = /\w*(?:Import|Export|import|export)\w*Declaration\s*\(/;
-      const qualifies = (text: string): boolean => {
-        for (const lit of stringLiterals(text, row.manager === 'pub')) {
-          if (!nameRe.test(lit.text)) continue;
-          if (keywordRe.test(lit.text)) return true;
-          if (builderRe.test(text.slice(Math.max(0, lit.start - 300), lit.start))) return true;
-        }
-        return false;
-      };
-      out = files.filter((f) => qualifies(readText(row.package_id, f)));
-    }
-    selfCache.set(row.package_id, out);
-    return out;
-  };
-
-  const selfHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
-    const files = selfGenFiles(row);
-    if (files === null) return [{ consumer: 'self', file: null, line: 0 }];
-    return files.flatMap((f) => nameLines(readText(row.package_id, f), plan.names).map((line) => ({ consumer: 'self', file: f, line })));
-  };
+  /** A literal found in one of P's own files (ownLiterals). */
+  interface OwnLiteral {
+    file: string;
+    /** Offset of the literal's opening delimiter in the file. */
+    start: number;
+    /** Offset of the content (after the delimiter). */
+    offset: number;
+    /** Raw literal text, delimiters included. */
+    text: string;
+    /** Content: delimiters stripped, `${…}` blanked (same length). */
+    content: string;
+    /** The target of `import`/`export … from`/`require(`/`import(`/Dart `part`: never a quoted name. */
+    specifier: boolean;
+    /** A code template (import-clause shape) or an AST-builder argument (codegenRegion). */
+    codegen: { start: number; end: number } | null;
+  }
 
   /**
-   * String literals of P's own files (same walk and test/docs rules), per package, with
-   * their content: delimiters stripped and every `${…}` interpolation blanked to spaces
-   * (same length, so offsets still map to lines; an interpolation is code the indexer
-   * sees, not a quoted name). null if P's checkout is missing.
+   * String literals of P's own code files (same walk and test/docs rules, and only
+   * P's own language: `.dart` for pub, JS/TS for npm, so a vendored `.js` bundle in a
+   * pub package is not read; never a generated file), per package; null if P's
+   * checkout is missing.
    */
-  const literalCache = new Map<string, Array<{ file: string; offset: number; content: string }> | null>();
-  const ownLiterals = (row: PendingRow): Array<{ file: string; offset: number; content: string }> | null => {
+  const literalCache = new Map<string, OwnLiteral[] | null>();
+  const ownLiterals = (row: PendingRow): OwnLiteral[] | null => {
     let out = literalCache.get(row.package_id);
     if (out !== undefined) return out;
     const files = consumerFiles(row.package_id);
-    out = files === null ? null : files.flatMap((f) => {
-      const dart = row.manager === 'pub';
-      return stringLiterals(readText(row.package_id, f), dart).map((lit) => {
+    const dart = row.manager === 'pub';
+    out = files === null ? null : files.filter((f) => (extname(f) === '.dart') === dart && !isGenerated(row.package_id, f)).flatMap((f) => {
+      const text = readText(row.package_id, f);
+      return stringLiterals(text, dart).map((lit): OwnLiteral => {
         const q = dart && (lit.text.startsWith("'''") || lit.text.startsWith('"""')) ? 3 : 1;
         const close = lit.text.length >= 2 * q && lit.text.endsWith(lit.text.slice(0, q)) ? q : 0;
-        return { file: f, offset: lit.start + q, content: blankInterpolations(lit.text.slice(q, lit.text.length - close)) };
+        const content = blankInterpolations(lit.text.slice(q, lit.text.length - close));
+        const specifier = SPECIFIER_BEFORE_RE.test(text.slice(Math.max(0, lit.start - 40), lit.start));
+        return {
+          file: f, start: lit.start, offset: lit.start + q, text: lit.text, content, specifier,
+          codegen: specifier ? null : codegenRegion(text, lit.start, lit.text.length, content),
+        };
       });
     });
     literalCache.set(row.package_id, out);
@@ -638,14 +726,51 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   };
 
   /**
+   * SELF (codegen) step: P's own literals that are code templates or AST-builder
+   * arguments naming P (header). Only the names written INSIDE such a literal (or, for
+   * an AST builder, inside the builder call up to the literal) are hits: another symbol
+   * merely declared or used elsewhere in the same file is not generated code
+   * (`ClerkAuthVariables` next to a template importing `@hono/clerk-auth`).
+   */
+  const selfHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
+    const lits = ownLiterals(row);
+    if (lits === null) return [{ consumer: 'self', file: null, line: 0 }];
+    if (plan.names.length === 0) return [];
+    const p = escapeRe(row.pkg_name);
+    // P as a whole specifier inside the literal: not part of a longer name (`@acme/lib-x`).
+    const nameRe = row.manager === 'pub'
+      ? new RegExp(`package:${p}(?![\\w])`)
+      : new RegExp(`(?<![\\w@./-])${p}(?![\\w.-])`);
+    const identRe = new RegExp(`(?<!\\w)(?:${plan.names.map(escapeRe).join('|')})(?![\\w$])`, 'g');
+    const hits: Hit[] = [];
+    for (const lit of lits) {
+      if (lit.codegen === null || !nameRe.test(lit.text)) continue;
+      const text = readText(row.package_id, lit.file);
+      // A template: its content (interpolations blanked: they are code the indexer sees).
+      // A builder call: the raw text from the call to the end of the literal.
+      const region = lit.codegen.start === lit.start ? lit.content : text.slice(lit.codegen.start, lit.codegen.end);
+      const base = lit.codegen.start === lit.start ? lit.offset : lit.codegen.start;
+      identRe.lastIndex = 0;
+      for (let m = identRe.exec(region); m; m = identRe.exec(region)) {
+        hits.push({ consumer: 'self', file: lit.file, line: lineAt(text, base + m.index) });
+      }
+    }
+    return hits;
+  };
+
+  /**
    * SELF-STRING step: a literal in P's own sources that quotes a name of S (header):
-   * its content IS the name (`helperName: "executeAsync"`, an auto-import list), or it
-   * holds the name in an import-clause shape (`{ N`, `N }`, `N as`, `as N`, `, N,`),
-   * i.e. generated code naming S with a module path we cannot follow.
+   * it holds the name in an import-clause shape (`{ N`, `N }`, `N as`, `as N`, `, N,`),
+   * i.e. generated code naming S with a module path we cannot follow; or its content IS
+   * the name (`helperName: "executeAsync"`) AND the same file holds a codegen-shaped
+   * literal (so `c.set('sentry', …)`, `name = 'MedleyRouter'` or a default title do
+   * not count). Module specifiers never count (`import { Enforcer } from 'casbin'` is
+   * no mention of `casbin`), nor does S's own definition line (`component = 'component'`).
    */
   const selfStringHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
     const lits = ownLiterals(row);
     if (lits === null) return [{ consumer: 'self-string', file: null, line: 0 }];
+    const codegenFiles = new Set(lits.filter((l) => l.codegen !== null).map((l) => l.file));
     const hits: Hit[] = [];
     for (const name of plan.names) {
       const e = escapeRe(name);
@@ -653,14 +778,18 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         `\\{\\s*${e}(?![\\w$])|(?<![\\w$])${e}\\s*\\}|(?<![\\w$])${e}\\s+as\\b|\\bas\\s+${e}(?![\\w$])|,\\s*${e}\\s*,`,
       );
       for (const lit of lits) {
-        if (!lit.content.includes(name)) continue;
+        if (lit.specifier || !lit.content.includes(name)) continue;
         let at = -1;
-        if (lit.content === name) at = 0;
-        else {
+        if (lit.content === name) {
+          if (codegenFiles.has(lit.file)) at = 0;
+        } else {
           const m = clause.exec(lit.content);
           if (m) at = m.index;
         }
-        if (at >= 0) hits.push({ consumer: 'self-string', file: lit.file, line: lineAt(readText(row.package_id, lit.file), lit.offset + at) });
+        if (at < 0) continue;
+        const line = lineAt(readText(row.package_id, lit.file), lit.offset + at);
+        if (lit.file === row.file && row.line !== null && line === row.line + 1) continue;
+        hits.push({ consumer: 'self-string', file: lit.file, line });
       }
     }
     return hits;
@@ -721,6 +850,47 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     `SELECT consumer_package_id AS c, max(dev) AS dev FROM package_deps
      WHERE resolved_package_id = ? GROUP BY consumer_package_id ORDER BY consumer_package_id`,
   );
+  /**
+   * witness_files: unindexed script / docs / test files of a consumer C that import P
+   * (ingest, scoped sidecar unindexedImports). Scanned like C's own files (the file
+   * must import P; a name of S on any line is a hit; test/docs files only under the
+   * same policy / dev-dependency rules), whether or not C declares P as a dependency.
+   * A row with C = P (an own SFC importing own code relatively) needs no import of P
+   * and is reported as consumer `self`.
+   */
+  const witnessFilesOf = db.prepare(
+    'SELECT consumer_package_id AS c, file FROM witness_files WHERE target_package_id = ? ORDER BY consumer_package_id, file',
+  );
+  const devOf = db.prepare('SELECT max(dev) AS dev FROM package_deps WHERE consumer_package_id = ? AND resolved_package_id = ?');
+  const extraFileHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
+    const hits: Hit[] = [];
+    for (const { c, file } of witnessFilesOf.all(row.package_id) as Array<{ c: string; file: string }>) {
+      const loc = locs.get(c);
+      if (!loc) {
+        hits.push({ consumer: c, file: null, line: 0 });
+        continue;
+      }
+      const dev = (devOf.get(c, row.package_id) as { dev: number | null } | undefined)?.dev === 1;
+      if (excluded(file, loc.globBase, dev)) continue;
+      let text: string;
+      try {
+        text = readText(c, file);
+      } catch {
+        hits.push({ consumer: c, file: null, line: 0 }); // listed but unreadable: fail closed
+        continue;
+      }
+      // A self row (consumer = P: an own `.vue` / `.svelte` component importing an own
+      // module relatively) names P's code without naming P: no import-of-P check.
+      const res = mentionRegexes(row.manager, row.pkg_name);
+      if (c !== row.package_id && !res.some((re) => {
+        re.lastIndex = 0;
+        return re.test(text);
+      })) continue;
+      for (const line of nameLines(text, plan.names)) hits.push({ consumer: c === row.package_id ? 'self' : c, file, line });
+    }
+    return hits;
+  };
+
   const del = db.prepare("DELETE FROM findings WHERE symbol_id = ? AND verdict = 'needs_review'");
   const insFinding = db.prepare('INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, ?, ?, ?)');
   const insOk = db.prepare('INSERT OR REPLACE INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)');
@@ -738,6 +908,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       const plan = planFor(row);
       const all = [
         ...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev)),
+        ...extraFileHits(row, plan),
         // P is its own consumer for own files that import it BY NAME (unindexed files
         // outside the tsconfig program, e.g. codeup's `actions/*.ts` importing "codeup").
         // The definition line itself is not a use (a Dart file routinely imports its own
@@ -771,6 +942,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         counts.passed += 1;
       }
     }
+    // Propagate the outcomes (header): current views, dead islands, private_dead cascade.
+    db.exec(analyzeSql());
+    const reverted = reconcileDeadIslands(db);
+    if (reverted > 0) log(`[witness] ${reverted} dead island(s) reverted to unexport_candidate (their users were downgraded)`);
+    insertPrivateDead(db);
     const fk = db.prepare('PRAGMA foreign_key_check').all();
     if (fk.length > 0) throw new Error(`sentei witness: foreign_key_check failed: ${JSON.stringify(fk.slice(0, 5))}`);
     db.exec('COMMIT');

@@ -86,7 +86,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(7);
+    expect(SCHEMA_VERSION).toBe(8);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -94,7 +94,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 7/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 8/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -151,8 +151,9 @@ describe('smoke', () => {
     run('INSERT INTO documents (package_id, file, module_symbol_id, is_entry) VALUES (?, ?, ?, 1)', lib, 'src/index.ts', b);
     run('INSERT INTO unresolved_refs (consumer_package_id, target_package_id, symbol_str, file, line, col) VALUES (?, ?, ?, ?, ?, ?)',
       app, lib, 'gone', 'src/main.ts', 1, 2);
+    run("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES (?, ?, 'bench/x.ts')", app, lib);
     run('DELETE FROM repos');
-    for (const t of ['packages', 'package_deps', 'symbols', 'occurrences', 'edges', 'package_flags', 'keep_rules', 'witness_ok', 'findings', 'documents', 'unresolved_refs', 'symbol_exports']) {
+    for (const t of ['packages', 'package_deps', 'symbols', 'occurrences', 'edges', 'package_flags', 'keep_rules', 'witness_ok', 'findings', 'documents', 'unresolved_refs', 'symbol_exports', 'witness_files']) {
       expect(count(`SELECT count(*) AS n FROM ${t}`), t).toBe(0);
     }
   });
