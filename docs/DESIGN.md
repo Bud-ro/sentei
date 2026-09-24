@@ -771,3 +771,35 @@ private_dead 460 → 282, needs_review 0 → 18, blocked ~400.
 - hono self-flagged `opaque_consumer` 153 times for `require` conditions
   pointing at `dist/cjs/*`: an exports entry is now unresolved only when none of
   its conditions resolves.
+
+### Workiva verification rerun (HEAD bf4a486)
+
+No work-dir workarounds needed: npm and pub packages in one directory index
+side by side, ingest had zero package errors and zero skipped symbols. Index
+461 s with installs, blame 0.4 s from cache. Verdicts: deletion 81 → 60,
+unexport 280 → 146, private_dead 623 → 82, needs_review 14 → 52, blocked
+412 → 451, version skew 16 → 0.
+
+- Fixed as intended: `builtRedux` (build.yaml builder factory) and the
+  dart_dev `config` / benchmark `main` symbols are entry symbols; import
+  prefixes and generated `*.pb.dart`/`*.g.dart` produce no rows; `pub:react`
+  and `pub:pdfjs` own their documents; the dev-dependency rule keeps
+  react_testing_library's `screen` alive while its truly test-only API keeps
+  `only_test_refs`.
+- New blocker: `over_react` became `partial` for 19 missing
+  `*.over_react.g.dart` parts in `web/` demo code, blocking 451 findings. The
+  missing-part rule is now limited to library code (`lib/`, `bin/`).
+- Self-witness was too broad for Dart: own `lib/` files import the package by
+  `package:` URI and are indexed, so `show MockClient`, a constructor line and
+  a same-named class in another library counted as hits (30 of 52
+  needs_review rows). The self consumer now scans only own files that are not
+  indexed documents, ignores directive lines, restricts `self-string` to the
+  package's own language files and skips the defining line.
+- Dead islands did not follow witness downgrades (pdfjs
+  `DocumentInitParameters` stayed a deletion candidate after `PDFJS`, its only
+  user, became `needs_review`); the island verdicts are now recomputed after
+  the witness until stable.
+- Spot check of 6 new deletion candidates: 4 public-API-only, 2 wrong only
+  through the island/witness interaction above. Two open toolchain items for
+  Budro: Dart ≥3.12/3.13 for codemod packages, and pnpm's store-operation lock
+  failing inside this sandbox (react-dart, hono).
