@@ -1,0 +1,12 @@
+# Generates packages/core/src/scip/scip_pb.ts from the vendored scip.proto.
+# Run `npm run gen:scip` only when vendor/scip/scip.proto changes; the output is checked in.
+version: v2
+inputs:
+  - directory: vendor/scip
+plugins:
+  - local: protoc-gen-es
+    out: packages/core/src/scip
+    opt:
+      - target=ts
+      - import_extension=ts
+      - erasable_syntax=true

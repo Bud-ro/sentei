@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openDb } from '../src/db.ts';
+import { openDb, SCHEMA_VERSION } from '../src/db.ts';
 
 const REJECTED = /sentei:|constraint/i;
 
@@ -84,6 +84,20 @@ describe('openDb', () => {
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
+
+  it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
+    expect(SCHEMA_VERSION).toBe(2);
+    const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
+    expect(v.user_version).toBe(SCHEMA_VERSION);
+    db.close();
+    const path = join(process.env['TMPDIR'] ?? '.', `sentei-schema-version-${process.pid}.db`);
+    db = openDb(path);
+    db.exec('PRAGMA user_version = 1');
+    db.close();
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 2/);
+    for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
+    db = openDb(':memory:');
+  });
 });
 
 describe('smoke', () => {
@@ -131,8 +145,13 @@ describe('smoke', () => {
     run("INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, 'a')", lib);
     run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', b, 1);
     addFinding(a, 'private_dead');
+    addRepo('acme/app');
+    const app = addPackage('@acme/app', { repo: 'acme/app' });
+    run('INSERT INTO documents (package_id, file, module_symbol_id, is_entry) VALUES (?, ?, ?, 1)', lib, 'src/index.ts', b);
+    run('INSERT INTO unresolved_refs (consumer_package_id, target_package_id, symbol_str, file, line, col) VALUES (?, ?, ?, ?, ?, ?)',
+      app, lib, 'gone', 'src/main.ts', 1, 2);
     run('DELETE FROM repos');
-    for (const t of ['packages', 'package_deps', 'symbols', 'occurrences', 'edges', 'package_flags', 'keep_rules', 'witness_ok', 'findings']) {
+    for (const t of ['packages', 'package_deps', 'symbols', 'occurrences', 'edges', 'package_flags', 'keep_rules', 'witness_ok', 'findings', 'documents', 'unresolved_refs']) {
       expect(count(`SELECT count(*) AS n FROM ${t}`), t).toBe(0);
     }
   });
@@ -194,6 +213,131 @@ describe('symbols invariants', () => {
     const other = addPackage('@acme/other');
     const a = addSymbol(lib, 'a');
     expect(() => run('UPDATE symbols SET package_id = ? WHERE symbol_id = ?', other, a)).toThrow(REJECTED);
+  });
+});
+
+describe('symbols.parent_symbol_id invariants', () => {
+  let lib: string;
+  beforeEach(() => {
+    addRepo();
+    lib = addPackage('@acme/lib');
+  });
+
+  it('accepts a same-package parent and cascades its deletion to members', () => {
+    const owner = addSymbol(lib, 'Foo', 'Foo#');
+    const member = addSymbol(lib, 'bar', 'Foo#bar().');
+    run('UPDATE symbols SET parent_symbol_id = ? WHERE symbol_id = ?', owner, member);
+    run('DELETE FROM symbols WHERE symbol_id = ?', owner);
+    expect(count('SELECT count(*) AS n FROM symbols')).toBe(0);
+  });
+
+  it('rejects an unknown parent', () => {
+    const member = addSymbol(lib, 'bar');
+    expect(() => run('UPDATE symbols SET parent_symbol_id = 9999 WHERE symbol_id = ?', member)).toThrow(REJECTED);
+    expect(() => run("INSERT INTO symbols (symbol_str, package_id, file, name, parent_symbol_id) VALUES ('x', ?, 'f', 'x', 9999)", lib))
+      .toThrow(REJECTED);
+  });
+
+  it('rejects a parent in another package (insert and update)', () => {
+    const other = addPackage('@acme/other');
+    const owner = addSymbol(other, 'Foo', 'Foo#');
+    const member = addSymbol(lib, 'bar');
+    expect(() => run('UPDATE symbols SET parent_symbol_id = ? WHERE symbol_id = ?', owner, member))
+      .toThrow(/sentei: symbols.parent_symbol_id/);
+    expect(() => run("INSERT INTO symbols (symbol_str, package_id, file, name, parent_symbol_id) VALUES ('x', ?, 'f', 'x', ?)", lib, owner))
+      .toThrow(/sentei: symbols.parent_symbol_id/);
+  });
+
+  it('rejects a symbol being its own parent', () => {
+    const a = addSymbol(lib, 'a');
+    expect(() => run('UPDATE symbols SET parent_symbol_id = symbol_id WHERE symbol_id = ?', a)).toThrow(REJECTED);
+  });
+});
+
+describe('documents invariants', () => {
+  let lib: string;
+  let mod: number;
+  function addDoc(pkg: string, file: string, moduleSymbol: number | null, isEntry: number = 0): void {
+    run('INSERT INTO documents (package_id, file, module_symbol_id, is_entry) VALUES (?, ?, ?, ?)', pkg, file, moduleSymbol, isEntry);
+  }
+  beforeEach(() => {
+    addRepo();
+    lib = addPackage('@acme/lib');
+    mod = addSymbol(lib, 'index.ts', 'src/`index.ts`/');
+  });
+
+  it('accepts a document and cascades when its module symbol goes', () => {
+    addDoc(lib, 'src/index.ts', mod, 1);
+    run('DELETE FROM symbols');
+    expect(count('SELECT count(*) AS n FROM documents')).toBe(0);
+  });
+
+  it('rejects a duplicate (package_id, file)', () => {
+    addDoc(lib, 'src/index.ts', mod);
+    expect(() => addDoc(lib, 'src/index.ts', null)).toThrow(REJECTED);
+  });
+
+  it('rejects an unknown package or module symbol', () => {
+    expect(() => addDoc('npm:@acme/missing', 'src/index.ts', null)).toThrow(REJECTED);
+    expect(() => addDoc(lib, 'src/index.ts', 9999)).toThrow(REJECTED);
+  });
+
+  it('rejects a module symbol from another package (insert and update)', () => {
+    const other = addPackage('@acme/other');
+    expect(() => addDoc(other, 'src/index.ts', mod)).toThrow(/sentei: documents.module_symbol_id/);
+    addDoc(lib, 'src/index.ts', mod);
+    expect(() => run('UPDATE documents SET package_id = ?', other)).toThrow(/sentei: documents.module_symbol_id/);
+  });
+
+  it('rejects is_entry outside 0/1', () => {
+    expect(() => addDoc(lib, 'src/index.ts', mod, 2)).toThrow(REJECTED);
+  });
+});
+
+describe('occurrences.is_export_site invariants', () => {
+  it('defaults to 0 and rejects values outside 0/1', () => {
+    addRepo();
+    const lib = addPackage('@acme/lib');
+    const a = addSymbol(lib, 'a');
+    addOccurrence(a, lib, lib);
+    expect(count('SELECT is_export_site AS n FROM occurrences')).toBe(0);
+    expect(() => run('INSERT INTO occurrences (symbol_id, package_id, def_package_id, file, role, is_export_site) VALUES (?, ?, ?, ?, 0, 2)', a, lib, lib, 'f'))
+      .toThrow(REJECTED);
+    expect(() => run('INSERT INTO occurrences (symbol_id, package_id, def_package_id, file, role, is_export_site) VALUES (?, ?, ?, ?, 0, NULL)', a, lib, lib, 'f'))
+      .toThrow(REJECTED);
+  });
+});
+
+describe('unresolved_refs invariants', () => {
+  let lib: string;
+  let app: string;
+  function addUnresolved(consumer: string, target: string, sym: string | null = 'npm @acme/lib . gone().', file: string | null = 'src/main.ts'): void {
+    run('INSERT INTO unresolved_refs (consumer_package_id, target_package_id, symbol_str, file, line, col) VALUES (?, ?, ?, ?, 1, 2)',
+      consumer, target, sym, file);
+  }
+  beforeEach(() => {
+    addRepo();
+    lib = addPackage('@acme/lib');
+    app = addPackage('@acme/app');
+  });
+
+  it('accepts a cross-package unresolved reference', () => {
+    addUnresolved(app, lib);
+    expect(count('SELECT count(*) AS n FROM unresolved_refs')).toBe(1);
+  });
+
+  it('rejects unknown consumer or target packages', () => {
+    expect(() => addUnresolved('npm:@acme/missing', lib)).toThrow(REJECTED);
+    expect(() => addUnresolved(app, 'npm:@acme/missing')).toThrow(REJECTED);
+  });
+
+  it('rejects a same-package unresolved reference', () => {
+    expect(() => addUnresolved(lib, lib)).toThrow(REJECTED);
+  });
+
+  it('rejects missing symbol_str or file', () => {
+    expect(() => addUnresolved(app, lib, null)).toThrow(REJECTED);
+    expect(() => addUnresolved(app, lib, 'x', null)).toThrow(REJECTED);
   });
 });
 

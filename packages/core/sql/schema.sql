@@ -59,12 +59,29 @@ CREATE TABLE IF NOT EXISTS symbols (
   col                INTEGER,
   kind               TEXT,
   name               TEXT NOT NULL,
+  -- Enclosing declaration by descriptor (Foo#bar(). -> Foo#), so members are reachable
+  -- when their owner is. NULL for top-level declarations (the file is not a parent).
+  parent_symbol_id   INTEGER REFERENCES symbols (symbol_id) ON DELETE CASCADE
+                     CHECK (parent_symbol_id IS NOT symbol_id),
   is_exported        INTEGER NOT NULL DEFAULT 0 CHECK (is_exported IN (0, 1)),
   is_entry_reachable INTEGER NOT NULL DEFAULT 0 CHECK (is_entry_reachable IN (0, 1)),
   first_seen_sha     TEXT,
   first_seen_at      INTEGER                     -- epoch seconds (git blame author-time)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS symbols_package ON symbols (package_id);
+CREATE INDEX IF NOT EXISTS symbols_parent ON symbols (parent_symbol_id);
+
+-- One row per indexed document. module_symbol_id is the file pseudo-symbol (the
+-- indexer's module symbol, or a synthetic 'sentei file <package_id> <file>' one):
+-- the enclosing symbol of top-level code and the seed for entry files.
+CREATE TABLE IF NOT EXISTS documents (
+  package_id       TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
+  file             TEXT NOT NULL,
+  module_symbol_id INTEGER REFERENCES symbols (symbol_id) ON DELETE CASCADE,
+  is_entry         INTEGER NOT NULL DEFAULT 0 CHECK (is_entry IN (0, 1)),
+  PRIMARY KEY (package_id, file)
+) STRICT;
+CREATE INDEX IF NOT EXISTS documents_module ON documents (module_symbol_id);
 
 -- Every SCIP occurrence; is_external is the single definition of "cross-package reference".
 -- def_package_id denormalizes symbols.package_id because SQLite forbids subqueries in
@@ -78,6 +95,9 @@ CREATE TABLE IF NOT EXISTS occurrences (
   col                 INTEGER,
   role                INTEGER NOT NULL,          -- SCIP SymbolRole bitmask
   enclosing_symbol_id INTEGER REFERENCES symbols (symbol_id) ON DELETE CASCADE,
+  -- 1 = the identifier in an `export { a }` / `export { a as b } from` clause: part of
+  -- the export surface, not a use, so it never counts as a reference or makes an edge.
+  is_export_site      INTEGER NOT NULL DEFAULT 0 CHECK (is_export_site IN (0, 1)),
   is_external         INTEGER GENERATED ALWAYS AS (package_id <> def_package_id) STORED
 ) STRICT;
 CREATE INDEX IF NOT EXISTS occurrences_symbol ON occurrences (symbol_id);
@@ -95,6 +115,21 @@ CREATE TABLE IF NOT EXISTS edges (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS edges_from ON edges (from_symbol_id);
 CREATE INDEX IF NOT EXISTS edges_to ON edges (to_symbol_id);
+
+-- References from a consumer into an org package whose symbol has no definition in
+-- that package's index (version skew, indexer gaps). Reported, never counted as a
+-- reference: the symbol it names does not exist at HEAD, so it is neither dead nor alive.
+CREATE TABLE IF NOT EXISTS unresolved_refs (
+  consumer_package_id TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
+  target_package_id   TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
+  symbol_str          TEXT NOT NULL,             -- version-normalized SCIP symbol, or the imported
+                                                 -- name for a sidecar unresolvedImports entry
+  file                TEXT NOT NULL,             -- in the consumer's repo
+  line                INTEGER,
+  col                 INTEGER,
+  CHECK (consumer_package_id <> target_package_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS unresolved_refs_target ON unresolved_refs (target_package_id);
 
 -- Uncertainty markers on a package; any row makes the package opaque (fail closed).
 CREATE TABLE IF NOT EXISTS package_flags (
@@ -209,6 +244,40 @@ WHEN NEW.from_package_id IS NOT (SELECT package_id FROM symbols WHERE symbol_id 
   OR NEW.to_package_id IS NOT (SELECT package_id FROM symbols WHERE symbol_id = NEW.to_symbol_id)
 BEGIN
   SELECT RAISE(ABORT, 'sentei: edges package ids do not match endpoint symbols');
+END;
+
+-- A member's parent is a symbol of the same package.
+CREATE TRIGGER IF NOT EXISTS symbols_parent_same_package
+BEFORE INSERT ON symbols
+WHEN NEW.parent_symbol_id IS NOT NULL
+ AND NEW.package_id IS NOT (SELECT package_id FROM symbols WHERE symbol_id = NEW.parent_symbol_id)
+BEGIN
+  SELECT RAISE(ABORT, 'sentei: symbols.parent_symbol_id must be a symbol of the same package');
+END;
+
+CREATE TRIGGER IF NOT EXISTS symbols_parent_same_package_update
+BEFORE UPDATE OF parent_symbol_id ON symbols
+WHEN NEW.parent_symbol_id IS NOT NULL
+ AND NEW.package_id IS NOT (SELECT package_id FROM symbols WHERE symbol_id = NEW.parent_symbol_id)
+BEGIN
+  SELECT RAISE(ABORT, 'sentei: symbols.parent_symbol_id must be a symbol of the same package');
+END;
+
+-- A document's file pseudo-symbol belongs to the document's package.
+CREATE TRIGGER IF NOT EXISTS documents_module_same_package
+BEFORE INSERT ON documents
+WHEN NEW.module_symbol_id IS NOT NULL
+ AND NEW.package_id IS NOT (SELECT package_id FROM symbols WHERE symbol_id = NEW.module_symbol_id)
+BEGIN
+  SELECT RAISE(ABORT, 'sentei: documents.module_symbol_id must be a symbol of the document package');
+END;
+
+CREATE TRIGGER IF NOT EXISTS documents_module_same_package_update
+BEFORE UPDATE OF package_id, module_symbol_id ON documents
+WHEN NEW.module_symbol_id IS NOT NULL
+ AND NEW.package_id IS NOT (SELECT package_id FROM symbols WHERE symbol_id = NEW.module_symbol_id)
+BEGIN
+  SELECT RAISE(ABORT, 'sentei: documents.module_symbol_id must be a symbol of the document package');
 END;
 
 -- Findings are insert-only so the guards below cannot be bypassed with UPDATE.
