@@ -18,6 +18,7 @@
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
+import { DOCS_GLOBS, TEST_GLOBS, matchGlob } from '@sentei/core';
 import type {
   ConsumerFlag,
   ConsumerPolicy,
@@ -356,16 +357,15 @@ function truncate(s: string, max = 80): string {
 
 /**
  * True when a repo-relative POSIX file is a test or docs file that does not
- * count as a consumer under the policy. Mirrors the test_files / doc_files views
- * in packages/core/sql/analyze.sql (PLAN.md §6.5 globs `**\/*.test.*`,
- * `**\/test/**`, `**\/__tests__/**`, `**\/docs/**`): references from such files
- * are ignored by analyze, so nothing found there can hide a counted use.
+ * count as a consumer under the policy. Uses the same TEST_GLOBS / DOCS_GLOBS
+ * lists as the witness; a core test keeps those lists identical to the
+ * test_files / doc_files views in packages/core/sql/analyze.sql, so references
+ * from such files are ignored by analyze and nothing found there can hide a
+ * counted use.
  */
 export function isExcludedConsumerFile(file: string, policy: Partial<ConsumerPolicy> | undefined): boolean {
-  const withSlash = `/${file}`;
-  const base = file.slice(file.lastIndexOf('/') + 1);
-  const isTest = /\.test\..+/.test(base) || /\/(?:test|__tests__)\//.test(withSlash);
-  const isDocs = /\/docs\//.test(withSlash);
+  const isTest = TEST_GLOBS.some((g) => matchGlob(g, file));
+  const isDocs = DOCS_GLOBS.some((g) => matchGlob(g, file));
   return (isTest && policy?.countTestsAsConsumers !== true) || (isDocs && policy?.countDocsAsConsumers !== true);
 }
 

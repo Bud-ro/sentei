@@ -12,9 +12,9 @@ export interface DiscoverFile {
 
 /** The policy keys the index stage reads (PLAN.md §6.5). */
 export interface ConsumerPolicy {
-  /** When false, test files (`**\/*.test.*`, `**\/test/**`, `**\/__tests__/**`) are not consumers. */
+  /** When false, test files (core TEST_GLOBS: *.test.*, test/, __tests__/, mocks/, fixtures/, e2e/, ...) are not consumers. */
   countTestsAsConsumers: boolean;
-  /** When false, docs files (`**\/docs/**`) are not consumers. */
+  /** When false, docs files (core DOCS_GLOBS: docs/, examples/, demo/) are not consumers. */
   countDocsAsConsumers: boolean;
 }
 
