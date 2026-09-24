@@ -313,3 +313,66 @@ Running record of decisions and deviations from `PLAN.md`. Newest milestone last
   repos/OWNER/REPO/code-scanning/sarifs` with the gzipped+base64 log,
   `commit_sha` = `runs[0].properties.headSha`, `ref`, `tool_name=sentei`; the
   token needs `security_events` (or `public_repo` for a public repo).
+
+### M4 — discover hardening and unindexed consumers
+
+- **Ignored manifests.** `fixtures`, `__fixtures__`, `templates`, `examples`,
+  `benchmarks`, `playground`, `sandbox`, `__mocks__`, `test(s)`, `__tests__`
+  and similar directory names (any depth) never hold org packages. Their files
+  still belong to the enclosing package for indexing. Org `sentei.json`
+  `ignoreManifestDirs` replaces the list; `ignoreManifests` globs
+  (`<repo>/<manifest path>`) ignore specific manifests; the duplicate-name
+  error prints copy-pasteable entries. Trade-off: consumer code under those
+  directories is usually not indexed (an `include: ["src"]` tsconfig does not
+  cover `examples/`), so it never adds references. To keep that from being
+  fail-open, the text witness also scans ignored manifests that declare a
+  dependency on the candidate's package (they can downgrade to `needs_review`,
+  never add edges, per §12).
+- **`unindexed_consumer`** is decided at discover from file extensions of
+  programming languages we have no indexer for (`.py`, `.go`, `.rs`, `.java`,
+  ...). Shell, YAML, JSON, Markdown and Dockerfiles are deliberately not code
+  that can load an npm/pub package. Only packages that consume an org package
+  are flagged. Known false positives (`.fs` GLSL shaders, `.c`/`.h` node-gyp
+  addons) err toward blocking. The flag is written by discover and survives
+  ingest, which rebuilds only its own four flags. PLAN §6.5's `opaque(P)` list
+  omits `unindexed_consumer`; the schema views already treat every flag as
+  opaque, which is the M4 behaviour.
+
+### M3 — Dart evaluation (fixtures/org-dart)
+
+Evaluated `scip_dart` against the §8 Dart checklist (details and evidence in
+the M3 agent run; decoded outputs were compared across pub.dev 1.6.2, git
+9dde7de, and 1.7.0).
+
+- **Adequate on every §6.2 must-have:** `show`/`hide` (names are role-0
+  references, on imports and on export directives), `part`/`part of` (parts are
+  their own documents, symbols named by the part file), extension methods
+  (`3.doubled` references `IntTimes#\`<get>doubled\`.`), `export 'src/x.dart'`
+  (consumer references resolve to the declaring file's symbol). Cross-package
+  linking is an exact string match when the dependency resolves to the source
+  path (path dep, or `pubspec_overrides.yaml` `dependency_overrides` — the Dart
+  equivalent of the npm source links).
+- **Not adequate as released, three ways:** (1) private declarations become
+  `local N` (`if (element.isPrivate) return _localSymbolFor(element)`), so
+  private islands can never be found and references inside private bodies lose
+  their enclosing symbol; (2) pub.dev 1.6.2 has no `enclosing_range`; (3) 1.6.2
+  runs analyzer 5.13, which silently misparses Dart ≥3.3 syntax (dot shorthands,
+  extension types). 1.7.0 fixes (2) and (3) but requires Dart ≥3.12 although
+  analyzer 14.4 only needs 3.11; relaxing the constraint gives byte-identical
+  output on 3.11.3.
+- **Decision: vendor a fork of scip_dart 1.7.0** under `packages/indexers/scip-dart`
+  with two patches (SDK constraint ≥3.11; private declarations as global
+  symbols), recorded in `PATCHES.md`. Upgrading the dev box to Dart ≥3.12 would
+  remove the first patch; that is Budro's call.
+- **SCIP carries no export information for Dart either**, and §6.3's "public
+  name in a `lib/` non-`src` file" rule is wrong for parts and `show`, so a
+  `dart-surface` sidecar built on `LibraryElement.exportNamespace` is required,
+  emitting the same sidecar shape as the TS adapter (export-directive `show`
+  names as sites).
+- **Two language-neutral pipeline changes** fell out: a reference to a member
+  also counts for its owner (extension use never names the extension), and a
+  reference to an undefined `<constructor>` member is attributed to the defined
+  owner (implicit constructors are never defined; they were false version skew).
+- scip_dart exits 0 on type errors and on unresolved `package:` imports
+  (references silently vanish), so the adapter classifies resolution failures
+  itself, like the TS adapter.
