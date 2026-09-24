@@ -16,3 +16,5 @@ export { ensureClone, git, headSha, isShallow } from './git.ts';
 export type { EnsureCloneOptions, EnsureCloneResult, GitOptions } from './git.ts';
 export { runBlame, parseBlamePorcelain } from './blame.ts';
 export type { BlameCache, BlameCounts, BlameDiscoverInput, BlameLine, RunBlameOptions } from './blame.ts';
+export { DOCS_GLOBS, TEST_GLOBS } from './globs.ts';
+export { matchGlob } from './glob.ts';

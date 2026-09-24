@@ -316,28 +316,49 @@ describe('ingestOrg (synthetic SCIP)', () => {
     ]);
   });
 
-  it('attributes undefined anonymous-literal members to the nearest defined ancestor; other missing members stay unresolved', () => {
+  it('attributes any undefined ref through an anonymous descriptor to the nearest defined ancestor; other missing members stay unresolved', () => {
     // The typeLiteral / property counters depend on the program that indexed the file, so
-    // the consumer's `Foo#typeLiteral9:foo.` never matches the library's name.
+    // the consumer's `Foo#typeLiteral9:foo.` never matches the library's name; contextual
+    // type chains (`ErrorBoundary.FC:PropsWithChildren:typeLiteral5:fallback.`) name
+    // descriptors the library index never defines.
     writeScip('acme/mono', 'app.scip', [{
       path: 'src/main.ts',
       occurrences: [
-        { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 9, 1] },
+        { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 12, 1] },
         { range: [3, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#typeLiteral9:foo.` },
         { range: [4, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#bar().typeLiteral1:x.typeLiteral2:y.` },
-        { range: [5, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#gone().` },
-        { range: [6, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#gone.typeLiteral1:x.` }, // gone. is real skew
+        { range: [5, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#gone().` }, // real skew
+        { range: [6, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#gone.typeLiteral1:x.` }, // through an anonymous descriptor
         { range: [7, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#\`<constructor>\`().typeLiteral0:opt.` },
+        { range: [8, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/ErrorBoundary.FC:PropsWithChildren:typeLiteral5:fallback.` },
+        { range: [9, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Gone.FC:typeLiteral5:x.` }, // top-level Gone missing: skew
+        { range: [10, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#\`<constructor>\`().gone.` }, // below a ctor, named: skew
       ],
     }]);
+    writeScip('acme/mono', 'lib.scip', [{
+      path: 'src/a.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 13, 16], symbol: `${LIB}src/\`a.ts\`/Foo#`, roles: 1, enclosing: [1, 0, 6, 1] },
+        { range: [2, 2, 5], symbol: `${LIB}src/\`a.ts\`/Foo#bar().`, roles: 1, enclosing: [2, 2, 4, 3] },
+        { range: [8, 6, 19], symbol: `${LIB}src/\`a.ts\`/ErrorBoundary.`, roles: 1 },
+      ],
+    }]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]));
     run();
     const foo = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#`);
     const bar = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#bar().`);
+    const eb = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/ErrorBoundary.`);
+    expect(eb).toBeGreaterThan(0);
     expect(db.prepare(`SELECT symbol_id, line FROM occurrences WHERE package_id = 'npm:@acme/app' AND (role & 1) = 0 ORDER BY line`).all())
-      .toEqual([{ symbol_id: foo, line: 3 }, { symbol_id: bar, line: 4 }, { symbol_id: foo, line: 7 }]);
+      .toEqual([
+        { symbol_id: foo, line: 3 }, { symbol_id: bar, line: 4 }, { symbol_id: foo, line: 6 }, { symbol_id: foo, line: 7 },
+        { symbol_id: eb, line: 8 },
+      ]);
     expect(db.prepare('SELECT symbol_str FROM unresolved_refs ORDER BY line').all()).toEqual([
       { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Foo#gone().' },
-      { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Foo#gone.typeLiteral1:x.' },
+      { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Gone.FC:typeLiteral5:x.' },
+      { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Foo#`<constructor>`().gone.' },
     ]);
   });
 
@@ -464,6 +485,67 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(tableCounts(db)).toEqual(before);
   });
 
+  it('adds shorthand refs like namespace member refs (same package or cross-package), counted separately', () => {
+    const ref = (file: string, line: number, col: number, member: string, targetLine: number, targetCol: number, targetPackage = '@acme/lib') =>
+      ({ file, line, col, member, targetPackage, targetFile: 'src/a.ts', targetLine, targetCol });
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:@acme/app'),
+      shorthandRefs: [ref('apps/app/src/main.ts', 3, 10, 'helper', 8, 9), ref('apps/app/src/main.ts', 3, 20, 'gone', 40, 0)],
+    });
+    writeJson('acme/mono', 'lib.exports.json', {
+      ...sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
+      // `{ helper }` inside Foo#bar(): a same-package use of helper.
+      shorthandRefs: [ref('src/a.ts', 3, 20, 'helper', 8, 9)],
+    });
+    const c = run();
+    const helper = id('scip-typescript npm @acme/lib . src/`a.ts`/helper().');
+    const bar = id('scip-typescript npm @acme/lib . src/`a.ts`/Foo#bar().');
+    const main = id('scip-typescript npm @acme/app . src/`main.ts`/main().');
+    expect(db.prepare('SELECT package_id, line, col, enclosing_symbol_id, is_external FROM occurrences WHERE symbol_id = ? AND role = 0 AND col IN (10, 20) ORDER BY package_id')
+      .all(helper)).toEqual([
+      { package_id: 'npm:@acme/app', line: 3, col: 10, enclosing_symbol_id: main, is_external: 1 },
+      { package_id: 'npm:@acme/lib', line: 3, col: 20, enclosing_symbol_id: bar, is_external: 0 },
+    ]);
+    expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", main, helper)).toBe(1);
+    expect(c.shorthandRefs).toBe(2);
+    expect(c.namespaceMemberRefs).toBe(0);
+    expect(c.unmatchedShorthandRefs).toBe(1);
+    expect(logs.some((l) => /warning: 1 shorthand ref\(s\) match no SCIP definition: .*gone/.test(l))).toBe(true);
+  });
+
+  it('records every export alias in symbol_exports (entry, exported name), including anonymous defaults', () => {
+    writeScip('acme/mono', 'lib.scip', [
+      { path: 'src/a.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 13, 16], symbol: `${LIB}src/\`a.ts\`/Foo#`, roles: 1 },
+      ] },
+      { path: 'src/anon.ts', occurrences: [{ range: [0, 0, 0], symbol: `${LIB}src/\`anon.ts\`/`, roles: 1 }] },
+    ]);
+    const e = (entry: string, exportedAs: string, name: string, file: string, line: number, col: number, note?: string) =>
+      ({ entry, exportedAs, name, file, line, col, sites: [], ...(note ? { note } : {}) });
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [
+      e('src/index.ts', 'Foo', 'Foo', 'src/a.ts', 1, 13),
+      e('src/index.ts', 'Bar', 'Foo', 'src/a.ts', 1, 13), // export { Foo as Bar }
+      e('src/index.ts', 'Bar', 'Foo', 'src/a.ts', 1, 13), // duplicate record
+      e('src/other.ts', 'default', 'Foo', 'src/a.ts', 1, 13), // export default Foo
+      e('src/anon.ts', 'default', 'default', 'src/anon.ts', 2, 7, 'default-keyword'),
+      e('src/index.ts', 'nope', 'nope', 'src/a.ts', 40, 0), // unmatched: no row
+    ]));
+    const c = run();
+    expect(db.prepare(`SELECT s.name, x.entry_file, x.exported_as FROM symbol_exports x JOIN symbols s USING (symbol_id)
+      ORDER BY s.name, x.entry_file, x.exported_as`).all()).toEqual([
+      { name: 'Foo', entry_file: 'src/index.ts', exported_as: 'Bar' },
+      { name: 'Foo', entry_file: 'src/index.ts', exported_as: 'Foo' },
+      { name: 'Foo', entry_file: 'src/other.ts', exported_as: 'default' },
+      { name: 'default', entry_file: 'src/anon.ts', exported_as: 'default' },
+    ]);
+    expect(c.exportAliases).toBe(4);
+    expect(c.unmatchedExports).toBe(1);
+    // Rebuilt on every run (cascade from symbols).
+    run();
+    expect(count(db, 'SELECT count(*) AS n FROM symbol_exports')).toBe(4);
+  });
+
   it('warns about sidecar exports that match no definition', () => {
     writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13), exp('nope', 'src/a.ts', 40, 0)]));
     const c = run();
@@ -496,6 +578,27 @@ describe('ingestOrg (synthetic SCIP)', () => {
     // Idempotent: ingest owns these flags and replaces them.
     run();
     expect(count(db, 'SELECT count(*) AS n FROM package_flags')).toBe(2);
+  });
+
+  it('targets a sidecar flag at another org package when targetPackage names one, else leaves it untargeted', () => {
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:@acme/app'),
+      flags: [
+        { flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib', file: 'apps/app/src/main.ts', line: 3, col: 2, targetPackage: '@acme/lib' },
+        { flag: 'namespace_dynamic', reason: 'X[key] on @acme/app', file: 'apps/app/src/main.ts', line: 4, col: 2, targetPackage: '@acme/app' },
+        { flag: 'namespace_dynamic', reason: 'X[key] on left-pad', file: 'apps/app/src/main.ts', line: 5, col: 2, targetPackage: 'left-pad' },
+        { flag: 'dynamic_access', reason: "require('@acme/' + name)", file: 'apps/app/src/main.ts', line: 6, col: 0 },
+      ],
+    });
+    const c = run();
+    expect(db.prepare('SELECT flag, reason, target_package_id FROM package_flags ORDER BY reason').all()).toEqual([
+      { flag: 'namespace_dynamic', reason: 'X[key] on @acme/app', target_package_id: null },
+      { flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib', target_package_id: 'npm:@acme/lib' },
+      { flag: 'namespace_dynamic', reason: 'X[key] on left-pad', target_package_id: null },
+      { flag: 'dynamic_access', reason: "require('@acme/' + name)", target_package_id: null },
+    ]);
+    expect(logs.some((l) => /namespace_dynamic flag targets "left-pad", not an org package; kept untargeted/.test(l))).toBe(true);
+    expect(c.warnings).toBe(1);
   });
 
   it('rejects an unknown sidecar flag', () => {

@@ -14,8 +14,10 @@ interface OrgSpec {
   manager?: 'npm' | 'pub';
   /** Consumer files, relative to the consumer package dir. */
   files?: Record<string, string>;
-  /** Symbols of P: name + defining file (default src/index.ts). */
-  symbols: Array<{ name: string; file?: string }>;
+  /** Symbols of P: name + defining file (default src/index.ts) + symbol_exports rows [entry, exportedAs]. */
+  symbols: Array<{ name: string; file?: string; exports?: Array<[string, string]> }>;
+  /** Library (P) files, relative to P's dir (the acme/lib repo root). */
+  libFiles?: Record<string, string>;
   policy?: Record<string, unknown>;
   keep?: string[];
   /** Consumer checkout does not exist on disk. */
@@ -53,6 +55,7 @@ function buildOrg(spec: OrgSpec): Org {
   const libDir = join(root, 'lib');
   const appDir = join(root, 'app');
   mkdirSync(libDir, { recursive: true });
+  for (const [rel, text] of Object.entries(spec.libFiles ?? {})) write(libDir, rel, text);
   if (!spec.missingCheckout) {
     mkdirSync(join(appDir, 'pkg'), { recursive: true });
     for (const [rel, text] of Object.entries(spec.files ?? {})) write(appDir, `pkg/${rel}`, text);
@@ -82,6 +85,9 @@ function buildOrg(spec: OrgSpec): Org {
     const id = Number(r.lastInsertRowid);
     ids[`${file}#${s.name}`] = id;
     ids[s.name] ??= id;
+    for (const [entry, as] of s.exports ?? []) {
+      run('INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)', id, entry, as);
+    }
     run("INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, 'needs_review', ?, '[]')", id, JSON.stringify(['no_refs', 'witness_pending']));
   }
 
@@ -312,6 +318,102 @@ describe('runWitness', () => {
     ]);
   });
 
+  it('searches every export alias: an `export { a as b }` consumer names only b', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'internalName', exports: [['src/index.ts', 'publicName']] },
+        { name: 'otherInternal', exports: [['src/index.ts', 'otherPublic']] },
+      ],
+      files: { 'src/main.ts': "import { publicName } from '@acme/lib';\n\npublicName();\n" },
+    });
+    expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+    expectMismatch(org, org.ids['internalName']!, [
+      'witness_mismatch:npm:@acme/app:pkg/src/main.ts:1',
+      'witness_mismatch:npm:@acme/app:pkg/src/main.ts:3',
+    ]);
+    expectPass(org, org.ids['otherInternal']!);
+  });
+
+  it('applies the default-import rule to a named symbol exported as default, from the entry file of that alias', () => {
+    const org = buildOrg({
+      symbols: [
+        // export default cloudflarePagesBuildPlugin, in src/adapter/cloudflare-pages/index.ts
+        { name: 'pagesPlugin', file: 'src/adapter/cloudflare-pages/plugin.ts', exports: [['src/adapter/cloudflare-pages/index.ts', 'default']] },
+        { name: 'workersPlugin', file: 'src/adapter/cloudflare-workers/plugin.ts', exports: [['src/adapter/cloudflare-workers/index.ts', 'default']] },
+        { name: 'bunPlugin', file: 'src/adapter/bun/plugin.ts', exports: [['src/adapter/bun/index.ts', 'default']] },
+        { name: 'nodePlugin', file: 'src/adapter/node/plugin.ts', exports: [['src/adapter/node/index.ts', 'default']] },
+      ],
+      files: {
+        'src/a.ts': "import build from '@acme/lib/cloudflare-pages';\nbuild();\n", // subpath = parent dir of the index entry
+        'src/b.ts': "import build from '@acme/lib/adapter/cloudflare-workers';\n", // subpath = entry minus src/ and /index.ts
+        'src/c.ts': "import { bunPlugin as x } from '@acme/lib/other';\n", // named import of the declared name
+        'src/d.ts': "import nodeBuild from '@acme/lib/node-server';\n", // unrelated subpath
+      },
+    });
+    expect(witness(org)).toEqual({ checked: 4, passed: 1, mismatched: 3 });
+    expectMismatch(org, org.ids['pagesPlugin']!, ['witness_mismatch:npm:@acme/app:pkg/src/a.ts:1']);
+    expectMismatch(org, org.ids['workersPlugin']!, ['witness_mismatch:npm:@acme/app:pkg/src/b.ts:1']);
+    expectMismatch(org, org.ids['bunPlugin']!, ['witness_mismatch:npm:@acme/app:pkg/src/c.ts:1']);
+    expectPass(org, org.ids['nodePlugin']!);
+  });
+
+  it('a default import via the bare specifier matches every default export of P', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'app', file: 'src/app.ts', exports: [['src/index.ts', 'default']] },
+        { name: 'named', file: 'src/app.ts', exports: [['src/index.ts', 'named']] },
+      ],
+      files: { 'src/main.ts': "import lib from '@acme/lib';\nlib.fetch();\n" },
+    });
+    expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+    expectMismatch(org, org.ids['app']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:1']);
+    expectPass(org, org.ids['named']!);
+  });
+
+  it('a default import via an exports-map key resolving to the entry file matches', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'cf', file: 'src/adapter/cloudflare/impl.ts', exports: [['src/adapter/cloudflare/index.ts', 'default']] },
+        { name: 'dn', file: 'src/adapter/deno/impl.ts', exports: [['src/adapter/deno/index.ts', 'default']] },
+        { name: 'pl', file: 'src/plugins/x/main.ts', exports: [['src/plugins/x/main.ts', 'default']] },
+        { name: 'pm', file: 'src/plugins/y/main.ts', exports: [['src/plugins/y/main.ts', 'default']] },
+      ],
+      libFiles: {
+        'package.json': JSON.stringify({
+          name: '@acme/lib',
+          exports: {
+            '.': './dist/index.js',
+            './cf': { types: './dist/types/adapter/cloudflare/index.d.ts', import: './dist/adapter/cloudflare/index.js' },
+            './p/*': './dist/plugins/*/main.js',
+          },
+        }),
+      },
+      files: {
+        'src/a.ts': "import cf from '@acme/lib/cf';\n",
+        'src/b.ts': "import x from '@acme/lib/p/x';\n", // pattern key with * = x
+      },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['cf']!, ['witness_mismatch:npm:@acme/app:pkg/src/a.ts:1']);
+    expectPass(org, org.ids['dn']!);
+    expectMismatch(org, org.ids['pl']!, ['witness_mismatch:npm:@acme/app:pkg/src/b.ts:1']);
+    expectPass(org, org.ids['pm']!);
+  });
+
+  it('skips the extended test/docs dirs (mocks, fixtures, e2e, examples, specs, stories…)', () => {
+    const imp = "import { deadFn } from '@acme/lib';\n";
+    const org = buildOrg({
+      symbols: [{ name: 'deadFn' }],
+      files: {
+        'src/mocks/m.ts': imp, '__mocks__/m.ts': imp, 'fixtures/f.ts': imp, 'src/__fixtures__/f.ts': imp, 'e2e/e.ts': imp,
+        'test-integration/t.ts': imp, 'src/__schemas__/s.ts': imp, 'src/a.spec.ts': imp, 'src/b_test.ts': imp,
+        'src/C.stories.tsx': imp, 'examples/x.ts': imp, 'example/y.ts': imp, 'demo/z.ts': imp,
+      },
+    });
+    witness(org);
+    expectPass(org, org.ids['deadFn']!);
+  });
+
   it('outside git: scans a build/ dir holding a manifest (a real package), skips build output', () => {
     const org = buildOrg({
       symbols: [{ name: 'usedInBuildPkg' }, { name: 'onlyInDist' }],
@@ -361,6 +463,67 @@ describe('runWitness', () => {
     // Rolled back: the pending row is intact and no witness_ok was written.
     expect(findings(org, org.ids['deadFn']!)).toEqual([{ verdict: 'needs_review', reasons: ['no_refs', 'witness_pending'] }]);
     expect(witnessOk(org, org.ids['deadFn']!)).toBe(false);
+  });
+});
+
+describe('runWitness: self-witness (generated imports of P in P itself)', () => {
+  it('a P file holding P\'s name in a non-import string and naming S is a `self` hit', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'IslandWrapper', file: 'src/components/island.ts' },
+        { name: 'Unmentioned', file: 'src/components/other.ts' },
+        { name: 'OnlyImported', file: 'src/components/other.ts' },
+        { name: 'InTemplate', file: 'src/components/other.ts' },
+      ],
+      libFiles: {
+        // A code generator: writes `import { IslandWrapper } from '@acme/lib/components'`.
+        'src/gen.ts': [
+          "import { parse } from 'parser';",
+          'export function gen(ast) {',
+          "  ast.unshift(importDeclaration([spec('IslandWrapper')], stringLiteral('@acme/lib/components')));",
+          '}',
+        ].join('\n'),
+        // The statement itself inside a template literal.
+        'src/tpl.ts': "export const code = `import { InTemplate } from '@acme/lib/components'`;\n",
+        // A real (self-)import names the symbol but generates nothing.
+        'src/real.ts': "import { OnlyImported } from '@acme/lib/components';\nexport {\n  OnlyImported,\n} from '@acme/lib';\n",
+        // Test files are skipped (policy).
+        'src/gen.test.ts': "const s = '@acme/lib'; Unmentioned;\n",
+      },
+    });
+    expect(witness(org)).toEqual({ checked: 4, passed: 2, mismatched: 2 });
+    expectMismatch(org, org.ids['IslandWrapper']!, ['witness_mismatch:self:src/gen.ts:3']);
+    expectMismatch(org, org.ids['InTemplate']!, ['witness_mismatch:self:src/tpl.ts:1']);
+    expectPass(org, org.ids['Unmentioned']!);
+    expectPass(org, org.ids['OnlyImported']!);
+  });
+
+  it('searches export aliases in self files and fails closed when P\'s checkout is missing', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'impl', exports: [['src/index.ts', 'Island']] }],
+      libFiles: { 'src/gen.ts': "const code = \"import { Island } from '@acme/lib'\";\n" },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['impl']!, ['witness_mismatch:self:src/gen.ts:1']);
+
+    const gone = buildOrg({ symbols: [{ name: 'impl' }] });
+    gone.discover.repos = gone.discover.repos.filter((r) => r.repo !== 'acme/lib');
+    witness(gone);
+    expectMismatch(gone, gone.ids['impl']!, ['witness_mismatch:self:checkout missing']);
+  });
+
+  it('pub: a `package:` string that is not an import directive', () => {
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [{ name: 'Generated' }, { name: 'Plain' }],
+      libFiles: {
+        'lib/builder.dart': "import 'package:lib_pub/src/x.dart';\nfinal out = \"import 'package:lib_pub/gen.dart' show Generated;\";\n",
+        'lib/plain.dart': "import 'package:lib_pub/src/x.dart';\nvoid f() => Plain();\n",
+      },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['Generated']!, ['witness_mismatch:self:lib/builder.dart:2']);
+    expectPass(org, org.ids['Plain']!);
   });
 });
 

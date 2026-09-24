@@ -86,7 +86,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -94,7 +94,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 4/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 5/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -144,6 +144,7 @@ describe('smoke', () => {
     run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'dynamic_access', 'x')", lib);
     run("INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, 'a')", lib);
     run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', b, 1);
+    run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/index.ts', 'default')", a);
     addFinding(a, 'private_dead');
     addRepo('acme/app');
     const app = addPackage('@acme/app', { repo: 'acme/app' });
@@ -151,7 +152,7 @@ describe('smoke', () => {
     run('INSERT INTO unresolved_refs (consumer_package_id, target_package_id, symbol_str, file, line, col) VALUES (?, ?, ?, ?, ?, ?)',
       app, lib, 'gone', 'src/main.ts', 1, 2);
     run('DELETE FROM repos');
-    for (const t of ['packages', 'package_deps', 'symbols', 'occurrences', 'edges', 'package_flags', 'keep_rules', 'witness_ok', 'findings', 'documents', 'unresolved_refs']) {
+    for (const t of ['packages', 'package_deps', 'symbols', 'occurrences', 'edges', 'package_flags', 'keep_rules', 'witness_ok', 'findings', 'documents', 'unresolved_refs', 'symbol_exports']) {
       expect(count(`SELECT count(*) AS n FROM ${t}`), t).toBe(0);
     }
   });
@@ -251,6 +252,43 @@ describe('symbols.parent_symbol_id invariants', () => {
   it('rejects a symbol being its own parent', () => {
     const a = addSymbol(lib, 'a');
     expect(() => run('UPDATE symbols SET parent_symbol_id = symbol_id WHERE symbol_id = ?', a)).toThrow(REJECTED);
+  });
+});
+
+describe('symbol_exports invariants', () => {
+  let lib: string;
+  beforeEach(() => {
+    addRepo();
+    lib = addPackage('@acme/lib');
+  });
+
+  it('accepts several aliases per symbol and entry, rejecting duplicates', () => {
+    const a = addSymbol(lib, 'a');
+    run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/index.ts', 'a')", a);
+    run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/index.ts', 'b')", a);
+    run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/other.ts', 'a')", a);
+    expect(count('SELECT count(*) AS n FROM symbol_exports')).toBe(3);
+    expect(() => run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/index.ts', 'b')", a))
+      .toThrow(REJECTED);
+  });
+
+  it('rejects an unknown symbol and missing columns', () => {
+    const a = addSymbol(lib, 'a');
+    expect(() => run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (9999, 'src/index.ts', 'a')"))
+      .toThrow(REJECTED);
+    expect(() => run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (NULL, 'src/index.ts', 'a')"))
+      .toThrow(REJECTED);
+    expect(() => run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, NULL, 'a')", a)).toThrow(REJECTED);
+    expect(() => run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/index.ts', NULL)", a))
+      .toThrow(REJECTED);
+  });
+
+  it('cascades when the symbol goes', () => {
+    const a = addSymbol(lib, 'a');
+    const b = addSymbol(lib, 'b');
+    run("INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, 'src/index.ts', 'a'), (?, 'src/index.ts', 'b')", a, b);
+    run('DELETE FROM symbols WHERE symbol_id = ?', a);
+    expect(db.prepare('SELECT symbol_id, exported_as FROM symbol_exports').all()).toEqual([{ symbol_id: b, exported_as: 'b' }]);
   });
 });
 

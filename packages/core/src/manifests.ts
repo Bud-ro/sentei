@@ -204,6 +204,7 @@ export function readRepoManifestsWithIgnored(
   const pkgs: ManifestPackage[] = [];
   const ignored: IgnoredManifest[] = [];
   const skipped: string[] = [];
+  const vscode: string[] = [];
   for (const file of files) {
     const base = posix.basename(file);
     if (base !== 'package.json' && base !== 'pubspec.yaml') continue;
@@ -211,6 +212,11 @@ export function readRepoManifestsWithIgnored(
     if (inIgnoredDir(file, ignoreDirs) || opts.ignoreManifest?.(file)) {
       skipped.push(file);
       ignored.push(readIgnoredManifest(repoRoot, dir, base === 'package.json' ? 'npm' : 'pub', warn));
+      continue;
+    }
+    if (base === 'package.json' && isVscodeExtension(repoRoot, file)) {
+      vscode.push(file);
+      ignored.push(readIgnoredManifest(repoRoot, dir, 'npm', warn));
       continue;
     }
     const pkg = base === 'package.json'
@@ -222,9 +228,31 @@ export function readRepoManifestsWithIgnored(
     opts.log?.(`skipped ${skipped.length} manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): ${
       skipped.slice(0, 3).join(', ')}${skipped.length > 3 ? ', ...' : ''}`);
   }
+  if (vscode.length > 0) {
+    opts.log?.(`skipped ${vscode.length} VS Code extension manifest(s) (engines.vscode) as not org packages: ${
+      vscode.slice(0, 3).join(', ')}${vscode.length > 3 ? ', ...' : ''}`);
+  }
   pkgs.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
   ignored.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
   return { packages: pkgs, ignored };
+}
+
+/**
+ * A package.json with `engines.vscode` is a VS Code extension: installed into the
+ * editor, never imported, so not an org package (its code is scanned by the witness
+ * like any ignored manifest). A manifest that does not parse is not one here;
+ * readNpmPackage reports the parse error.
+ */
+function isVscodeExtension(repoRoot: string, manifest: string): boolean {
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(join(repoRoot, manifest), 'utf8'));
+  } catch {
+    return false;
+  }
+  if (!isObject(json)) return false;
+  const engines = json['engines'];
+  return isObject(engines) && engines['vscode'] !== undefined;
 }
 
 /** Parse an ignored manifest for its name and deps only; parse errors are warnings. */

@@ -29,6 +29,7 @@ DROP VIEW IF EXISTS private_dead_eligible;
 DROP VIEW IF EXISTS candidate_symbols;
 DROP VIEW IF EXISTS verdicts;
 DROP VIEW IF EXISTS verdict_blockers;
+DROP VIEW IF EXISTS runtime_entry_defaults;
 DROP VIEW IF EXISTS reachable;
 DROP VIEW IF EXISTS reach_seeds_before;
 DROP VIEW IF EXISTS reach_edges;
@@ -79,23 +80,39 @@ SELECT symbol_id, package_id, def_package_id, file, line, col, role, enclosing_s
 FROM occurrences
 WHERE (role & 1) = 0 AND is_export_site = 0;
 
--- PLAN.md §6.5 test globs: **/*.test.*, **/*_test.dart, **/test/**, **/__tests__/**.
--- GLOB's * crosses '/', so file-name patterns are matched against the base name
--- (everything after the last '/'), and directory patterns against '/' || file so a
--- leading segment is optional (test/x.ts and src/test/x.ts both match).
+-- PLAN.md §6.5 test globs, extended with test support dirs/files (mocks, fixtures,
+-- e2e, schemas, specs, stories). The SAME lists as packages/core/src/globs.ts
+-- (TEST_GLOBS / DOCS_GLOBS): test/globs.test.ts parses the GLOB patterns below and
+-- asserts equality, so edit both together. A `**/<file pattern>` glob is matched
+-- against the base name (everything after the last '/'; GLOB's * crosses '/'), a
+-- `**/<dir>/**` glob against '/' || file so a leading segment is optional
+-- (test/x.ts and src/test/x.ts both match).
 CREATE VIEW test_files (package_id, file) AS
 SELECT package_id, file
 FROM documents
 WHERE substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.test.*'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*_test.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.spec.*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*_test.*'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.stories.*'
    OR ('/' || file) GLOB '*/test/*'
-   OR ('/' || file) GLOB '*/__tests__/*';
+   OR ('/' || file) GLOB '*/__tests__/*'
+   OR ('/' || file) GLOB '*/mocks/*'
+   OR ('/' || file) GLOB '*/__mocks__/*'
+   OR ('/' || file) GLOB '*/fixtures/*'
+   OR ('/' || file) GLOB '*/__fixtures__/*'
+   OR ('/' || file) GLOB '*/e2e/*'
+   OR ('/' || file) GLOB '*/test-integration/*'
+   OR ('/' || file) GLOB '*/__schemas__/*';
 
--- Docs glob: **/docs/**.
+-- Docs globs: docs and in-package examples / demos.
 CREATE VIEW doc_files (package_id, file) AS
 SELECT package_id, file
 FROM documents
-WHERE ('/' || file) GLOB '*/docs/*';
+WHERE ('/' || file) GLOB '*/docs/*'
+   OR ('/' || file) GLOB '*/examples/*'
+   OR ('/' || file) GLOB '*/example/*'
+   OR ('/' || file) GLOB '*/demo/*';
 
 -- Structural owner of a symbol: its descriptor parent (Foo#bar(). -> Foo#), or the
 -- declaration whose body contains its definition (e.g. an object-literal property
@@ -290,8 +307,23 @@ SELECT package_id, blocker_package_id, flag FROM blocked_packages
 UNION
 SELECT package_id, package_id, flag FROM package_flags WHERE target_package_id IS NULL;
 
--- Decision tree, per exported symbol S of package P not kept and with no counted
--- external reference (those are alive: no row):
+-- Default exports of a runtime entry: S is exported as `default` (symbol_exports) from
+-- an entry file of a package P that no org package declares a dependency on
+-- (package_deps.resolved_package_id = P is empty). A Workers / Lambda / Vite app's
+-- `export default app` (and a Durable Object class exported alongside it) is consumed
+-- by the runtime, not by code we can see. Such symbols get no verdict; they stay
+-- reachability seeds (they are exported). Named exports of the same entry stay
+-- candidates. symbol_exports.entry_file is the sidecar's entry, always an entry point.
+CREATE VIEW runtime_entry_defaults (symbol_id) AS
+SELECT DISTINCT x.symbol_id
+FROM symbol_exports x
+JOIN symbols s ON s.symbol_id = x.symbol_id
+WHERE x.exported_as = 'default'
+  AND NOT EXISTS (SELECT 1 FROM package_deps d WHERE d.resolved_package_id = s.package_id);
+
+-- Decision tree, per exported symbol S of package P not kept, not a runtime entry
+-- default (runtime_entry_defaults) and with no counted external reference (those are
+-- alive: no row):
 --   internal refs > 0:  closed_world & age ok -> unexport_candidate [internal_refs_only]
 --                       not closed_world      -> deprecation_candidate [internal_refs_only, open_world]
 --                       closed_world, young   -> no row
@@ -316,6 +348,7 @@ WITH base AS (
   WHERE s.is_exported = 1
     AND NOT EXISTS (SELECT 1 FROM external_refs x WHERE x.symbol_id = s.symbol_id)
     AND NOT EXISTS (SELECT 1 FROM kept_symbols k WHERE k.symbol_id = s.symbol_id)
+    AND NOT EXISTS (SELECT 1 FROM runtime_entry_defaults r WHERE r.symbol_id = s.symbol_id)
 ),
 classified AS (
   SELECT symbol_id, package_id,

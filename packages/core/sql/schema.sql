@@ -104,6 +104,17 @@ CREATE INDEX IF NOT EXISTS occurrences_symbol ON occurrences (symbol_id);
 CREATE INDEX IF NOT EXISTS occurrences_file ON occurrences (package_id, file);
 CREATE INDEX IF NOT EXISTS occurrences_enclosing ON occurrences (enclosing_symbol_id);
 
+-- Every name under which an entry file exports a symbol (sidecar `exports[]`: entry,
+-- exportedAs), including `default` for default exports (named or anonymous). An
+-- `export { a as b }` consumer names `b`, never `a`; the witness searches every alias
+-- and analyze treats a `default` export of a runtime entry specially.
+CREATE TABLE IF NOT EXISTS symbol_exports (
+  symbol_id   INTEGER NOT NULL REFERENCES symbols (symbol_id) ON DELETE CASCADE,
+  entry_file  TEXT NOT NULL,                     -- repo-relative entry point
+  exported_as TEXT NOT NULL,                     -- `ns.x` for namespace re-exports
+  PRIMARY KEY (symbol_id, entry_file, exported_as)
+) STRICT;
+
 -- Reachability graph: enclosing symbol -> referenced symbol, from SCIP or explicit overlays.
 CREATE TABLE IF NOT EXISTS edges (
   from_symbol_id  INTEGER NOT NULL REFERENCES symbols (symbol_id) ON DELETE CASCADE,

@@ -81,7 +81,15 @@ export interface ExportsSidecar {
   /** Module specifiers / entries whose exports could not be resolved -> dynamic_access. */
   unresolved: Array<string | { file?: string; reason?: string; [k: string]: unknown }>;
   /** Uncertainty found while reading the package's own code (optional). */
-  flags?: Array<{ flag: 'namespace_dynamic' | 'dynamic_access'; reason: string; file: string | null; line?: number; col?: number }>;
+  /**
+   * `targetPackage` (npm name), when present, names the org package whose members the
+   * construct hides: the flag is then targeted at that package only (blocks it, does
+   * not make this package opaque). Absent: untargeted.
+   */
+  flags?: Array<{
+    flag: 'namespace_dynamic' | 'dynamic_access'; reason: string; file: string | null; line?: number; col?: number;
+    targetPackage?: string;
+  }>;
   /** Imports of names an org package does not export (version skew; optional). */
   unresolvedImports?: Array<{ module: string; name: string; file: string; line: number | null; col: number | null }>;
   /**
@@ -91,6 +99,17 @@ export interface ExportsSidecar {
    * package dir; targetLine/targetCol are the declaration name identifier. Optional.
    */
   namespaceMemberRefs?: Array<{
+    file: string; line: number; col: number; member: string;
+    targetPackage: string; targetFile: string; targetLine: number; targetCol: number;
+  }>;
+  /**
+   * Shorthand properties `{ grade }` whose value is declared in an org package (this
+   * package or an imported org binding), resolved by the type checker: scip-typescript
+   * 0.4.0 emits only the contextual property symbol for a shorthand in a contextually
+   * typed object literal, no reference to the value. Same shape and handling as
+   * namespaceMemberRefs (the target may be this package). Optional.
+   */
+  shorthandRefs?: Array<{
     file: string; line: number; col: number; member: string;
     targetPackage: string; targetFile: string; targetLine: number; targetCol: number;
   }>;
@@ -131,6 +150,12 @@ export interface IngestCounts {
   namespaceMemberRefs: number;
   /** namespaceMemberRefs whose target matched no definition (warned). */
   unmatchedNamespaceMemberRefs: number;
+  /** Occurrences (+ edges) added from sidecar shorthandRefs that SCIP missed. */
+  shorthandRefs: number;
+  /** shorthandRefs whose target matched no definition (warned). */
+  unmatchedShorthandRefs: number;
+  /** symbol_exports rows (distinct (symbol, entry, exported name)). */
+  exportAliases: number;
   /** Sidecar entrySymbols that matched no definition (warned). */
   unmatchedEntrySymbols: number;
   warnings: number;
@@ -297,7 +322,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
 
   const counts: IngestCounts = {
     documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0,
-    namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, unmatchedEntrySymbols: 0, warnings: 0,
+    namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, shorthandRefs: 0, unmatchedShorthandRefs: 0, exportAliases: 0,
+    unmatchedEntrySymbols: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -328,6 +354,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       unresolved: db.prepare(`INSERT INTO unresolved_refs (consumer_package_id, target_package_id, symbol_str, file, line, col)
         VALUES (?, ?, ?, ?, ?, ?)`),
       exported: db.prepare('UPDATE symbols SET is_exported = 1 WHERE symbol_id = ?'),
+      exportAlias: db.prepare('INSERT OR IGNORE INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)'),
     };
     const addFlag = (packageId: string, flag: IngestFlag, reason: string, file: string | null, target: string | null = null): void => {
       st.flag.run(packageId, flag, reason, file, target);
@@ -582,17 +609,22 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     /**
      * A reference to an undefined symbol is attributed to its nearest DEFINED descriptor
      * ancestor when the missing part is one no index can be expected to define:
+     *   - anything whose descriptor chain passes through an anonymous literal
+     *     (isAnonymousDescriptor), anywhere: the counter in `typeLiteral3:` / `npm0:`
+     *     depends on the program that indexed the file, so a consumer's
+     *     `Props.typeLiteral3:__html.` never matches the library's
+     *     `Props.typeLiteral5:__html.`, and scip-typescript names contextual members
+     *     through type-alias chains (`ErrorBoundary.FC:PropsWithChildren:typeLiteral5:fallback.`)
+     *     that the defining index never emits. The nearest defined prefix (walking up)
+     *     takes the occurrence, even when the named parts below it are missing too;
      *   - an implicit constructor: `Owner#<constructor>().` (scip-dart names `Shown()` so
-     *     even when the class declares no constructor);
-     *   - anything inside an anonymous literal (isAnonymousDescriptor): the counter in
-     *     `typeLiteral3:` / `npm0:` depends on the program that indexed the file, so a
-     *     consumer's `Props.typeLiteral3:__html.` never matches the library's
-     *     `Props.typeLiteral5:__html.`.
-     * Precisely: with the ancestor keeping descriptors [0, k), the first dropped
-     * descriptor ds[k] must be anonymous, or be `<constructor>` followed by nothing or
-     * by an anonymous descriptor. Everything below an anonymous descriptor goes with
-     * it. Any other missing member (`Foo#gone().`, `Props.gone.typeLiteral1:x.`) is
-     * real version skew and stays an unresolved_refs row.
+     *     even when the class declares no constructor), with nothing (or only anonymous
+     *     descriptors, covered above) below it.
+     * Exception: the ancestor is never a file / namespace (a module symbol) unless the
+     * first missing descriptor is itself anonymous (`src/\`a.ts\`/npm0:` object-literal
+     * properties live directly under the file): a missing named top-level declaration
+     * is real version skew. Anything else missing (`Foo#gone().`) stays an
+     * unresolved_refs row.
      */
     const undefinedRefOwner = (norm: string, p: ParsedGlobal, roles: number): SymRow | undefined => {
       if ((roles & DEFINITION) !== 0) return undefined;
@@ -601,13 +633,15 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       if (!norm.endsWith(suffix)) return undefined;
       const head = norm.slice(0, norm.length - suffix.length);
       const isCtor = (d: Descriptor | undefined): boolean => d?.suffix === 'method' && d.name === '<constructor>';
+      const anonymous = ds.some(isAnonymousDescriptor);
       for (let k = ds.length - 1; k >= 1; k -= 1) {
         const row = symbols.get(head + ds.slice(0, k).map((d) => d.text).join(''));
         if (!row) continue;
         const first = ds[k]!;
-        const next = ds[k + 1];
-        const ok = isAnonymousDescriptor(first) || (isCtor(first) && (next === undefined || isAnonymousDescriptor(next)));
-        return ok ? row : undefined;
+        if (isAnonymousDescriptor(first)) return row;
+        if (isCtor(first) && k === ds.length - 1) return row;
+        const prefixIsModule = ds.slice(0, k).every((d) => d.suffix === 'namespace');
+        return anonymous && !prefixIsModule ? row : undefined;
       }
       return undefined;
     };
@@ -637,26 +671,31 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       }
     }
 
-    // ---- Namespace member refs SCIP missed (sidecar namespaceMemberRefs) ---
-    // scip-typescript 0.4.0 emits `local N` for `W.member` when W is an org namespace
-    // import and member is an alias re-export; the index adapter records the
-    // checker-resolved declaration instead. Added only where SCIP has no occurrence
-    // of that symbol at the same position.
+    // ---- Checker-resolved refs SCIP missed (sidecar namespaceMemberRefs, shorthandRefs) ---
+    // namespaceMemberRefs: scip-typescript 0.4.0 emits `local N` for `W.member` when W is
+    // an org namespace import and member is an alias re-export. shorthandRefs: it emits
+    // only the contextual property symbol for `{ grade }` in a contextually typed object
+    // literal, no reference to the value `grade`. The index adapter records the
+    // checker-resolved declaration instead. Added only where SCIP has no occurrence of
+    // that symbol at the same position.
     {
       const docAt = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
       const occAt = db.prepare('SELECT 1 FROM occurrences WHERE symbol_id = ? AND package_id = ? AND file = ? AND line = ? AND col = ? LIMIT 1');
-      const unmatchedRefs: string[] = [];
-      for (const { packageId, repo, data } of sidecars) {
-        for (const r of data.namespaceMemberRefs ?? []) {
+      type CheckerRef = NonNullable<ExportsSidecar['namespaceMemberRefs']>[number];
+      /** Adds the refs of one sidecar field; returns [added, unmatched labels]. */
+      const addCheckerRefs = (what: string, packageId: string, repo: string, refs: readonly CheckerRef[]): [number, string[]] => {
+        let added = 0;
+        const unmatchedRefs: string[] = [];
+        for (const r of refs) {
           const label = `${packageId} ${r.file}:${r.line + 1}:${r.col + 1} ${r.member} -> ${r.targetPackage}/${r.targetFile}:${r.targetLine + 1}:${r.targetCol + 1}`;
           const target = pkgs.get(`npm:${r.targetPackage}`);
           if (!target) {
-            warn(`namespace member ref ${label}: target is not an org package, ignored`);
+            warn(`${what} ${label}: target is not an org package, ignored`);
             continue;
           }
           const w = docAt.get(`${repo}\0${r.file}`);
           if (!w || w.packageId !== packageId) {
-            warn(`namespace member ref ${label}: consumer file is not an indexed document of ${packageId}, ignored`);
+            warn(`${what} ${label}: consumer file is not an indexed document of ${packageId}, ignored`);
             continue;
           }
           const targetFile = posix.normalize(posix.join(target.path || '.', r.targetFile));
@@ -670,13 +709,28 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           const enclosingId = enclosingAt(w, r.line, r.col);
           st.occurrence.run(id, w.packageId, row.packageId, w.file, r.line, r.col, 0, enclosingId, 0);
           counts.occurrences += 1;
-          counts.namespaceMemberRefs += 1;
+          added += 1;
           edgeRun(st.edge, byId.get(enclosingId)!, row, 'scip');
         }
+        return [added, unmatchedRefs];
+      };
+      const unmatchedNs: string[] = [];
+      const unmatchedSh: string[] = [];
+      for (const { packageId, repo, data } of sidecars) {
+        const [ns, nsMiss] = addCheckerRefs('namespace member ref', packageId, repo, data.namespaceMemberRefs ?? []);
+        counts.namespaceMemberRefs += ns;
+        unmatchedNs.push(...nsMiss);
+        const [sh, shMiss] = addCheckerRefs('shorthand ref', packageId, repo, data.shorthandRefs ?? []);
+        counts.shorthandRefs += sh;
+        unmatchedSh.push(...shMiss);
       }
-      counts.unmatchedNamespaceMemberRefs = unmatchedRefs.length;
-      if (unmatchedRefs.length > 0) {
-        warn(`${unmatchedRefs.length} namespace member ref(s) match no SCIP definition: ${unmatchedRefs.join('; ')}`);
+      counts.unmatchedNamespaceMemberRefs = unmatchedNs.length;
+      if (unmatchedNs.length > 0) {
+        warn(`${unmatchedNs.length} namespace member ref(s) match no SCIP definition: ${unmatchedNs.join('; ')}`);
+      }
+      counts.unmatchedShorthandRefs = unmatchedSh.length;
+      if (unmatchedSh.length > 0) {
+        warn(`${unmatchedSh.length} shorthand ref(s) match no SCIP definition: ${unmatchedSh.join('; ')}`);
       }
     }
 
@@ -740,6 +794,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           st.exported.run(id);
           exportedIds.add(id);
         }
+        counts.exportAliases += Number(st.exportAlias.run(id, e.entry, e.exportedAs).changes);
       }
       for (const e of data.entrySymbols ?? []) {
         const id = defPositions.get(`${repo}\0${e.file}\0${e.line}\0${e.col}`);
@@ -757,7 +812,15 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       }
       for (const f of data.flags ?? []) {
         if (!SIDECAR_FLAGS.has(f.flag)) throw new Error(`sentei: ${packageId} exports sidecar: unknown flag ${JSON.stringify(f.flag)}`);
-        addFlag(packageId, f.flag, f.reason, f.file ?? null);
+        // Targeted only at another org package; a self target or a non-org one stays
+        // untargeted (fail closed: the package itself is opaque, and blocks its deps).
+        let target: string | null = null;
+        if (f.targetPackage !== undefined) {
+          const t = `npm:${f.targetPackage}`;
+          if (pkgs.has(t) && t !== packageId) target = t;
+          else if (t !== packageId) warn(`${packageId}: ${f.flag} flag targets ${JSON.stringify(f.targetPackage)}, not an org package; kept untargeted`);
+        }
+        addFlag(packageId, f.flag, f.reason, f.file ?? null, target);
       }
       const manager = packageId.slice(0, packageId.indexOf(':'));
       for (const u of data.unresolvedImports ?? []) {
@@ -827,6 +890,6 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
   counts.warnings = warnings;
   log(`[ingest] documents=${counts.documents} symbols=${counts.symbols} occurrences=${counts.occurrences} edges=${counts.edges} `
     + `exported=${counts.exported} unresolved=${counts.unresolved} flags=${counts.flags} unmatchedExports=${counts.unmatchedExports} `
-    + `namespaceMemberRefs=${counts.namespaceMemberRefs}`);
+    + `namespaceMemberRefs=${counts.namespaceMemberRefs} shorthandRefs=${counts.shorthandRefs} exportAliases=${counts.exportAliases}`);
   return counts;
 }

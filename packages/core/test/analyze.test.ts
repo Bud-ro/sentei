@@ -541,6 +541,44 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([]);
   });
 
+  it('never reports declarations in the extended test/docs dirs (mocks, fixtures, e2e, schemas, examples…) as private_dead', () => {
+    aliveExport('used');
+    const files = ['src/mocks/m.ts', '__mocks__/n.ts', 'fixtures/f.ts', 'e2e/e.ts', 'test-integration/i.ts', 'src/__schemas__/s.ts',
+      'src/a.spec.ts', 'src/b_test.ts', 'src/C.stories.tsx', 'examples/x.ts', 'src/example/y.ts', 'demo/z.ts'];
+    for (const [i, file] of files.entries()) {
+      doc(lib, file);
+      sym(lib, file, `helper${i}`);
+    }
+    doc(lib, 'src/real.ts');
+    sym(lib, 'src/real.ts', 'reallyDead');
+    analyze();
+    expect(findings()).toEqual([f('reallyDead', 'private_dead', ['already_unreachable'])]);
+  });
+
+  it('gives no verdict to a default export of an entry of a package with no org consumers (runtime entry)', () => {
+    // A Workers app: `export default app` + a named Durable Object class, nobody depends on it.
+    const worker = pkg('@acme/worker');
+    const entry = doc(worker, 'src/index.ts', true);
+    const app = sym(worker, 'src/index.ts', 'app', { exported: true });
+    const durable = sym(worker, 'src/index.ts', 'Counter', { exported: true });
+    const helper = sym(worker, 'src/index.ts', 'helper');
+    use(app, helper, 'src/index.ts');
+    const x = db.prepare('INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)');
+    x.run(app, 'src/index.ts', 'default');
+    x.run(durable, 'src/index.ts', 'Counter');
+    // The same shape in lib, which has an org consumer (app depends on lib): a candidate.
+    const libDefault = sym(lib, 'src/fns.ts', 'libDefault', { exported: true });
+    x.run(libDefault, 'src/index.ts', 'default');
+    void entry;
+    analyze();
+    expect(findings()).toEqual([
+      f('libDefault', 'needs_review', DELETE),
+      f('Counter', 'needs_review', DELETE),
+    ]);
+    // Still a seed: its helper is reachable, so not private_dead.
+    expect(db.prepare('SELECT 1 AS r FROM reachable WHERE symbol_id = ?').get(helper)).toEqual({ r: 1 });
+  });
+
   it('counts overlay edges as references', () => {
     const s = sym(lib, 'src/fns.ts', 'viaOverlay', { exported: true });
     edge(appMain, s, 'overlay');

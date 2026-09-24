@@ -149,6 +149,27 @@ describe('ignored manifest dirs', () => {
   });
 });
 
+describe('VS Code extension manifests', () => {
+  it('a package.json with engines.vscode is not an org package: recorded as ignored, one log line', () => {
+    pkgJson('package.json', { name: 'real', main: 'src/index.ts' });
+    write('src/index.ts');
+    pkgJson('packages/vscode/package.json', {
+      name: 'hono-vscode', main: './out/extension.js', engines: { vscode: '^1.80.0', node: '>=18' }, dependencies: { real: '^1' },
+    });
+    pkgJson('packages/tool/package.json', { name: 'tool', engines: { node: '>=18' } });
+    write('packages/tool/index.ts');
+    const logs: string[] = [];
+    const r = readRepoManifestsWithIgnored(root, warn, listFiles(root), { log: (l) => logs.push(l) });
+    expect(r.packages.map((p) => p.name)).toEqual(['real', 'tool']);
+    expect(r.ignored).toEqual([
+      { path: 'packages/vscode', manifest: 'packages/vscode/package.json', manager: 'npm', name: 'hono-vscode', depsUnknown: false,
+        deps: [{ name: 'real', manager: 'npm', constraint: '^1' }] },
+    ]);
+    expect(logs).toEqual(['skipped 1 VS Code extension manifest(s) (engines.vscode) as not org packages: packages/vscode/package.json']);
+    expect(warnings).toEqual([]);
+  });
+});
+
 describe('npm manifests', () => {
   it('resolves main/module/types to existing files, relative to the repo root', () => {
     pkgJson('packages/core/package.json', { name: '@acme/core', version: '2.0.0', main: './src/index.ts', types: 'src/index.ts', module: 'missing.js' });

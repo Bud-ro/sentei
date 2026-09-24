@@ -14,23 +14,58 @@
 //     PLAN §12: this unindexed code can only downgrade a verdict, never add edges.
 // In each C:
 //   1. files that import/require/re-export P (per-language regex, whole file);
-//   2. in those files, S's name as a whole identifier (or, for `default`, a default
-//      import of the matching module specifier).
+//   2. in those files, any NAME of S as a whole identifier: S's declared name plus every
+//      name an entry exports it under (symbol_exports.exported_as; an
+//      `export { a as b }` consumer names only `b`). `default` is never searched as an
+//      identifier (npm); instead, when S is named `default` (anonymous default export)
+//      or exported as `default`, a default import of a matching module specifier is a
+//      hit (the default-import rule below).
+// Plus the SELF step: P's own files (same walk and test/docs rules) that hold P's
+// package name inside a string literal that is not the module specifier of an
+// import / export-from / require / import() (e.g. `stringLiteral('honox/vite/components')`
+// or a template `import { X } from 'honox/…'` in a code generator): code that writes
+// imports of P at build time. Such a file naming S (any name) is a hit, consumer `self`.
 // Any hit (or a consumer dir we cannot read) → needs_review with reasons
 //   witness_mismatch:<consumer>:<file>:<line>      (1-based line, repo-relative file)
 //   witness_mismatch:<consumer>:checkout missing
-// where <consumer> is either a package id (`npm:<name>` / `pub:<name>`) or, for an
-// ignored manifest, `ignored:<repo>/<manifest>` with <repo> = `<org>/<name>` and
-// <manifest> the repo-relative manifest file (ending in `package.json` or
-// `pubspec.yaml`), e.g.
+// where <consumer> is either a package id (`npm:<name>` / `pub:<name>`), `self` (P's
+// own generated-import files), or, for an ignored manifest, `ignored:<repo>/<manifest>`
+// with <repo> = `<org>/<name>` and <manifest> the repo-relative manifest file (ending in
+// `package.json` or `pubspec.yaml`), e.g.
 //   witness_mismatch:ignored:acme/app/examples/demo/package.json:examples/demo/src/x.ts:3
-// The `ignored:` prefix cannot collide with a package id (always `npm:`/`pub:`).
+//   witness_mismatch:self:src/vite/island-components.ts:189
+// The `ignored:` / `self` labels cannot collide with a package id (always `npm:`/`pub:`).
+//
+// Default-import rule (npm). The default-bound forms are: `import X from`, `import
+// type X from`, `import X, {…} from`, `import { default as X } from`,
+// `export { default } from`, `require(…)`, `import(…)`. The specifier is P itself or
+// `P/<subpath>`. For each file F that defines S as `default` (S.file when S is
+// named `default`) or is an entry exporting S as `default` (symbol_exports.entry_file),
+// with F' = F relative to P's dir, a hit is (dumb and over-inclusive on purpose):
+//   - the bare specifier P (no subpath): matches every default of P;
+//   - a subpath whose last segment (extension stripped) is F's base name, or F's
+//     parent dir name when F is an index file (`@acme/lib/d` for `src/d/index.ts`);
+//   - a subpath equal (extension stripped) to F' minus a leading `src/` and its
+//     extension, or, for an index file, minus `/index` too (`adapter/cloudflare-pages`);
+//   - a subpath equal to a key of P's package.json `exports` map (read from the
+//     checkout; packages.entry_points does not keep the map) whose target resolves to
+//     F: target and F' are compared after stripping `./`, leading build/source dirs
+//     (dist lib build out src esm cjs types es), extensions (incl. `.d.ts`) and a
+//     trailing `/index`, one being a suffix of the other; for a pattern key
+//     (`./plugins/*`), a target pattern matching F gives the `*` value to put in the key;
+//   - an empty last segment (`@acme/lib/`).
+//
+// Test / docs globs (globs.ts, shared with analyze.sql) are matched against the
+// repo-relative path for org packages (as analyze does) and against the path relative
+// to the manifest dir for an ignored manifest (an example project under `examples/`
+// is itself the consumer being checked; its own tests/docs are still skipped).
 // No hit → witness_ok row and a deletion_candidate (the schema triggers still guard
 // that insert).
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { matchGlob } from './glob.ts';
+import { DOCS_GLOBS, TEST_GLOBS } from './globs.ts';
 import { listFiles } from './manifests.ts';
 
 /** The part of work/discover.json (DiscoverModel) the witness reads. */
@@ -68,9 +103,6 @@ export interface WitnessCounts {
 const MAX_HITS = 5;
 
 const CODE_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.dart']);
-/** Same globs analyze uses (PLAN.md §6.5), matched against repo-relative paths. */
-const TEST_GLOBS = ['**/*.test.*', '**/*_test.dart', '**/test/**', '**/__tests__/**'];
-const DOCS_GLOBS = ['**/docs/**'];
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -115,18 +147,71 @@ function lineAt(text: string, index: number): number {
 }
 
 const stripExt = (f: string): string => basename(f, extname(f));
+/** `a/b.ts` -> `a/b`; `a/b.d.ts` -> `a/b`. */
+const stripPathExt = (f: string): string => f.replace(/(?:\.d)?\.[cm]?[jt]sx?$/, '');
+
+/** What a default-import subpath of P may be to bind a given `default` (header comment). */
+interface DefaultTargets {
+  /** Last-segment names (base names, index parent dirs). */
+  segs: Set<string>;
+  /** Whole subpaths, extension-stripped, without leading `/`. */
+  paths: Set<string>;
+}
+
+/** Dumb normalization of a package-relative path for exports-map comparison. */
+function normEntryPath(p: string): string {
+  let n = stripPathExt(p.replace(/^\.\//, ''));
+  while (/^(?:dist|lib|build|out|src|esm|cjs|types|es)\//.test(n)) n = n.slice(n.indexOf('/') + 1);
+  return n.replace(/(?:^|\/)index$/, '');
+}
+
+function exportLeaves(v: unknown, out: string[]): void {
+  if (typeof v === 'string') out.push(v);
+  else if (Array.isArray(v)) v.forEach((x) => exportLeaves(x, out));
+  else if (v !== null && typeof v === 'object') Object.values(v).forEach((x) => exportLeaves(x, out));
+}
 
 /**
- * Module names a default-import subpath may use for the file defining a `default`
- * symbol: its basename, plus the parent dir name for `…/index.*` (fail closed).
+ * Add the subpaths that bind a `default` defined in / exported from repo-relative
+ * `file` of P (package dir `pkgPath`, P's parsed package.json `exportsMap` or undefined).
  */
-function defaultModuleNames(file: string): Set<string> {
-  const names = new Set([stripExt(file)]);
-  if (stripExt(file) === 'index') {
+function addDefaultTargets(t: DefaultTargets, file: string, pkgPath: string | null, exportsMap: unknown): void {
+  const base = stripExt(file);
+  t.segs.add(base);
+  const isIndex = base === 'index';
+  if (isIndex) {
     const parent = basename(dirname(file));
-    if (parent && parent !== '.') names.add(parent);
+    if (parent && parent !== '.') t.segs.add(parent);
   }
-  return names;
+  if (pkgPath === null) return;
+  const rel = pkgPath === '.' ? file : file.startsWith(`${pkgPath}/`) ? file.slice(pkgPath.length + 1) : null;
+  if (rel === null) return;
+  const noSrc = stripPathExt(rel.replace(/^src\//, ''));
+  t.paths.add(noSrc);
+  if (isIndex) t.paths.add(noSrc.replace(/(?:^|\/)index$/, ''));
+  if (exportsMap === null || typeof exportsMap !== 'object' || Array.isArray(exportsMap)) return;
+  const want = normEntryPath(rel);
+  for (const [key, value] of Object.entries(exportsMap as Record<string, unknown>)) {
+    if (!key.startsWith('.')) continue; // a conditions object, not a subpath map
+    const k = key.replace(/^\.\/?/, '');
+    const leaves: string[] = [];
+    exportLeaves(value, leaves);
+    if (k.includes('*')) {
+      // Pattern key: a target pattern matching F gives the `*` value to substitute.
+      for (const l of leaves) {
+        if (!l.includes('*')) continue;
+        const re = new RegExp(`^(?:.*/)?${normEntryPath(l).split('*').map(escapeRe).join('(.+)')}$`);
+        const m = re.exec(want);
+        if (m?.[1] !== undefined) t.paths.add(stripPathExt(k.replaceAll('*', m[1])));
+      }
+      continue;
+    }
+    const hit = leaves.some((l) => {
+      const n = normEntryPath(l);
+      return n === want || n.endsWith(`/${want}`) || (n !== '' && want.endsWith(`/${n}`));
+    });
+    if (hit) t.paths.add(stripPathExt(k));
+  }
 }
 
 interface Hit {
@@ -140,6 +225,8 @@ interface ConsumerLoc {
   repoDir: string;
   /** Package dir, repo-relative POSIX; '.' for the root. */
   pkgPath: string;
+  /** Test/docs globs are matched against paths relative to this dir ('.' = repo-relative). */
+  globBase: string;
   /** Other org package dirs in the same repo (repo-relative); those nested under pkgPath are skipped. */
   nestedPaths: Set<string>;
 }
@@ -153,6 +240,14 @@ interface PendingRow {
   package_id: string;
   manager: 'npm' | 'pub';
   pkg_name: string;
+}
+
+/** What to search for one pending symbol. */
+interface SearchPlan {
+  /** Identifier names (declared name + export aliases; never `default` for npm). */
+  names: string[];
+  /** Default-import targets, or null when S is not a default export (or pub). */
+  defaults: DefaultTargets | null;
 }
 
 function policyBool(db: DatabaseSync, key: string): boolean {
@@ -176,6 +271,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       locs.set(p.packageId, {
         repoDir: r.localPath,
         pkgPath: p.path,
+        globBase: '.',
         nestedPaths: new Set(r.packages.filter((q) => q.packageId !== p.packageId).map((q) => q.path)),
       });
     }
@@ -184,6 +280,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       locs.set(key, {
         repoDir: r.localPath,
         pkgPath: m.path,
+        globBase: m.path,
         // Org packages nested under the ignored dir are indexed consumers in their own right.
         nestedPaths: new Set(r.packages.map((q) => q.path).filter((q) => q !== m.path)),
       });
@@ -199,9 +296,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
 
   const countTests = policyBool(db, 'countTestsAsConsumers');
   const countDocs = policyBool(db, 'countDocsAsConsumers');
-  const excluded = (relFile: string): boolean =>
-    (!countTests && TEST_GLOBS.some((g) => matchGlob(g, relFile))) ||
-    (!countDocs && DOCS_GLOBS.some((g) => matchGlob(g, relFile)));
+  const excluded = (relFile: string, globBase: string): boolean => {
+    const f = globBase === '.' ? relFile : relFile.slice(globBase.length + 1);
+    return (!countTests && TEST_GLOBS.some((g) => matchGlob(g, f))) ||
+      (!countDocs && DOCS_GLOBS.some((g) => matchGlob(g, f)));
+  };
 
   /**
    * Candidate code files of a consumer (repo-relative), or null if its checkout is
@@ -224,7 +323,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         const nested = [...loc.nestedPaths].filter((q) => q !== loc.pkgPath && q !== '.' && under(q, loc.pkgPath));
         files = all
           .filter((f) => under(f, loc.pkgPath) && !nested.some((q) => under(f, q)))
-          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f))
+          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f, loc.globBase))
           .sort(cmp);
       }
     }
@@ -262,33 +361,125 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return out;
   };
 
-  const findHits = (row: PendingRow, consumer: string): Hit[] => {
+  /** Lines (1-based) of `text` naming any of `names` as a whole identifier. */
+  const nameLines = (text: string, names: readonly string[]): number[] => {
+    if (names.length === 0) return [];
+    // `$` is an identifier char on the right; on the left only \w blocks a match, so a
+    // Dart `'$name'` interpolation (and a JS `$name`, a harmless false positive) still hits.
+    const lineRe = new RegExp(`(?<!\\w)(?:${names.map(escapeRe).join('|')})(?![\\w$])`);
+    const out: number[] = [];
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i += 1) if (lineRe.test(lines[i]!)) out.push(i + 1);
+    return out;
+  };
+
+  const findHits = (row: PendingRow, plan: SearchPlan, consumer: string): Hit[] => {
     const files = consumerFiles(consumer);
     if (files === null) return [{ consumer, file: null, line: 0 }];
     const hits: Hit[] = [];
     for (const f of mentioning(consumer, files, row.manager, row.pkg_name)) {
       const text = readText(consumer, f);
-      if (row.name === 'default' && row.manager === 'npm') {
-        const wanted = defaultModuleNames(row.file);
-        const lines = new Set<number>();
+      const lines = new Set<number>(nameLines(text, plan.names));
+      if (plan.defaults) {
+        const t = plan.defaults;
         for (const re of defaultRegexes(row.pkg_name)) {
           re.lastIndex = 0;
           for (let m = re.exec(text); m; m = re.exec(text)) {
             const sub = m[1];
-            const seg = sub === undefined ? undefined : stripExt(sub.split('/').filter(Boolean).pop() ?? '');
-            if (sub === undefined || seg === '' || wanted.has(seg!)) lines.add(lineAt(text, m.index));
+            const segs = sub === undefined ? [] : sub.split('/').filter(Boolean);
+            const seg = sub === undefined ? undefined : stripExt(segs.at(-1) ?? '');
+            const whole = segs.join('/');
+            if (sub === undefined || seg === '' || t.segs.has(seg!) || t.paths.has(whole) || t.paths.has(stripPathExt(whole))
+) {
+              lines.add(lineAt(text, m.index));
+            }
           }
         }
-        for (const line of lines) hits.push({ consumer, file: f, line });
-      } else {
-        // `$` is an identifier char on the right; on the left only \w blocks a match, so a
-        // Dart `'$name'` interpolation (and a JS `$name`, a harmless false positive) still hits.
-        const lineRe = new RegExp(`(?<!\\w)${escapeRe(row.name)}(?![\\w$])`);
-        const lines = text.split(/\r?\n/);
-        for (let i = 0; i < lines.length; i += 1) if (lineRe.test(lines[i]!)) hits.push({ consumer, file: f, line: i + 1 });
       }
+      for (const line of [...lines].sort((a, b) => a - b)) hits.push({ consumer, file: f, line });
     }
     return hits;
+  };
+
+  /**
+   * P's own files holding P's package name in a string literal that is not a module
+   * specifier of an import/export-from/require/import() (generated imports), per package.
+   * null when P's checkout is missing.
+   */
+  const selfCache = new Map<string, string[] | null>();
+  const selfGenFiles = (row: PendingRow): string[] | null => {
+    let out = selfCache.get(row.package_id);
+    if (out !== undefined) return out;
+    const files = consumerFiles(row.package_id);
+    if (files === null) {
+      out = null;
+    } else {
+      const p = escapeRe(row.pkg_name);
+      const strRe = row.manager === 'pub'
+        ? new RegExp(`(['"])package:${p}(?:/[^'"\\s]*)?\\1`, 'g')
+        : new RegExp(`(['"\`])${p}(?:/[^'"\`\\s]*)?\\1`, 'g');
+      const specPrefix = row.manager === 'pub'
+        ? /\b(?:import|export|part)\s*$/
+        : /(?:\bfrom|\bimport|\b(?:require|import)\s*\()\s*$/;
+      out = files.filter((f) => {
+        for (const line of readText(row.package_id, f).split(/\r?\n/)) {
+          strRe.lastIndex = 0;
+          for (let m = strRe.exec(line); m; m = strRe.exec(line)) {
+            const prefix = line.slice(0, m.index);
+            // A real specifier: `from '…'` etc. with no quote earlier on the line (a quote
+            // before it means the statement itself sits inside a string or template).
+            if (/['"`]/.test(prefix) || !specPrefix.test(prefix)) return true;
+          }
+        }
+        return false;
+      });
+    }
+    selfCache.set(row.package_id, out);
+    return out;
+  };
+
+  const selfHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
+    const files = selfGenFiles(row);
+    if (files === null) return [{ consumer: 'self', file: null, line: 0 }];
+    return files.flatMap((f) => nameLines(readText(row.package_id, f), plan.names).map((line) => ({ consumer: 'self', file: f, line })));
+  };
+
+  /** P's package.json `exports` (undefined if absent/unreadable), per package. */
+  const exportsMapCache = new Map<string, unknown>();
+  const exportsMapOf = (packageId: string): unknown => {
+    if (exportsMapCache.has(packageId)) return exportsMapCache.get(packageId);
+    let v: unknown;
+    const loc = locs.get(packageId);
+    if (loc) {
+      try {
+        const json = JSON.parse(readFileSync(join(loc.repoDir, loc.pkgPath, 'package.json'), 'utf8')) as Record<string, unknown>;
+        v = json['exports'];
+      } catch {
+        v = undefined;
+      }
+    }
+    exportsMapCache.set(packageId, v);
+    return v;
+  };
+
+  const aliasesOf = db.prepare(
+    'SELECT DISTINCT entry_file, exported_as FROM symbol_exports WHERE symbol_id = ? ORDER BY entry_file, exported_as',
+  );
+  const planFor = (row: PendingRow): SearchPlan => {
+    const aliases = aliasesOf.all(row.symbol_id) as Array<{ entry_file: string; exported_as: string }>;
+    const all = [...new Set([row.name, ...aliases.map((a) => a.exported_as)])];
+    if (row.manager !== 'npm') return { names: all, defaults: null };
+    const defaultFiles = [
+      ...(row.name === 'default' ? [row.file] : []),
+      ...aliases.filter((a) => a.exported_as === 'default').map((a) => a.entry_file),
+    ];
+    let defaults: DefaultTargets | null = null;
+    if (defaultFiles.length > 0) {
+      defaults = { segs: new Set(), paths: new Set() };
+      const pkgPath = locs.get(row.package_id)?.pkgPath ?? null;
+      for (const f of new Set(defaultFiles)) addDefaultTargets(defaults, f, pkgPath, exportsMapOf(row.package_id));
+    }
+    return { names: all.filter((n) => n !== 'default'), defaults };
   };
 
   const pending = db
@@ -321,7 +512,8 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         ...(consumersOf.all(row.package_id) as Array<{ c: string }>).map((r) => r.c),
         ...new Set([...(ignoredConsumers.get(row.package_id) ?? []), ...ignoredAnyPackage]),
       ];
-      const hits = consumers.flatMap((c) => findHits(row, c));
+      const plan = planFor(row);
+      const hits = [...consumers.flatMap((c) => findHits(row, plan, c)), ...selfHits(row, plan)];
       del.run(row.symbol_id);
       if (hits.length > 0) {
         hits.sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);
