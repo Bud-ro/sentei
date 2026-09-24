@@ -5,6 +5,7 @@ export { runWitness } from './witness.ts';
 export type { RunWitnessOptions, WitnessCounts, WitnessDiscoverInput } from './witness.ts';
 export { buildReport, formatSummary } from './report.ts';
 export type { Report, ReportBlocker, ReportFinding, ReportPackage, ReportRepo, ReportVersionSkew } from './report.ts';
+export * from './sarif.ts';
 export { analyzeOrg, analyzeSql } from './analyze.ts';
 export type { AnalyzeCounts, AnalyzeOptions } from './analyze.ts';
 export { DEFAULT_API_URL, discoverGithub, findToken, listRepos, readLockfile, resolveToken, selectRepo, writeLockfile } from './github.ts';

@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '@sentei/core/db';
-import type { Report } from '@sentei/core';
+import type { Report, SarifLog } from '@sentei/core';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { analyze } from '../src/stages/analyze.ts';
@@ -13,6 +13,7 @@ import { index } from '../src/stages/index.ts';
 import { ingest } from '../src/stages/ingest.ts';
 import { report } from '../src/stages/report.ts';
 import { witness } from '../src/stages/witness.ts';
+import { sarifSchemaErrors } from '../../core/test/helpers/sarif.ts';
 
 const FIXTURES = path.resolve(import.meta.dirname, '../../../fixtures');
 const NO_NODE_MODULES = { recursive: true, filter: (src: string) => path.basename(src) !== 'node_modules' };
@@ -61,7 +62,7 @@ async function withCtx<T>(orgDir: string, fn: (ctx: StageContext, lines: string[
 }
 
 /** Run every stage and return report.json mapped to the expected-findings row shape. */
-async function runPipeline(orgDir: string): Promise<{ rows: ExpectedRow[]; report: Report; lines: string[] }> {
+async function runPipeline(orgDir: string): Promise<{ rows: ExpectedRow[]; report: Report; lines: string[]; work: string }> {
   return withCtx(orgDir, async (ctx, lines) => {
     await discover(ctx);
     await index(ctx, { install: false });
@@ -87,7 +88,7 @@ async function runPipeline(orgDir: string): Promise<{ rows: ExpectedRow[]; repor
         reasons: [`target:${v.target_package_id}`],
       })),
     ];
-    return { rows: sortRows(rows), report: r, lines };
+    return { rows: sortRows(rows), report: r, lines, work: ctx.work };
   });
 }
 
@@ -108,11 +109,21 @@ function expected(file: string): ExpectedRow[] {
 describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
   it.skipIf(!ANALYZE_READY)('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
     const org = copyFixture('org-small');
-    const { rows, report: r, lines } = await runPipeline(org);
+    const { rows, report: r, lines, work } = await runPipeline(org);
     expect(r.policy.assumeClosedWorld).toBe(true);
     expect(r.warnings[0]).toMatch(/^assumeClosedWorld is ON/);
     expect(lines.some((l) => l.includes('WARNING: assumeClosedWorld is ON'))).toBe(true);
     expect(rows).toEqual(expected('expected-findings.json'));
+
+    // M5: one SARIF log per repo, schema-valid, carrying the deletion candidate.
+    for (const { repo } of r.repos) {
+      expect(existsSync(path.join(work, 'sarif', `${repo.replaceAll('/', '__')}.sarif`)), repo).toBe(true);
+    }
+    const sarif = JSON.parse(readFileSync(path.join(work, 'sarif', 'acme__lib-core.sarif'), 'utf8')) as SarifLog;
+    expect(sarifSchemaErrors(sarif)).toEqual([]);
+    expect(sarif.runs[0]!.properties.warnings[0]).toMatch(/^assumeClosedWorld is ON/);
+    expect(sarif.runs[0]!.results.some((x) => x.ruleId === 'sentei/deletion' && x.properties.symbol === 'unusedFn'
+      && x.locations[0]!.physicalLocation.artifactLocation.uri === 'src/fns.ts')).toBe(true);
   }, 180_000);
 
   it.skipIf(!ANALYZE_READY)('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
