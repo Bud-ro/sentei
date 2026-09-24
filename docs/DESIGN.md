@@ -1010,7 +1010,12 @@ not installed, Nuxt apps that need built org packages at `nuxt prepare`.
   and SolidStart `src/routes/**`, Nuxt `pages/**` and `server/**`. They are
   entry points (so the adapter emits their exports) and runtime entries (so
   those exports seed reachability without verdicts). `bin` targets are runtime
-  entries only; `exports` wildcards respect `files`.
+  entries only; `exports` wildcards respect `files`. Pages `functions/**` also
+  triggers on a `wrangler` dependency or a `wrangler pages` script; wrangler
+  `main` falls back to the file in a `wrangler dev|deploy <file>` script; Durable
+  Object and Workflow `class_name`s from the wrangler config are runtime entry
+  symbols (`runtimeEntrySymbols`), so a class the runtime instantiates by name
+  gets no verdict.
 - **Witness rules, final form**: an import vouches only for symbols exported
   from the entry file its specifier reaches (bare specifier → root entry);
   message literals (`deprecated()`, `warn()`, `console.*`, `[deprecated]`) are
