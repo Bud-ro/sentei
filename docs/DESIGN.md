@@ -246,3 +246,19 @@ Running record of decisions and deviations from `PLAN.md`. Newest milestone last
   checker-resolved namespace member accesses in the sidecar
   (`namespaceMemberRefs`) and ingest adds the occurrence and edge when SCIP has
   none at that position.
+
+### M2 — blame
+
+- One `git blame --porcelain <sha> -- <file>` per file holding exported symbols
+  (not per symbol), at the discovered head sha; results are cached per repo under
+  `work/blame/<repo>.json`, trusted only when the cache sha matches.
+- **Every target symbol is reset to NULL before the update**, in the same
+  transaction, so a symbol that cannot be dated this run (skipped repo, blame
+  error) fails closed under the age rule instead of keeping a stale age. Because
+  `ingest` rebuilds `symbols`, `blame` must run after every ingest; the cache
+  makes that cheap.
+- Shallow clones are unshallowed with `git fetch --unshallow --filter=blob:none`
+  (fallback without the filter). Against a real GitHub remote the filter makes a
+  partial clone, so blame may fetch old blobs on demand; untested at scale.
+- Caveat carried into the report wording: blame dates the last edit of the
+  definition line, not the symbol's creation (the safe direction).
