@@ -803,3 +803,36 @@ unexport 280 → 146, private_dead 623 → 82, needs_review 14 → 52, blocked
   through the island/witness interaction above. Two open toolchain items for
   Budro: Dart ≥3.12/3.13 for codemod packages, and pnpm's store-operation lock
   failing inside this sandbox (react-dart, hono).
+
+### unjs verification rerun (HEAD bf4a486)
+
+One pass, no orchestrator heap failure: index 9.5 min with installs, blame
+44 s from cache, analyze 39 s. 68 ok / 38 partial / 8 failed (was 58/46/10):
+the `devEngines` repos now install (pnpm 11.24, 12.3, 12.5); the newest pnpm
+12 (`^12`, `latest`) still fails on its store-operation lock in this sandbox.
+Ingest: unmatched exports 297 → 0, unmatched namespace refs 45 → 0, 100
+unresolved imports became uses. Verdicts: deletion 106 → 127 (36 dead
+islands, 35 previously blocked), unexport 584 → 392, private_dead 216 → 152,
+needs_review 9 → 41, skew 272 → 45.
+
+- Every previously wrong row is fixed except codeup's `utils` members: the
+  adapter emits `namespaceSpreadRefs` but ingest did not consume it (an
+  omission in the dispatch, now added).
+- Spot check of 8 new deletion candidates: 7 public-API-only, 1 wrong
+  (`SvelteStreamableHeadContext`, the return type of a function the witness
+  kept; dead islands are now re-evaluated after the witness).
+- Witness hits: real for codegen (`mask: "getFloat32Mask"`, autoImports
+  presets); noise from generated capnp-es files carrying `displayName: "X"`
+  strings and importing the package by name, and from compiler reserved-name
+  lists (`fetchdts`). Fail closed.
+- Whole-package blocks from unindexed files in `bench/` (unhead-monorepo:
+  377 findings): unindexed script/docs/test files now feed the witness instead
+  of flagging (`witness_files`).
+- package.json `imports` map arms TypeScript does not pick (`#crypto` →
+  `default`) were `private_dead`: every `imports` target is an entry point.
+- Skew residue: `.d.ts` module symbols reported as missing symbols are not
+  symbol references and are dropped.
+- Still open: Vue/Svelte SFC consumers are invisible to scip-typescript (text
+  scan them as unindexed consumers); TS generated files (`@generated`,
+  "automatically generated" headers) need the Dart generated-file treatment;
+  scule runs out of heap at 8 GB; Nuxt apps need `nuxt prepare`.
