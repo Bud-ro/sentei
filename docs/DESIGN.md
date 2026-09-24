@@ -518,3 +518,39 @@ out-of-program scan (now skipped there: they are witness-only); installs must be
 hermetic (pnpm/yarn write under `$HOME`; store and global dirs now live in the
 work dir and the proxy is passed to yarn). The honojs lockfile is committed at
 `fixtures/orgs/honojs.lock.json` (PLAN §13).
+
+### Round 2 fixes (as built) — what changed in the rules
+
+- **Export aliases are first-class** (`symbol_exports`, schema v5). The witness
+  searches every alias a symbol is exported under; before, `export { a as b }`
+  consumers naming `b` were invisible to it (fail-open).
+- **Default exports and the witness.** For every alias `default` the witness
+  applies its default-import rule keyed on the *entry file* of that alias
+  (`export default x` in `src/adapter/cloudflare-pages/index.ts` reached via the
+  exports key `./cloudflare-pages`); the subpath heuristic is deliberately
+  over-inclusive and listed in `witness.ts`.
+- **Self-witness.** A package's own non-test sources are scanned for string
+  literals containing its own package name that are not module specifiers and
+  read like code (`import`/`from`/`require`/`export` inside the literal); a
+  symbol named in such a file becomes `needs_review` (`witness_mismatch:self:`).
+  This is the only defence against code-generated imports.
+- **Test/docs globs** are one list (`packages/core/src/globs.ts`) used by the
+  witness and the adapter, with a test that parses `analyze.sql` to keep the SQL
+  views identical. `mocks/`, `fixtures/`, `e2e/`, `__schemas__/`, `*.spec.*`,
+  `*.stories.*` are tests; in-package `examples/`, `example/`, `demo/` are docs.
+  Effect on honojs: ~160 fewer `private_dead` rows; a few exports whose only
+  internal uses sit in `examples/` moved from unexport to deletion candidates,
+  which is what `countDocsAsConsumers=false` means.
+- **Runtime entry defaults.** `export default app` in an entry file of a
+  package that is not library-shaped (no `exports`/`types`/`module`; pub: no
+  `lib/*.dart`) and has no org consumers gets no verdict: the runtime consumes
+  it (Workers, Lambda, Vite). Library-shaped packages keep their verdicts.
+- **Anonymous descriptors anywhere in a reference chain** attribute the
+  reference to the nearest defined ancestor (`FC:PropsWithChildren:typeLiteralN:`
+  chains); real skew (missing top-level names) is still reported.
+- **Per-package index cache**; hermetic installs under `<work>/.pm`; targeted
+  `namespace_dynamic`; shorthand-property references recorded by the adapter
+  (scip-typescript emits only the property symbol for `{ grade }`).
+- Effect of the round on the honojs DB (before adapter re-index): unresolved
+  refs 9 → 0, deletion candidates 93 → 84, private_dead 460 → 300, and the
+  witness now downgrades 15 symbols including all three known-wrong ones.
