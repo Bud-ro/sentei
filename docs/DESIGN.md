@@ -592,3 +592,58 @@ the package only as a dev dependency, generated files are never reported,
 empty DB, and version skew against a target that failed to index is not
 reported. Two packages need Dart ≥3.12/3.13 (Budro's call). Lockfile committed
 at `fixtures/orgs/workiva.lock.json`.
+
+### M2 — first unjs run (84 repos, 114 packages, at commit 8788a71)
+
+Index 12 min (the sentei process itself ran out of heap once at ~4 GB and was
+resumed with a bigger heap; per-package cache made that cheap), blame 15 min
+first time (84 unshallows), analyze 36 s. Work dir 12 GB after installs.
+Report: 106 deletion, 584 unexport, 216 private_dead, 9 needs_review, 3240
+blocked (unenv and ast-types/recast alone block 2200). 58 packages ok, 46
+partial, 10 failed; the main partial causes were installs (`devEngines`
+runtime mismatch makes `npm exec` refuse; pnpm 12's store lock; Nuxt apps
+missing `.nuxt/tsconfig.json` under `--ignore-scripts`) and unresolved own
+subpath imports. Spot checks: of 8 deletion candidates, 3 **wrong**, 4
+public-API-only, 1 right; all 3 checked private_dead rows wrong. Lockfile and
+org config committed under `fixtures/orgs/unjs.*`.
+
+What the wrong rows taught, and the fixes adopted:
+
+- **A package's own unindexed files importing it by name** (`actions/*.ts`
+  outside `src/` doing `import { defineAction } from "codeup"`) were skipped as
+  self-imports. Fix: the witness treats the package itself as a consumer for own
+  files that import it by name; and any own non-test file that holds the
+  symbol's name inside a string literal (`helperName: "executeAsync"`,
+  auto-import lists, codegen with a variable module path) downgrades the
+  candidate (`witness_mismatch:self-string:`). This is the cheap, fail-closed
+  answer to codegen we cannot follow.
+- **Unresolved `exports` subpaths were silently dropped** (`./vue` →
+  `dist/vue.mjs`; only `src/vue.ts` was tried, not `src/vue/index.ts`), so an
+  entire entry point vanished and ~100 symbols were false `private_dead`. Fix:
+  `index.ts` variants in the dist→src rule, and a code-looking exports leaf that
+  resolves to nothing flags the package opaque (unknown surface is fail-open).
+- **A namespace import used as a value** (`{..._pkg}` of a relative module) made
+  no edges and no flag. Fix: the adapter records such uses and ingest adds
+  edges to every top-level symbol of that module (over-approximation).
+- **Cross-repo compile-option mismatch**: c12 (nodenext) cannot follow pathe's
+  extensionless `export * from "./_path"`, so `resolve`/`join` looked "not
+  exported" and became version skew. Fix in ingest: an unresolved named import
+  from an org package whose HEAD export surface contains that name is a use of
+  that export, not skew.
+- **Unexport candidates that only reference each other** (nanotar's
+  `createTar*` island) left their private helper `private_dead` while they
+  themselves stayed "unexport". Fix: an unexport candidate that is unreachable
+  once candidates stop seeding is a dead island and goes to the witness as a
+  deletion candidate (`dead_island`).
+- **Playground, bench, sandbox and scripts directories** are runnable code:
+  their references count, their declarations are never reported dead
+  (`SCRIPT_GLOBS`).
+- Also adopted: template repos (`is_template`) are skipped at discover; private
+  duplicate manifests are auto-ignored instead of aborting (they are still
+  witness-scanned); skew against an unindexed target is not reported; the
+  export-surface computation runs in a child process per package so the
+  orchestrator's heap stays flat; scip-typescript retries once with double
+  heap on SIGABRT; `devEngines.packageManager` is honoured and `npm exec` runs
+  with engine checks off; install stderr tails go into diagnostics; blame checks
+  its cache before unshallowing. 297 sidecar exports matched no SCIP
+  definition on unjs; cause under investigation.
