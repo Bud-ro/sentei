@@ -84,6 +84,16 @@ export interface ExportsSidecar {
   flags?: Array<{ flag: 'namespace_dynamic' | 'dynamic_access'; reason: string; file: string | null; line?: number; col?: number }>;
   /** Imports of names an org package does not export (version skew; optional). */
   unresolvedImports?: Array<{ module: string; name: string; file: string; line: number | null; col: number | null }>;
+  /**
+   * `W.member` on an org namespace import, resolved by the type checker, where
+   * scip-typescript 0.4.0 emits `local N` (member is an alias re-export). file/line/col
+   * are the consumer position (repo-relative); targetFile is relative to the target
+   * package dir; targetLine/targetCol are the declaration name identifier. Optional.
+   */
+  namespaceMemberRefs?: Array<{
+    file: string; line: number; col: number; member: string;
+    targetPackage: string; targetFile: string; targetLine: number; targetCol: number;
+  }>;
 }
 
 export interface IngestOptions {
@@ -103,6 +113,10 @@ export interface IngestCounts {
   flags: number;
   /** Sidecar exports that matched no definition (warned). */
   unmatchedExports: number;
+  /** Occurrences (+ edges) added from sidecar namespaceMemberRefs that SCIP missed. */
+  namespaceMemberRefs: number;
+  /** namespaceMemberRefs whose target matched no definition (warned). */
+  unmatchedNamespaceMemberRefs: number;
   warnings: number;
 }
 
@@ -224,7 +238,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
   }
 
   const counts: IngestCounts = {
-    documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0, warnings: 0,
+    documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0,
+    namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -452,6 +467,17 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     const byId = new Map<number, SymRow>();
     for (const row of symbols.values()) byId.set(row.symbolId, row);
 
+    /** Innermost definition in `w` whose enclosing_range contains (line, col), else the module symbol. */
+    const enclosingAt = (w: DocWork, line: number, col: number, exclude?: number): number => {
+      let enclosing: { symbolId: number; span: Span } | undefined;
+      for (const s of w.spans) {
+        if (s.symbolId === exclude) continue;
+        if (!contains(s.span, line, col)) continue;
+        if (!enclosing || startsAfter(s.span, enclosing.span)) enclosing = s;
+      }
+      return enclosing?.symbolId ?? w.moduleSymbolId;
+    };
+
     for (const w of docs) {
       for (const o of w.doc.occurrences) {
         const p = parse(o.symbol);
@@ -469,18 +495,54 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           continue;
         }
         const isDef = (o.symbolRoles & DEFINITION) !== 0;
-        // Innermost definition in this document whose enclosing_range contains the start.
-        let enclosing: { symbolId: number; span: Span } | undefined;
-        for (const s of w.spans) {
-          if (isDef && s.symbolId === row.symbolId) continue;
-          if (!contains(s.span, start.line, start.col)) continue;
-          if (!enclosing || startsAfter(s.span, enclosing.span)) enclosing = s;
-        }
-        const enclosingId = enclosing?.symbolId ?? w.moduleSymbolId;
+        const enclosingId = enclosingAt(w, start.line, start.col, isDef ? row.symbolId : undefined);
         const isSite = exportSites.has(`${w.repo}\0${w.file}\0${start.line}\0${start.col}`) ? 1 : 0;
         st.occurrence.run(row.symbolId, w.packageId, row.packageId, w.file, start.line, start.col, o.symbolRoles, enclosingId, isSite);
         counts.occurrences += 1;
         if (!isDef && !isSite) edgeRun(st.edge, byId.get(enclosingId)!, row, 'scip');
+      }
+    }
+
+    // ---- Namespace member refs SCIP missed (sidecar namespaceMemberRefs) ---
+    // scip-typescript 0.4.0 emits `local N` for `W.member` when W is an org namespace
+    // import and member is an alias re-export; the index adapter records the
+    // checker-resolved declaration instead. Added only where SCIP has no occurrence
+    // of that symbol at the same position.
+    {
+      const docAt = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
+      const occAt = db.prepare('SELECT 1 FROM occurrences WHERE symbol_id = ? AND package_id = ? AND file = ? AND line = ? AND col = ? LIMIT 1');
+      const unmatchedRefs: string[] = [];
+      for (const { packageId, repo, data } of sidecars) {
+        for (const r of data.namespaceMemberRefs ?? []) {
+          const label = `${packageId} ${r.file}:${r.line + 1}:${r.col + 1} ${r.member} -> ${r.targetPackage}/${r.targetFile}:${r.targetLine + 1}:${r.targetCol + 1}`;
+          const target = pkgs.get(`npm:${r.targetPackage}`);
+          if (!target) {
+            warn(`namespace member ref ${label}: target is not an org package, ignored`);
+            continue;
+          }
+          const w = docAt.get(`${repo}\0${r.file}`);
+          if (!w || w.packageId !== packageId) {
+            warn(`namespace member ref ${label}: consumer file is not an indexed document of ${packageId}, ignored`);
+            continue;
+          }
+          const targetFile = posix.normalize(posix.join(target.path || '.', r.targetFile));
+          const id = defPositions.get(`${target.repo}\0${targetFile}\0${r.targetLine}\0${r.targetCol}`);
+          if (id === undefined) {
+            unmatchedRefs.push(label);
+            continue;
+          }
+          const row = byId.get(id)!;
+          if (occAt.get(id, w.packageId, w.file, r.line, r.col)) continue; // SCIP already resolved it
+          const enclosingId = enclosingAt(w, r.line, r.col);
+          st.occurrence.run(id, w.packageId, row.packageId, w.file, r.line, r.col, 0, enclosingId, 0);
+          counts.occurrences += 1;
+          counts.namespaceMemberRefs += 1;
+          edgeRun(st.edge, byId.get(enclosingId)!, row, 'scip');
+        }
+      }
+      counts.unmatchedNamespaceMemberRefs = unmatchedRefs.length;
+      if (unmatchedRefs.length > 0) {
+        warn(`${unmatchedRefs.length} namespace member ref(s) match no SCIP definition: ${unmatchedRefs.join('; ')}`);
       }
     }
 
@@ -605,6 +667,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
 
   counts.warnings = warnings;
   log(`[ingest] documents=${counts.documents} symbols=${counts.symbols} occurrences=${counts.occurrences} edges=${counts.edges} `
-    + `exported=${counts.exported} unresolved=${counts.unresolved} flags=${counts.flags} unmatchedExports=${counts.unmatchedExports}`);
+    + `exported=${counts.exported} unresolved=${counts.unresolved} flags=${counts.flags} unmatchedExports=${counts.unmatchedExports} `
+    + `namespaceMemberRefs=${counts.namespaceMemberRefs}`);
   return counts;
 }

@@ -356,6 +356,40 @@ describe('ingestOrg (synthetic SCIP)', () => {
       anonDefault, id('scip-typescript npm @acme/lib . src/`anon.ts`/'))).toBe(1);
   });
 
+  it('adds namespace member refs SCIP missed, never duplicates ones it has, and warns on unknown targets', () => {
+    const ref = (line: number, col: number, member: string, targetLine: number, targetCol: number, targetPackage = '@acme/lib') =>
+      ({ file: 'apps/app/src/main.ts', line, col, member, targetPackage, targetFile: 'src/a.ts', targetLine, targetCol });
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:@acme/app'),
+      namespaceMemberRefs: [
+        ref(3, 10, 'helper', 8, 9), //       SCIP emitted `local N` here: inside main() -> edge main -> helper
+        ref(3, 2, 'bar', 2, 2), //           SCIP already resolved Foo#bar() at this position
+        ref(3, 20, 'gone', 40, 0), //        no definition at the target position
+        ref(3, 30, 'pad', 0, 0, 'left-pad'), // not an org package
+      ],
+    });
+    const c = run();
+    const helper = id('scip-typescript npm @acme/lib . src/`a.ts`/helper().');
+    const bar = id('scip-typescript npm @acme/lib . src/`a.ts`/Foo#bar().');
+    const main = id('scip-typescript npm @acme/app . src/`main.ts`/main().');
+    expect(db.prepare(`SELECT package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site, is_external
+      FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:@acme/app'`).all(helper)).toEqual([
+      { package_id: 'npm:@acme/app', def_package_id: 'npm:@acme/lib', file: 'apps/app/src/main.ts', line: 3, col: 10, role: 0,
+        enclosing_symbol_id: main, is_export_site: 0, is_external: 1 },
+    ]);
+    expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", main, helper)).toBe(1);
+    expect(count(db, "SELECT count(*) AS n FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:@acme/app'", bar)).toBe(1);
+    expect(c.namespaceMemberRefs).toBe(1);
+    expect(c.unmatchedNamespaceMemberRefs).toBe(1);
+    expect(c.warnings).toBe(2);
+    expect(logs.some((l) => /warning: 1 namespace member ref\(s\) match no SCIP definition: .*gone/.test(l))).toBe(true);
+    expect(logs.some((l) => /namespace member ref .*pad .*not an org package/.test(l))).toBe(true);
+    // Idempotent.
+    const before = tableCounts(db);
+    expect(run().namespaceMemberRefs).toBe(1);
+    expect(tableCounts(db)).toEqual(before);
+  });
+
   it('warns about sidecar exports that match no definition', () => {
     writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13), exp('nope', 'src/a.ts', 40, 0)]));
     const c = run();
