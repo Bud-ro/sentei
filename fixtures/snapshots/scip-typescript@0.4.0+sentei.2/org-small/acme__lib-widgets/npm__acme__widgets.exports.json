@@ -158,6 +158,7 @@
   "flags": [],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
   "packageId": "npm:@acme/widgets",
   "shorthandRefs": [],
   "unindexedImports": [],

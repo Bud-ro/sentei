@@ -71,6 +71,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         flags: [],
         namespaceMemberRefs: [],
         shorthandRefs: [],
+        namespaceSpreadRefs: [],
         unindexedImports: [],
         entrySymbols: [],
       },
@@ -85,6 +86,15 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     if (abs.split(path.sep).includes('node_modules')) return false;
     return !input.nestedPackageDirs.some((d) => isInside(abs, d));
   };
+
+  // The files scip-typescript indexes: exactly each program's root files (its
+  // ProjectIndexer skips every other source file of the program). Without a
+  // tsconfig, the surface program is built from the entry files alone while
+  // scip-typescript infers a tsconfig of its own, so the sets are not comparable
+  // and no declaration is dropped for this reason.
+  const indexedFiles = new Set(specs.flatMap((spec) => spec.rootNames.map((f) => path.resolve(f))));
+  const rootsKnown = input.tsconfig !== undefined && existsSync(input.tsconfig);
+  const skipped = { bindings: 0, typedefs: 0, expandos: 0, json: new Set<string>() };
 
   const exports: ExportRecord[] = [];
   const readEntry = (entry: string, sf: ts.SourceFile, checker: ts.TypeChecker): void => {
@@ -122,9 +132,42 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         }
         continue;
       }
-      for (const decl of decls) {
+      for (const decl of expandAliasDeclarations(decls, checker)) {
         const declSf = decl.getSourceFile();
         if (!isOwnFile(declSf.fileName)) continue;
+        // Declarations scip-typescript 0.4.0 gives no global definition at this
+        // position; a record for them could never match a SCIP symbol.
+        if (ts.isBindingElement(decl)) {
+          // `export const { a, b } = f()`: SCIP defines a `local N` symbol there,
+          // never a verdict subject; its uses resolve to the source property.
+          skipped.bindings++;
+          continue;
+        }
+        if (ts.isJSDocTypedefTag(decl) || ts.isJSDocCallbackTag(decl) || ts.isJSDocEnumTag(decl)) {
+          // `/** @typedef {import('./types').X} X */` in a JS file: SCIP emits nothing for JSDoc.
+          skipped.typedefs++;
+          continue;
+        }
+        if (isExpandoDeclaration(decl) && decls.some((d) => !isExpandoDeclaration(d))) {
+          // `fn.prop = ...` adds a declaration to `fn` itself; the function
+          // declaration is recorded, the assignment is not a definition.
+          skipped.expandos++;
+          continue;
+        }
+        if (rootsKnown && !indexedFiles.has(path.resolve(declSf.fileName))) {
+          const rel = toRepoRel(path.resolve(declSf.fileName));
+          if (declSf.flags & ts.NodeFlags.JsonFile || /\.json$/i.test(declSf.fileName)) {
+            // `export { version } from '../package.json'`: data, never code to report.
+            skipped.json.add(rel);
+          } else {
+            // Declared in a file no tsconfig lists (a hand-written `lib/*.d.mts`
+            // entry, a file only reached by import): SCIP has no symbol for it,
+            // so neither the export nor any reference inside that file is
+            // visible. Unknown surface: fail closed.
+            unresolved.add(`${entry}#${exportedAs} (declared in ${rel}, which is in no tsconfig's files, so scip-typescript did not index it)`);
+          }
+          continue;
+        }
         const { node, name, note } = nameOf(decl, target);
         const pos = position(declSf, node.getStart(declSf), toRepoRel);
         const record: ExportRecord = { entry, exportedAs, name, ...pos, sites: sites.get(target) ?? [] };
@@ -153,15 +196,14 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     flags: [],
     namespaceMemberRefs: [],
     shorthandRefs: [],
+    namespaceSpreadRefs: [],
   };
   const compilerErrors = new Set<string>();
   const checked = new Set<string>();
   const pending = new Map(input.entryPoints.map((e) => [e, path.resolve(input.repoRoot, ...e.split('/'))] as const));
   const found = new Set<string>();
-  const indexedFiles = new Set<string>();
   for (const spec of specs) {
     const roots = spec.rootNames.map((f) => path.resolve(f));
-    roots.forEach((f) => indexedFiles.add(f));
     const rootSet = new Set(roots);
     if (!roots.some(isOwnFile) && ![...pending.values()].some((abs) => rootSet.has(abs))) continue;
     const program = spec.create();
@@ -176,6 +218,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     consumer.flags.push(...r.flags);
     consumer.namespaceMemberRefs.push(...r.namespaceMemberRefs);
     consumer.shorthandRefs.push(...r.shorthandRefs);
+    consumer.namespaceSpreadRefs.push(...r.namespaceSpreadRefs);
     // Every other compiler error is informational: it does not change what SCIP links.
     // Per own file (plus the program's global/options diagnostics), deduplicated.
     const fileDiags = files.length > 0 ? files.flatMap((sf) => ts.getPreEmitDiagnostics(program, sf)) : [];
@@ -249,6 +292,13 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     diagnostics.push(`warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})`);
   }
 
+  if (skipped.bindings > 0) {
+    diagnostics.push(`info: ${skipped.bindings} export(s) declared by destructuring (\`export const { a } = ...\`) not recorded: scip-typescript defines them as locals`);
+  }
+  if (skipped.typedefs > 0) diagnostics.push(`info: ${skipped.typedefs} JSDoc @typedef/@callback export(s) not recorded: scip-typescript does not index JSDoc`);
+  if (skipped.expandos > 0) diagnostics.push(`info: ${skipped.expandos} expando assignment declaration(s) (\`fn.prop = ...\`) not recorded`);
+  if (skipped.json.size > 0) diagnostics.push(`info: exports declared in JSON modules not recorded: ${[...skipped.json].sort().join(', ')}`);
+
   const entryPoints = input.entryPoints.filter((e) => found.has(e));
   const missingEntryPoints = input.entryPoints.filter((e) => !found.has(e));
 
@@ -278,6 +328,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       flags,
       namespaceMemberRefs: consumer.namespaceMemberRefs,
       shorthandRefs: consumer.shorthandRefs,
+      namespaceSpreadRefs: consumer.namespaceSpreadRefs,
       unindexedImports,
       entrySymbols: [],
     },
@@ -445,6 +496,49 @@ function findDefaultKeyword(decl: ts.Node): ts.Node | undefined {
 function position(sf: ts.SourceFile, pos: number, toRepoRel: (abs: string) => string): SourcePosition {
   const { line, character } = sf.getLineAndCharacterOfPosition(pos);
   return { file: toRepoRel(path.resolve(sf.fileName)), line, col: character };
+}
+
+/**
+ * `decls` with every import/export alias declaration replaced by the
+ * declarations it resolves to. A symbol merged from an import and a local
+ * value (`import type { T } from './types'; const { T } = f(); export { T }`)
+ * keeps the import specifier among its declarations, and SCIP has only a
+ * reference there; the definition is the imported declaration.
+ */
+function expandAliasDeclarations(decls: readonly ts.Declaration[], checker: ts.TypeChecker): ts.Declaration[] {
+  const out: ts.Declaration[] = [];
+  const seen = new Set<ts.Node>();
+  const visit = (d: ts.Declaration, depth: number): void => {
+    if (seen.has(d)) return;
+    seen.add(d);
+    const isAlias =
+      ts.isImportSpecifier(d) || ts.isImportClause(d) || ts.isNamespaceImport(d) || ts.isExportSpecifier(d) || ts.isImportEqualsDeclaration(d);
+    if (!isAlias) {
+      out.push(d);
+      return;
+    }
+    const name = ts.getNameOfDeclaration(d);
+    const sym = name !== undefined ? checker.getSymbolAtLocation(name) : undefined;
+    if (sym === undefined || depth > 10) return;
+    const target = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
+    for (const t of target.declarations ?? []) if (!ts.isSourceFile(t)) visit(t, depth + 1);
+  };
+  for (const d of decls) visit(d, 0);
+  return out;
+}
+
+/**
+ * A declaration added by an expando assignment (`fn.prop = x`,
+ * `Object.defineProperty(fn, ...)`), not a declaration statement.
+ */
+function isExpandoDeclaration(decl: ts.Node): boolean {
+  return (
+    ts.isIdentifier(decl) ||
+    ts.isPropertyAccessExpression(decl) ||
+    ts.isElementAccessExpression(decl) ||
+    ts.isBinaryExpression(decl) ||
+    ts.isCallExpression(decl)
+  );
 }
 
 /** True when an org module specifier reaches into the package's `dist/` (`hono/dist/types/router`). */

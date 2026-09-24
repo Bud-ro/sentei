@@ -21,6 +21,7 @@
   "flags": [],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
   "packageId": "pub:acme_app",
   "shorthandRefs": [],
   "unindexedImports": [],

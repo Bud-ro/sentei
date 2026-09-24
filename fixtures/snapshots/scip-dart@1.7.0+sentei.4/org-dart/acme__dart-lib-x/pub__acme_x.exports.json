@@ -152,6 +152,7 @@
   "flags": [],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
   "packageId": "pub:acme_x",
   "shorthandRefs": [],
   "unindexedImports": [],

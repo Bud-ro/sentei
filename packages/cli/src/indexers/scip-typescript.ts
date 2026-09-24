@@ -20,7 +20,8 @@ import {
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { computeExportSurface } from './export-surface.ts';
+import { fileURLToPath } from 'node:url';
+import type { SurfaceJob, SurfaceWorkerResult } from './surface-worker.ts';
 import type { DiscoveredPackage, DiscoveredRepo, Indexer, IndexerInput, IndexerResult, IndexStatus } from './types.ts';
 import { worstStatus } from './types.ts';
 
@@ -88,7 +89,10 @@ export const scipTypescript: Indexer = {
   // Upstream version + our patch level. Bump the patch level whenever the
   // adapter's output (the sidecar) changes: it is the index cache key.
   // +sentei.1: shorthandRefs, targeted namespace_dynamic, deep dist imports.
-  version: '0.4.0+sentei.1',
+  // +sentei.2: namespaceSpreadRefs; exports SCIP cannot define are not recorded
+  //   (destructuring, JSDoc typedefs, expandos, JSON) or are `unresolved`
+  //   (declared outside every tsconfig's files).
+  version: '0.4.0+sentei.2',
 
   detect({ repo, pkg }) {
     if (pkg.manager !== 'npm') return false;
@@ -137,14 +141,18 @@ export const scipTypescript: Indexer = {
       args.push('--infer-tsconfig');
       diagnostics.push('info: no tsconfig.json; running with --infer-tsconfig (scip-typescript writes one)');
     }
-    const nodeOptions = [process.env.NODE_OPTIONS, `--max-old-space-size=${options.maxOldSpaceMb}`]
-      .filter(Boolean)
-      .join(' ');
-    const proc = await exec(process.execPath, args, dir, { ...process.env, NODE_OPTIONS: nodeOptions });
-    log.push(`$ NODE_OPTIONS='${nodeOptions}' node ${args.join(' ')}  (cwd ${dir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+    const proc = await runNode({
+      what: 'scip-typescript',
+      args,
+      cwd: dir,
+      maxOldSpaceMb: options.maxOldSpaceMb,
+      log,
+      diagnostics,
+      beforeRetry: () => rmSync(scipFile, { force: true }),
+    });
     if (proc.code !== 0) {
       status = 'failed';
-      diagnostics.push(`error: scip-typescript ${describeExit(proc)}`);
+      diagnostics.push(`error: scip-typescript ${describeExit(proc)}${stderrTail(proc)}`);
     }
     const errorLines = [
       ...proc.stderr.split(/\r?\n/).filter((l) => /error TS\d+|\berror\b/i.test(l)),
@@ -160,7 +168,7 @@ export const scipTypescript: Indexer = {
       diagnostics.push(`error: ${path.basename(scipFile)} missing or empty`);
     }
 
-    // 4. Export-surface sidecar.
+    // 4. Export-surface sidecar, computed in a child process (surface-worker.ts).
     try {
       const nested = repo.packages
         .map((p) => packageDir(repo, p))
@@ -172,27 +180,33 @@ export const scipTypescript: Indexer = {
         .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
         .map((d) => (existsSync(d) ? realpathSync(d) : d))
         .filter((d) => d.startsWith(dir + path.sep));
-      const surface = computeExportSurface({
-        packageId: pkg.packageId,
-        repoRoot,
-        pkgDir: dir,
-        nestedPackageDirs: nested,
-        ignoredDirs,
-        entryPoints: pkg.entryPoints,
-        tsconfig: existsSync(tsconfig) ? tsconfig : undefined,
-        orgPackageNames: new Set(
-          input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'npm' && p.name !== null ? [p.name] : [])),
-        ),
-        orgPackageDirs: input.orgPackages.flatMap(({ repo: r, pkg: p }) => {
-          const d = packageDir(r, p);
-          return p.manager === 'npm' && p.name !== null && existsSync(d) ? [{ name: p.name, dir: realpathSync(d) }] : [];
-        }),
-        packageName: pkg.name,
-        ...(input.policy !== undefined ? { policy: input.policy } : {}),
-      });
-      writeFileSync(exportsFile, `${JSON.stringify(surface.sidecar, null, 2)}\n`);
-      diagnostics.push(...surface.diagnostics);
-      if (surface.partial) status = worstStatus(status, 'partial');
+      const job: SurfaceJob = {
+        sidecarFile: exportsFile,
+        input: {
+          packageId: pkg.packageId,
+          repoRoot,
+          pkgDir: dir,
+          nestedPackageDirs: nested,
+          ignoredDirs,
+          entryPoints: pkg.entryPoints,
+          tsconfig: existsSync(tsconfig) ? tsconfig : undefined,
+          orgPackageNames: input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'npm' && p.name !== null ? [p.name] : [])),
+          orgPackageDirs: input.orgPackages.flatMap(({ repo: r, pkg: p }) => {
+            const d = packageDir(r, p);
+            return p.manager === 'npm' && p.name !== null && existsSync(d) ? [{ name: p.name, dir: realpathSync(d) }] : [];
+          }),
+          packageName: pkg.name,
+          ...(input.policy !== undefined ? { policy: input.policy } : {}),
+        },
+      };
+      rmSync(exportsFile, { force: true }); // never leave a previous run's sidecar behind a failure
+      const surface = await runSurfaceWorker(job, dir, options.maxOldSpaceMb, log, diagnostics);
+      if (surface === undefined) {
+        status = 'failed';
+      } else {
+        diagnostics.push(...surface.diagnostics);
+        if (surface.partial) status = worstStatus(status, 'partial');
+      }
     } catch (err) {
       status = 'failed';
       diagnostics.push(`error: export surface failed: ${(err as Error).stack ?? String(err)}`);
@@ -204,8 +218,125 @@ export const scipTypescript: Indexer = {
   },
 };
 
-/** Runs a subprocess; injectable so tests never spawn a package manager. */
-export type Runner = (cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, shell?: boolean) => Promise<ExecResult>;
+/** Runs a subprocess; injectable so tests never spawn a package manager. `input` is written to its stdin. */
+export type Runner = (
+  cmd: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  shell?: boolean,
+  input?: string,
+) => Promise<ExecResult>;
+
+/** Absolute path of the export-surface worker script. */
+const SURFACE_WORKER = fileURLToPath(new URL('./surface-worker.ts', import.meta.url));
+
+/** True when a node subprocess died of heap exhaustion (V8 aborts: SIGABRT / exit 134). */
+export function isHeapExhausted(proc: ExecResult): boolean {
+  return proc.signal === 'SIGABRT' || proc.code === 134 || /heap out of memory|allocation failed - javascript heap/i.test(proc.stderr);
+}
+
+export interface RunNodeOptions {
+  /** Name in diagnostics (`scip-typescript`, `export surface`). */
+  what: string;
+  /** Script and its arguments. */
+  args: string[];
+  cwd: string;
+  maxOldSpaceMb: number;
+  /** Written to the child's stdin. */
+  input?: string;
+  log: string[];
+  diagnostics: string[];
+  /** Runs before the retry (e.g. removes a partial output file). */
+  beforeRetry?: () => void;
+  run?: Runner;
+}
+
+/**
+ * Runs `node --max-old-space-size=<mb> <args>`. When the child runs out of
+ * heap (SIGABRT, exit 134 or "heap out of memory" on stderr) it is retried
+ * once with double the heap, with a `warn:` naming both sizes.
+ */
+export async function runNode(o: RunNodeOptions): Promise<ExecResult> {
+  const run = o.run ?? exec;
+  let heap = o.maxOldSpaceMb;
+  const once = async (): Promise<ExecResult> => {
+    const args = [`--max-old-space-size=${heap}`, ...o.args];
+    const proc = await run(process.execPath, args, o.cwd, process.env, false, o.input);
+    o.log.push(`$ node ${args.join(' ')}  (cwd ${o.cwd})`, '--- stdout', truncateLog(proc.stdout), '--- stderr', proc.stderr);
+    return proc;
+  };
+  let proc = await once();
+  if (proc.code !== 0 && isHeapExhausted(proc)) {
+    o.diagnostics.push(
+      `warn: ${o.what} ran out of heap at --max-old-space-size=${heap} (${describeExit(proc)}); retrying once with ${heap * 2}`,
+    );
+    heap *= 2;
+    o.beforeRetry?.();
+    proc = await once();
+  }
+  return proc;
+}
+
+/** Stdout kept in the log (a worker's JSON result can be long). */
+function truncateLog(s: string, max = 20000): string {
+  return s.length > max ? `${s.slice(0, max)}\n... (${s.length - max} more characters)` : s;
+}
+
+/**
+ * Runs the export-surface worker for one package. On success the sidecar is at
+ * `job.sidecarFile`; undefined (with an `error:` diagnostic carrying the stderr
+ * tail) when the worker failed or printed something that is not its result.
+ */
+export async function runSurfaceWorker(
+  job: SurfaceJob,
+  cwd: string,
+  maxOldSpaceMb: number,
+  log: string[],
+  diagnostics: string[],
+  run?: Runner,
+): Promise<SurfaceWorkerResult | undefined> {
+  const proc = await runNode({
+    what: 'export surface',
+    args: [SURFACE_WORKER],
+    cwd,
+    maxOldSpaceMb,
+    input: JSON.stringify(job),
+    log,
+    diagnostics,
+    ...(run !== undefined ? { run } : {}),
+  });
+  if (proc.errno !== undefined || proc.code !== 0) {
+    diagnostics.push(`error: export surface failed: worker ${describeExit(proc)}${stderrTail(proc)}`);
+    return undefined;
+  }
+  try {
+    const r = JSON.parse(proc.stdout) as SurfaceWorkerResult;
+    if (!Array.isArray(r.diagnostics) || typeof r.partial !== 'boolean') throw new Error('unexpected shape');
+    return r;
+  } catch (err) {
+    diagnostics.push(`error: export surface failed: worker printed no result (${(err as Error).message})${stderrTail(proc)}`);
+    return undefined;
+  }
+}
+
+/**
+ * `: <last lines of stderr>` (up to 5 non-empty lines, ` | `-joined, capped);
+ * stdout's last lines when stderr is empty (pnpm prints its errors on
+ * stdout); '' when both are empty.
+ */
+export function stderrTail(proc: Pick<ExecResult, 'stderr'> & Partial<Pick<ExecResult, 'stdout'>>, lines = 5, max = 1000): string {
+  const lastLines = (s: string): string =>
+    s
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l !== '')
+      .slice(-lines)
+      .join(' | ');
+  const tail = lastLines(proc.stderr) || lastLines(proc.stdout ?? '');
+  if (tail === '') return '';
+  return `: ${tail.length > max ? `…${tail.slice(tail.length - max)}` : tail}`;
+}
 
 /**
  * The environment of every install subprocess: all global, state and cache
@@ -229,6 +360,15 @@ export function hermeticEnv(workDir: string, base: NodeJS.ProcessEnv = process.e
     // corepack shims: downloads under the work dir, no strict packageManager check.
     COREPACK_HOME: path.join(pm, 'corepack'),
     COREPACK_ENABLE_STRICT: '0',
+    // A repo's `engines` naming another node major must not abort the install
+    // (npm and pnpm both read these; the checkout is only type-resolved, never run).
+    npm_config_engine_strict: 'false',
+    NPM_CONFIG_ENGINE_STRICT: 'false',
+    pnpm_config_engine_strict: 'false', // pnpm 11 reads pnpm_config_*, not npm_config_*
+    // Not set: pnpm_config_runtime_on_fail. pnpm 11 turns `devEngines.runtime`
+    // with `onFail: "download"` into a `node@runtime:<range>` dev dependency that
+    // is in the lockfile; overriding it makes `--frozen-lockfile` fail
+    // (ERR_PNPM_OUTDATED_LOCKFILE), so such installs download node from nodejs.org.
   };
   // yarn berry ignores HTTP(S)_PROXY; it reads its own settings.
   const httpsProxy = base.HTTPS_PROXY ?? base.https_proxy;
@@ -297,12 +437,21 @@ export async function install(
             `(version ${want.version} ${want.source})`,
         );
         cmd = 'npm';
-        cmdArgs = ['exec', '--yes', `--package=${fb.spec}`, '--', fb.bin, ...(fb.args ?? args)];
+        // npm 11 checks the `devEngines` of the package.json at its local prefix
+        // before `exec` (EBADDEVENGINES: `runtime` node ^24 on node 26, or
+        // `packageManager` pnpm ≠ npm) and engine-strict does not turn that off;
+        // only --force would, and it leaks into pnpm as npm_config_force (a
+        // forced reinstall). So the prefix is an empty dir in the work dir: no
+        // package.json, no devEngines check. The command still runs in `d`
+        // (npm exec's run path is the cwd), and pnpm@x lands in npm's npx cache.
+        const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
+        mkdirSync(execPrefix, { recursive: true });
+        cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...(fb.args ?? args)];
         proc = await run(cmd, cmdArgs, d, env, shell);
         log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
       }
       if (proc.errno !== undefined || proc.code !== 0) {
-        diagnostics.push(`error: ${cmd} ${cmdArgs.join(' ')} in ${rel} ${describeExit(proc)}`);
+        diagnostics.push(`error: ${cmd} ${cmdArgs.join(' ')} in ${rel} ${describeExit(proc)}${proc.errno === undefined ? stderrTail(proc) : ''}`);
         return false;
       }
       diagnostics.push(`info: ran ${cmd} ${cmdArgs.join(' ')} in ${rel}`);
@@ -322,8 +471,10 @@ function describeExit(proc: ExecResult): string {
 }
 
 /**
- * The version of `pm` named by the nearest `packageManager` field (`pnpm@9.1.0+sha512...`)
- * from the lockfile dir up to the repo root, else `latest`.
+ * The version of `pm` named by the nearest package.json (from the lockfile dir
+ * up to the repo root) whose `packageManager` field (`pnpm@9.1.0+sha512...`)
+ * or, failing that, `devEngines.packageManager` (`{ name, version }` or an
+ * array of those; the version may be a range) names `pm`; else `latest`.
  */
 function packageManagerVersion(
   repoRoot: string,
@@ -331,20 +482,29 @@ function packageManagerVersion(
   pm: PackageManager,
 ): { version: string; source: string } {
   for (let d = lockDir; ; d = path.dirname(d)) {
-    let field: unknown;
+    let json: { packageManager?: unknown; devEngines?: { packageManager?: unknown } } | undefined;
     try {
-      field = (JSON.parse(readFileSync(path.join(d, 'package.json'), 'utf8')) as { packageManager?: unknown }).packageManager;
+      json = JSON.parse(readFileSync(path.join(d, 'package.json'), 'utf8')) as typeof json;
     } catch {
-      field = undefined;
+      json = undefined;
     }
+    const rel = path.relative(repoRoot, path.join(d, 'package.json')).split(path.sep).join('/');
+    const field = json?.packageManager;
     if (typeof field === 'string') {
       const m = /^(npm|pnpm|yarn|bun)@([^+\s]+)/.exec(field);
-      const rel = path.relative(repoRoot, path.join(d, 'package.json')).split(path.sep).join('/');
       if (m !== null && m[1] === pm) return { version: m[2]!, source: `from packageManager in ${rel}` };
+    }
+    const dev = json?.devEngines?.packageManager;
+    for (const e of Array.isArray(dev) ? dev : dev !== undefined ? [dev] : []) {
+      if (typeof e !== 'object' || e === null) continue;
+      const { name, version } = e as { name?: unknown; version?: unknown };
+      if (name === pm && typeof version === 'string' && /^[\w.^~<>=|*\s-]+$/.test(version.trim())) {
+        return { version: version.trim(), source: `from devEngines.packageManager in ${rel}` };
+      }
     }
     if (d === repoRoot || path.dirname(d) === d) break;
   }
-  return { version: 'latest', source: '(no matching packageManager field)' };
+  return { version: 'latest', source: '(no matching packageManager or devEngines.packageManager field)' };
 }
 
 /**
@@ -353,7 +513,8 @@ function packageManagerVersion(
  * (`--immutable` / `--mode=skip-build` instead).
  */
 function npmExecFallback(pm: PackageManager, version: string): { spec: string; bin: string; args?: string[] } {
-  if (pm === 'yarn' && /^[2-9]|^\d{2,}/.test(version)) {
+  // The major of a version or a range (`^4.1.0`, `>=4`).
+  if (pm === 'yarn' && /^(?:[2-9]|\d{2,})/.test(version.replace(/^[\s^~>=v]+/, ''))) {
     return { spec: `@yarnpkg/cli-dist@${version}`, bin: 'yarn', args: ['install', '--immutable', '--mode=skip-build'] };
   }
   return { spec: `${pm}@${version}`, bin: pm };
@@ -615,13 +776,17 @@ export interface ExecResult {
   errorMessage?: string;
 }
 
-function exec(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, shell = false): Promise<ExecResult> {
+function exec(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, shell = false, input?: string): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env, shell, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, { cwd, env, shell, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    if (input !== undefined) {
+      child.stdin!.on('error', () => {}); // EPIPE when the child exits early; its exit status tells the story
+      child.stdin!.end(input);
+    }
     let stdout = '';
     let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (c: string) => (stdout += c));
-    child.stderr.setEncoding('utf8').on('data', (c: string) => (stderr += c));
+    child.stdout!.setEncoding('utf8').on('data', (c: string) => (stdout += c));
+    child.stderr!.setEncoding('utf8').on('data', (c: string) => (stderr += c));
     child.on('error', (err: NodeJS.ErrnoException) =>
       resolve({
         code: -1,

@@ -59,7 +59,8 @@ Options:
                         (default: cwd if it has one, else defaults)
   --force        index: re-index repos even when cached for the same headSha
   --no-install   index: do not run npm ci / pnpm / yarn install
-  --max-old-space-mb <n>  index: indexer heap limit in MB (default: 8192)
+  --max-old-space-mb <n>  index: heap limit in MB of each indexer and export-surface
+                          child process, doubled once on heap exhaustion (default: 8192)
   --policy <key>=<json>   discover/run: override one org sentei.json policy key
                           (repeatable), e.g. --policy assumeClosedWorld=true
                           --policy minAgeDays=0

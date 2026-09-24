@@ -175,6 +175,18 @@ export interface ExportsSidecar {
    */
   shorthandRefs: ShorthandRef[];
   /**
+   * Every value use of a namespace import (`import * as X from '<module>'`)
+   * other than `X.member` / `X['lit']` (a spread `{...X}`, an argument
+   * `f(X)` / `Object.keys(X)`, an assignment `const y = X`, `export { X }`),
+   * when the module resolves to a file inside an org package checkout: this
+   * package's own files (relative imports) or another org package. The
+   * members read are not statically known; ingest adds a reference to every
+   * top-level symbol of `targetFile` (over-approximation, fail closed).
+   * Position is the namespace identifier. Imports of another org package by
+   * name also keep producing the `namespace_dynamic` flag. Always `[]` for Dart.
+   */
+  namespaceSpreadRefs: NamespaceSpreadRef[];
+  /**
    * Imports of org packages found by a text scan of code files in the package
    * that no indexed program covers (config files such as `eslint.config.mjs`
    * outside every tsconfig). Each is a consumer SCIP cannot see; ingest turns
@@ -214,6 +226,13 @@ export interface NamespaceMemberRef extends SourcePosition {
   /** 0-based position of the declaration's name identifier (declaration start if it has none). */
   targetLine: number;
   targetCol: number;
+}
+
+export interface NamespaceSpreadRef extends SourcePosition {
+  /** npm name of the org package holding the namespace's module (this package for a relative import). */
+  targetPackage: string;
+  /** The module file relative to that package's dir, POSIX. */
+  targetFile: string;
 }
 
 /** Same shape as `NamespaceMemberRef`; `member` is the shorthand name. */

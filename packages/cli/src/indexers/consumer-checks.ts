@@ -14,7 +14,9 @@
 //     accessed members are not statically known → `flags`.
 // Plus two upstream gaps recorded as checker-resolved references (ingest
 // dedupes them against SCIP occurrences): namespace member accesses
-// (`namespaceMemberRefs`) and shorthand properties (`shorthandRefs`).
+// (`namespaceMemberRefs`) and shorthand properties (`shorthandRefs`); and
+// value uses of any namespace import of org code, relative ones included
+// (`namespaceSpreadRefs`: `{..._pkg}` reads members nobody can list).
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -23,6 +25,7 @@ import type {
   ConsumerFlag,
   ConsumerPolicy,
   NamespaceMemberRef,
+  NamespaceSpreadRef,
   ShorthandRef,
   SourcePosition,
   UnindexedImport,
@@ -42,6 +45,7 @@ export interface ConsumerCheckResult {
   flags: ConsumerFlag[];
   namespaceMemberRefs: NamespaceMemberRef[];
   shorthandRefs: ShorthandRef[];
+  namespaceSpreadRefs: NamespaceSpreadRef[];
 }
 
 /** Bare package name of a module specifier (`@a/b/c` → `@a/b`, `x/y` → `x`), or undefined if relative/absolute. */
@@ -67,6 +71,7 @@ export function checkConsumerFiles(
     flags: [],
     namespaceMemberRefs: [],
     shorthandRefs: [],
+    namespaceSpreadRefs: [],
   };
   // Longest dir first, so a nested package wins over its parent.
   const dirs = [...orgPackageDirs].sort((a, b) => b.dir.length - a.dir.length);
@@ -107,24 +112,35 @@ function checkFile(
     }
   };
 
-  // Namespace imports of org packages: the module symbol they alias → the org
-  // package the specifier names (`hono/jsx` → `hono`).
-  const namespaceModules = new Map<ts.Symbol, string>();
+  // Namespace imports: the module symbol they alias → the org package the
+  // specifier names (`hono/jsx` → `hono`; set only for a bare org specifier)
+  // and the org file the module resolves to (set for any specifier, relative
+  // ones included, whose module file is inside an org package checkout).
+  const namespaceModules = new Map<ts.Symbol, NamespaceModule>();
   const namespaceNames = new Set<string>();
+  const addNamespace = (bindings: ts.NamespaceImport, bareOrg: string | undefined): void => {
+    const alias = checker.getSymbolAtLocation(bindings.name);
+    if (alias === undefined) return;
+    const mod = alias.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(alias) : alias;
+    const file = moduleTarget(mod, orgDirs);
+    if (bareOrg === undefined && file === undefined) return;
+    namespaceModules.set(mod, { ...(bareOrg !== undefined ? { pkg: bareOrg } : {}), ...(file !== undefined ? { file } : {}) });
+    namespaceNames.add(bindings.name.text);
+  };
 
   for (const stmt of sf.statements) {
     if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
       const module = stmt.moduleSpecifier.text;
-      if (!checkModule(stmt.moduleSpecifier)) continue;
       const bindings = stmt.importClause?.namedBindings;
+      if (!checkModule(stmt.moduleSpecifier)) {
+        // Not a resolvable org specifier: a relative namespace import of org code still counts.
+        if (bindings !== undefined && ts.isNamespaceImport(bindings) && !isOrg(module)) addNamespace(bindings, undefined);
+        continue;
+      }
       if (bindings !== undefined && ts.isNamedImports(bindings)) {
         for (const el of bindings.elements) checkNamed(module, el.name, el.propertyName ?? el.name);
       } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
-        const alias = checker.getSymbolAtLocation(bindings.name);
-        if (alias !== undefined) {
-          namespaceModules.set(alias.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(alias) : alias, barePackageName(module)!);
-          namespaceNames.add(bindings.name.text);
-        }
+        addNamespace(bindings, barePackageName(module)!);
       }
     } else if (
       ts.isExportDeclaration(stmt) &&
@@ -185,7 +201,10 @@ function checkFile(
       const use = namespaceValueUse(node, checker, namespaceModules, sf);
       if (use !== undefined) {
         // The namespace's module is known, so the flag blocks only that package.
-        out.flags.push({ flag: 'namespace_dynamic', reason: use.reason, targetPackage: use.targetPackage, ...pos(node) });
+        if (use.module.pkg !== undefined) {
+          out.flags.push({ flag: 'namespace_dynamic', reason: use.reason, targetPackage: use.module.pkg, ...pos(node) });
+        }
+        if (use.module.file !== undefined) out.namespaceSpreadRefs.push({ ...pos(node), ...use.module.file });
       }
     }
     ts.forEachChild(node, visit);
@@ -246,9 +265,9 @@ function isExemptComputed(arg: ts.Expression, checker: ts.TypeChecker, hops = 1)
 function namespaceValueUse(
   id: ts.Identifier,
   checker: ts.TypeChecker,
-  modules: ReadonlyMap<ts.Symbol, string>,
+  modules: ReadonlyMap<ts.Symbol, NamespaceModule>,
   sf: ts.SourceFile,
-): { reason: string; targetPackage: string } | undefined {
+): { reason: string; module: NamespaceModule } | undefined {
   const parent = id.parent;
   if (ts.isNamespaceImport(parent)) return undefined; // the declaration
   // Is this identifier really the namespace binding?
@@ -262,24 +281,59 @@ function namespaceValueUse(
   }
   if (sym === undefined) return undefined;
   const target = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
-  const targetPackage = modules.get(target);
-  if (targetPackage === undefined) return undefined;
+  const module = modules.get(target);
+  if (module === undefined) return undefined;
 
   if (ts.isPropertyAccessExpression(parent) && parent.expression === id) return undefined;
   if (ts.isElementAccessExpression(parent) && parent.expression === id) {
     if (ts.isStringLiteralLike(parent.argumentExpression)) return undefined;
-    return { reason: `namespace ${id.text} indexed with a computed key: ${truncate(parent.getText(sf))}`, targetPackage };
+    return { reason: `namespace ${id.text} indexed with a computed key: ${truncate(parent.getText(sf))}`, module };
   }
   if (ts.isQualifiedName(parent) && parent.left === id) return undefined; // `X.Type`
   if (inTypePosition(id)) return undefined;
-  return { reason: `namespace ${id.text} used as a value: ${truncate(parent.getText(sf))}`, targetPackage };
+  return { reason: `namespace ${id.text} used as a value: ${truncate(parent.getText(sf))}`, module };
 }
 
-/** True when `id` (the object of a member access) is an org namespace-import binding. */
-function isNamespaceBinding(id: ts.Identifier, checker: ts.TypeChecker, modules: ReadonlyMap<ts.Symbol, unknown>): boolean {
+/** A namespace import's module, as far as it concerns org code. */
+interface NamespaceModule {
+  /** npm name of the org package a bare specifier names (the `namespace_dynamic` flag target). */
+  pkg?: string;
+  /** The module file inside an org package checkout (the `namespaceSpreadRefs` target). */
+  file?: Pick<NamespaceSpreadRef, 'targetPackage' | 'targetFile'>;
+}
+
+/** The org package and package-relative file a module symbol's source file lives in, if any. */
+function moduleTarget(mod: ts.Symbol, orgDirs: readonly OrgPackageDir[]): NamespaceModule['file'] {
+  const sf = mod.declarations?.find(ts.isSourceFile);
+  if (sf === undefined) return undefined;
+  const owner = orgOwner(sf.fileName, orgDirs);
+  return owner === undefined ? undefined : { targetPackage: owner.pkg.name, targetFile: owner.rel };
+}
+
+/**
+ * The org package whose checkout holds `fileName` (realpath; longest dir first
+ * in `orgDirs`) and the file relative to it, unless it sits in that package's
+ * node_modules.
+ */
+function orgOwner(fileName: string, orgDirs: readonly OrgPackageDir[]): { pkg: OrgPackageDir; rel: string } | undefined {
+  let real: string;
+  try {
+    real = realpathSync(fileName);
+  } catch {
+    return undefined;
+  }
+  const owner = orgDirs.find((o) => real === o.dir || real.startsWith(o.dir + path.sep));
+  if (owner === undefined) return undefined;
+  const rel = path.relative(owner.dir, real);
+  if (rel.split(path.sep).includes('node_modules')) return undefined;
+  return { pkg: owner, rel: rel.split(path.sep).join(path.posix.sep) };
+}
+
+/** True when `id` (the object of a member access) is a namespace-import binding of an org package named by a bare specifier. */
+function isNamespaceBinding(id: ts.Identifier, checker: ts.TypeChecker, modules: ReadonlyMap<ts.Symbol, NamespaceModule>): boolean {
   const sym = checker.getSymbolAtLocation(id);
   if (sym === undefined) return false;
-  return modules.has(sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);
+  return modules.get(sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym)?.pkg !== undefined;
 }
 
 /**
@@ -300,22 +354,17 @@ function declTarget(
   }
   for (const decl of sym?.declarations ?? []) {
     if (skipLocals && (ts.isSourceFile(decl) || ts.isModuleDeclaration(decl) || isFunctionLocal(decl))) continue;
+    // A top-level destructured binding (`export const { a } = f()`) is a `local N`
+    // symbol in scip-typescript 0.4.0: a reference to it can never match.
+    if (ts.isBindingElement(decl)) continue;
     const declSf = decl.getSourceFile();
-    let real: string;
-    try {
-      real = realpathSync(declSf.fileName);
-    } catch {
-      continue;
-    }
-    const owner = orgDirs.find((o) => real === o.dir || real.startsWith(o.dir + path.sep));
-    if (owner === undefined || real.split(path.sep).slice(owner.dir.split(path.sep).length).includes('node_modules')) {
-      continue;
-    }
+    const owner = orgOwner(declSf.fileName, orgDirs);
+    if (owner === undefined) continue;
     const nameNode = ts.getNameOfDeclaration(decl) ?? decl;
     const { line, character } = declSf.getLineAndCharacterOfPosition(nameNode.getStart(declSf));
     return {
-      targetPackage: owner.name,
-      targetFile: path.relative(owner.dir, real).split(path.sep).join(path.posix.sep),
+      targetPackage: owner.pkg.name,
+      targetFile: owner.rel,
       targetLine: line,
       targetCol: character,
     };

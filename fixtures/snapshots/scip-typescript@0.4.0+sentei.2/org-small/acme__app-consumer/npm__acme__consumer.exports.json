@@ -18,6 +18,7 @@
       "targetPackage": "@acme/widgets"
     }
   ],
+  "namespaceSpreadRefs": [],
   "packageId": "npm:@acme/consumer",
   "shorthandRefs": [],
   "unindexedImports": [],

@@ -24,6 +24,15 @@
   ],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [
+    {
+      "col": 12,
+      "file": "src/main.ts",
+      "line": 6,
+      "targetFile": "src/index.ts",
+      "targetPackage": "@acme/dyn"
+    }
+  ],
   "packageId": "npm:@acme/app-dynamic",
   "shorthandRefs": [],
   "unindexedImports": [],

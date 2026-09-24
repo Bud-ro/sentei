@@ -32,7 +32,7 @@ const BACKUP_DIR = '.sentei-backup';
 export const OVERRIDES_HEADER = '# Written by sentei: source links for org dependencies. Original (if any) in .sentei-backup/.';
 
 /** Output of dart-surface: the sidecar plus three adapter-only keys (stripped before writing). */
-interface SurfaceOutput extends ExportsSidecar {
+interface SurfaceOutput extends Omit<ExportsSidecar, 'namespaceSpreadRefs'> {
   unresolvedOrgModules: Array<SourcePosition & { module: string }>;
   /** `part` directives whose file does not exist (an ungenerated `*.g.dart`): the library is incomplete. */
   missingParts?: Array<SourcePosition & { uri: string }>;
@@ -177,6 +177,7 @@ export const scipDart: Indexer = {
     const sidecar: ExportsSidecar = {
       ...rest,
       shorthandRefs: rest.shorthandRefs ?? [],
+      namespaceSpreadRefs: [],
       // A test's `main` is run by the test runner; test files never get verdicts.
       entrySymbols: rest.entrySymbols.filter((e) => !TEST_GLOBS.some((g) => matchGlob(g, e.file))),
     };

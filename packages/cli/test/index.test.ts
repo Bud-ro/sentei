@@ -7,7 +7,7 @@ import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { scanUnindexedImports } from '../src/indexers/consumer-checks.ts';
-import { hermeticEnv, install, scipTypescript, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { hermeticEnv, install, runNode, runSurfaceWorker, scipTypescript, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -315,6 +315,12 @@ describe('consumer checks and import sites', () => {
     expect(sidecar.flags.map((f) => f.targetPackage)).toEqual(['@acme/core', '@acme/core', undefined]);
     expect(ix.packages[0]!.diagnostics.some((d) => d.startsWith('warn: namespace_dynamic at src/main.ts:5:1') && d.endsWith('(targets @acme/core)'))).toBe(true);
     expect(sidecar.flags[2]!.reason).toContain("require() with a non-literal specifier: '@acme/' + x");
+    // The same value uses are also recorded as namespace spread refs to the module file.
+    const spread = { targetPackage: '@acme/core', targetFile: 'src/index.ts' };
+    expect(sidecar.namespaceSpreadRefs).toEqual([
+      { file: 'src/main.ts', line: 4, col: 0, ...spread },
+      { file: 'src/main.ts', line: 8, col: 46, ...spread },
+    ]);
   });
 
   it('links every org package before indexing any (transitive re-exports resolve regardless of order)', () => {
@@ -637,6 +643,8 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
       return { code: 0, signal: null, stdout: '', stderr: '' };
     };
   }
+  /** npm exec runs with engine-strict off and an empty prefix (no devEngines check). */
+  const execFlags = (): string[] => ['exec', '--yes', '--no-engine-strict', `--prefix=${path.join(root, '.pm/npm-exec-prefix')}`];
   function repo(name: string, files: Record<string, string>): string {
     const dir = path.join(root, name);
     mkdirSync(dir, { recursive: true });
@@ -655,7 +663,7 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const store = ['--store-dir', path.join(root, '.pm/pnpm-store')];
     expect(calls).toEqual([
       ['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', ...store]],
-      ['npm', ['exec', '--yes', '--package=pnpm@9.1.0', '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts', ...store]],
+      ['npm', [...execFlags(), '--package=pnpm@9.1.0', '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts', ...store]],
     ]);
     expect(diagnostics).toContain(
       'info: pnpm is not installed (spawn pnpm ENOENT); falling back to npm exec --yes --package=pnpm@9.1.0 (version 9.1.0 from packageManager in package.json)',
@@ -667,13 +675,13 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const calls: Array<[string, string[]]> = [];
     const diagnostics: string[] = [];
     await install(plain, plain, diagnostics, [], fakeRunner(['yarn'], calls), root);
-    expect(calls[1]).toEqual(['npm', ['exec', '--yes', '--package=yarn@latest', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts']]);
-    expect(diagnostics[0]).toContain('(version latest (no matching packageManager field))');
+    expect(calls[1]).toEqual(['npm', [...execFlags(), '--package=yarn@latest', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts']]);
+    expect(diagnostics[0]).toContain('(version latest (no matching packageManager or devEngines.packageManager field))');
 
     const berry = repo('yarn-berry', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.10.3' }), 'yarn.lock': '' });
     const calls2: Array<[string, string[]]> = [];
     await install(berry, berry, [], [], fakeRunner(['yarn'], calls2), root);
-    expect(calls2[1]).toEqual(['npm', ['exec', '--yes', '--package=@yarnpkg/cli-dist@4.10.3', '--', 'yarn', 'install', '--immutable', '--mode=skip-build']]);
+    expect(calls2[1]).toEqual(['npm', [...execFlags(), '--package=@yarnpkg/cli-dist@4.10.3', '--', 'yarn', 'install', '--immutable', '--mode=skip-build']]);
   });
 
   it('(3) skips a bun install with a warning when bun is missing, and names ENOENT when the fallback cannot start', async () => {
@@ -880,4 +888,213 @@ describe('per-package index cache (stage)', () => {
       '[index] acme/mono npm:@acme/b',
     ]);
   }, 60_000);
+});
+
+describe('unjs fixes', () => {
+  let root: string;
+  let uwork: string;
+  const TSCONFIG = {
+    compilerOptions: {
+      strict: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler', noEmit: true, skipLibCheck: true, types: [],
+      resolveJsonModule: true, allowJs: true, checkJs: false,
+    },
+    include: ['src'],
+  };
+  function write(repo: string, files: Record<string, string | object>): void {
+    for (const [f, body] of Object.entries(files)) {
+      const abs = path.join(root, 'repos', repo, ...f.split('/'));
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+    }
+  }
+  const pkg = (repo: string, name: string, entryPoints: string[]): DiscoverFile['repos'][number] => ({
+    repo: `acme/${repo}`,
+    localPath: path.join(root, 'repos', repo),
+    headSha: null,
+    packages: [{ packageId: `npm:${name}`, path: '.', manager: 'npm', name, version: '1.0.0', entryPoints, deps: [] }],
+  });
+  const result = (repo: string) => ({
+    index: readJson<RepoIndex>(uwork, 'index', `acme__${repo}`, 'index.json'),
+    sidecar: readJson<ExportsSidecar>(uwork, 'index', `acme__${repo}`, `npm__acme__${repo}.exports.json`),
+  });
+
+  beforeAll(async () => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-unjs-')));
+    // (1) A namespace import of an own relative module used as a value.
+    write('spread', {
+      'package.json': { name: '@acme/spread', version: '1.0.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      'src/utils/pkg.ts': `export const a = 1;\nexport function b(): number { return 2; }\n`,
+      'src/main.ts': [
+        `import * as _pkg from './utils/pkg';`,
+        `export const utils = Object.freeze({ ..._pkg });`,
+        `export const n = _pkg.a;`, // member access: no record
+        `export type T = typeof _pkg;`, // type position: no record
+        `export const keys = Object.keys(_pkg);`,
+        '',
+      ].join('\n'),
+    });
+    // (6) Exports scip-typescript has no global definition for.
+    write('surface', {
+      'package.json': { name: '@acme/surface', version: '3.1.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': [
+        `const obj = { x: 1, y: 2 };`,
+        `export const { x, y } = obj;`, // destructuring: SCIP locals
+        `export function f(): number { return 1; }`,
+        `f.extra = 1;`, // expando: adds a declaration to f
+        `export { version } from '../package.json';`, // JSON module
+        `export * from './typedefs.js';`,
+        `export type { Hidden } from '../lib/extra';`, // declared outside every tsconfig's files
+        // A type import merged with a destructured value (vendored ast-types): the type is the definition.
+        `import type { Pair } from './types';`,
+        `const { Pair } = { Pair: 1 };`,
+        `export { Pair };`,
+        '',
+      ].join('\n'),
+      'src/types.ts': `export interface Pair { p: number }\n`,
+      'src/typedefs.js': `/** @typedef {{ a: number }} Shape */\nexport const real = 1;\n`,
+      'lib/extra.d.ts': `export interface Hidden { h: number }\n`,
+    });
+    const repos = [pkg('spread', '@acme/spread', ['src/main.ts']), pkg('surface', '@acme/surface', ['src/index.ts'])];
+    uwork = path.join(root, 'work');
+    mkdirSync(uwork);
+    writeFileSync(path.join(uwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
+    await index({ work: uwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+  }, 120_000);
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('(1) records value uses of a relative namespace import as namespaceSpreadRefs, without a flag', () => {
+    const { index: ix, sidecar } = result('spread');
+    expect(ix.status).toBe('ok');
+    const target = { targetPackage: '@acme/spread', targetFile: 'src/utils/pkg.ts' };
+    expect(sidecar.namespaceSpreadRefs).toEqual([
+      { file: 'src/main.ts', line: 1, col: 40, ...target },
+      { file: 'src/main.ts', line: 4, col: 32, ...target },
+    ]);
+    expect(sidecar.flags).toEqual([]);
+    // Member refs stay limited to namespaces of org packages imported by name.
+    expect(sidecar.namespaceMemberRefs).toEqual([]);
+  });
+
+  it('(6) records no export SCIP cannot define, and flags exports declared outside every tsconfig', () => {
+    const { index: ix, sidecar } = result('surface');
+    expect(sidecar.exports.map((e) => [e.exportedAs, e.file, e.line, e.col])).toEqual([
+      ['Pair', 'src/types.ts', 0, 17],
+      ['f', 'src/index.ts', 2, 16],
+      ['real', 'src/typedefs.js', 1, 13],
+    ]);
+    // Every record matches a SCIP definition (ingest's position join).
+    const defs = new Set(
+      readScipIndex(path.join(uwork, 'index/acme__surface/npm__acme__surface.scip')).documents.flatMap((doc) =>
+        doc.occurrences.filter((o) => (o.symbolRoles & 1) !== 0 && !o.symbol.startsWith('local ')).map((o) => `${doc.relativePath}:${o.range[0]}:${o.range[1]}`),
+      ),
+    );
+    expect(sidecar.exports.filter((e) => !defs.has(`${e.file}:${e.line}:${e.col}`))).toEqual([]);
+    expect(sidecar.unresolved).toEqual([
+      "src/index.ts#Hidden (declared in lib/extra.d.ts, which is in no tsconfig's files, so scip-typescript did not index it)",
+    ]);
+    expect(ix.status).toBe('partial');
+    const diags = ix.packages[0]!.diagnostics;
+    expect(diags).toContain('info: 3 export(s) declared by destructuring (`export const { a } = ...`) not recorded: scip-typescript defines them as locals');
+    expect(diags).toContain('info: 1 JSDoc @typedef/@callback export(s) not recorded: scip-typescript does not index JSDoc');
+    expect(diags).toContain('info: 1 expando assignment declaration(s) (`fn.prop = ...`) not recorded');
+    expect(diags).toContain('info: exports declared in JSON modules not recorded: package.json');
+    // The sidecar field exists (empty) for every package.
+    expect(sidecar.namespaceSpreadRefs).toEqual([]);
+  });
+
+  it('(2) a failing export-surface worker fails the package with its stderr tail', async () => {
+    const diagnostics: string[] = [];
+    const log: string[] = [];
+    const job = { sidecarFile: path.join(root, 'no/such/dir/x.exports.json'), input: {
+      packageId: 'npm:@acme/spread', repoRoot: path.join(root, 'repos/spread'), pkgDir: path.join(root, 'repos/spread'),
+      nestedPackageDirs: [], entryPoints: ['src/main.ts'], tsconfig: path.join(root, 'repos/spread/tsconfig.json'),
+      orgPackageNames: [], orgPackageDirs: [],
+    } };
+    expect(await runSurfaceWorker(job, root, 1024, log, diagnostics)).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatch(/^error: export surface failed: worker exited with code 1: .*ENOENT/);
+    expect(log[0]).toMatch(/^\$ node --max-old-space-size=1024 .*surface-worker\.ts/);
+  }, 60_000);
+
+  it('(3) retries a node child once with double heap when it runs out of memory', async () => {
+    const calls: string[][] = [];
+    const oom: Runner = async (_cmd, args) => {
+      calls.push(args);
+      return calls.length === 1
+        ? { code: 134, signal: null, stdout: '', stderr: 'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n' }
+        : { code: 0, signal: null, stdout: 'done', stderr: '' };
+    };
+    const diagnostics: string[] = [];
+    let cleaned = 0;
+    const proc = await runNode({ what: 'scip-typescript', args: ['x.js'], cwd: root, maxOldSpaceMb: 4096, log: [], diagnostics, run: oom, beforeRetry: () => cleaned++ });
+    expect(proc.code).toBe(0);
+    expect(calls).toEqual([['--max-old-space-size=4096', 'x.js'], ['--max-old-space-size=8192', 'x.js']]);
+    expect(cleaned).toBe(1);
+    expect(diagnostics).toEqual(['warn: scip-typescript ran out of heap at --max-old-space-size=4096 (exited with code 134); retrying once with 8192']);
+
+    // SIGABRT counts too; a second OOM is not retried again; other failures are not retried at all.
+    const sig: Runner = async (_c, args) => (calls.push(args), { code: null, signal: 'SIGABRT', stdout: '', stderr: '' });
+    calls.length = 0;
+    expect((await runNode({ what: 'w', args: [], cwd: root, maxOldSpaceMb: 100, log: [], diagnostics: [], run: sig })).signal).toBe('SIGABRT');
+    expect(calls).toHaveLength(2);
+    const plain: Runner = async (_c, args) => (calls.push(args), { code: 1, signal: null, stdout: '', stderr: 'boom' });
+    calls.length = 0;
+    await runNode({ what: 'w', args: [], cwd: root, maxOldSpaceMb: 100, log: [], diagnostics: [], run: plain });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('(4) reads the package manager version from devEngines.packageManager (object or array form)', async () => {
+    const calls: Array<[string, string[]]> = [];
+    const runner: Runner = async (cmd, args) => {
+      calls.push([cmd, args]);
+      return cmd === 'npm' ? { code: 0, signal: null, stdout: '', stderr: '' } : { code: -1, signal: null, stdout: '', stderr: '', errno: 'ENOENT', errorMessage: `spawn ${cmd} ENOENT` };
+    };
+    const obj = path.join(root, 'pm-obj');
+    write('../pm-obj', {
+      'package.json': { devEngines: { runtime: { name: 'node', version: '^24.0.0' }, packageManager: { name: 'pnpm', version: '11.24.0', onFail: 'download' } } },
+      'pnpm-lock.yaml': '',
+    });
+    const d1: string[] = [];
+    expect(await install(obj, obj, d1, [], runner, root)).toBe(true);
+    expect(calls[1]![1]).toContain('--package=pnpm@11.24.0');
+    expect(d1[0]).toContain('(version 11.24.0 from devEngines.packageManager in package.json)');
+
+    const arr = path.join(root, 'pm-arr');
+    write('../pm-arr', {
+      'package.json': { devEngines: { packageManager: [{ name: 'npm', version: '^11' }, { name: 'yarn', version: '^4.1.0' }] } },
+      'yarn.lock': '',
+    });
+    calls.length = 0;
+    await install(arr, arr, [], [], runner, root);
+    // A berry range still selects @yarnpkg/cli-dist.
+    expect(calls[1]![1]).toContain('--package=@yarnpkg/cli-dist@^4.1.0');
+    // packageManager wins over devEngines.
+    const both = path.join(root, 'pm-both');
+    write('../pm-both', { 'package.json': { packageManager: 'pnpm@9.0.0', devEngines: { packageManager: { name: 'pnpm', version: '10.0.0' } } }, 'pnpm-lock.yaml': '' });
+    calls.length = 0;
+    await install(both, both, [], [], runner, root);
+    expect(calls[1]![1]).toContain('--package=pnpm@9.0.0');
+  });
+
+  it('(4) runs installs with engine-strict off and puts the stderr tail into the error', async () => {
+    const dir = path.join(root, 'pm-fail');
+    write('../pm-fail', { 'package.json': '{}', 'package-lock.json': '{}' });
+    const envs: NodeJS.ProcessEnv[] = [];
+    const failing: Runner = async (_cmd, _args, _cwd, env) => {
+      envs.push(env);
+      return { code: 1, signal: null, stdout: '', stderr: 'npm warn one\n\nline 2\nline 3\nline 4\nline 5\nnpm error code EBADENGINE\n' };
+    };
+    const diagnostics: string[] = [];
+    expect(await install(dir, dir, diagnostics, [], failing, root)).toBe(false);
+    expect(diagnostics).toEqual(['error: npm ci --ignore-scripts in . exited with code 1: line 2 | line 3 | line 4 | line 5 | npm error code EBADENGINE']);
+    expect(envs[0]).toMatchObject({ npm_config_engine_strict: 'false', NPM_CONFIG_ENGINE_STRICT: 'false', pnpm_config_engine_strict: 'false' });
+
+    // pnpm prints its errors on stdout: with an empty stderr, the stdout tail is used.
+    const quiet: Runner = async () => ({ code: 1, signal: null, stdout: 'Scope: all\n[ERR_PNPM_OUTDATED_LOCKFILE] Cannot install\n', stderr: '' });
+    const d2: string[] = [];
+    expect(await install(dir, dir, d2, [], quiet, root)).toBe(false);
+    expect(d2[0]).toMatch(/exited with code 1: Scope: all \| \[ERR_PNPM_OUTDATED_LOCKFILE\] Cannot install$/);
+  });
 });

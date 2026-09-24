@@ -53,6 +53,7 @@
   "flags": [],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
   "packageId": "npm:@acme/core",
   "shorthandRefs": [],
   "unindexedImports": [],
