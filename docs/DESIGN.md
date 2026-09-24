@@ -994,3 +994,37 @@ not installed, Nuxt apps that need built org packages at `nuxt prepare`.
 - Adapter versions: scip-typescript `0.4.0+sentei.5`, scip-dart
   `1.7.0+sentei.7`; every version bump invalidates the index cache and renames
   the snapshot directory, which is the intended review trigger (§6.6).
+
+### Core round 4 (as built)
+
+- **Eligibility vs. seeds.** `entry_symbols.kind` (schema v9): ambient
+  declarations seed reachability but never make a package eligible for
+  `private_dead`; only runtime entry symbols, exported symbols and entry
+  documents do. This removed the 75 false rows from Wrangler's generated
+  declarations and honox app files.
+- **Namespace owners**: a namespace descriptor is a parent when it is a
+  same-file declaration that is neither a module symbol nor an import prefix.
+- **Runtime entry conventions** (one table in `manifests.ts`): wrangler
+  `main`, Pages `functions/**`, HonoX `app/{server,client,routes,islands}`,
+  Netlify functions, Vercel `api/**`, Next `pages/**` and `app/**`, SvelteKit
+  and SolidStart `src/routes/**`, Nuxt `pages/**` and `server/**`. They are
+  entry points (so the adapter emits their exports) and runtime entries (so
+  those exports seed reachability without verdicts). `bin` targets are runtime
+  entries only; `exports` wildcards respect `files`.
+- **Witness rules, final form**: an import vouches only for symbols exported
+  from the entry file its specifier reaches (bare specifier → root entry);
+  message literals (`deprecated()`, `warn()`, `console.*`, `[deprecated]`) are
+  never codegen and never self-string hits; member-access and comment matches
+  in indexed files are skipped, as are matches where SCIP already resolved
+  that name to another symbol on the line; the codegen qualifier is
+  package-wide (any own literal holding the name as a whole word counts once
+  the package is known to build import text, with `from` followed by a
+  template, `JSON.stringify` or an identifier accepted). Self unindexed
+  imports scan even indexed files. The string scanner is linear (Workiva
+  witness 13 s → 1.5 s).
+- Effects on the real DBs (re-analysed, not re-indexed): honojs 975 → 907
+  findings with the ambient/app rows gone; Workiva's 7 false needs_review rows
+  became deletion candidates; unjs recovered the unctx, capnp-es and unhead
+  codegen protections lost in round 3.
+- Fixture `app-worker` covers wrangler `main`, a Pages function, a bin outside
+  the program, namespaces and non-vouching imports.
