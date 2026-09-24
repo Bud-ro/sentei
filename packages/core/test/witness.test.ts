@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.ts';
-import { runWitness, type WitnessDiscoverInput } from '../src/witness.ts';
+import { runWitness, stringLiterals, type WitnessDiscoverInput } from '../src/witness.ts';
 
 // A hand-built org: library P (npm:@acme/lib or pub:lib_pub) with one consumer C
 // whose package dir is <repo>/pkg. Every symbol gets a witness_pending finding.
@@ -467,7 +467,7 @@ describe('runWitness', () => {
 });
 
 describe('runWitness: self-witness (generated imports of P in P itself)', () => {
-  it('a P file holding P\'s name in a non-import string and naming S is a `self` hit', () => {
+  it('a P file with a code template or AST-builder literal naming P, and naming S, is a `self` hit', () => {
     const org = buildOrg({
       symbols: [
         { name: 'IslandWrapper', file: 'src/components/island.ts' },
@@ -498,6 +498,30 @@ describe('runWitness: self-witness (generated imports of P in P itself)', () => 
     expectPass(org, org.ids['OnlyImported']!);
   });
 
+  it('only code templates qualify: plugin names and messages do not; multi-line templates do', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'bunPlugin' }, { name: 'getAuth' }, { name: 'Wrapper' }, { name: 'Other' }, { name: 'documented' }],
+      libFiles: {
+        // Vite plugin name: P's name in a string, no import keyword.
+        'src/bun.ts': "export const bunPlugin = () => ({\n  name: '@acme/lib/bun',\n});\n",
+        // Deprecation message: mentions P and even `import` but in two separate literals.
+        'src/dep.ts': "warn('@acme/lib', 'use @other/lib instead of the import');\nexport const getAuth = 1;\n",
+        // Multi-line template writing an import of P.
+        'src/gen.ts': 'export const out = (x) => `\n// generated\nimport { Wrapper } from "@acme/lib/components";\n${x}\n`;\n',
+        // A JSDoc code fence is a comment, not a template.
+        'src/doc.ts': "/**\n * ```ts\n * import { documented } from '@acme/lib';\n * ```\n */\nexport const documented = `${1}`;\n",
+        // A longer package name is not P.
+        'src/other.ts': "const code = `import { Other } from '@acme/lib-extra'`;\n",
+      },
+    });
+    expect(witness(org)).toEqual({ checked: 5, passed: 4, mismatched: 1 });
+    expectPass(org, org.ids['documented']!);
+    expectPass(org, org.ids['bunPlugin']!);
+    expectPass(org, org.ids['getAuth']!);
+    expectMismatch(org, org.ids['Wrapper']!, ['witness_mismatch:self:src/gen.ts:3']);
+    expectPass(org, org.ids['Other']!);
+  });
+
   it('searches export aliases in self files and fails closed when P\'s checkout is missing', () => {
     const org = buildOrg({
       symbols: [{ name: 'impl', exports: [['src/index.ts', 'Island']] }],
@@ -524,6 +548,23 @@ describe('runWitness: self-witness (generated imports of P in P itself)', () => 
     witness(org);
     expectMismatch(org, org.ids['Generated']!, ['witness_mismatch:self:lib/builder.dart:2']);
     expectPass(org, org.ids['Plain']!);
+  });
+});
+
+describe('stringLiterals (loose scanner for the self-witness)', () => {
+  it('skips comments, keeps quotes single-line, spans templates and skips ${…}', () => {
+    const src = [
+      "// 'not a string'",
+      "/* `nor this` */ const a = 'x', b = \"y\\\"z\";",
+      'const t = `line1',
+      "line2 ${ { k: '`' }.k } end`;",
+      "const bad = 'unterminated",
+      "const ok = 'next';",
+    ].join('\n');
+    expect(stringLiterals(src).map((l) => l.text)).toEqual([
+      "'x'", '"y\\"z"', "`line1\nline2 ${ { k: '`' }.k } end`", "'unterminated", "'next'",
+    ]);
+    expect(stringLiterals("final s = '''a\n'b'\n''';\nfinal t = \"c\";", true).map((l) => l.text)).toEqual(["'''a\n'b'\n'''", '"c"']);
   });
 });
 

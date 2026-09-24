@@ -170,6 +170,35 @@ describe('VS Code extension manifests', () => {
   });
 });
 
+describe('isLibrary (manifest shape: library vs runtime app)', () => {
+  it('npm: exports/types/typings/module make a library; main/bin only is an app', () => {
+    const shapes: Record<string, Record<string, unknown>> = {
+      worker: { main: 'src/index.ts' },
+      cli: { bin: { x: 'src/index.ts' } },
+      exp: { exports: { '.': './src/index.ts' } },
+      types: { main: 'src/index.ts', types: 'src/index.ts' },
+      typings: { typings: 'src/index.ts' },
+      mod: { module: 'src/index.ts' },
+    };
+    for (const [n, fields] of Object.entries(shapes)) {
+      pkgJson(`p/${n}/package.json`, { name: n, ...fields });
+      write(`p/${n}/src/index.ts`);
+    }
+    const lib = Object.fromEntries(readRepoManifests(root, warn).map((p) => [p.name, p.isLibrary]));
+    expect(lib).toEqual({ worker: false, cli: false, exp: true, types: true, typings: true, mod: true });
+  });
+
+  it('pub: a library iff lib/ holds a .dart file directly', () => {
+    write('a/pubspec.yaml', 'name: a\n');
+    write('a/lib/a.dart');
+    write('b/pubspec.yaml', 'name: b\n');
+    write('b/bin/main.dart');
+    write('b/lib/src/only_nested.dart');
+    const lib = Object.fromEntries(readRepoManifests(root, warn).map((p) => [p.name, p.isLibrary]));
+    expect(lib).toEqual({ a: true, b: false });
+  });
+});
+
 describe('npm manifests', () => {
   it('resolves main/module/types to existing files, relative to the repo root', () => {
     pkgJson('packages/core/package.json', { name: '@acme/core', version: '2.0.0', main: './src/index.ts', types: 'src/index.ts', module: 'missing.js' });

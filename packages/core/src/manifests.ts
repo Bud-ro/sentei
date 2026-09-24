@@ -23,6 +23,11 @@ export interface ManifestPackage {
   name: string;
   version: string | null;
   visibility: Visibility;
+  /**
+   * Manifest shape of a library (imported by other code) rather than an app (run by a
+   * runtime): npm `exports`/`types`/`typings`/`module`; pub any `lib/*.dart`.
+   */
+  isLibrary: boolean;
   /** Package dir relative to the repo root, POSIX; '.' for the root. */
   path: string;
   /** Manifest file relative to the repo root, POSIX (for error messages). */
@@ -312,6 +317,7 @@ export function readNpmPackage(
     name,
     version,
     visibility: npmVisibility(json, manifest, warn),
+    isLibrary: ['exports', 'types', 'typings', 'module'].some((k) => json[k] !== undefined),
     path: dir,
     manifest,
     entryPoints,
@@ -496,6 +502,7 @@ export function readPubPackage(
     name,
     version,
     visibility: pubVisibility(doc['publish_to']),
+    isLibrary: files.some((f) => f.startsWith('lib/') && f.endsWith('.dart') && !f.slice(4).includes('/')),
     path: dir,
     manifest,
     entryPoints,

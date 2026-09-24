@@ -555,7 +555,7 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([f('reallyDead', 'private_dead', ['already_unreachable'])]);
   });
 
-  it('gives no verdict to a default export of an entry of a package with no org consumers (runtime entry)', () => {
+  it('gives no verdict to a default export of an entry of an app package (is_library = 0) with no org consumers (runtime entry)', () => {
     // A Workers app: `export default app` + a named Durable Object class, nobody depends on it.
     const worker = pkg('@acme/worker');
     const entry = doc(worker, 'src/index.ts', true);
@@ -569,12 +569,21 @@ describe('analyzeOrg on hand-built rows', () => {
     // The same shape in lib, which has an org consumer (app depends on lib): a candidate.
     const libDefault = sym(lib, 'src/fns.ts', 'libDefault', { exported: true });
     x.run(libDefault, 'src/index.ts', 'default');
+    // A published middleware (package.json `exports`: is_library = 1) nobody in the org
+    // uses: its default export is a candidate, not a runtime entry.
+    const mw = pkg('@acme/middleware');
+    run('UPDATE packages SET is_library = 1 WHERE package_id = ?', mw);
+    doc(mw, 'src/index.ts', true);
+    const mwDefault = sym(mw, 'src/index.ts', 'uaBlocker', { exported: true });
+    x.run(mwDefault, 'src/index.ts', 'default');
     void entry;
     analyze();
     expect(findings()).toEqual([
       f('libDefault', 'needs_review', DELETE),
+      f('uaBlocker', 'needs_review', DELETE),
       f('Counter', 'needs_review', DELETE),
     ]);
+    expect(db.prepare('SELECT symbol_id FROM runtime_entry_defaults').all()).toEqual([{ symbol_id: app }]);
     // Still a seed: its helper is reachable, so not private_dead.
     expect(db.prepare('SELECT 1 AS r FROM reachable WHERE symbol_id = ?').get(helper)).toEqual({ r: 1 });
   });

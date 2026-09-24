@@ -86,7 +86,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBe(6);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -94,7 +94,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 5/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 6/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -177,6 +177,14 @@ describe('packages invariants', () => {
 
   it('rejects an unknown manager', () => {
     expect(() => addPackage('lib', { manager: 'cargo' })).toThrow(REJECTED);
+  });
+
+  it('defaults is_library to 0 and rejects values outside 0/1', () => {
+    const id = addPackage('@acme/lib');
+    expect(count('SELECT is_library AS n FROM packages WHERE package_id = ?', id)).toBe(0);
+    run('UPDATE packages SET is_library = 1 WHERE package_id = ?', id);
+    expect(() => run('UPDATE packages SET is_library = 2 WHERE package_id = ?', id)).toThrow(REJECTED);
+    expect(() => run('UPDATE packages SET is_library = NULL WHERE package_id = ?', id)).toThrow(REJECTED);
   });
 
   it('rejects a package_id not shaped <manager>:<name>', () => {

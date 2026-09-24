@@ -20,11 +20,21 @@
 //      identifier (npm); instead, when S is named `default` (anonymous default export)
 //      or exported as `default`, a default import of a matching module specifier is a
 //      hit (the default-import rule below).
-// Plus the SELF step: P's own files (same walk and test/docs rules) that hold P's
-// package name inside a string literal that is not the module specifier of an
-// import / export-from / require / import() (e.g. `stringLiteral('honox/vite/components')`
-// or a template `import { X } from 'honox/…'` in a code generator): code that writes
-// imports of P at build time. Such a file naming S (any name) is a hit, consumer `self`.
+// Plus the SELF step: P's own files (same walk and test/docs rules) that generate
+// import statements of P at build time. A file qualifies when one of its string
+// literals is a CODE TEMPLATE naming P: the literal contains P's package name (`P`,
+// `P/…`; pub `package:P/…`) and one of the words import / require / from / export
+// (e.g. `` `import { X } from 'honox/vite/components'` ``). Literals come
+// from a loose scanner (stringLiterals: comments skipped, so JSDoc code fences do not
+// count; '…' / "…" single-line; backtick templates span lines, `${…}` skipped by brace
+// counting; pub: also '''…''' / """…""").
+// Also a literal naming P passed to an AST builder: `*ImportDeclaration(` /
+// `*ExportDeclaration(` (babel `importDeclaration`, TS `factory.createImportDeclaration`)
+// opening within the 300 characters before it (honox's
+// `importDeclaration([…HonoXIsland…], stringLiteral('honox/vite/components'))`).
+// A plain `name: '@acme/x/bun'` or a deprecation message does not qualify; a real
+// `import … from 'P'` does not either (the literal `'P'` has no keyword). In a
+// qualifying file, a line naming S (any name) is a hit, consumer `self`.
 // Any hit (or a consumer dir we cannot read) → needs_review with reasons
 //   witness_mismatch:<consumer>:<file>:<line>      (1-based line, repo-relative file)
 //   witness_mismatch:<consumer>:checkout missing
@@ -137,6 +147,65 @@ function defaultRegexes(name: string): RegExp[] {
     new RegExp(`\\brequire\\(\\s*${spec}\\s*\\)`, 'g'),
     new RegExp(`\\bimport\\(\\s*${spec}\\s*\\)`, 'g'),
   ];
+}
+
+/**
+ * String literals of a JS/TS (or Dart) source text, found by a loose scanner: `//` and
+ * `/* *\/` comments are skipped (so JSDoc code fences are not templates), '…' / "…"
+ * end at the matching quote or the end of the line, backtick templates (JS) may span
+ * lines and skip `${…}` by brace counting, Dart '''…''' / """…""" may span lines.
+ * Regex literals are not recognised (a quote inside one may pair wrongly: loose).
+ */
+export function stringLiterals(text: string, dart = false): Array<{ start: number; text: string }> {
+  const out: Array<{ start: number; text: string }> = [];
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text[i]!;
+    const d = text[i + 1];
+    if (c === '/' && d === '/') {
+      const e = text.indexOf('\n', i);
+      i = e === -1 ? n : e;
+    } else if (c === '/' && d === '*') {
+      const e = text.indexOf('*/', i + 2);
+      i = e === -1 ? n : e + 2;
+    } else if (dart && (c === "'" || c === '"') && text.startsWith(c.repeat(3), i)) {
+      const q = c.repeat(3);
+      const e = text.indexOf(q, i + 3);
+      const end = e === -1 ? n : e + 3;
+      out.push({ start: i, text: text.slice(i, end) });
+      i = end;
+    } else if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < n && text[j] !== c && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+      const end = text[j] === c ? j + 1 : Math.min(n, j);
+      out.push({ start: i, text: text.slice(i, end) });
+      i = end;
+    } else if (c === '`' && !dart) {
+      let j = i + 1;
+      while (j < n && text[j] !== '`') {
+        if (text[j] === '\\') {
+          j += 2;
+        } else if (text[j] === '$' && text[j + 1] === '{') {
+          let depth = 1;
+          j += 2;
+          while (j < n && depth > 0) {
+            if (text[j] === '{') depth += 1;
+            else if (text[j] === '}') depth -= 1;
+            j += 1;
+          }
+        } else {
+          j += 1;
+        }
+      }
+      const end = Math.min(n, j + 1);
+      out.push({ start: i, text: text.slice(i, end) });
+      i = end;
+    } else {
+      i += 1;
+    }
+  }
+  return out;
 }
 
 /** 1-based line of a string offset. */
@@ -401,11 +470,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return hits;
   };
 
-  /**
-   * P's own files holding P's package name in a string literal that is not a module
-   * specifier of an import/export-from/require/import() (generated imports), per package.
-   * null when P's checkout is missing.
-   */
+  /** P's own files holding a code template (or AST-builder literal) naming P (header), per package; null if P's checkout is missing. */
   const selfCache = new Map<string, string[] | null>();
   const selfGenFiles = (row: PendingRow): string[] | null => {
     let out = selfCache.get(row.package_id);
@@ -415,24 +480,21 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       out = null;
     } else {
       const p = escapeRe(row.pkg_name);
-      const strRe = row.manager === 'pub'
-        ? new RegExp(`(['"])package:${p}(?:/[^'"\\s]*)?\\1`, 'g')
-        : new RegExp(`(['"\`])${p}(?:/[^'"\`\\s]*)?\\1`, 'g');
-      const specPrefix = row.manager === 'pub'
-        ? /\b(?:import|export|part)\s*$/
-        : /(?:\bfrom|\bimport|\b(?:require|import)\s*\()\s*$/;
-      out = files.filter((f) => {
-        for (const line of readText(row.package_id, f).split(/\r?\n/)) {
-          strRe.lastIndex = 0;
-          for (let m = strRe.exec(line); m; m = strRe.exec(line)) {
-            const prefix = line.slice(0, m.index);
-            // A real specifier: `from '…'` etc. with no quote earlier on the line (a quote
-            // before it means the statement itself sits inside a string or template).
-            if (/['"`]/.test(prefix) || !specPrefix.test(prefix)) return true;
-          }
+      // P as a whole specifier inside the literal: not part of a longer name (`@acme/lib-x`).
+      const nameRe = row.manager === 'pub'
+        ? new RegExp(`package:${p}(?![\\w])`)
+        : new RegExp(`(?<![\\w@./-])${p}(?![\\w.-])`);
+      const keywordRe = /\b(?:import|require|from|export)\b/;
+      const builderRe = /\w*(?:Import|Export|import|export)\w*Declaration\s*\(/;
+      const qualifies = (text: string): boolean => {
+        for (const lit of stringLiterals(text, row.manager === 'pub')) {
+          if (!nameRe.test(lit.text)) continue;
+          if (keywordRe.test(lit.text)) return true;
+          if (builderRe.test(text.slice(Math.max(0, lit.start - 300), lit.start))) return true;
         }
         return false;
-      });
+      };
+      out = files.filter((f) => qualifies(readText(row.package_id, f)));
     }
     selfCache.set(row.package_id, out);
     return out;

@@ -308,8 +308,10 @@ UNION
 SELECT package_id, package_id, flag FROM package_flags WHERE target_package_id IS NULL;
 
 -- Default exports of a runtime entry: S is exported as `default` (symbol_exports) from
--- an entry file of a package P that no org package declares a dependency on
--- (package_deps.resolved_package_id = P is empty). A Workers / Lambda / Vite app's
+-- an entry file of an APP package P (packages.is_library = 0: no exports/types/module in
+-- package.json, no lib/*.dart) that no org package declares a dependency on
+-- (package_deps.resolved_package_id = P is empty). A library's default export with no
+-- org consumer is a candidate like any other export. A Workers / Lambda / Vite app's
 -- `export default app` (and a Durable Object class exported alongside it) is consumed
 -- by the runtime, not by code we can see. Such symbols get no verdict; they stay
 -- reachability seeds (they are exported). Named exports of the same entry stay
@@ -318,7 +320,9 @@ CREATE VIEW runtime_entry_defaults (symbol_id) AS
 SELECT DISTINCT x.symbol_id
 FROM symbol_exports x
 JOIN symbols s ON s.symbol_id = x.symbol_id
+JOIN packages p ON p.package_id = s.package_id
 WHERE x.exported_as = 'default'
+  AND p.is_library = 0
   AND NOT EXISTS (SELECT 1 FROM package_deps d WHERE d.resolved_package_id = s.package_id);
 
 -- Decision tree, per exported symbol S of package P not kept, not a runtime entry

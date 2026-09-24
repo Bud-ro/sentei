@@ -35,6 +35,8 @@ export interface DiscoverPackage {
   name: string;
   version: string | null;
   visibility: Visibility;
+  /** Library manifest shape (ManifestPackage.isLibrary). Absent in older discover.json: app. */
+  isLibrary?: boolean;
   /** Relative to the REPO root, POSIX, sorted. */
   entryPoints: string[];
   deps: DiscoverDep[];
@@ -321,6 +323,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       name: m.name,
       version: m.version,
       visibility: m.visibility,
+      isLibrary: m.isLibrary,
       entryPoints: m.entryPoints,
       deps: m.deps.map(resolveDep),
       flags: [],
@@ -401,7 +404,7 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
     const insRepo = db.prepare(
       'INSERT INTO repos (repo, default_branch, head_sha, indexed_at, index_status) VALUES (?, ?, ?, NULL, NULL)');
     const insPkg = db.prepare(
-      'INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      'INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, is_library, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const insDep = db.prepare(
       'INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id) VALUES (?, ?, ?, ?, ?)');
     // Discover-owned flags; ingest deletes and rebuilds only its own flags, so these survive it.
@@ -410,7 +413,7 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
     for (const r of model.repos) {
       insRepo.run(r.repo, r.defaultBranch, r.headSha);
       for (const p of r.packages) {
-        insPkg.run(p.packageId, r.repo, p.path, p.manager, p.name, p.version, p.visibility, JSON.stringify(p.entryPoints));
+        insPkg.run(p.packageId, r.repo, p.path, p.manager, p.name, p.version, p.visibility, p.isLibrary === true ? 1 : 0, JSON.stringify(p.entryPoints));
         for (const f of p.flags) insFlag.run(p.packageId, f.flag, f.reason, f.file);
       }
     }

@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS packages (
   name         TEXT NOT NULL,
   version      TEXT,
   visibility   TEXT NOT NULL CHECK (visibility IN ('private', 'published-private', 'published-public')),
+  -- Manifest shape: 1 = a library (npm package.json with exports/types/typings/module;
+  -- pub with a lib/*.dart), 0 = an app run by a runtime (e.g. a Worker with only `main`).
+  is_library   INTEGER NOT NULL DEFAULT 0 CHECK (is_library IN (0, 1)),
   entry_points TEXT NOT NULL DEFAULT '[]'
                CHECK (json_valid(entry_points) AND json_type(entry_points) = 'array'),
   UNIQUE (manager, name),
