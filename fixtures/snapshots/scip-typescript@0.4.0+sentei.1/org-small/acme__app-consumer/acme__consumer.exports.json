@@ -19,6 +19,7 @@
     }
   ],
   "packageId": "npm:@acme/consumer",
+  "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []

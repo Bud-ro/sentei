@@ -26,6 +26,18 @@ export interface DiscoveredRepo {
   defaultBranch?: string | null;
   headSha: string | null;
   packages: DiscoveredPackage[];
+  /**
+   * Manifests discover ignored (examples, templates, fixtures, ...): witness-only.
+   * Their dirs are skipped by the out-of-program scan of an org package that
+   * contains them. Absent in older discover.json files.
+   */
+  ignoredManifests?: DiscoveredIgnoredManifest[];
+}
+
+/** The fields of a `repos[].ignoredManifests[]` entry the index stage reads. */
+export interface DiscoveredIgnoredManifest {
+  /** Manifest dir relative to the repo root, POSIX (`.` for the root). */
+  path: string;
 }
 
 export interface DiscoveredPackage {
@@ -61,6 +73,13 @@ export interface IndexerOptions {
   install: boolean;
   /** Heap limit for the indexer subprocess (`--max-old-space-size`). */
   maxOldSpaceMb: number;
+  /**
+   * The work dir. Install subprocesses keep every global/state/cache write
+   * (XDG dirs, pnpm store, yarn global folder, corepack) under `<workDir>/.pm/`.
+   * The index stage always sets it; absent (direct adapter calls in tests), a
+   * `sentei-pm` dir under the OS temp dir is used.
+   */
+  workDir?: string;
 }
 
 export interface IndexerInput {
@@ -142,6 +161,20 @@ export interface ExportsSidecar {
    */
   namespaceMemberRefs: NamespaceMemberRef[];
   /**
+   * Every shorthand property `{ grade }` whose value symbol (the checker's
+   * `getShorthandAssignmentValueSymbol`, aliases followed) is declared in an
+   * org package: this package's own files or an imported org binding. Position
+   * is the shorthand identifier; target is the declaration's name.
+   * Workaround for an upstream gap (PLAN.md §6.6): scip-typescript 0.4.0 emits
+   * only the contextual property symbol (`PracticalTask#grade().`) for a
+   * shorthand in a contextually typed object literal, no reference to the
+   * value `grade`, so the value looks unused. Function-local declarations are
+   * skipped (SCIP gives them `local N` symbols; they are never verdict
+   * subjects). Recorded whether or not SCIP linked it; ingest dedupes.
+   * Always `[]` for Dart.
+   */
+  shorthandRefs: ShorthandRef[];
+  /**
    * Imports of org packages found by a text scan of code files in the package
    * that no indexed program covers (config files such as `eslint.config.mjs`
    * outside every tsconfig). Each is a consumer SCIP cannot see; ingest turns
@@ -178,10 +211,17 @@ export interface NamespaceMemberRef extends SourcePosition {
   targetCol: number;
 }
 
+/** Same shape as `NamespaceMemberRef`; `member` is the shorthand name. */
+export type ShorthandRef = NamespaceMemberRef;
+
 export interface UnresolvedImport extends SourcePosition {
   /** Module specifier as written. */
   module: string;
-  /** Imported (not local) name; position is that identifier. */
+  /**
+   * Imported (not local) name; position is that identifier. `*` for a deep
+   * `/dist/` import of an org package that does not resolve (position: the
+   * module specifier): a private-path import whose members cannot be mapped.
+   */
   name: string;
 }
 
@@ -189,6 +229,13 @@ export interface ConsumerFlag extends SourcePosition {
   flag: 'namespace_dynamic' | 'dynamic_access';
   /** One line naming the construct. */
   reason: string;
+  /**
+   * npm name of the org package whose members are hidden, when known: set for
+   * `namespace_dynamic` (the namespace import's specifier names it). Absent for
+   * `dynamic_access` (a computed specifier, even `'@acme/' + x`, may reach any
+   * org package): an untargeted flag blocks every org package.
+   */
+  targetPackage?: string;
 }
 
 export interface SourcePosition {

@@ -11,7 +11,8 @@
       "file": "src/main.ts",
       "flag": "namespace_dynamic",
       "line": 6,
-      "reason": "namespace D indexed with a computed key: D[key]"
+      "reason": "namespace D indexed with a computed key: D[key]",
+      "targetPackage": "@acme/dyn"
     },
     {
       "col": 17,
@@ -24,6 +25,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "packageId": "npm:@acme/app-dynamic",
+  "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []

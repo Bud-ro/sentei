@@ -18,6 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { computeExportSurface } from './export-surface.ts';
 import type { DiscoveredPackage, DiscoveredRepo, Indexer, IndexerInput, IndexerResult, IndexStatus } from './types.ts';
@@ -78,7 +79,10 @@ function hasJsOrTsSources(dir: string, budget = { n: 2000 }): boolean {
 
 export const scipTypescript: Indexer = {
   name: 'scip-typescript',
-  version: '0.4.0',
+  // Upstream version + our patch level. Bump the patch level whenever the
+  // adapter's output (the sidecar) changes: it is the index cache key.
+  // +sentei.1: shorthandRefs, targeted namespace_dynamic, deep dist imports.
+  version: '0.4.0+sentei.1',
 
   detect({ repo, pkg }) {
     if (pkg.manager !== 'npm') return false;
@@ -94,7 +98,7 @@ export const scipTypescript: Indexer = {
     const dir = realpathSync(packageDir(repo, pkg));
     // 1. Install third-party deps (before source-linking: links create node_modules).
     if (options.install) {
-      const installed = await install(realpathSync(repo.localPath), dir, diagnostics, log);
+      const installed = await install(realpathSync(repo.localPath), dir, diagnostics, log, exec, options.workDir);
       if (!installed) status = 'partial';
     } else {
       diagnostics.push('info: install skipped (--no-install)');
@@ -157,11 +161,17 @@ export const scipTypescript: Indexer = {
         .filter((d) => d !== packageDir(repo, pkg))
         .map((d) => (existsSync(d) ? realpathSync(d) : d))
         .filter((d) => d.startsWith(dir + path.sep));
+      // Ignored manifests (examples, templates) strictly inside this package.
+      const ignoredDirs = (repo.ignoredManifests ?? [])
+        .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
+        .map((d) => (existsSync(d) ? realpathSync(d) : d))
+        .filter((d) => d.startsWith(dir + path.sep));
       const surface = computeExportSurface({
         packageId: pkg.packageId,
         repoRoot,
         pkgDir: dir,
         nestedPackageDirs: nested,
+        ignoredDirs,
         entryPoints: pkg.entryPoints,
         tsconfig: existsSync(tsconfig) ? tsconfig : undefined,
         orgPackageNames: new Set(
@@ -192,6 +202,42 @@ export const scipTypescript: Indexer = {
 export type Runner = (cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, shell?: boolean) => Promise<ExecResult>;
 
 /**
+ * The environment of every install subprocess: all global, state and cache
+ * writes of the package managers go under `<workDir>/.pm/` (the sandbox and a
+ * shared dev box forbid writing under `$HOME`; pnpm 10+ also takes a store lock
+ * there). npm's own cache (`npm_config_cache`) is inherited unchanged. Returns
+ * the env and the keys it set (logged, never the values).
+ */
+export function hermeticEnv(workDir: string, base: NodeJS.ProcessEnv = process.env): { env: NodeJS.ProcessEnv; keys: string[] } {
+  const pm = path.resolve(workDir, '.pm');
+  const set: Record<string, string> = {
+    XDG_DATA_HOME: path.join(pm, 'xdg-data'),
+    XDG_STATE_HOME: path.join(pm, 'xdg-state'),
+    XDG_CONFIG_HOME: path.join(pm, 'xdg-config'),
+    XDG_CACHE_HOME: path.join(pm, 'xdg-cache'),
+    // pnpm: global bin dir (the store dir is passed as --store-dir).
+    PNPM_HOME: path.join(pm, 'pnpm-home'),
+    // yarn berry: global folder in the work dir, cache per project (.yarn/cache).
+    YARN_GLOBAL_FOLDER: path.join(pm, 'yarn-global'),
+    YARN_ENABLE_GLOBAL_CACHE: 'false',
+    // corepack shims: downloads under the work dir, no strict packageManager check.
+    COREPACK_HOME: path.join(pm, 'corepack'),
+    COREPACK_ENABLE_STRICT: '0',
+  };
+  // yarn berry ignores HTTP(S)_PROXY; it reads its own settings.
+  const httpsProxy = base.HTTPS_PROXY ?? base.https_proxy;
+  const httpProxy = base.HTTP_PROXY ?? base.http_proxy;
+  if (httpsProxy !== undefined && httpsProxy !== '' && base.YARN_HTTPS_PROXY === undefined) set.YARN_HTTPS_PROXY = httpsProxy;
+  if (httpProxy !== undefined && httpProxy !== '' && base.YARN_HTTP_PROXY === undefined) set.YARN_HTTP_PROXY = httpProxy;
+  return { env: { ...base, ...set }, keys: Object.keys(set) };
+}
+
+/** `<workDir>/.pm/pnpm-store`, passed to pnpm as `--store-dir`. */
+function pnpmStoreDir(workDir: string): string {
+  return path.resolve(workDir, '.pm', 'pnpm-store');
+}
+
+/**
  * Runs the lockfile's install when the lockfile's dir has no node_modules.
  * The lockfile is searched from the package dir up to the repo root, so a
  * workspace package installs at the workspace root. Returns false on failure.
@@ -200,6 +246,10 @@ export type Runner = (cmd: string, args: string[], cwd: string, env: NodeJS.Proc
  * the version taken from the nearest `packageManager` field or `latest`. A
  * missing bun skips the install with a warning (org deps are source-linked
  * regardless; only third-party types are lost, which never hides an org use).
+ *
+ * Every subprocess runs with `hermeticEnv(workDir)` (pnpm also gets
+ * `--store-dir <workDir>/.pm/pnpm-store`); the env keys are logged once, before
+ * the first subprocess. Without `workDir`, `<os tmpdir>/sentei-pm` is used.
  */
 export async function install(
   repoRoot: string,
@@ -207,20 +257,27 @@ export async function install(
   diagnostics: string[],
   log: string[],
   run: Runner = exec,
+  workDir: string = path.join(tmpdir(), 'sentei-pm'),
 ): Promise<boolean> {
   for (let d = pkgDir; ; d = path.dirname(d)) {
-    for (const [lockfile, pm, args] of LOCKFILES) {
+    for (const [lockfile, pm, baseArgs] of LOCKFILES) {
       if (!existsSync(path.join(d, lockfile))) continue;
       const rel = path.relative(repoRoot, d) || '.';
       if (isInstalled(path.join(d, 'node_modules'))) {
         diagnostics.push(`info: ${rel}/node_modules exists; install skipped`);
         return true;
       }
+      const { env, keys } = hermeticEnv(workDir);
+      for (const k of ['XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'PNPM_HOME', 'YARN_GLOBAL_FOLDER', 'COREPACK_HOME']) {
+        mkdirSync(env[k]!, { recursive: true });
+      }
+      log.push(`# install env (hermetic, under ${path.resolve(workDir, '.pm')}): ${keys.join(', ')}`);
+      const args = pm === 'pnpm' ? [...baseArgs, '--store-dir', pnpmStoreDir(workDir)] : baseArgs;
       // Windows: npm/pnpm/yarn are .cmd shims and need a shell.
       const shell = process.platform === 'win32';
       let cmd: string = pm;
       let cmdArgs = args;
-      let proc = await run(cmd, cmdArgs, d, process.env, shell);
+      let proc = await run(cmd, cmdArgs, d, env, shell);
       log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
       if (proc.errno === 'ENOENT' && pm === 'bun') {
         diagnostics.push(`warn: bun is not installed (spawn bun ENOENT); install skipped in ${rel}`);
@@ -235,7 +292,7 @@ export async function install(
         );
         cmd = 'npm';
         cmdArgs = ['exec', '--yes', `--package=${fb.spec}`, '--', fb.bin, ...(fb.args ?? args)];
-        proc = await run(cmd, cmdArgs, d, process.env, shell);
+        proc = await run(cmd, cmdArgs, d, env, shell);
         log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
       }
       if (proc.errno !== undefined || proc.code !== 0) {

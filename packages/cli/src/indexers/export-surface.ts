@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import {
+  barePackageName,
   checkConsumerFiles,
   isExcludedConsumerFile,
   scanUnindexedImports,
@@ -24,6 +25,8 @@ export interface ExportSurfaceInput {
   pkgDir: string;
   /** Absolute dirs of other packages nested inside `pkgDir` (their files are not ours). */
   nestedPackageDirs: string[];
+  /** Absolute dirs of discover's ignored manifests inside `pkgDir` (skipped by the out-of-program scan only). */
+  ignoredDirs?: string[];
   /** Entry points, repo-relative POSIX (from discover.json). */
   entryPoints: string[];
   /** Absolute tsconfig path, or undefined to build a program from the entry files. */
@@ -67,6 +70,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         unresolvedImports: [],
         flags: [],
         namespaceMemberRefs: [],
+        shorthandRefs: [],
         unindexedImports: [],
         entrySymbols: [],
       },
@@ -143,7 +147,13 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   // A missing named import is version skew → recorded, status unchanged.
   // Each own file is checked once, with the first program (root first) that has it;
   // each entry is read from the first program that contains it.
-  const consumer: ConsumerCheckResult = { unresolvedOrgModules: [], unresolvedImports: [], flags: [], namespaceMemberRefs: [] };
+  const consumer: ConsumerCheckResult = {
+    unresolvedOrgModules: [],
+    unresolvedImports: [],
+    flags: [],
+    namespaceMemberRefs: [],
+    shorthandRefs: [],
+  };
   const compilerErrors = new Set<string>();
   const checked = new Set<string>();
   const pending = new Map(input.entryPoints.map((e) => [e, path.resolve(input.repoRoot, ...e.split('/'))] as const));
@@ -165,6 +175,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     consumer.unresolvedImports.push(...r.unresolvedImports);
     consumer.flags.push(...r.flags);
     consumer.namespaceMemberRefs.push(...r.namespaceMemberRefs);
+    consumer.shorthandRefs.push(...r.shorthandRefs);
     // Every other compiler error is informational: it does not change what SCIP links.
     // Per own file (plus the program's global/options diagnostics), deduplicated.
     const fileDiags = files.length > 0 ? files.flatMap((sf) => ts.getPreEmitDiagnostics(program, sf)) : [];
@@ -193,18 +204,28 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     const where = `'${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`;
     if (excluded(m)) {
       diagnostics.push(`warn: unresolved org module ${where} (test/docs file, not a counted consumer; status unaffected)`);
+    } else if (isDeepDistImport(m.module)) {
+      // A deep dist import (`hono/dist/types/router`) is a private-path import
+      // of build output: the checkout has no dist/ and we cannot map its members
+      // to source declarations. Blocking every verdict of this consumer (partial)
+      // for it is disproportionate; it is recorded in `unresolvedImports` (name
+      // `*`) instead, so it surfaces as version skew on the target package.
+      consumer.unresolvedImports.push({ module: m.module, name: '*', file: m.file, line: m.line, col: m.col });
+      diagnostics.push(`warn: unresolved deep dist import ${where} (private build-output path; recorded as unresolved import '*', status unaffected)`);
     } else {
       partial = true;
       diagnostics.push(`error: unresolved org module ${where}`);
     }
   }
   for (const u of consumer.unresolvedImports) {
+    if (u.name === '*') continue; // deep dist import, reported above
     diagnostics.push(`warn: '${u.name}' is not exported by org module '${u.module}' at ${u.file}:${u.line + 1}:${u.col + 1}`);
   }
   const flags = consumer.flags.filter((f) => !excluded(f));
   for (const f of consumer.flags) {
     diagnostics.push(
       `warn: ${f.flag} at ${f.file}:${f.line + 1}:${f.col + 1}: ${f.reason}` +
+        (f.targetPackage !== undefined ? ` (targets ${f.targetPackage})` : '') +
         (excluded(f) ? ' (test/docs file, not a counted consumer; dropped)' : ''),
     );
   }
@@ -218,6 +239,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     repoRoot: input.repoRoot,
     pkgDir: input.pkgDir,
     nestedPackageDirs: input.nestedPackageDirs,
+    ...(input.ignoredDirs !== undefined ? { ignoredDirs: input.ignoredDirs } : {}),
     indexedFiles,
     orgPackageNames: input.orgPackageNames,
     selfName: input.packageName ?? null,
@@ -255,6 +277,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       unresolvedImports: consumer.unresolvedImports,
       flags,
       namespaceMemberRefs: consumer.namespaceMemberRefs,
+      shorthandRefs: consumer.shorthandRefs,
       unindexedImports,
       entrySymbols: [],
     },
@@ -422,6 +445,12 @@ function findDefaultKeyword(decl: ts.Node): ts.Node | undefined {
 function position(sf: ts.SourceFile, pos: number, toRepoRel: (abs: string) => string): SourcePosition {
   const { line, character } = sf.getLineAndCharacterOfPosition(pos);
   return { file: toRepoRel(path.resolve(sf.fileName)), line, col: character };
+}
+
+/** True when an org module specifier reaches into the package's `dist/` (`hono/dist/types/router`). */
+function isDeepDistImport(spec: string): boolean {
+  const name = barePackageName(spec);
+  return name !== undefined && /^\/(?:.*\/)?dist(?:\/|$)/.test(spec.slice(name.length));
 }
 
 function isInside(abs: string, dir: string): boolean {

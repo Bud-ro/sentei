@@ -6,7 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
-import { install, scipTypescript, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { scanUnindexedImports } from '../src/indexers/consumer-checks.ts';
+import { hermeticEnv, install, scipTypescript, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -113,7 +114,7 @@ describe('index stage on fixtures/org-small', () => {
       expect.objectContaining({
         packageId: 'npm:@acme/core',
         indexer: 'scip-typescript',
-        indexerVersion: '0.4.0',
+        indexerVersion: scipTypescript.version,
         status: 'ok',
         scip: 'acme__core.scip',
         exports: 'acme__core.exports.json',
@@ -155,13 +156,16 @@ describe('index stage on fixtures/org-small', () => {
     expect(app.packages[0]!.diagnostics).toContain('info: replaced stale symlink node_modules/@acme/core');
   });
 
-  it('skips a repo whose index.json matches headSha and indexer versions', async () => {
+  it('reuses every package whose index.json entry matches headSha and indexer versions', async () => {
+    const before = readFileSync(path.join(work, 'index/acme__app/index.json'), 'utf8');
     lines = [];
     await index(ctx());
     expect(lines).toEqual([
-      '[index] acme/lib-core: cached at sha-lib (use --force to re-index)',
-      '[index] acme/app: cached at sha-app (use --force to re-index)',
+      '[index] acme/lib-core npm:@acme/core: cached (ok at sha-lib; use --force to re-index)',
+      '[index] acme/app npm:@acme/app: cached (ok at sha-app; use --force to re-index)',
+      '[index] acme/app pub:app_tool: cached (failed at sha-app; use --force to re-index)',
     ]);
+    expect(readFileSync(path.join(work, 'index/acme__app/index.json'), 'utf8')).toBe(before);
   });
 });
 
@@ -195,6 +199,18 @@ describe('consumer checks and import sites', () => {
       `require('lodash');`,
       '',
     ].join('\n'),
+    // Shorthand properties: scip-typescript links only the contextual property.
+    short: [
+      `import { usedFn } from '@acme/core';`,
+      `interface Task { grade(): number; run(x: number): number }`,
+      `function grade(): number { return 1; }`,
+      `export const t: Task = { grade, run: usedFn };`,
+      `export const u = { usedFn };`,
+      `export function f(): object { const local = 1; return { local }; }`,
+      '',
+    ].join('\n'),
+    // A deep dist import: a private build-output path, not a blocker.
+    deepdist: `import { usedFn } from '@acme/core/dist/fns';\nusedFn(1);\n`,
   };
 
   function writePkg(dir: string, name: string, files: Record<string, string>, deps: Record<string, string> = {}): void {
@@ -295,6 +311,9 @@ describe('consumer checks and import sites', () => {
       ['dynamic_access', 9, 0], // require('@acme/' + x)
     ]);
     expect(sidecar.flags[0]!.reason).toContain('computed key');
+    // namespace_dynamic is targeted at the namespace's package; dynamic_access is not.
+    expect(sidecar.flags.map((f) => f.targetPackage)).toEqual(['@acme/core', '@acme/core', undefined]);
+    expect(ix.packages[0]!.diagnostics.some((d) => d.startsWith('warn: namespace_dynamic at src/main.ts:5:1') && d.endsWith('(targets @acme/core)'))).toBe(true);
     expect(sidecar.flags[2]!.reason).toContain("require() with a non-literal specifier: '@acme/' + x");
   });
 
@@ -316,6 +335,25 @@ describe('consumer checks and import sites', () => {
     expect(sidecar.flags).toEqual([]);
     // A non-namespace package records none.
     expect(result('skew').sidecar.namespaceMemberRefs).toEqual([]);
+  });
+
+  it('records shorthand property references to own and imported org declarations, not to locals', () => {
+    const { index: ix, sidecar } = result('short');
+    expect(ix.status).toBe('ok');
+    expect(sidecar.shorthandRefs).toEqual([
+      { file: 'src/main.ts', line: 3, col: 25, member: 'grade', targetPackage: '@acme/short', targetFile: 'src/main.ts', targetLine: 2, targetCol: 9 },
+      { file: 'src/main.ts', line: 4, col: 19, member: 'usedFn', targetPackage: '@acme/core', targetFile: 'src/fns.ts', targetLine: 3, targetCol: 16 },
+    ]);
+    expect(result('skew').sidecar.shorthandRefs).toEqual([]);
+  });
+
+  it('a deep dist import of an org package is recorded as an unresolved import, not partial', () => {
+    const { index: ix, sidecar } = result('deepdist');
+    expect(ix.status).toBe('ok');
+    expect(sidecar.unresolvedImports).toEqual([{ module: '@acme/core/dist/fns', name: '*', file: 'src/main.ts', line: 0, col: 23 }]);
+    const diags = ix.packages[0]!.diagnostics;
+    expect(diags.some((d) => d.startsWith("warn: unresolved deep dist import '@acme/core/dist/fns' at src/main.ts:1:24"))).toBe(true);
+    expect(diags.some((d) => d.startsWith('error:'))).toBe(false);
   });
 
   it('records import bindings in re-exporting entry files as sites', () => {
@@ -442,8 +480,12 @@ describe('real-org fixes (honojs dogfood)', () => {
       'test/setup.test.mjs': `import '@acme/built';\n`,
       'docs/example.mjs': `export * from '@acme/built';\n`,
       'dist/bundle.js': `import '@acme/built';\n`,
+      // An ignored manifest (discover: witness-only) inside the package.
+      'examples/demo/package.json': { name: 'demo', private: true },
+      'examples/demo/index.mjs': `import '@acme/built';\n`,
     });
     addRepo('consumer', { name: '@acme/consumer', entryPoints: ['src/main.ts'] }, ['@acme/unbuilt', '@acme/built']);
+    repos[repos.length - 1]!.ignoredManifests = [{ path: 'examples/demo' }];
     // A stale shadow left by a previous run is ours and gets replaced.
     write('consumer', { 'node_modules/@acme/unbuilt/.sentei-shadow': '', 'node_modules/@acme/unbuilt/stale.txt': 'x' });
 
@@ -547,6 +589,26 @@ describe('real-org fixes (honojs dogfood)', () => {
     );
   });
 
+  it('skips ignored-manifest subtrees in the out-of-program scan', () => {
+    // The previous test asserts the sidecar has no examples/demo entry; without
+    // the ignored dir the scan would report it.
+    const pkgDir = path.join(root, 'repos/consumer');
+    const scan = (ignoredDirs: string[]) =>
+      scanUnindexedImports({
+        repoRoot: pkgDir,
+        pkgDir,
+        nestedPackageDirs: [],
+        ignoredDirs,
+        indexedFiles: new Set(),
+        orgPackageNames: new Set(['@acme/built']),
+        selfName: '@acme/consumer',
+        policy: undefined,
+      }).map((u) => u.file);
+    expect(scan([])).toContain('examples/demo/index.mjs');
+    expect(scan([path.join(pkgDir, 'examples/demo')])).not.toContain('examples/demo/index.mjs');
+    expect(result('consumer', 'acme__consumer').sidecar.unindexedImports.map((u) => u.file)).not.toContain('examples/demo/index.mjs');
+  });
+
   it('(5b/c) drops flags and unresolved org modules from test files; exempts data: URL imports', () => {
     const { index: ix, sidecar } = result('consumer', 'acme__consumer');
     expect(sidecar.flags).toEqual([]);
@@ -588,10 +650,11 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     });
     const calls: Array<[string, string[]]> = [];
     const diagnostics: string[] = [];
-    expect(await install(dir, dir, diagnostics, [], fakeRunner(['pnpm'], calls))).toBe(true);
+    expect(await install(dir, dir, diagnostics, [], fakeRunner(['pnpm'], calls), root)).toBe(true);
+    const store = ['--store-dir', path.join(root, '.pm/pnpm-store')];
     expect(calls).toEqual([
-      ['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts']],
-      ['npm', ['exec', '--yes', '--package=pnpm@9.1.0', '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts']],
+      ['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', ...store]],
+      ['npm', ['exec', '--yes', '--package=pnpm@9.1.0', '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts', ...store]],
     ]);
     expect(diagnostics).toContain(
       'info: pnpm is not installed (spawn pnpm ENOENT); falling back to npm exec --yes --package=pnpm@9.1.0 (version 9.1.0 from packageManager in package.json)',
@@ -602,26 +665,80 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const plain = repo('yarn-classic', { 'package.json': '{}', 'yarn.lock': '' });
     const calls: Array<[string, string[]]> = [];
     const diagnostics: string[] = [];
-    await install(plain, plain, diagnostics, [], fakeRunner(['yarn'], calls));
+    await install(plain, plain, diagnostics, [], fakeRunner(['yarn'], calls), root);
     expect(calls[1]).toEqual(['npm', ['exec', '--yes', '--package=yarn@latest', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts']]);
     expect(diagnostics[0]).toContain('(version latest (no matching packageManager field))');
 
     const berry = repo('yarn-berry', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.10.3' }), 'yarn.lock': '' });
     const calls2: Array<[string, string[]]> = [];
-    await install(berry, berry, [], [], fakeRunner(['yarn'], calls2));
+    await install(berry, berry, [], [], fakeRunner(['yarn'], calls2), root);
     expect(calls2[1]).toEqual(['npm', ['exec', '--yes', '--package=@yarnpkg/cli-dist@4.10.3', '--', 'yarn', 'install', '--immutable', '--mode=skip-build']]);
   });
 
   it('(3) skips a bun install with a warning when bun is missing, and names ENOENT when the fallback cannot start', async () => {
     const bun = repo('bun-repo', { 'package.json': '{}', 'bun.lock': '' });
     const diagnostics: string[] = [];
-    expect(await install(bun, bun, diagnostics, [], fakeRunner(['bun'], []))).toBe(true);
+    expect(await install(bun, bun, diagnostics, [], fakeRunner(['bun'], []), root)).toBe(true);
     expect(diagnostics).toEqual(['warn: bun is not installed (spawn bun ENOENT); install skipped in .']);
 
     const npmRepo = repo('npm-repo', { 'package.json': '{}', 'package-lock.json': '{}' });
     const d2: string[] = [];
-    expect(await install(npmRepo, npmRepo, d2, [], fakeRunner(['npm'], []))).toBe(false);
+    expect(await install(npmRepo, npmRepo, d2, [], fakeRunner(['npm'], []), root)).toBe(false);
     expect(d2).toEqual(['error: npm ci --ignore-scripts in . could not start (ENOENT: spawn npm ENOENT)']);
+  });
+
+  it('(hermetic) every install subprocess keeps global/state/cache writes in the work dir', async () => {
+    const dir = repo('hermetic', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.10.3' }), 'yarn.lock': '' });
+    const work = path.join(root, 'work');
+    const envs: NodeJS.ProcessEnv[] = [];
+    const runner: Runner = async (cmd, _args, _cwd, env) => {
+      envs.push(env);
+      return cmd === 'yarn'
+        ? { code: -1, signal: null, stdout: '', stderr: '', errno: 'ENOENT', errorMessage: 'spawn yarn ENOENT' }
+        : { code: 0, signal: null, stdout: '', stderr: '' };
+    };
+    const log: string[] = [];
+    const saved = { HTTPS_PROXY: process.env.HTTPS_PROXY, npm_config_cache: process.env.npm_config_cache };
+    process.env.HTTPS_PROXY = 'http://proxy.test:3128';
+    process.env.npm_config_cache = '/inherited/npm-cache';
+    try {
+      expect(await install(dir, dir, [], log, runner, work)).toBe(true);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    expect(envs).toHaveLength(2); // yarn, then the npm exec fallback
+    const pm = path.join(work, '.pm');
+    for (const env of envs) {
+      expect(env).toMatchObject({
+        XDG_DATA_HOME: path.join(pm, 'xdg-data'),
+        XDG_STATE_HOME: path.join(pm, 'xdg-state'),
+        XDG_CONFIG_HOME: path.join(pm, 'xdg-config'),
+        XDG_CACHE_HOME: path.join(pm, 'xdg-cache'),
+        PNPM_HOME: path.join(pm, 'pnpm-home'),
+        YARN_GLOBAL_FOLDER: path.join(pm, 'yarn-global'),
+        YARN_ENABLE_GLOBAL_CACHE: 'false',
+        YARN_HTTPS_PROXY: 'http://proxy.test:3128',
+        COREPACK_HOME: path.join(pm, 'corepack'),
+        COREPACK_ENABLE_STRICT: '0',
+        npm_config_cache: '/inherited/npm-cache',
+      });
+    }
+    expect(existsSync(path.join(pm, 'xdg-state'))).toBe(true);
+    // Keys are logged, values never.
+    const envLine = log.find((l) => l.startsWith('# install env'))!;
+    expect(envLine).toContain('XDG_DATA_HOME, XDG_STATE_HOME');
+    expect(envLine).toContain('YARN_HTTPS_PROXY');
+    expect(envLine).not.toContain('proxy.test');
+    expect(log.filter((l) => l.startsWith('# install env'))).toHaveLength(1);
+  });
+
+  it('(hermetic) passes HTTP_PROXY to yarn only when set, and never overrides YARN_* proxies', () => {
+    expect(hermeticEnv('/w', {}).env.YARN_HTTP_PROXY).toBeUndefined();
+    expect(hermeticEnv('/w', { HTTP_PROXY: 'http://a' }).env.YARN_HTTP_PROXY).toBe('http://a');
+    expect(hermeticEnv('/w', { https_proxy: 'http://b', YARN_HTTPS_PROXY: 'http://c' }).env.YARN_HTTPS_PROXY).toBe('http://c');
   });
 });
 
@@ -664,22 +781,88 @@ describe('index cache', () => {
     return f;
   }
 
-  it('(5a) reuses an ok index, refuses a partial/failed one and says why', () => {
-    const log: string[] = [];
-    expect(isCached(indexJson('ok', false), repo, owners, { install: false, log: (l) => log.push(l) })).toBe(true);
-    expect(isCached(indexJson('partial', false), repo, owners, { install: false, log: (l) => log.push(l) })).toBe(false);
-    expect(isCached(indexJson('failed', true), repo, owners, { install: true, log: (l) => log.push(l) })).toBe(false);
-    expect(log).toEqual([
-      '[index] acme/r: not reusing cached index (previous status npm:a=partial; partial/failed results are always retried)',
-      '[index] acme/r: not reusing cached index (previous status npm:a=failed; partial/failed results are always retried)',
-    ]);
+  const decide = (f: string, r: DiscoveredRepo, install: boolean) =>
+    Object.fromEntries([...isCached(f, r, owners, { install })].map(([id, d]) => [id, d.reuse ? 'reuse' : (d.reason ?? 'none')]));
+
+  it('(5a) reuses ok packages, refuses partial/failed ones and says why', () => {
+    expect(decide(indexJson('ok', false), repo, false)).toEqual({ 'npm:a': 'reuse', 'pub:b': 'reuse' });
+    expect(decide(indexJson('partial', false), repo, false)).toEqual({
+      'npm:a': 'previous status partial; partial/failed results are always retried',
+      'pub:b': 'reuse',
+    });
+    expect(decide(indexJson('failed', true), repo, true)['npm:a']).toBe('previous status failed; partial/failed results are always retried');
   });
 
-  it('(5a) refuses an index made without install when this run installs', () => {
-    expect(isCached(indexJson('ok', undefined), repo, owners, { install: true })).toBe(false);
-    expect(isCached(indexJson('ok', false), repo, owners, { install: true })).toBe(false);
-    expect(isCached(indexJson('ok', true), repo, owners, { install: true })).toBe(true);
-    expect(isCached(indexJson('ok', true), repo, owners, { install: false })).toBe(true);
-    expect(isCached(indexJson('ok', true), { ...repo, headSha: 'sha2' }, owners, { install: true })).toBe(false);
+  it('(5a) refuses a result made without install when this run installs', () => {
+    const noInstall = 'previous run did not install dependencies';
+    expect(decide(indexJson('ok', undefined), repo, true)['npm:a']).toBe(noInstall);
+    expect(decide(indexJson('ok', false), repo, true)['npm:a']).toBe(noInstall);
+    expect(decide(indexJson('ok', true), repo, true)['npm:a']).toBe('reuse');
+    expect(decide(indexJson('ok', true), repo, false)['npm:a']).toBe('reuse');
+    // A new commit: nothing reusable, no reason (nothing was cached for it).
+    expect(decide(indexJson('ok', true), { ...repo, headSha: 'sha2' }, true)).toEqual({ 'npm:a': 'none', 'pub:b': 'none' });
+    expect(decide(path.join(root, 'missing.json'), repo, true)).toEqual({ 'npm:a': 'none', 'pub:b': 'none' });
   });
+});
+
+describe('per-package index cache (stage)', () => {
+  let root: string;
+  let pwork: string;
+  let log: string[];
+  const TSCONFIG = JSON.stringify({ compilerOptions: { strict: true, module: 'esnext', moduleResolution: 'bundler', noEmit: true, types: [] }, include: ['src'] });
+  const run = async (opts: { force?: boolean } = {}) => {
+    log = [];
+    await index({ work: pwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: (l) => log.push(l) }, { install: false, ...opts });
+    return readJson<RepoIndex>(pwork, 'index/acme__mono/index.json');
+  };
+
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-pkgcache-')));
+    const files: Record<string, string> = {
+      'a/package.json': JSON.stringify({ name: '@acme/a', version: '1.0.0', type: 'module', types: 'src/index.ts' }),
+      'a/tsconfig.json': TSCONFIG,
+      'a/src/index.ts': `export function fa(): number { return 1; }\n`,
+      'b/package.json': JSON.stringify({ name: '@acme/b', version: '1.0.0', type: 'module', dependencies: { '@acme/a': '*' } }),
+      'b/tsconfig.json': TSCONFIG,
+      // Unresolved org module: b is partial.
+      'b/src/index.ts': `import { fa } from '@acme/a/nope';\nexport const x = fa();\n`,
+    };
+    for (const [f, body] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(root, 'mono', f)), { recursive: true });
+      writeFileSync(path.join(root, 'mono', f), body);
+    }
+    pwork = path.join(root, 'work');
+    mkdirSync(pwork);
+    const pkg = (name: string, p: string, deps: string[]) => ({
+      packageId: `npm:${name}`, path: p, manager: 'npm', name, entryPoints: [`${p}/src/index.ts`],
+      deps: deps.map((d) => ({ name: d, manager: 'npm', resolvedPackageId: `npm:${d}` })),
+    });
+    const discover: DiscoverFile = {
+      org: 'acme',
+      repos: [{ repo: 'acme/mono', localPath: path.join(root, 'mono'), headSha: 'sha1', packages: [pkg('@acme/a', 'a', []), pkg('@acme/b', 'b', ['@acme/a'])] }],
+    };
+    writeFileSync(path.join(pwork, 'discover.json'), JSON.stringify(discover));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('re-runs only the package that cannot be reused and keeps the reused entry verbatim', async () => {
+    const first = await run();
+    expect(first.packages.map((p) => [p.packageId, p.status])).toEqual([['npm:@acme/a', 'ok'], ['npm:@acme/b', 'partial']]);
+    const aLog = path.join(pwork, 'index/acme__mono/acme__a.log');
+    const aLogMtime = statSync(aLog).mtimeMs;
+
+    const second = await run();
+    expect(log[0]).toBe('[index] acme/mono npm:@acme/a: cached (ok at sha1; use --force to re-index)');
+    expect(log[1]).toMatch(/^\[index\] acme\/mono npm:@acme\/b: re-indexed \(previous status partial; partial\/failed results are always retried\): partial/);
+    expect(log).toHaveLength(2);
+    expect(second.packages[0]).toEqual(first.packages[0]);
+    expect(second.status).toBe('partial');
+    expect(statSync(aLog).mtimeMs).toBe(aLogMtime); // a was not re-run
+
+    await run({ force: true });
+    expect(log.map((l) => l.replace(/: re-indexed \(--force\): .*/, ''))).toEqual([
+      '[index] acme/mono npm:@acme/a',
+      '[index] acme/mono npm:@acme/b',
+    ]);
+  }, 60_000);
 });

@@ -38,7 +38,7 @@ export const scipDart: Indexer = {
   name: 'scip-dart',
   // Upstream version + our patch level. Bump the patch level whenever the
   // vendored fork or dart-surface changes output (it is the index cache key).
-  version: '1.7.0+sentei.2',
+  version: '1.7.0+sentei.3',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -150,7 +150,7 @@ export const scipDart: Indexer = {
       diagnostics.push('error: export surface failed');
       return finish();
     }
-    const { unresolvedOrgModules, diagnostics: surfaceDiagnostics, ...sidecar } = out;
+    const { unresolvedOrgModules, diagnostics: surfaceDiagnostics, ...rest } = out, sidecar = { ...rest, shorthandRefs: rest.shorthandRefs ?? [] };
     writeFileSync(exportsFile, `${JSON.stringify(sidecar satisfies ExportsSidecar, null, 2)}\n`);
     for (const m of unresolvedOrgModules) {
       diagnostics.push(`error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`);

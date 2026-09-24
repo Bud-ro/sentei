@@ -93,7 +93,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.1',
+        indexerVersion: '1.7.0+sentei.3',
         status: 'ok',
         scip: `${pkg}.scip`,
         exports: `${pkg}.exports.json`,

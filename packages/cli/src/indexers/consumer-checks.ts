@@ -12,6 +12,9 @@
 //     symbol that no longer exists (version skew) → `unresolvedImports`;
 //   - a namespace import used as a value, or a computed require/import: the
 //     accessed members are not statically known → `flags`.
+// Plus two upstream gaps recorded as checker-resolved references (ingest
+// dedupes them against SCIP occurrences): namespace member accesses
+// (`namespaceMemberRefs`) and shorthand properties (`shorthandRefs`).
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
@@ -19,6 +22,7 @@ import type {
   ConsumerFlag,
   ConsumerPolicy,
   NamespaceMemberRef,
+  ShorthandRef,
   SourcePosition,
   UnindexedImport,
   UnresolvedImport,
@@ -36,6 +40,7 @@ export interface ConsumerCheckResult {
   unresolvedImports: UnresolvedImport[];
   flags: ConsumerFlag[];
   namespaceMemberRefs: NamespaceMemberRef[];
+  shorthandRefs: ShorthandRef[];
 }
 
 /** Bare package name of a module specifier (`@a/b/c` → `@a/b`, `x/y` → `x`), or undefined if relative/absolute. */
@@ -55,7 +60,13 @@ export function checkConsumerFiles(
   toRepoRel: (abs: string) => string,
   orgPackageDirs: readonly OrgPackageDir[] = [],
 ): ConsumerCheckResult {
-  const result: ConsumerCheckResult = { unresolvedOrgModules: [], unresolvedImports: [], flags: [], namespaceMemberRefs: [] };
+  const result: ConsumerCheckResult = {
+    unresolvedOrgModules: [],
+    unresolvedImports: [],
+    flags: [],
+    namespaceMemberRefs: [],
+    shorthandRefs: [],
+  };
   // Longest dir first, so a nested package wins over its parent.
   const dirs = [...orgPackageDirs].sort((a, b) => b.dir.length - a.dir.length);
   for (const sf of files) checkFile(sf, checker, orgPackageNames, toRepoRel, result, dirs);
@@ -95,8 +106,9 @@ function checkFile(
     }
   };
 
-  // Namespace imports of org packages, keyed by the module symbol they alias.
-  const namespaceModules = new Set<ts.Symbol>();
+  // Namespace imports of org packages: the module symbol they alias → the org
+  // package the specifier names (`hono/jsx` → `hono`).
+  const namespaceModules = new Map<ts.Symbol, string>();
   const namespaceNames = new Set<string>();
 
   for (const stmt of sf.statements) {
@@ -109,7 +121,7 @@ function checkFile(
       } else if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
         const alias = checker.getSymbolAtLocation(bindings.name);
         if (alias !== undefined) {
-          namespaceModules.add(alias.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(alias) : alias);
+          namespaceModules.set(alias.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(alias) : alias, barePackageName(module)!);
           namespaceNames.add(bindings.name.text);
         }
       }
@@ -161,12 +173,19 @@ function checkFile(
       isNamespaceBinding(node.expression, checker, namespaceModules)
     ) {
       const member = ts.isPropertyAccessExpression(node) ? node.name : (node.argumentExpression as ts.StringLiteralLike);
-      const ref = memberRef(member, checker, orgDirs);
-      if (ref !== undefined) out.namespaceMemberRefs.push({ ...pos(member), ...ref });
+      const ref = declTarget(checker.getSymbolAtLocation(member), checker, orgDirs, false);
+      if (ref !== undefined) out.namespaceMemberRefs.push({ ...pos(member), member: member.text, ...ref });
+    } else if (ts.isShorthandPropertyAssignment(node)) {
+      // `{ grade }`: SCIP links only the contextual property, not the value.
+      const ref = declTarget(checker.getShorthandAssignmentValueSymbol(node), checker, orgDirs, true);
+      if (ref !== undefined) out.shorthandRefs.push({ ...pos(node.name), member: node.name.text, ...ref });
     }
     if (ts.isIdentifier(node) && namespaceNames.has(node.text)) {
-      const reason = namespaceValueUse(node, checker, namespaceModules, sf);
-      if (reason !== undefined) out.flags.push({ flag: 'namespace_dynamic', reason, ...pos(node) });
+      const use = namespaceValueUse(node, checker, namespaceModules, sf);
+      if (use !== undefined) {
+        // The namespace's module is known, so the flag blocks only that package.
+        out.flags.push({ flag: 'namespace_dynamic', reason: use.reason, targetPackage: use.targetPackage, ...pos(node) });
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -226,9 +245,9 @@ function isExemptComputed(arg: ts.Expression, checker: ts.TypeChecker, hops = 1)
 function namespaceValueUse(
   id: ts.Identifier,
   checker: ts.TypeChecker,
-  modules: ReadonlySet<ts.Symbol>,
+  modules: ReadonlyMap<ts.Symbol, string>,
   sf: ts.SourceFile,
-): string | undefined {
+): { reason: string; targetPackage: string } | undefined {
   const parent = id.parent;
   if (ts.isNamespaceImport(parent)) return undefined; // the declaration
   // Is this identifier really the namespace binding?
@@ -242,36 +261,44 @@ function namespaceValueUse(
   }
   if (sym === undefined) return undefined;
   const target = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
-  if (!modules.has(target)) return undefined;
+  const targetPackage = modules.get(target);
+  if (targetPackage === undefined) return undefined;
 
   if (ts.isPropertyAccessExpression(parent) && parent.expression === id) return undefined;
   if (ts.isElementAccessExpression(parent) && parent.expression === id) {
     if (ts.isStringLiteralLike(parent.argumentExpression)) return undefined;
-    return `namespace ${id.text} indexed with a computed key: ${truncate(parent.getText(sf))}`;
+    return { reason: `namespace ${id.text} indexed with a computed key: ${truncate(parent.getText(sf))}`, targetPackage };
   }
   if (ts.isQualifiedName(parent) && parent.left === id) return undefined; // `X.Type`
   if (inTypePosition(id)) return undefined;
-  return `namespace ${id.text} used as a value: ${truncate(parent.getText(sf))}`;
+  return { reason: `namespace ${id.text} used as a value: ${truncate(parent.getText(sf))}`, targetPackage };
 }
 
 /** True when `id` (the object of a member access) is an org namespace-import binding. */
-function isNamespaceBinding(id: ts.Identifier, checker: ts.TypeChecker, modules: ReadonlySet<ts.Symbol>): boolean {
+function isNamespaceBinding(id: ts.Identifier, checker: ts.TypeChecker, modules: ReadonlyMap<ts.Symbol, unknown>): boolean {
   const sym = checker.getSymbolAtLocation(id);
   if (sym === undefined) return false;
   return modules.has(sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);
 }
 
-/** Resolves a namespace member to its declaration inside an org package, if any. */
-function memberRef(
-  member: ts.MemberName | ts.StringLiteralLike,
+/**
+ * Resolves a symbol (aliases followed) to its first declaration inside an org
+ * package checkout (not that package's node_modules), if any. With
+ * `skipLocals`, a module (namespace) symbol and a declaration inside a function
+ * or block (a `local N` symbol in SCIP) resolve to nothing.
+ */
+function declTarget(
+  start: ts.Symbol | undefined,
   checker: ts.TypeChecker,
   orgDirs: readonly OrgPackageDir[],
-): Omit<NamespaceMemberRef, 'file' | 'line' | 'col'> | undefined {
-  let sym = checker.getSymbolAtLocation(member);
+  skipLocals: boolean,
+): Omit<NamespaceMemberRef, 'file' | 'line' | 'col' | 'member'> | undefined {
+  let sym = start;
   for (let guard = 0; sym !== undefined && sym.flags & ts.SymbolFlags.Alias && guard < 100; guard++) {
     sym = checker.getAliasedSymbol(sym);
   }
   for (const decl of sym?.declarations ?? []) {
+    if (skipLocals && (ts.isSourceFile(decl) || ts.isModuleDeclaration(decl) || isFunctionLocal(decl))) continue;
     const declSf = decl.getSourceFile();
     let real: string;
     try {
@@ -286,7 +313,6 @@ function memberRef(
     const nameNode = ts.getNameOfDeclaration(decl) ?? decl;
     const { line, character } = declSf.getLineAndCharacterOfPosition(nameNode.getStart(declSf));
     return {
-      member: member.text,
       targetPackage: owner.name,
       targetFile: path.relative(owner.dir, real).split(path.sep).join(path.posix.sep),
       targetLine: line,
@@ -294,6 +320,16 @@ function memberRef(
     };
   }
   return undefined;
+}
+
+/** True when a declaration sits inside a function body, parameter list or block. */
+function isFunctionLocal(decl: ts.Node): boolean {
+  for (let n = decl.parent; n !== undefined && !ts.isSourceFile(n); n = n.parent) {
+    if (ts.isFunctionLike(n) || ts.isBlock(n) || ts.isCatchClause(n) || ts.isForStatement(n) || ts.isForInStatement(n) || ts.isForOfStatement(n)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** True when the node sits inside a type annotation / type query (not a value). */
@@ -367,6 +403,12 @@ export interface UnindexedScanInput {
   pkgDir: string;
   /** Absolute dirs of other packages nested inside `pkgDir` (not walked). */
   nestedPackageDirs: readonly string[];
+  /**
+   * Absolute dirs of ignored manifests (discover's `ignoredManifests`: examples,
+   * templates, fixtures) inside `pkgDir`: not walked. Such a subtree is not an
+   * org package; the witness covers it.
+   */
+  ignoredDirs?: readonly string[];
   /** Absolute paths of every file some indexed program has as a root file. */
   indexedFiles: ReadonlySet<string>;
   orgPackageNames: ReadonlySet<string>;
@@ -385,7 +427,7 @@ export interface UnindexedScanInput {
 export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport[] {
   const out: UnindexedImport[] = [];
   const seen = new Set<string>();
-  const nested = input.nestedPackageDirs.map((d) => path.resolve(d));
+  const nested = [...input.nestedPackageDirs, ...(input.ignoredDirs ?? [])].map((d) => path.resolve(d));
   const walk = (dir: string): void => {
     let entries;
     try {

@@ -27,6 +27,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "packageId": "npm:@acme/y",
+  "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []

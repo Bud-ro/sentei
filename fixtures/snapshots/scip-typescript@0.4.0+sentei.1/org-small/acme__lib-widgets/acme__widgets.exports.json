@@ -159,6 +159,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "packageId": "npm:@acme/widgets",
+  "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []
