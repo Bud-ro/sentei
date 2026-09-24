@@ -200,6 +200,15 @@ Running record of decisions and deviations from `PLAN.md`. Newest milestone last
   are never reported in v1.
 - **Age rule gates only closed-world verdicts** (as in the §6.5 tree). Unknown
   `first_seen_at` with a positive `minAgeDays` means no verdict (fail closed).
+- **A use of a member is a use of its owner.** `owner_ref_occurrences` folds every
+  reference into each ancestor of the referenced symbol (descriptor parents and
+  body owners), so an extension whose getter is used, or a class whose method is
+  called, is alive even though nothing names the owner. `n` may count one
+  position several times (once per used member); verdicts only test existence.
+- **Implicit constructors.** At ingest, a reference to an undefined
+  `Owner#<constructor>()` whose owner is defined is recorded against the owner
+  (Dart never defines implicit constructors). Any other missing member is real
+  version skew and stays in `unresolved_refs`.
 - **Overlay edges count as references** (external or internal by package), so
   `extraEdges` can keep an export alive.
 - **Private-dead exclusions beyond the plan:** declarations in test and docs
