@@ -554,3 +554,41 @@ work dir and the proxy is passed to yarn). The honojs lockfile is committed at
 - Effect of the round on the honojs DB (before adapter re-index): unresolved
   refs 9 → 0, deletion candidates 93 → 84, private_dead 460 → 300, and the
   witness now downgrades 15 symbols including all three known-wrong ones.
+
+### M3 — first Workiva run (30 Dart repos, 42 packages)
+
+Index 600 s first run (229 s cached), blame 637 s (22 unshallows), analyze
+50 s. Report: 81 deletion, 280 unexport, 623 private_dead, 14 needs_review,
+412 blocked. Two showstoppers needed work-dir workarounds to get past ingest:
+
+- **scip-dart emits invalid symbols**: operator methods unescaped
+  (`ActionsClass#==().`, `#[]().`, `#<=().`; ~150 symbols in 10 packages),
+  `null`-namespaced descriptors for type parameters of generic function types
+  and named params of function-typed parameters, and colliding `…/null#` /
+  `…/null().` for unnamed extensions and closures. One bad symbol aborted
+  ingest for the whole org. Fix: patch the vendored fork (escape non-identifier
+  names, emit locals for the nameless cases, do not define import prefixes as
+  namespaces) and make ingest fail only the affected package.
+- **A `package.json` next to a `pubspec.yaml`** (react-dart, pdfjs_dart,
+  w_transport, sockjs_client_wrapper): output slugs collided when names matched,
+  and document ownership ignored the manager when they differed (React's 5682
+  Dart symbols landed in the opaque npm package; `PDFPageView` was reported
+  under `npm:pdfjs_dart`). Fix: slugs carry the manager; documents from a Dart
+  index belong to the pub package at that path and vice versa.
+
+Spot checks (5 deletion candidates, 3 private_dead): `builtRedux` is
+**wrong** (`build.yaml` `builder_factories` loads it by name); `screen`
+(react_testing_library) is wrong in intent: its only consumers are tests
+because it is a dev_dependency, so `countTestsAsConsumers=false` empties the
+whole test-support package (12 delete, 80 unexport, 119 private_dead); the rest
+are public-API-only. private_dead: `tool/dart_dev/config.dart#config` (4×,
+dart_dev's run script reads it), `benchmark/benchmarks.dart#main` (runnable
+script), and import prefixes (`$0`, 130 rows) are all wrong; generated
+`*.pb.dart` files add 168 rows. Fixes adopted: Dart entry conventions in the
+sidecar (`build.yaml` builder factories, `main` in any non-lib, non-test
+script, dart_dev's `config`), test references count when the consumer declares
+the package only as a dev dependency, generated files are never reported,
+`test_fixtures` is an ignored manifest dir, later stages refuse to run on an
+empty DB, and version skew against a target that failed to index is not
+reported. Two packages need Dart ≥3.12/3.13 (Budro's call). Lockfile committed
+at `fixtures/orgs/workiva.lock.json`.

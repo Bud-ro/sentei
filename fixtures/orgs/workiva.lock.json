@@ -1,0 +1,312 @@
+{
+  "org": "Workiva",
+  "generatedAt": "2026-09-24T06:51:31.000Z",
+  "repos": [
+    {
+      "name": "FCModel",
+      "defaultBranch": "workiva-master",
+      "headSha": "49a79cd1629ba8ab4c660b7e1802e962526af14f",
+      "fork": true
+    },
+    {
+      "name": "aws-lambda-fsm-workflows",
+      "defaultBranch": "master",
+      "headSha": "9b36a21b80486ac3f7a3074951fb01c309bf3b91",
+      "fork": false
+    },
+    {
+      "name": "built_redux",
+      "defaultBranch": "master",
+      "headSha": "020098a8224ec5f3f79206edae9d281242ea62a9",
+      "fork": false
+    },
+    {
+      "name": "contextual_message",
+      "defaultBranch": "master",
+      "headSha": "f50342385087623a046a0244aaf8cf5d743ed81c",
+      "fork": false
+    },
+    {
+      "name": "dart_codemod",
+      "defaultBranch": "master",
+      "headSha": "d4053e657b8c0de96e4029640f98754f5913ea65",
+      "fork": false
+    },
+    {
+      "name": "dart_dev",
+      "defaultBranch": "master",
+      "headSha": "105803485dd542805bbb9a2b3f1e3af8680e9bfc",
+      "fork": false
+    },
+    {
+      "name": "dart_to_js_script_rewriter",
+      "defaultBranch": "master",
+      "headSha": "3cbdc4aa0e78001b407407d16dcd654a86fb41d9",
+      "fork": false
+    },
+    {
+      "name": "dart_transformer_utils",
+      "defaultBranch": "master",
+      "headSha": "8e4dce08b2dd5b415264d86f9d1d74fd6bd6efa9",
+      "fork": false
+    },
+    {
+      "name": "dependency_validator",
+      "defaultBranch": "master",
+      "headSha": "de3d75fb91edaa82c1ed7388e3c956cf98e9a91b",
+      "fork": false
+    },
+    {
+      "name": "dpx",
+      "defaultBranch": "master",
+      "headSha": "31518f32154e174188cb9b91b8b32fbe8037b005",
+      "fork": false
+    },
+    {
+      "name": "fluri",
+      "defaultBranch": "master",
+      "headSha": "eec7c0e7f2e189723b35abc82ebadeb1ca078373",
+      "fork": false
+    },
+    {
+      "name": "font_face_observer",
+      "defaultBranch": "master",
+      "headSha": "432f79d7b247eff45e01c82c0b22ccce5aa5cc1f",
+      "fork": false
+    },
+    {
+      "name": "frugal-public",
+      "defaultBranch": "master",
+      "headSha": "a06991ba245699b4ad445b3628ae41c89db513fc",
+      "fork": true
+    },
+    {
+      "name": "gha-dart-oss",
+      "defaultBranch": "master",
+      "headSha": "2a6883c706c3c2a4a211d26f82b182972a993f2d",
+      "fork": false
+    },
+    {
+      "name": "gha-security-scanner",
+      "defaultBranch": "master",
+      "headSha": "27b0bdf34f811e54c2d3a3a4dbc3b284f321864e",
+      "fork": false
+    },
+    {
+      "name": "go-datastructures",
+      "defaultBranch": "master",
+      "headSha": "89d15facb2e3d7ae0c819fa43b66a2153e77196f",
+      "fork": false
+    },
+    {
+      "name": "go-rest",
+      "defaultBranch": "master",
+      "headSha": "55d3967a4c8a0880fe721364b0b4b87776285d2a",
+      "fork": false
+    },
+    {
+      "name": "gopherjs",
+      "defaultBranch": "master",
+      "headSha": "490705b1d6fc7d5bd9202ac41888e146183328eb",
+      "fork": true
+    },
+    {
+      "name": "json_schema",
+      "defaultBranch": "master",
+      "headSha": "3ce85f9ea9b5fd03ecd71df5c5ae3dd5fb7978e8",
+      "fork": true
+    },
+    {
+      "name": "jsonpath",
+      "defaultBranch": "master",
+      "headSha": "edb085d0b25e9f4fb88e41e935254cf23a374897",
+      "fork": true
+    },
+    {
+      "name": "opentelemetry-dart",
+      "defaultBranch": "master",
+      "headSha": "af5301fabc1eca19c874853ccdd880bfb40d3601",
+      "fork": false
+    },
+    {
+      "name": "opentracing_dart",
+      "defaultBranch": "master",
+      "headSha": "b8feb615bba55923a9e45cb38cdab30d7d04139a",
+      "fork": false
+    },
+    {
+      "name": "orderedmap",
+      "defaultBranch": "master",
+      "headSha": "8d5bc01d5b2823026d88ca06a0a87153d5d111be",
+      "fork": true
+    },
+    {
+      "name": "over_react",
+      "defaultBranch": "master",
+      "headSha": "7f49f653dc232c150201359ca8cd3d075a6ff758",
+      "fork": false
+    },
+    {
+      "name": "over_react_codemod",
+      "defaultBranch": "master",
+      "headSha": "0248c17a61d789f9b8e8b37cbfd0faade79a6a2b",
+      "fork": false
+    },
+    {
+      "name": "over_react_test",
+      "defaultBranch": "master",
+      "headSha": "bde6bb31f075c8ec1c898d8a516863d7cabf7c46",
+      "fork": false
+    },
+    {
+      "name": "paper_trail",
+      "defaultBranch": "master",
+      "headSha": "040ae71e7a9d608ef1cc6636bd7073305ad4f9ba",
+      "fork": true
+    },
+    {
+      "name": "pdfjs_dart",
+      "defaultBranch": "master",
+      "headSha": "c37a55a29b34b03269ca2acc6995fd076ba810e1",
+      "fork": false
+    },
+    {
+      "name": "platform_detect",
+      "defaultBranch": "master",
+      "headSha": "457c90c0702c721aaa070e083335fa5a06292300",
+      "fork": false
+    },
+    {
+      "name": "r_tree",
+      "defaultBranch": "master",
+      "headSha": "d8e6da7fdbd4ab82e6661a30d26678fe24627917",
+      "fork": false
+    },
+    {
+      "name": "react-codemirror2",
+      "defaultBranch": "master",
+      "headSha": "f8b8b3983be155b92baa14f6a71195f16c6c6b76",
+      "fork": true
+    },
+    {
+      "name": "react-dart",
+      "defaultBranch": "master",
+      "headSha": "bd5d6ea8816a8c7a702f4b1a5843e714a482eea0",
+      "fork": false
+    },
+    {
+      "name": "react-dnd-mouse-backend",
+      "defaultBranch": "master",
+      "headSha": "27c6fd7fce3eb3ea9410ba1f5f387976710213d2",
+      "fork": true
+    },
+    {
+      "name": "react-querybuilder",
+      "defaultBranch": "master",
+      "headSha": "f908f5739b57c506cd149899844aaa6e3f421d2a",
+      "fork": true
+    },
+    {
+      "name": "react_testing_library",
+      "defaultBranch": "master",
+      "headSha": "f85c7094a547a55acf023b2569ffebd9e908bad6",
+      "fork": false
+    },
+    {
+      "name": "rolify",
+      "defaultBranch": "master",
+      "headSha": "f852c28b818f7c8f2fbaaef060da2763c36f3ad7",
+      "fork": true
+    },
+    {
+      "name": "schemas",
+      "defaultBranch": "master",
+      "headSha": "d3f87b78192a0e35cd3cb3af4d4477046a21c0e8",
+      "fork": false
+    },
+    {
+      "name": "sockjs_client_wrapper",
+      "defaultBranch": "master",
+      "headSha": "d6b994eed58d4687efd5f27b077cad524acadcb5",
+      "fork": false
+    },
+    {
+      "name": "state_machine",
+      "defaultBranch": "master",
+      "headSha": "de67c450033885338b0115f6a0b936d25904243a",
+      "fork": false
+    },
+    {
+      "name": "tableschema-js",
+      "defaultBranch": "master",
+      "headSha": "3147b1c73e34da0fa94b964cf12165e83f5e259a",
+      "fork": true
+    },
+    {
+      "name": "test_html_builder",
+      "defaultBranch": "master",
+      "headSha": "e40ac5ea79b24268fe973321d27fd4b24cc19fb6",
+      "fork": false
+    },
+    {
+      "name": "vs-code-format-on-save",
+      "defaultBranch": "master",
+      "headSha": "b4c1b8df6d8beb0fe54f669c0aa6c2e47d5a9571",
+      "fork": false
+    },
+    {
+      "name": "w-mobile-kit",
+      "defaultBranch": "master",
+      "headSha": "e27648f0638168d3cdc89f857f806908dc2786ff",
+      "fork": false
+    },
+    {
+      "name": "w_common",
+      "defaultBranch": "master",
+      "headSha": "10cda1ed3296debe85d8ee14e8430f3b54494443",
+      "fork": false
+    },
+    {
+      "name": "w_flux",
+      "defaultBranch": "master",
+      "headSha": "54de3ad41138f6998b3ae21c32d0e89765ea907d",
+      "fork": false
+    },
+    {
+      "name": "w_module",
+      "defaultBranch": "master",
+      "headSha": "58f0750f21e7b86e50b5ebb994d00b56af068fd7",
+      "fork": false
+    },
+    {
+      "name": "w_transport",
+      "defaultBranch": "master",
+      "headSha": "b5a3cbcbd3b788f3b895d398b61420478aec8d4d",
+      "fork": false
+    },
+    {
+      "name": "webdev_proxy",
+      "defaultBranch": "master",
+      "headSha": "a68e2e4a6ffb465f73b1feb2dc4cb037e759dbf4",
+      "fork": false
+    },
+    {
+      "name": "wf-common",
+      "defaultBranch": "master",
+      "headSha": "bb311787cfd7edfb08d2a3f844bd4ce22f30016f",
+      "fork": false
+    },
+    {
+      "name": "workiva_analysis_options",
+      "defaultBranch": "master",
+      "headSha": "45fa26352dd4a466725c5342cdf27a9298140908",
+      "fork": false
+    },
+    {
+      "name": "xlsx",
+      "defaultBranch": "master",
+      "headSha": "a76f72c8b4807b9763aaa55711c23ea48abac67f",
+      "fork": true
+    }
+  ]
+}
