@@ -174,3 +174,75 @@ Running record of decisions and deviations from `PLAN.md`. Newest milestone last
   `index.json` / missing package / missing `.scip` → `index_failed`; missing
   exports sidecar → `opaque_consumer` (an unknown export surface would be
   fail-open otherwise).
+
+### M1 — analyze
+
+- **Rules live in `packages/core/sql/analyze.sql`, not `schema.sql`.** Changing a
+  rule must not bump `SCHEMA_VERSION`. The file drops and recreates every view on
+  each run, so a work DB built by an older sentei never answers with a stale rule.
+  Per-run inputs that are not policy (`now`) go in a tiny `run_params` table so
+  the views stay parameter-free. Debug a verdict with
+  `SELECT * FROM verdicts v JOIN symbols s USING (symbol_id) WHERE s.name = ?`.
+- **Analyze never inserts `deletion_candidate`.** The schema trigger requires
+  `witness_ok`; analyze emits `needs_review` + `witness_pending`, and the witness
+  stage promotes or downgrades. So the pipeline order is analyze → witness → report
+  and a report can never contain an unwitnessed deletion.
+- **`blocked` verdict** (added to the CHECK): a symbol that would have had a
+  verdict in a package with an opaque consumer, or in a package that is itself
+  opaque (`blocked_by` names `<package>:<flag>` in both cases). Reasons carry the
+  base reason only, so the report can say what the verdict would have been.
+- **Owners.** A symbol's structural owner is its descriptor parent or the
+  declaration whose body contains its definition (scip-typescript names
+  object-literal properties inside a function without a parent descriptor).
+  Owner → member edges make members reachable with their owner; self-references
+  through owners are excluded from internal refs; and only the outermost dead
+  declaration is reported. Consequence: unused members of live exported classes
+  are never reported in v1.
+- **Age rule gates only closed-world verdicts** (as in the §6.5 tree). Unknown
+  `first_seen_at` with a positive `minAgeDays` means no verdict (fail closed).
+- **Overlay edges count as references** (external or internal by package), so
+  `extraEdges` can keep an export alive.
+- **Private-dead exclusions beyond the plan:** declarations in test and docs
+  files (never entry points, so everything in them would be "unreachable"), kept
+  symbols, packages with no seed at all (no entry document and no export means
+  the entry points are unknown, not that everything is dead), and any package
+  that is opaque or blocked.
+- **Known noise source:** any file not reachable from an entry point (scripts,
+  config files) yields `private_dead` rows for its declarations. That is the
+  plan's design (list them in `extraEntryPoints`); M2 will show whether a default
+  allow-list is needed.
+
+### M1 — witness
+
+- Runs only over `needs_review` rows carrying `witness_pending`; searches
+  manifest-declared consumers (`package_deps`), never SCIP.
+- Skips test/docs files under the same policy analyze uses, otherwise every
+  `only_test_refs` candidate would be a mismatch.
+- Anonymous default exports: matched only by a default import whose specifier
+  subpath's last segment equals the defining file's basename (or a bare
+  specifier), so `import anon from '@acme/widgets/anon'` does not vouch for
+  `unused-anon.ts`. An `exports` map that renames a subpath is a known gap.
+- Name search is `(?<!\w)NAME(?![\w$])` rather than `\b` so Dart `'$name'`
+  interpolation still hits. Mismatch reasons are `witness_mismatch:<consumer>:<file>:<line>`
+  (1-based line), capped at 5 per symbol.
+
+### M1 — report
+
+- `work/report.json` positions are 1-based; the DB stays 0-based (SCIP).
+- `warnings` shouts about `assumeClosedWorld`, a disabled age policy, and repos
+  whose index was partial/failed; the summary prints them in a banner first.
+- Version skew is reported from `unresolved_refs`, keyed by the consumer, and is
+  never a finding.
+- Blockers are ranked by how many findings they block: the "fix that repo first"
+  list.
+
+### M1 — indexer gap found end to end
+
+- scip-typescript 0.4.0 emits a `local` symbol for `W.member` when `W` is a
+  namespace import and `member` reaches the entry through `export { member } from`
+  (an alias export); `export *` members resolve fine. The witness caught it
+  (`needs_review` + `witness_mismatch`), which is the fail-closed path working, but
+  the symbol is in use. Workaround at the indexer boundary: the adapter records
+  checker-resolved namespace member accesses in the sidecar
+  (`namespaceMemberRefs`) and ingest adds the occurrence and edge when SCIP has
+  none at that position.
