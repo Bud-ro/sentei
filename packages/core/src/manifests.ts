@@ -40,6 +40,37 @@ export const SKIP_DIRS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Default `ignoreManifestDirs` (org sentei.json replaces this list when present).
+ * A manifest whose directory path contains one of these names as a segment, at any
+ * depth, is not an org package: templates, fixtures, examples, benchmarks and
+ * tests are neither published nor consumed through a manifest, and they routinely
+ * reuse real package names (which would trip the PLAN §5.1 duplicate-name error).
+ *
+ * Unlike SKIP_DIRS these dirs are still walked: their files stay in the listing
+ * and belong to the enclosing package for indexing; only the manifest is ignored.
+ */
+export const DEFAULT_IGNORE_MANIFEST_DIRS: readonly string[] = Object.freeze([
+  'fixtures', '__fixtures__', 'fixture', 'templates', 'template', 'examples', 'example',
+  'benchmarks', 'bench', 'playground', 'playgrounds', 'sandbox', '__mocks__', 'test', 'tests', '__tests__',
+]);
+
+/** True if any directory segment of repo-relative `file` is in `dirs` (the basename is not checked). */
+export function inIgnoredDir(file: string, dirs: ReadonlySet<string>): boolean {
+  const segs = file.split('/');
+  for (let i = 0; i < segs.length - 1; i++) if (dirs.has(segs[i]!)) return true;
+  return false;
+}
+
+export interface ManifestOptions {
+  /** Dir names whose manifests are not org packages; default DEFAULT_IGNORE_MANIFEST_DIRS. */
+  ignoreDirs?: readonly string[];
+  /** Extra per-manifest exclusion (repo-relative manifest path), e.g. org `ignoreManifests` globs. */
+  ignoreManifest?: (manifest: string) => boolean;
+  /** Informational log (one line per repo listing skipped manifests). */
+  log?: (message: string) => void;
+}
+
+/**
  * Every file under `root`, as sorted POSIX paths relative to `root`. Skips
  * SKIP_DIRS by name at any depth. Symlinks are not followed (a symlinked dir
  * could loop or escape the repo).
@@ -62,19 +93,33 @@ export function listFiles(root: string): string[] {
   return out;
 }
 
-/** Find and parse every manifest in a repo. Packages without a name are skipped with a warning. */
+/**
+ * Find and parse every manifest in a repo. Packages without a name are skipped with
+ * a warning. Manifests under an ignored dir (`opts.ignoreDirs`) or rejected by
+ * `opts.ignoreManifest` are skipped (not parsed), reported in one `opts.log` line.
+ */
 export function readRepoManifests(
-  repoRoot: string, warn: Warn = () => {}, files: readonly string[] = listFiles(repoRoot),
+  repoRoot: string, warn: Warn = () => {}, files: readonly string[] = listFiles(repoRoot), opts: ManifestOptions = {},
 ): ManifestPackage[] {
+  const ignoreDirs = new Set(opts.ignoreDirs ?? DEFAULT_IGNORE_MANIFEST_DIRS);
   const pkgs: ManifestPackage[] = [];
+  const skipped: string[] = [];
   for (const file of files) {
     const base = posix.basename(file);
     if (base !== 'package.json' && base !== 'pubspec.yaml') continue;
+    if (inIgnoredDir(file, ignoreDirs) || opts.ignoreManifest?.(file)) {
+      skipped.push(file);
+      continue;
+    }
     const dir = posix.dirname(file); // '.' for the root
     const pkg = base === 'package.json'
       ? readNpmPackage(repoRoot, dir, files, warn)
       : readPubPackage(repoRoot, dir, files, warn);
     if (pkg) pkgs.push(pkg);
+  }
+  if (skipped.length > 0) {
+    opts.log?.(`skipped ${skipped.length} manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): ${
+      skipped.slice(0, 3).join(', ')}${skipped.length > 3 ? ', ...' : ''}`);
   }
   pkgs.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
   return pkgs;

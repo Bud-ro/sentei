@@ -41,6 +41,8 @@ Options:
   --db <file>    Database file (default: <work>/sentei.db)
   --org <name>     discover: GitHub org or user to list and shallow-clone
                    (token: GITHUB_TOKEN, GH_TOKEN, or \`gh auth token\`)
+                   behind a proxy set NODE_USE_ENV_PROXY=1 (Node's fetch
+                   ignores HTTPS_PROXY by default)
   --org-dir <dir>  discover: local org directory (org.json + repos/<name>/)
                    (exactly one of --org / --org-dir)
   --lockfile <file>     discover --org: pin repo head shas; read if it exists

@@ -27,6 +27,22 @@ export interface OrgConfig {
   policy: Policy;
   /** Org-wide keep entries, e.g. "npm:@acme/foo#sym", "pub:bar#*". */
   keep: string[];
+  /**
+   * `ignoreManifestDirs`: dir names (one path segment each) under which a manifest is
+   * not an org package. null = manifests.ts DEFAULT_IGNORE_MANIFEST_DIRS; a list
+   * (even an empty one) replaces the default.
+   */
+  ignoreManifestDirs: string[] | null;
+  /**
+   * `ignoreManifests`: glob.ts globs matched against "<repo name>/<manifest path>"
+   * (repo name without the org), e.g. "vscode/package.json"; matches are not org packages.
+   */
+  ignoreManifests: string[];
+}
+
+/** An org config with every default (no sentei.json). */
+export function defaultOrgConfig(): OrgConfig {
+  return { policy: { ...DEFAULT_POLICY }, keep: [], ignoreManifestDirs: null, ignoreManifests: [] };
 }
 
 export interface ExtraEdge {
@@ -90,13 +106,16 @@ function keepArray(file: string, v: unknown): string[] {
   return keep;
 }
 
-/** Read `<orgDir>/sentei.json` (optional): policy + org-wide keep. */
+/**
+ * Read `<orgDir>/sentei.json` (optional): policy, org-wide keep, and manifest
+ * exclusions (`ignoreManifestDirs`, `ignoreManifests`; see OrgConfig).
+ */
 export function readOrgConfig(orgDir: string): OrgConfig {
   const file = join(orgDir, 'sentei.json');
   const json = readJson(file);
-  const policy: Policy = { ...DEFAULT_POLICY };
-  let keep: string[] = [];
-  if (json === undefined) return { policy, keep };
+  const cfg = defaultOrgConfig();
+  const policy = cfg.policy;
+  if (json === undefined) return cfg;
   if (!isObject(json)) throw new Error(`sentei: ${file} must be a JSON object`);
   for (const [key, value] of Object.entries(json)) {
     switch (key) {
@@ -114,13 +133,29 @@ export function readOrgConfig(orgDir: string): OrgConfig {
         policy[key] = value;
         break;
       case 'keep':
-        keep = keepArray(file, value);
+        cfg.keep = keepArray(file, value);
+        break;
+      case 'ignoreManifestDirs':
+        cfg.ignoreManifestDirs = stringArray(file, key, value);
+        for (const d of cfg.ignoreManifestDirs) {
+          if (d === '' || d.includes('/') || d === '.' || d === '..') {
+            throw new Error(`sentei: ${file}: ignoreManifestDirs entry ${JSON.stringify(d)} must be a single directory name`);
+          }
+        }
+        break;
+      case 'ignoreManifests':
+        cfg.ignoreManifests = stringArray(file, key, value);
+        for (const g of cfg.ignoreManifests) {
+          if (!g.includes('/')) {
+            throw new Error(`sentei: ${file}: ignoreManifests entry ${JSON.stringify(g)} must be "<repo name>/<manifest path>", e.g. "vscode/package.json"`);
+          }
+        }
         break;
       default:
         throw new Error(`sentei: ${file}: unknown key "${key}"`);
     }
   }
-  return { policy, keep };
+  return cfg;
 }
 
 /** Read `<repoDir>/sentei.json` (optional): overlays (PLAN §7). */

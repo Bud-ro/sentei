@@ -10,11 +10,14 @@
 //   - github (github.ts discoverGithub): API listing + shallow clones.
 // writeDiscoverToDb replaces the whole org in the DB from that model.
 import { readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_POLICY, parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig } from './config.ts';
+import { defaultOrgConfig, parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig } from './config.ts';
 import { matchGlob } from './glob.ts';
-import { listFiles, readRepoManifests, type Manager, type ManifestPackage, type Visibility } from './manifests.ts';
+import {
+  DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readRepoManifests,
+  type Manager, type ManifestPackage, type Visibility,
+} from './manifests.ts';
 
 export interface DiscoverDep {
   name: string;
@@ -35,7 +38,29 @@ export interface DiscoverPackage {
   /** Relative to the REPO root, POSIX, sorted. */
   entryPoints: string[];
   deps: DiscoverDep[];
+  /** package_flags discover owns (today only `unindexed_consumer`); [] when none. */
+  flags: DiscoverFlag[];
 }
+
+export interface DiscoverFlag {
+  flag: 'unindexed_consumer';
+  reason: string;
+  /** Repo-relative POSIX path of the first offending file. */
+  file: string;
+}
+
+/**
+ * Extensions of programming languages we have no indexer for (PLAN §2: a consumer
+ * containing such code is `unindexed_consumer`, opaque). Read strictly as
+ * programming languages that can load an npm/pub package: shell scripts (.sh),
+ * YAML, JSON, Markdown, Dockerfiles and other config/data files are deliberately
+ * NOT listed. Compared case-insensitively.
+ */
+export const UNINDEXED_LANGUAGE_EXTS: ReadonlySet<string> = new Set([
+  '.py', '.go', '.rs', '.java', '.kt', '.kts', '.rb', '.php', '.cs', '.swift', '.c', '.cc', '.cpp',
+  '.h', '.hpp', '.m', '.mm', '.scala', '.ex', '.exs', '.clj', '.cljs', '.pl', '.pm', '.lua', '.erl',
+  '.hs', '.ml', '.fs', '.r', '.jl',
+]);
 
 export interface DiscoverRepo {
   repo: string;
@@ -180,9 +205,12 @@ export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
  */
 export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   const log = opts.log ?? (() => {});
-  const orgConfig = opts.orgConfigDir === null ? { policy: { ...DEFAULT_POLICY }, keep: [] } : readOrgConfig(opts.orgConfigDir);
+  const orgConfig = opts.orgConfigDir === null ? defaultOrgConfig() : readOrgConfig(opts.orgConfigDir);
+  const ignoreDirList = orgConfig.ignoreManifestDirs ?? DEFAULT_IGNORE_MANIFEST_DIRS;
+  const ignoreDirs: ReadonlySet<string> = new Set(ignoreDirList);
+  const usedIgnoreGlobs = new Set<string>();
 
-  const repos: Array<DiscoverRepo & { manifests: ManifestPackage[] }> = [];
+  const repos: Array<DiscoverRepo & { manifests: ManifestPackage[]; files: string[] }> = [];
   for (const r of [...opts.repos].sort((a, b) => cmp(a.name, b.name))) {
     const repo = `${opts.org}/${r.name}`;
     const localPath = r.localPath;
@@ -196,7 +224,15 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     const warn = (m: string): void => log(`warning: ${repo}: ${m}`);
     const config = readRepoConfig(localPath);
     const files = listFiles(localPath);
-    const manifests = readRepoManifests(localPath, warn, files);
+    const manifests = readRepoManifests(localPath, warn, files, {
+      ignoreDirs: ignoreDirList,
+      ignoreManifest: (manifest) => {
+        const hit = orgConfig.ignoreManifests.find((g) => matchGlob(g, `${r.name}/${manifest}`));
+        if (hit !== undefined) usedIgnoreGlobs.add(hit);
+        return hit !== undefined;
+      },
+      log: (m) => log(`${repo}: ${m}`),
+    });
 
     // Overlay extraEntryPoints (PLAN §7): each matched file joins its owning package's entry points.
     for (const glob of config.extraEntryPoints) {
@@ -221,23 +257,24 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       config,
       packages: [],
       manifests,
+      files,
     });
+  }
+  for (const g of orgConfig.ignoreManifests) {
+    if (!usedIgnoreGlobs.has(g)) log(`warning: org sentei.json ignoreManifests ${JSON.stringify(g)} matched no manifest`);
   }
 
   // (manager, name) must be unique across the org (PLAN §5.1): report every clash at once.
-  const owners = new Map<string, string[]>();
+  const owners = new Map<string, Array<{ loc: string; ignoreEntry: string }>>();
   for (const r of repos) {
+    const repoName = r.repo.slice(opts.org.length + 1);
     for (const m of r.manifests) {
       const id = `${m.manager}:${m.name}`;
-      const loc = `${r.repo}:${m.manifest}`;
-      owners.set(id, [...(owners.get(id) ?? []), loc]);
+      owners.set(id, [...(owners.get(id) ?? []), { loc: `${r.repo}:${m.manifest}`, ignoreEntry: `${repoName}/${m.manifest}` }]);
     }
   }
   const dups = [...owners].filter(([, locs]) => locs.length > 1);
-  if (dups.length > 0) {
-    throw new Error(`sentei: duplicate org package names (must be unique per manager):\n${
-      dups.map(([id, locs]) => `  ${id}: ${locs.join(', ')}`).join('\n')}`);
-  }
+  if (dups.length > 0) throw new Error(duplicateNamesMessage(dups));
 
   // Resolve deps by (manager, name). Path/workspace/file/link deps carry the target's
   // package name as the dep key, so name matching covers them too.
@@ -255,7 +292,17 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
         const id = `${d.manager}:${target}`;
         return { name: d.name, manager: d.manager, constraint: d.constraint, resolvedPackageId: owners.has(id) ? id : null };
       }),
+      flags: [],
     }));
+    // unindexed_consumer (PLAN §2, M4): an org-package consumer with code we cannot index.
+    for (const p of r.packages) {
+      if (!p.deps.some((d) => d.resolvedPackageId !== null)) continue;
+      const flag = unindexedConsumerFlag(p, r.packages, r.files, ignoreDirs);
+      if (flag) {
+        p.flags.push(flag);
+        log(`${r.repo}: ${p.packageId} flagged unindexed_consumer (${flag.reason})`);
+      }
+    }
   }
 
   return {
@@ -264,14 +311,51 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     generatedAt: opts.now ?? Math.floor(Date.now() / 1000),
     policy: orgConfig.policy,
     keep: orgConfig.keep,
-    repos: repos.map(({ manifests: _m, ...r }) => r),
+    repos: repos.map(({ manifests: _m, files: _f, ...r }) => r),
   };
+}
+
+/** The §5.1 duplicate-name error: every location, plus copy-pasteable `ignoreManifests` entries. */
+function duplicateNamesMessage(dups: Array<[string, Array<{ loc: string; ignoreEntry: string }>]>): string {
+  const lines = ['sentei: duplicate org package names (must be unique per manager):'];
+  for (const [id, locs] of dups) lines.push(`  ${id}: ${locs.map((l) => l.loc).join(', ')}`);
+  const entries = dups.flatMap(([, locs]) => locs.map((l) => l.ignoreEntry));
+  lines.push(
+    'Exactly one manifest per name may remain. If the others are templates, fixtures or examples',
+    '(not real org packages), exclude them in the org sentei.json. Candidates (keep the real',
+    "package's entry OUT of the list):",
+    `  "ignoreManifests": [${entries.map((e) => JSON.stringify(e)).join(', ')}]`,
+  );
+  return lines.join('\n');
+}
+
+/**
+ * First-file summary of files in unindexed languages owned by `pkg`: files under its
+ * dir, minus nested packages' dirs, SKIP_DIRS (already absent from `files`) and
+ * ignored manifest dirs. null if there are none.
+ */
+function unindexedConsumerFlag(
+  pkg: DiscoverPackage, repoPkgs: readonly DiscoverPackage[], files: readonly string[], ignoreDirs: ReadonlySet<string>,
+): DiscoverFlag | null {
+  const hits: string[] = [];
+  const byExt = new Map<string, number>();
+  for (const f of files) {
+    const ext = posix.extname(f).toLowerCase();
+    if (!UNINDEXED_LANGUAGE_EXTS.has(ext)) continue;
+    if (inIgnoredDir(f, ignoreDirs)) continue;
+    if (owningPackage(repoPkgs, f) !== pkg) continue;
+    hits.push(f);
+    byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
+  }
+  if (hits.length === 0) return null;
+  const counts = [...byExt].sort(([a], [b]) => cmp(a, b)).map(([ext, n]) => `${n} ${ext}`).join(', ');
+  return { flag: 'unindexed_consumer', reason: `${counts} file(s), e.g. ${hits[0]}`, file: hits[0]! };
 }
 
 /**
  * Replace the whole org in the DB from `model`, in one transaction:
  * repos (cascade root, so every derived row goes), packages, package_deps,
- * policy, keep_rules. Throws if PRAGMA foreign_key_check reports anything.
+ * discover-owned package_flags (unindexed_consumer), policy, keep_rules. Throws if PRAGMA foreign_key_check reports anything.
  */
 export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: (m: string) => void = () => {}): void {
   db.exec('BEGIN');
@@ -289,11 +373,14 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
       'INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     const insDep = db.prepare(
       'INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id) VALUES (?, ?, ?, ?, ?)');
+    // Discover-owned flags; ingest deletes and rebuilds only its own flags, so these survive it.
+    const insFlag = db.prepare('INSERT INTO package_flags (package_id, flag, reason, file) VALUES (?, ?, ?, ?)');
 
     for (const r of model.repos) {
       insRepo.run(r.repo, r.defaultBranch, r.headSha);
       for (const p of r.packages) {
         insPkg.run(p.packageId, r.repo, p.path, p.manager, p.name, p.version, p.visibility, JSON.stringify(p.entryPoints));
+        for (const f of p.flags) insFlag.run(p.packageId, f.flag, f.reason, f.file);
       }
     }
     // Deps after all packages so resolved_package_id FKs point at existing rows.

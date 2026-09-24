@@ -119,7 +119,8 @@
       "no_refs"
     ],
     "blocked_by": [
-      "npm:@acme/broken:index_failed"
+      "npm:@acme/broken:index_failed",
+      "npm:@acme/tool-py:unindexed_consumer"
     ]
   }
 ]

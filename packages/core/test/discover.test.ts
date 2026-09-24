@@ -35,11 +35,11 @@ describe('discoverLocal on fixtures/org-small', () => {
   it('builds the model and writes it to the DB', () => {
     const logs: string[] = [];
     const model = discoverLocal({ orgDir: FIXTURE, log: (l) => logs.push(l), now: 1_700_000_000 });
-    expect(logs).toEqual([]);
+    expect(logs).toEqual(['acme/tool-py: npm:@acme/tool-py flagged unindexed_consumer (1 .py file(s), e.g. scripts/build.py)']);
     expect(model.org).toBe('acme');
     expect(model.source).toEqual({ kind: 'local', dir: FIXTURE });
     expect(model.generatedAt).toBe(1_700_000_000);
-    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'lib-core', 'lib-dyn', 'lib-widgets', 'lib-y', 'repo-broken'];
+    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'lib-core', 'lib-dyn', 'lib-widgets', 'lib-y', 'repo-broken', 'tool-py'];
     expect(model.repos.map((r) => r.repo)).toEqual(REPOS.map((n) => `acme/${n}`));
     expect(model.repos[0]!.localPath).toBe(join(FIXTURE, 'repos', 'app'));
 
@@ -55,6 +55,7 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:@acme/consumer', repo: 'acme/app-consumer', path: '.', manager: 'npm', name: '@acme/consumer', version: '1.0.0', visibility: 'private', entry_points: '["src/main.ts"]' },
       { package_id: 'npm:@acme/core', repo: 'acme/lib-core', path: '.', manager: 'npm', name: '@acme/core', version: '1.0.0', visibility: 'private', entry_points: '["src/index.ts"]' },
       { package_id: 'npm:@acme/dyn', repo: 'acme/lib-dyn', path: '.', manager: 'npm', name: '@acme/dyn', version: '1.0.0', visibility: 'private', entry_points: '["src/index.ts"]' },
+      { package_id: 'npm:@acme/tool-py', repo: 'acme/tool-py', path: '.', manager: 'npm', name: '@acme/tool-py', version: '1.0.0', visibility: 'private', entry_points: '["src/main.ts"]' },
       // published-public (no "private"), exports map incl. a "./deep/*" pattern resolved against the filesystem
       { package_id: 'npm:@acme/widgets', repo: 'acme/lib-widgets', path: '.', manager: 'npm', name: '@acme/widgets', version: '1.0.0', visibility: 'published-public', entry_points: '["src/anon.ts","src/deep/thing.ts","src/index.ts","src/lazy.ts","src/unused-anon.ts"]' },
       { package_id: 'npm:@acme/y', repo: 'acme/lib-y', path: '.', manager: 'npm', name: '@acme/y', version: '1.0.0', visibility: 'private', entry_points: '["src/index.ts"]' },
@@ -66,6 +67,7 @@ describe('discoverLocal on fixtures/org-small', () => {
       { consumer_package_id: 'npm:@acme/broken', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
       { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/widgets' },
       { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
+      { consumer_package_id: 'npm:@acme/tool-py', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
       { consumer_package_id: 'npm:@acme/widgets', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
     ]);
     expect(all('SELECT key, value FROM policy ORDER BY key')).toEqual([
@@ -76,6 +78,12 @@ describe('discoverLocal on fixtures/org-small', () => {
       { key: 'trustPrivateRegistry', value: 'true' },
     ]);
     expect(all('SELECT * FROM keep_rules')).toEqual([{ package_id: 'npm:@acme/widgets', symbol_name: 'keptFn' }]);
+    expect(all('SELECT * FROM package_flags')).toEqual([
+      { package_id: 'npm:@acme/tool-py', flag: 'unindexed_consumer', reason: '1 .py file(s), e.g. scripts/build.py', file: 'scripts/build.py' },
+    ]);
+    expect(all('SELECT * FROM blocked_packages ORDER BY package_id')).toEqual([
+      { package_id: 'npm:@acme/y', blocker_package_id: 'npm:@acme/tool-py', flag: 'unindexed_consumer' },
+    ]);
   });
 
   it('is a whole-org rebuild: rerunning replaces rows (and cascades derived data)', () => {
@@ -84,7 +92,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/gone')").run();
     db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:@acme/core', 'src/index.ts', 'x')").run();
     writeDiscoverToDb(db, model);
-    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 9 }]);
+    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 10 }]);
     expect(all("SELECT count(*) AS n FROM repos WHERE repo = 'acme/gone'")).toEqual([{ n: 0 }]);
     expect(all('SELECT count(*) AS n FROM symbols')).toEqual([{ n: 0 }]);
   });
@@ -102,6 +110,106 @@ describe('discoverLocal on a synthetic org', () => {
     write('org/repos/b/packages/x/package.json', { name: '@acme/dup' });
     expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(
       /npm:@acme\/dup: acme\/a:package\.json, acme\/b:packages\/x\/package\.json/);
+  });
+
+  it('the clash message lists every location and copy-pasteable ignoreManifests suggestions', () => {
+    org(['hono', 'starter', 'vscode', 'examples']);
+    write('org/repos/hono/package.json', { name: 'hono' });
+    write('org/repos/starter/apps/vercel/package.json', { name: 'hono' });
+    write('org/repos/vscode/package.json', { name: 'hono' });
+    write('org/repos/starter/basic/package.json', { name: 'basic' });
+    write('org/repos/examples/package.json', { name: 'basic' });
+    let msg = '';
+    try {
+      discoverLocal({ orgDir: join(tmp, 'org') });
+    } catch (err) {
+      msg = (err as Error).message;
+    }
+    expect(msg).toContain('  npm:basic: acme/examples:package.json, acme/starter:basic/package.json\n');
+    expect(msg).toContain('  npm:hono: acme/hono:package.json, acme/starter:apps/vercel/package.json, acme/vscode:package.json\n');
+    const suggestion = /^ {2}("ignoreManifests": \[.*\])$/m.exec(msg)?.[1];
+    expect(JSON.parse(`{${suggestion}}`)).toEqual({
+      ignoreManifests: ['examples/package.json', 'starter/basic/package.json', 'hono/package.json', 'starter/apps/vercel/package.json', 'vscode/package.json'],
+    });
+  });
+
+  it('ignoreManifests globs (org sentei.json) remove clashing manifests; unused globs warn', () => {
+    org(['hono', 'starter', 'vscode'], { ignoreManifests: ['vscode/package.json', 'starter/apps/*/package.json', 'nope/**'] });
+    write('org/repos/hono/package.json', { name: 'hono' });
+    write('org/repos/starter/apps/vercel/package.json', { name: 'hono' });
+    write('org/repos/starter/apps/vercel/index.ts', '');
+    write('org/repos/vscode/package.json', { name: 'hono' });
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos.map((r) => [r.repo, r.packages.map((p) => p.packageId)])).toEqual([
+      ['acme/hono', ['npm:hono']], ['acme/starter', []], ['acme/vscode', []],
+    ]);
+    expect(logs).toContain('acme/vscode: skipped 1 manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): package.json');
+    expect(logs).toContain('warning: org sentei.json ignoreManifests "nope/**" matched no manifest');
+  });
+
+  it('manifests under default ignore dirs are not org packages (no clash); ignoreManifestDirs replaces the default', () => {
+    org(['hono', 'starter']);
+    write('org/repos/hono/package.json', { name: 'hono' });
+    write('org/repos/starter/templates/vercel/package.json', { name: 'hono' });
+    write('org/repos/starter/templates/vercel/index.ts', '');
+    write('org/repos/hono/index.ts', '');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos.flatMap((r) => r.packages.map((p) => p.packageId))).toEqual(['npm:hono']);
+    expect(logs).toEqual([
+      'acme/starter: skipped 1 manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): templates/vercel/package.json',
+    ]);
+    // An explicit list replaces the default: templates/ is now a real package, and clashes.
+    org(['hono', 'starter'], { ignoreManifestDirs: ['fixtures'] });
+    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/npm:hono: acme\/hono:package\.json, acme\/starter:templates\/vercel\/package\.json/);
+  });
+
+  describe('unindexed_consumer', () => {
+    function flags(m: ReturnType<typeof discoverLocal>): unknown[] {
+      writeDiscoverToDb(db, m);
+      return all('SELECT * FROM package_flags ORDER BY package_id');
+    }
+
+    it('flags an org-package consumer with code in a language we cannot index, and only that package', () => {
+      org(['lib', 'mono']);
+      write('org/repos/lib/package.json', { name: '@acme/lib' });
+      write('org/repos/lib/tools/gen.go', ''); // not a consumer of any org package: no flag
+      write('org/repos/mono/package.json', { name: 'root', private: true, dependencies: { '@acme/lib': '^1' } });
+      write('org/repos/mono/src/index.ts', '');
+      write('org/repos/mono/scripts/b.py', '');
+      write('org/repos/mono/scripts/a.py', '');
+      write('org/repos/mono/scripts/Tool.RB', '');
+      // Not the root package's: a nested package, SKIP_DIRS, ignored manifest dirs.
+      write('org/repos/mono/packages/n/package.json', { name: '@acme/n', dependencies: { '@acme/lib': '^1' } });
+      write('org/repos/mono/packages/n/index.ts', '');
+      write('org/repos/mono/node_modules/x/y.py', '');
+      write('org/repos/mono/tests/t.py', '');
+      write('org/repos/mono/examples/e/main.go', '');
+      const m = discoverLocal({ orgDir: join(tmp, 'org') });
+      const root = m.repos[1]!.packages.find((p) => p.packageId === 'npm:root')!;
+      expect(root.flags).toEqual([{ flag: 'unindexed_consumer', reason: '2 .py, 1 .rb file(s), e.g. scripts/Tool.RB', file: 'scripts/Tool.RB' }]);
+      expect(flags(m)).toEqual([
+        { package_id: 'npm:root', flag: 'unindexed_consumer', reason: '2 .py, 1 .rb file(s), e.g. scripts/Tool.RB', file: 'scripts/Tool.RB' },
+      ]);
+      expect(all('SELECT package_id, blocker_package_id, flag FROM blocked_packages')).toEqual([
+        { package_id: 'npm:@acme/lib', blocker_package_id: 'npm:root', flag: 'unindexed_consumer' },
+      ]);
+    });
+
+    it('is not set for shell/YAML/JSON/Markdown/Dockerfile-only consumers or for packages without org deps', () => {
+      org(['lib', 'app', 'third']);
+      write('org/repos/lib/package.json', { name: '@acme/lib' });
+      write('org/repos/app/package.json', { name: 'app', dependencies: { '@acme/lib': '^1' } });
+      for (const f of ['build.sh', 'ci.yaml', 'ci.yml', 'data.json', 'README.md', 'Dockerfile', 'Makefile', 'src/i.ts', 'src/x.dart']) {
+        write(`org/repos/app/${f}`, '');
+      }
+      write('org/repos/third/package.json', { name: 'third', dependencies: { lodash: '^4' } });
+      write('org/repos/third/main.py', '');
+      const m = discoverLocal({ orgDir: join(tmp, 'org') });
+      expect(m.repos.flatMap((r) => r.packages.map((p) => p.flags))).toEqual([[], [], []]);
+      expect(flags(m)).toEqual([]);
+    });
   });
 
   it('same name under different managers is allowed', () => {
@@ -180,6 +288,14 @@ describe('discoverLocal on a synthetic org', () => {
     expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/unknown key "minAgeDay"/);
     org(['a'], { assumeClosedWorld: 'yes' });
     expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/"assumeClosedWorld" must be a boolean/);
+    org(['a'], { ignoreManifestDir: ['x'] });
+    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/unknown key "ignoreManifestDir"/);
+    org(['a'], { ignoreManifestDirs: 'fixtures' });
+    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/"ignoreManifestDirs" must be an array of strings/);
+    org(['a'], { ignoreManifestDirs: ['a/b'] });
+    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/must be a single directory name/);
+    org(['a'], { ignoreManifests: ['package.json'] });
+    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/must be "<repo name>\/<manifest path>"/);
     org(['a'], {});
     write('org/repos/a/sentei.json', { extraEntryPoint: ['x'] });
     expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/unknown key "extraEntryPoint"/);
@@ -197,7 +313,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 9 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 10 }]);
   });
 });
 

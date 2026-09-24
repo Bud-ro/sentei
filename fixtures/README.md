@@ -31,13 +31,14 @@ Findings rows: `package_id`, `symbol`, `file` (repo-relative), `verdict`,
 | --- | --- | --- | --- |
 | `lib-core` | `@acme/core` | private | lib (M0) |
 | `app` | `@acme/app` | private | consumer of core (M0) |
-| `lib-y` | `@acme/y` | private | lib; consumed by widgets, consumer, broken |
+| `lib-y` | `@acme/y` | private | lib; consumed by widgets, consumer, broken, tool-py |
 | `lib-widgets` | `@acme/widgets` | **published-public** | lib with an `exports` map; depends on y |
 | `app-consumer` | `@acme/consumer` | private | consumer of widgets + y (all the static reference forms) |
 | `lib-dyn` | `@acme/dyn` | private | lib whose only consumer is dynamic |
 | `app-dynamic` | `@acme/app-dynamic` | private | flagged `namespace_dynamic` + `dynamic_access` |
 | `app-skew` | `@acme/app-skew` | private | pinned to widgets `1.0.0`, names a removed export |
 | `repo-broken` | `@acme/broken` | private | invalid `tsconfig.json` → index fails |
+| `tool-py` | `@acme/tool-py` | private | consumer of y with a Python file (`scripts/build.py`) → `unindexed_consumer` |
 
 Note: `lib-widgets` imports `@acme/y`, so it typechecks only with
 `node_modules/@acme/y` linked (as the indexer does). `app-skew` fails typecheck
@@ -67,10 +68,10 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | Private helper unlocked by a candidate | `lib-widgets/src/internal.ts` `unusedHelper` | private_dead `unlocked_by:internalUnused` (closed world only) |
 | Export used internally only → `unexport_candidate` | `lib-core/src/fns.ts` `internalOnlyFn` | unexport_candidate |
 | `"private": true` vs published-public → verdict differs | `@acme/core` (private) vs `@acme/widgets` (public); compare the two expected files | public ones become deprecation_candidate in open world |
-| Repo whose index fails → dependents' verdicts blocked naming it | `repo-broken` (invalid `tsconfig.json`) → `@acme/y#yUnused` | blocked, `blocked_by ["npm:@acme/broken:index_failed"]` |
+| Repo whose index fails → dependents' verdicts blocked naming it | `repo-broken` (invalid `tsconfig.json`) → `@acme/y#yUnused` | blocked, `blocked_by` includes `"npm:@acme/broken:index_failed"` (see `unindexed_consumer` below for the second blocker) |
 | Symbol younger than `minAgeDays` | — | TODO (M2: needs git history / blame) |
 | `keep` list suppresses a finding | `sentei.json` keep `npm:@acme/widgets#keptFn` (`lib-widgets/src/misc.ts`) | no row |
-| Non-indexed-language consumer → `unindexed_consumer` | — | TODO (later milestone) |
+| Non-indexed-language consumer → `unindexed_consumer` | `tool-py/scripts/build.py` (flag set by discover; `.sh`/YAML/JSON/Markdown do not count) → `@acme/y#yUnused` | blocked, `blocked_by ["npm:@acme/broken:index_failed", "npm:@acme/tool-py:unindexed_consumer"]` |
 | Witness: corrupted `.scip` drops a ref → `needs_review` / `witness_mismatch` | — | TODO (needs checked-in `.scip` snapshots) |
 | Dart items | — | TODO (Dart milestone) |
 

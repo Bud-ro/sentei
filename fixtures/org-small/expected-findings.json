@@ -11,5 +11,5 @@
   {"package_id": "npm:@acme/widgets", "symbol": "namespaceUnused", "file": "src/misc.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:@acme/widgets", "symbol": "testOnlyFn", "file": "src/misc.ts", "verdict": "deletion_candidate", "reasons": ["only_test_refs"]},
   {"package_id": "npm:@acme/widgets", "symbol": "unusedHelper", "file": "src/internal.ts", "verdict": "private_dead", "reasons": ["unlocked_by:internalUnused"]},
-  {"package_id": "npm:@acme/y", "symbol": "yUnused", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:@acme/broken:index_failed"]}
+  {"package_id": "npm:@acme/y", "symbol": "yUnused", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:@acme/broken:index_failed", "npm:@acme/tool-py:unindexed_consumer"]}
 ]

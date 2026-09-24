@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests } from '../src/manifests.ts';
+import { DEFAULT_IGNORE_MANIFEST_DIRS, listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests } from '../src/manifests.ts';
 
 let root: string;
 let warnings: string[];
@@ -31,6 +31,50 @@ describe('listFiles', () => {
     write('pkgs/a/node_modules/b/package.json', '{}');
     write('pkgs/a/src/x.ts');
     expect(listFiles(root)).toEqual(['pkgs/a/src/x.ts']);
+  });
+});
+
+describe('ignored manifest dirs', () => {
+  it('manifests under default ignore dirs (any depth) are skipped with one log line; their files are still listed', () => {
+    pkgJson('package.json', { name: 'real', main: 'src/index.ts' });
+    write('src/index.ts');
+    for (const d of DEFAULT_IGNORE_MANIFEST_DIRS) pkgJson(`pkgs/${d}/x/package.json`, { name: `dup-${d}` });
+    write('templates/vercel/pubspec.yaml', 'name: real\n');
+    write('templates/vercel/lib/a.dart');
+    write('examples/basic/src/main.ts');
+    pkgJson('packages/testing/package.json', { name: 'testing' }); // "testing" is not "test"
+    write('packages/testing/index.ts');
+    const logs: string[] = [];
+    const pkgs = readRepoManifests(root, warn, listFiles(root), { log: (l) => logs.push(l) });
+    expect(pkgs.map((p) => p.name)).toEqual(['real', 'testing']);
+    expect(logs).toEqual([
+      `skipped ${DEFAULT_IGNORE_MANIFEST_DIRS.length + 1} manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): `
+        + 'pkgs/__fixtures__/x/package.json, pkgs/__mocks__/x/package.json, pkgs/__tests__/x/package.json, ...',
+    ]);
+    expect(warnings).toEqual([]);
+    const files = listFiles(root);
+    expect(files).toContain('templates/vercel/lib/a.dart');
+    expect(files).toContain('examples/basic/src/main.ts');
+    expect(files).toContain('pkgs/fixtures/x/package.json');
+  });
+
+  it('a manifest directly inside an ignore dir is skipped too; the file name itself is not a dir segment', () => {
+    pkgJson('test/package.json', { name: 't' });
+    pkgJson('example/package.json', { name: 'e' });
+    expect(readRepoManifests(root, warn)).toEqual([]);
+  });
+
+  it('ignoreDirs replaces the default list; ignoreManifest rejects single manifests', () => {
+    pkgJson('fixtures/a/package.json', { name: 'a' });
+    pkgJson('gen/b/package.json', { name: 'b' });
+    pkgJson('c/package.json', { name: 'c' });
+    const logs: string[] = [];
+    const pkgs = readRepoManifests(root, warn, listFiles(root), {
+      ignoreDirs: ['gen'], ignoreManifest: (m) => m === 'c/package.json', log: (l) => logs.push(l),
+    });
+    expect(pkgs.map((p) => p.name)).toEqual(['a']);
+    expect(logs).toEqual(['skipped 2 manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): c/package.json, gen/b/package.json']);
+    expect(readRepoManifests(root, warn, listFiles(root), { ignoreDirs: [] }).map((p) => p.name)).toEqual(['c', 'a', 'b']);
   });
 });
 

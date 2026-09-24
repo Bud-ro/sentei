@@ -1,0 +1,10 @@
+{
+  "name": "@acme/tool-py",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "dependencies": {
+    "@acme/y": "^1.0.0"
+  }
+}
