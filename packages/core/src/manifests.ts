@@ -16,6 +16,12 @@ export interface ManifestDep {
   manager: Manager;
   /** Version string as written (npm), or pub constraint; `path:<rel>` for pub path deps. */
   constraint: string | null;
+  /**
+   * Present (true) only when the name appears ONLY in the dev block (npm
+   * `devDependencies`, pub `dev_dependencies`): a test-time dependency, whose uses
+   * from the consumer's test files count (analyze.sql `external_refs`).
+   */
+  dev?: true;
 }
 
 export interface ManifestPackage {
@@ -62,6 +68,7 @@ const MANIFEST_NAMES = ['package.json', 'pubspec.yaml'];
 export const DEFAULT_IGNORE_MANIFEST_DIRS: readonly string[] = Object.freeze([
   'fixtures', '__fixtures__', 'fixture', 'templates', 'template', 'examples', 'example',
   'benchmarks', 'bench', 'playground', 'playgrounds', 'sandbox', '__mocks__', 'test', 'tests', '__tests__',
+  'test_fixtures', 'test_fixture', 'testdata', 'test_data', 'golden', 'goldens',
 ]);
 
 /** True if any directory segment of repo-relative `file` is in `dirs` (the basename is not checked). */
@@ -325,7 +332,10 @@ export function readNpmPackage(
   };
 }
 
-/** npm deps: first non-dev field wins; devDependencies only if the name is nowhere else. Sorted by name. */
+/**
+ * npm deps: first non-dev field wins; devDependencies only if the name is nowhere else
+ * (then `dev: true`). Sorted by name.
+ */
 function npmDeps(json: Record<string, unknown>, manifest: string, warn: Warn): ManifestDep[] {
   const deps = new Map<string, ManifestDep>();
   for (const field of [...NPM_DEP_FIELDS_NON_DEV, 'devDependencies'] as const) {
@@ -337,7 +347,9 @@ function npmDeps(json: Record<string, unknown>, manifest: string, warn: Warn): M
     }
     for (const [dep, spec] of Object.entries(block)) {
       if (deps.has(dep)) continue;
-      deps.set(dep, { name: dep, manager: 'npm', constraint: typeof spec === 'string' ? spec : null });
+      const d: ManifestDep = { name: dep, manager: 'npm', constraint: typeof spec === 'string' ? spec : null };
+      if (field === 'devDependencies') d.dev = true;
+      deps.set(dep, d);
     }
   }
   return [...deps.values()].sort((a, b) => cmp(a.name, b.name));
@@ -510,7 +522,7 @@ export function readPubPackage(
   };
 }
 
-/** pub deps (dependencies, then dev_dependencies for names not already seen). Sorted by name. */
+/** pub deps (dependencies, then dev_dependencies for names not already seen, with `dev: true`). Sorted by name. */
 function pubDeps(doc: YamlMap, manifest: string, warn: Warn): ManifestDep[] {
   const deps = new Map<string, ManifestDep>();
   for (const field of ['dependencies', 'dev_dependencies'] as const) {
@@ -522,7 +534,9 @@ function pubDeps(doc: YamlMap, manifest: string, warn: Warn): ManifestDep[] {
     }
     for (const [dep, spec] of Object.entries(block)) {
       if (deps.has(dep)) continue;
-      deps.set(dep, { name: dep, manager: 'pub', constraint: pubConstraint(spec) });
+      const d: ManifestDep = { name: dep, manager: 'pub', constraint: pubConstraint(spec) };
+      if (field === 'dev_dependencies') d.dev = true;
+      deps.set(dep, d);
     }
   }
   return [...deps.values()].sort((a, b) => cmp(a.name, b.name));

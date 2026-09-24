@@ -76,6 +76,12 @@ describe('listFiles', () => {
 });
 
 describe('ignored manifest dirs', () => {
+  it('the default list covers test-data dirs (test_fixtures, testdata, goldens, …)', () => {
+    for (const d of ['test_fixtures', 'test_fixture', 'testdata', 'test_data', 'golden', 'goldens', 'fixtures', 'test']) {
+      expect(DEFAULT_IGNORE_MANIFEST_DIRS, d).toContain(d);
+    }
+  });
+
   it('readRepoManifestsWithIgnored returns skipped manifests with their deps; malformed ones only warn', () => {
     pkgJson('package.json', { name: 'real', main: 'src/index.ts' });
     write('src/index.ts');
@@ -90,7 +96,7 @@ describe('ignored manifest dirs', () => {
     expect(r.ignored).toEqual([
       { path: 'examples/demo', manifest: 'examples/demo/package.json', manager: 'npm', name: 'demo', depsUnknown: false, deps: [
         { name: 'real', manager: 'npm', constraint: '^1' },
-        { name: 'vitest', manager: 'npm', constraint: '^1' },
+        { name: 'vitest', manager: 'npm', constraint: '^1', dev: true },
       ] },
       { path: 'fixtures/bad', manifest: 'fixtures/bad/package.json', manager: 'npm', name: null, deps: [], depsUnknown: true },
       { path: 'gen/x', manifest: 'gen/x/package.json', manager: 'npm', name: null, depsUnknown: false, deps: [
@@ -98,7 +104,7 @@ describe('ignored manifest dirs', () => {
       ] },
       { path: 'templates/app', manifest: 'templates/app/pubspec.yaml', manager: 'pub', name: 'app', depsUnknown: false, deps: [
         { name: 'real_pub', manager: 'pub', constraint: 'path:../..' },
-        { name: 'test', manager: 'pub', constraint: 'any' },
+        { name: 'test', manager: 'pub', constraint: 'any', dev: true },
       ] },
     ]);
     expect(warnings).toHaveLength(1);
@@ -319,7 +325,7 @@ describe('npm manifests', () => {
     expect(npmVisibility({})).toBe('published-public');
   });
 
-  it('deps: all four fields, constraint verbatim, first non-dev field wins, sorted', () => {
+  it('deps: all four fields, constraint verbatim, first non-dev field wins, dev only when only in devDependencies, sorted', () => {
     pkgJson('package.json', {
       name: 'x', private: true,
       devDependencies: { z: '^9', shared: '^1-dev', onlydev: '1' },
@@ -332,9 +338,9 @@ describe('npm manifests', () => {
     expect(p!.deps).toEqual([
       { name: 'a', manager: 'npm', constraint: 'file:../a' },
       { name: 'b', manager: 'npm', constraint: 'workspace:*' },
-      { name: 'onlydev', manager: 'npm', constraint: '1' },
+      { name: 'onlydev', manager: 'npm', constraint: '1', dev: true },
       { name: 'shared', manager: 'npm', constraint: '>=1' },
-      { name: 'z', manager: 'npm', constraint: '^9' },
+      { name: 'z', manager: 'npm', constraint: '^9', dev: true },
     ]);
   });
 
@@ -407,7 +413,7 @@ flutter:
       { name: 'hosted_dep', manager: 'pub', constraint: '^3.0.0' },
       { name: 'http', manager: 'pub', constraint: '^1.0.0' },
       { name: 'quoted', manager: 'pub', constraint: '^2.0.0' },
-      { name: 'test', manager: 'pub', constraint: '^1.24.0' },
+      { name: 'test', manager: 'pub', constraint: '^1.24.0', dev: true },
     ]);
   });
 

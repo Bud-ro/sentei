@@ -121,10 +121,12 @@ export interface ExportsSidecar {
    */
   unindexedImports?: Array<{ file: string; module: string; targetPackage: string }>;
   /**
-   * Declarations the runtime invokes without any code reference (Dart `main()` in a
-   * `bin/` entry), at their name identifier (0-based, repo-relative file). Each gets an
-   * edge from its document's module symbol, so it is reachable from an entry document
-   * without being exported. Optional.
+   * Declarations the runtime or a tool invokes without any code reference (Dart `main()`
+   * of a script, a build.yaml builder factory, dart_dev's `config`), at their name
+   * identifier (0-based, repo-relative file). Each becomes an `entry_symbols` row (a
+   * reachability seed that never gets a verdict or a private_dead row, whether or not
+   * its file is an entry or it is exported) and keeps an edge from its document's
+   * module symbol. Optional.
    */
   entrySymbols?: Array<{ file: string; line: number; col: number; name: string }>;
 }
@@ -158,6 +160,16 @@ export interface IngestCounts {
   exportAliases: number;
   /** Sidecar entrySymbols that matched no definition (warned). */
   unmatchedEntrySymbols: number;
+  /**
+   * Packages whose .scip could not be used (undecodable, or containing unparseable SCIP
+   * symbols): flagged index_failed and skipped, the rest of the org ingested (warned).
+   */
+  packageErrors: number;
+  /**
+   * Occurrences dropped because their symbol does not parse but names a package outside
+   * the org (e.g. scip-dart's `dart:core … Map#[]=().`): ingest would drop them anyway.
+   */
+  skippedInvalidOccurrences: number;
   warnings: number;
 }
 
@@ -187,6 +199,8 @@ export function repoSlug(repo: string): string {
 
 interface PkgInfo {
   packageId: string;
+  /** `npm` / `pub`: the packageId prefix. */
+  manager: string;
   repo: string;
   path: string; // '' for the repo root, else 'a/b'
   entryPoints: Set<string>;
@@ -229,6 +243,86 @@ const KIND_NAMES = new Map<number, string>(
     .filter(([k, v]) => typeof v === 'number' && k !== 'UnspecifiedKind')
     .map(([k, v]) => [v as number, k.toLowerCase()]),
 );
+
+function managerOf(packageId: string): string {
+  return packageId.slice(0, packageId.indexOf(':'));
+}
+
+/**
+ * `<manager>:<name>` from the package components of a raw SCIP symbol string (scheme,
+ * manager, name; two spaces escape one), read tolerantly so that it works on a symbol
+ * whose descriptors do not parse. undefined when those components are not all there.
+ */
+function rawSymbolPackage(str: string): string | undefined {
+  const comps: string[] = [];
+  let cur = '';
+  for (let i = 0; i < str.length && comps.length < 3; i += 1) {
+    if (str[i] !== ' ') {
+      cur += str[i];
+    } else if (str[i + 1] === ' ') {
+      cur += ' ';
+      i += 1;
+    } else {
+      comps.push(cur);
+      cur = '';
+    }
+  }
+  if (comps.length < 3 || comps[0] === '') return undefined;
+  const dot = (c: string): string => (c === '.' ? '' : c);
+  return `${dot(comps[1]!)}:${dot(comps[2]!)}`;
+}
+
+/**
+ * Validate the occurrence symbols of one index (locals and '' skipped; `valid` caches
+ * strings known to parse). An unparseable symbol whose package is not an org package
+ * (`isOrg`) goes to `skipped` (its occurrences are dropped, counted in `skippedOccurrences`):
+ * ingest never interns a non-org symbol anyway. Any other unparseable symbol (an org
+ * package's, or one without a recognisable package) is returned in `bad`, first-seen
+ * order, deduplicated: it fails the package.
+ */
+function checkSymbols(
+  documents: readonly Document[], valid: Set<string>, skipped: Set<string>, isOrg: (packageId: string) => boolean,
+): { bad: string[]; skippedOccurrences: number } {
+  const bad = new Set<string>();
+  let skippedOccurrences = 0;
+  for (const doc of documents) {
+    for (const o of doc.occurrences) {
+      const s = o.symbol;
+      if (s === '' || s.startsWith('local ') || valid.has(s) || bad.has(s)) continue;
+      if (skipped.has(s)) {
+        skippedOccurrences += 1;
+        continue;
+      }
+      try {
+        const g = parseScipSymbol(s);
+        if (!g.local) parseDescriptors(g.descriptors);
+        valid.add(s);
+      } catch {
+        const pkg = rawSymbolPackage(s);
+        if (pkg !== undefined && !isOrg(pkg)) {
+          skipped.add(s);
+          skippedOccurrences += 1;
+        } else {
+          bad.add(s);
+        }
+      }
+    }
+  }
+  return { bad: [...bad], skippedOccurrences };
+}
+
+/**
+ * scip-dart (the fork, until fixed) defines every `import '…' as p` prefix as a symbol
+ * (`lib/\`a.dart\`/p.`, SymbolInformation kind Namespace): syntax, not a declaration,
+ * never exported and never dead code. Recognised as a scip-dart definition that is not
+ * the document's module symbol and is either of SCIP kind Namespace or has a namespace
+ * descriptor last (Dart has no namespace declarations). Other indexers are untouched
+ * (a TypeScript `namespace X {}` is a real declaration).
+ */
+function isImportPrefix(p: ParsedGlobal, scipKind: number, isModule: boolean): boolean {
+  if (p.scheme !== 'scip-dart' || isModule) return false;
+  return scipKind === SymbolInformation_Kind.Namespace || p.descriptors.at(-1)?.suffix === 'namespace';
+}
 
 function normPkgPath(p: string): string {
   const n = posix.normalize(p.replaceAll('\\', '/'));
@@ -311,19 +405,22 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     (db.prepare('SELECT package_id, repo FROM packages').all() as Array<{ package_id: string; repo: string }>)
       .map((r) => [r.package_id, r.repo]),
   );
+  if (dbPkgs.size === 0) throw new Error('sentei: ingest: the database has no packages; run discover first');
   for (const r of discover.repos) {
     for (const p of r.packages) {
       if (dbPkgs.get(p.packageId) !== r.repo) {
         throw new Error(`sentei: ingest: package ${p.packageId} (repo ${r.repo}) is not in the database; run discover first`);
       }
-      pkgs.set(p.packageId, { packageId: p.packageId, repo: r.repo, path: normPkgPath(p.path), entryPoints: new Set(p.entryPoints) });
+      pkgs.set(p.packageId, {
+        packageId: p.packageId, manager: managerOf(p.packageId), repo: r.repo, path: normPkgPath(p.path), entryPoints: new Set(p.entryPoints),
+      });
     }
   }
 
   const counts: IngestCounts = {
     documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0,
     namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, shorthandRefs: 0, unmatchedShorthandRefs: 0, exportAliases: 0,
-    unmatchedEntrySymbols: 0, warnings: 0,
+    unmatchedEntrySymbols: 0, packageErrors: 0, skippedInvalidOccurrences: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -336,9 +433,15 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     db.exec('DELETE FROM occurrences');
     db.exec('DELETE FROM unresolved_refs');
     db.exec('DELETE FROM documents');
+    db.exec('DELETE FROM entry_symbols');
     db.exec('DELETE FROM symbols');
     db.exec(`DELETE FROM package_flags WHERE flag IN (${INGEST_FLAGS.map((f) => `'${f}'`).join(', ')})
       OR (flag = 'unindexed_consumer' AND target_package_id IS NOT NULL)`);
+    // Findings are gone, so the DB is no longer analyzed (witness/report check this marker;
+    // run_params is created by analyze.sql, so it may not exist yet).
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_params'").get()) {
+      db.exec("DELETE FROM run_params WHERE key = 'analyzed_at'");
+    }
 
     const st = {
       flag: db.prepare('INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, ?, ?, ?, ?)'),
@@ -355,6 +458,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         VALUES (?, ?, ?, ?, ?, ?)`),
       exported: db.prepare('UPDATE symbols SET is_exported = 1 WHERE symbol_id = ?'),
       exportAlias: db.prepare('INSERT OR IGNORE INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)'),
+      entrySymbol: db.prepare('INSERT OR IGNORE INTO entry_symbols (symbol_id) VALUES (?)'),
     };
     const addFlag = (packageId: string, flag: IngestFlag, reason: string, file: string | null, target: string | null = null): void => {
       st.flag.run(packageId, flag, reason, file, target);
@@ -371,6 +475,10 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     /** `${repo}\0${file}\0${line}\0${col}` of export-clause identifiers (sidecar sites). */
     const exportSites = new Set<string>();
     const sidecars: Array<{ packageId: string; repo: string; data: ExportsSidecar }> = [];
+    /** Symbol strings already known to parse (shared across indexes). */
+    const validSymbols = new Set<string>();
+    /** Unparseable symbols of non-org packages: their occurrences are dropped (checkSymbols). */
+    const skippedSymbols = new Set<string>();
 
     for (const r of discover.repos) {
       const repoPkgs = r.packages.map((p) => pkgs.get(p.packageId)!).sort((a, b) => b.path.length - a.path.length);
@@ -414,6 +522,30 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           addFlag(pkg.packageId, 'index_failed', 'no .scip file', null);
           continue;
         }
+        // Decode and validate before using anything of this package: an undecodable
+        // index, or one with an occurrence whose ORG symbol does not parse (scip-dart emits
+        // e.g. `Foo#==().` unescaped), fails THIS package only (index_failed: opaque,
+        // blocks what it depends on), never the org. Its sidecar is not read either.
+        // Unparseable third-party symbols only lose their occurrences (checkSymbols).
+        let index: ReturnType<typeof readScipIndex>;
+        try {
+          index = readScipIndex(resolveFile(ip.scip));
+        } catch (err) {
+          const why = `unreadable .scip: ${(err as Error).message.split('\n')[0]}`;
+          warn(`${ip.packageId}: ${why}; flagged index_failed`);
+          addFlag(pkg.packageId, 'index_failed', why, null);
+          counts.packageErrors += 1;
+          continue;
+        }
+        const { bad, skippedOccurrences } = checkSymbols(index.documents, validSymbols, skippedSymbols, (id) => pkgs.has(id));
+        if (bad.length > 0) {
+          const why = `invalid SCIP symbol ${JSON.stringify(bad[0])}${bad.length > 1 ? ` (+${bad.length - 1} more)` : ''}`;
+          warn(`${ip.packageId}: ${bad.length} invalid SCIP symbol(s), e.g. ${JSON.stringify(bad[0])}; flagged index_failed, package skipped`);
+          addFlag(pkg.packageId, 'index_failed', why, null);
+          counts.packageErrors += 1;
+          continue;
+        }
+        counts.skippedInvalidOccurrences += skippedOccurrences;
         if (ip.exports && existsSync(resolveFile(ip.exports))) {
           const data = JSON.parse(readFileSync(resolveFile(ip.exports), 'utf8')) as ExportsSidecar;
           if (data.packageId !== ip.packageId) throw new Error(`sentei: ${ip.exports}: packageId ${data.packageId}, expected ${ip.packageId}`);
@@ -428,12 +560,15 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           addFlag(pkg.packageId, 'opaque_consumer', 'no exports sidecar', null);
         }
 
-        const index = readScipIndex(resolveFile(ip.scip));
+        // Owner of a document: the innermost enclosing package of the INDEX's manager (a
+        // Dart file seen by the pub index of a dir that also has a package.json belongs to
+        // the pub package), else the innermost enclosing package of any manager.
+        const encloses = (p: PkgInfo, file: string): boolean => p.path === '' || file === p.path || file.startsWith(`${p.path}/`);
         for (const doc of index.documents) {
           const file = posix.normalize(posix.join(pkg.path || '.', doc.relativePath.replaceAll('\\', '/')));
           if (file.startsWith('../') || file === '..' || posix.isAbsolute(file)) continue; // outside the repo
           if (file.split('/').includes('node_modules')) continue;
-          const owner = repoPkgs.find((p) => p.path === '' || file === p.path || file.startsWith(`${p.path}/`));
+          const owner = repoPkgs.find((p) => p.manager === pkg.manager && encloses(p, file)) ?? repoPkgs.find((p) => encloses(p, file));
           if (!owner) continue; // not under any org package of this repo
           const key = `${owner.packageId}\0${file}`;
           let list = docCandidates.get(key);
@@ -485,7 +620,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       let p = parsedCache.get(raw);
       if (p !== undefined) return p;
       p = null;
-      if (raw !== '' && !raw.startsWith('local ')) {
+      if (raw !== '' && !raw.startsWith('local ') && !skippedSymbols.has(raw)) {
         const g = parseScipSymbol(raw);
         if (!g.local) p = { scheme: g.scheme, manager: g.manager, name: g.name, descriptors: parseDescriptors(g.descriptors) };
       }
@@ -538,9 +673,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         if (!row) {
           const isModule = p.descriptors.every((d) => d.suffix === 'namespace')
             && isModulePath(p.descriptors.map((d) => d.name).join('/'), w);
+          const scipKind = symbolKinds(w).get(o.symbol) ?? 0;
           const kind = isAnonymousMember(p.descriptors)
             ? 'anonymous-member'
-            : KIND_NAMES.get(symbolKinds(w).get(o.symbol) ?? 0) ?? '';
+            : isImportPrefix(p, scipKind, isModule)
+              ? 'import-prefix'
+              : KIND_NAMES.get(scipKind) ?? '';
           const id = defineSymbol(w, norm, p, start.line, start.col, kind, isModule);
           row = symbols.get(norm)!;
           if (isModule && w.moduleSymbolId === 0) w.moduleSymbolId = id;
@@ -804,6 +942,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           continue;
         }
         edgeRun(st.edge, byId.get(w.moduleSymbolId)!, byId.get(id)!, 'scip');
+        st.entrySymbol.run(id); // a seed on its own: the file need not be an entry
       }
       for (const u of data.unresolved) {
         const reason = typeof u === 'string' ? u : (u.reason ?? JSON.stringify(u));
@@ -890,6 +1029,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
   counts.warnings = warnings;
   log(`[ingest] documents=${counts.documents} symbols=${counts.symbols} occurrences=${counts.occurrences} edges=${counts.edges} `
     + `exported=${counts.exported} unresolved=${counts.unresolved} flags=${counts.flags} unmatchedExports=${counts.unmatchedExports} `
-    + `namespaceMemberRefs=${counts.namespaceMemberRefs} shorthandRefs=${counts.shorthandRefs} exportAliases=${counts.exportAliases}`);
+    + `namespaceMemberRefs=${counts.namespaceMemberRefs} shorthandRefs=${counts.shorthandRefs} exportAliases=${counts.exportAliases}`
+    + (counts.packageErrors > 0 ? ` packageErrors=${counts.packageErrors}` : '')
+    + (counts.skippedInvalidOccurrences > 0 ? ` skippedInvalidOccurrences=${counts.skippedInvalidOccurrences}` : ''));
   return counts;
 }

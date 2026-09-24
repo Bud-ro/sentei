@@ -39,7 +39,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     expect(model.org).toBe('acme');
     expect(model.source).toEqual({ kind: 'local', dir: FIXTURE });
     expect(model.generatedAt).toBe(1_700_000_000);
-    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'lib-core', 'lib-dyn', 'lib-widgets', 'lib-y', 'repo-broken', 'tool-py'];
+    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'lib-core', 'lib-dyn', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'tool-py'];
     expect(model.repos.map((r) => r.repo)).toEqual(REPOS.map((n) => `acme/${n}`));
     expect(model.repos[0]!.localPath).toBe(join(FIXTURE, 'repos', 'app'));
 
@@ -55,20 +55,22 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:@acme/consumer', repo: 'acme/app-consumer', path: '.', manager: 'npm', name: '@acme/consumer', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       { package_id: 'npm:@acme/core', repo: 'acme/lib-core', path: '.', manager: 'npm', name: '@acme/core', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       { package_id: 'npm:@acme/dyn', repo: 'acme/lib-dyn', path: '.', manager: 'npm', name: '@acme/dyn', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
+      { package_id: 'npm:@acme/testkit', repo: 'acme/lib-testkit', path: '.', manager: 'npm', name: '@acme/testkit', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       { package_id: 'npm:@acme/tool-py', repo: 'acme/tool-py', path: '.', manager: 'npm', name: '@acme/tool-py', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       // published-public (no "private"), exports map incl. a "./deep/*" pattern resolved against the filesystem
       { package_id: 'npm:@acme/widgets', repo: 'acme/lib-widgets', path: '.', manager: 'npm', name: '@acme/widgets', version: '1.0.0', visibility: 'published-public', is_library: 1, entry_points: '["src/anon.ts","src/deep/thing.ts","src/index.ts","src/lazy.ts","src/unused-anon.ts"]' },
       { package_id: 'npm:@acme/y', repo: 'acme/lib-y', path: '.', manager: 'npm', name: '@acme/y', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
     ]);
     expect(all('SELECT * FROM package_deps ORDER BY consumer_package_id, dep_name')).toEqual([
-      { consumer_package_id: 'npm:@acme/app', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/core' },
-      { consumer_package_id: 'npm:@acme/app-dynamic', dep_name: '@acme/dyn', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/dyn' },
-      { consumer_package_id: 'npm:@acme/app-skew', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '1.0.0', resolved_package_id: 'npm:@acme/widgets' },
-      { consumer_package_id: 'npm:@acme/broken', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
-      { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/widgets' },
-      { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
-      { consumer_package_id: 'npm:@acme/tool-py', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
-      { consumer_package_id: 'npm:@acme/widgets', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
+      { consumer_package_id: 'npm:@acme/app', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/core', dev: 0 },
+      { consumer_package_id: 'npm:@acme/app-dynamic', dep_name: '@acme/dyn', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/dyn', dev: 0 },
+      { consumer_package_id: 'npm:@acme/app-skew', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '1.0.0', resolved_package_id: 'npm:@acme/widgets', dev: 0 },
+      { consumer_package_id: 'npm:@acme/broken', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y', dev: 0 },
+      { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/testkit', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/testkit', dev: 1 },
+      { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/widgets', dev: 0 },
+      { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y', dev: 0 },
+      { consumer_package_id: 'npm:@acme/tool-py', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y', dev: 0 },
+      { consumer_package_id: 'npm:@acme/widgets', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y', dev: 0 },
     ]);
     expect(all('SELECT key, value FROM policy ORDER BY key')).toEqual([
       { key: 'assumeClosedWorld', value: 'true' },
@@ -92,7 +94,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/gone')").run();
     db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:@acme/core', 'src/index.ts', 'x')").run();
     writeDiscoverToDb(db, model);
-    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 10 }]);
+    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 11 }]);
     expect(all("SELECT count(*) AS n FROM repos WHERE repo = 'acme/gone'")).toEqual([{ n: 0 }]);
     expect(all('SELECT count(*) AS n FROM symbols')).toEqual([{ n: 0 }]);
   });
@@ -186,7 +188,7 @@ describe('discoverLocal on a synthetic org', () => {
       name: 'demo',
       deps: [
         { name: '@acme/lib', manager: 'npm', constraint: 'workspace:*', resolvedPackageId: 'npm:@acme/lib' },
-        { name: 'aliased', manager: 'npm', constraint: 'npm:@acme/lib@^1', resolvedPackageId: 'npm:@acme/lib' },
+        { name: 'aliased', manager: 'npm', constraint: 'npm:@acme/lib@^1', resolvedPackageId: 'npm:@acme/lib', dev: true },
         { name: 'react', manager: 'npm', constraint: '^18', resolvedPackageId: null },
       ],
       depsUnknown: false,
@@ -304,7 +306,7 @@ describe('discoverLocal on a synthetic org', () => {
       { name: '@acme/a', manager: 'npm', constraint: 'workspace:^', resolvedPackageId: 'npm:@acme/a' },
       { name: 'aliased', manager: 'npm', constraint: 'npm:@acme/a@^1.0.0', resolvedPackageId: 'npm:@acme/a' },
       { name: 'lodash', manager: 'npm', constraint: '^4', resolvedPackageId: null },
-      { name: 'root', manager: 'npm', constraint: 'file:../..', resolvedPackageId: 'npm:root' },
+      { name: 'root', manager: 'npm', constraint: 'file:../..', resolvedPackageId: 'npm:root', dev: true },
     ]);
     expect(mono!.config.extraEdges).toEqual([{ from: 'file:packages/b/index.ts', to: 'npm:@acme/a#*' }]);
     expect(logs.some((l) => l.includes('"nothing/**" matched no files'))).toBe(true);
@@ -353,7 +355,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 10 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 11 }]);
   });
 });
 

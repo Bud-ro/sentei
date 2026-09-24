@@ -23,6 +23,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { requireIngested } from './analyze.ts';
 
 /** The part of work/discover.json (DiscoverModel) blame reads. */
 export interface BlameDiscoverInput {
@@ -189,6 +190,7 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
   const { db, discover, workDir, log } = opts;
   const concurrency = opts.concurrency ?? 8;
   const candidatesOnly = opts.only === 'candidates';
+  requireIngested(db, 'blame');
 
   const targets = db
     .prepare(

@@ -71,6 +71,15 @@
     ]
   },
   {
+    "package_id": "npm:@acme/testkit",
+    "symbol": "unusedKitHelper",
+    "file": "src/index.ts",
+    "verdict": "deletion_candidate",
+    "reasons": [
+      "no_refs"
+    ]
+  },
+  {
     "package_id": "npm:@acme/widgets",
     "symbol": "default",
     "file": "src/unused-anon.ts",

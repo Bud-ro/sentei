@@ -6,6 +6,7 @@
   {"package_id": "npm:@acme/core", "symbol": "unusedFn", "file": "src/fns.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:@acme/dyn", "symbol": "dynA", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:@acme/app-dynamic:dynamic_access", "npm:@acme/app-dynamic:namespace_dynamic"]},
   {"package_id": "npm:@acme/dyn", "symbol": "dynB", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:@acme/app-dynamic:dynamic_access", "npm:@acme/app-dynamic:namespace_dynamic"]},
+  {"package_id": "npm:@acme/testkit", "symbol": "unusedKitHelper", "file": "src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:@acme/widgets", "symbol": "default", "file": "src/unused-anon.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:@acme/widgets", "symbol": "internalUnused", "file": "src/internal.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:@acme/widgets", "symbol": "namespaceUnused", "file": "src/misc.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},

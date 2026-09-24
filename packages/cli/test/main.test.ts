@@ -171,9 +171,16 @@ describe('stage errors', () => {
 
 describe('timings and --quiet', () => {
   it('prints "[stage] done in Ns" after each stage', async () => {
-    const r = await run('analyze', '--work', freshWork());
+    const r = await run('discover', '--org-dir', path.join(FIXTURES, 'org-small'), '--work', freshWork());
+    expect(r.err).toBe('');
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/^\[analyze\] done in \d+\.\ds$/m);
+    expect(r.out).toMatch(/^\[discover\] done in \d+\.\ds$/m);
+  });
+
+  it('a later stage on a DB its predecessor never filled fails with what to run first', async () => {
+    const r = await run('analyze', '--work', freshWork());
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/^sentei analyze: .*run ingest first/);
   });
 
   it('run prints per-stage timings and a total line; --quiet keeps the summary only', async () => {

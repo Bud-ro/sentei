@@ -69,11 +69,15 @@
 // repo-relative path for org packages (as analyze does) and against the path relative
 // to the manifest dir for an ignored manifest (an example project under `examples/`
 // is itself the consumer being checked; its own tests/docs are still skipped).
+// Exception, mirroring analyze.sql `external_refs`: a consumer whose dependency on P is
+// dev-only (package_deps.dev = 1) has its test files scanned too, whatever
+// countTestsAsConsumers says (a test-support library is consumed by tests).
 // No hit → witness_ok row and a deletion_candidate (the schema triggers still guard
 // that insert).
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { requireAnalyzed } from './analyze.ts';
 import { matchGlob } from './glob.ts';
 import { DOCS_GLOBS, TEST_GLOBS } from './globs.ts';
 import { listFiles } from './manifests.ts';
@@ -330,6 +334,7 @@ function policyBool(db: DatabaseSync, key: string): boolean {
 export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   const { db, discover, log } = opts;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
+  requireAnalyzed(db, 'witness');
 
   const locs = new Map<string, ConsumerLoc>();
   /** Ignored-manifest consumers by resolved package id; `anyPackage` = deps unknown. */
@@ -365,9 +370,9 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
 
   const countTests = policyBool(db, 'countTestsAsConsumers');
   const countDocs = policyBool(db, 'countDocsAsConsumers');
-  const excluded = (relFile: string, globBase: string): boolean => {
+  const excluded = (relFile: string, globBase: string, withTests: boolean): boolean => {
     const f = globBase === '.' ? relFile : relFile.slice(globBase.length + 1);
-    return (!countTests && TEST_GLOBS.some((g) => matchGlob(g, f))) ||
+    return (!countTests && !withTests && TEST_GLOBS.some((g) => matchGlob(g, f))) ||
       (!countDocs && DOCS_GLOBS.some((g) => matchGlob(g, f)));
   };
 
@@ -376,12 +381,14 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
    * missing. The repo's files come from discover's listFiles (git ls-files in a
    * checkout, so ignored build output is skipped but a real package named `build` is
    * not), restricted to the consumer's dir minus org packages nested under it.
+   * `withTests`: keep test files even when countTestsAsConsumers is off (dev-only dep).
    */
   const repoFileCache = new Map<string, string[]>();
   const fileCache = new Map<string, string[] | null>();
   const under = (file: string, dir: string): boolean => dir === '.' || file.startsWith(`${dir}/`);
-  const consumerFiles = (consumer: string): string[] | null => {
-    if (fileCache.has(consumer)) return fileCache.get(consumer)!;
+  const consumerFiles = (consumer: string, withTests = false): string[] | null => {
+    const cacheKey = `${consumer}\0${withTests ? 1 : 0}`;
+    if (fileCache.has(cacheKey)) return fileCache.get(cacheKey)!;
     const loc = locs.get(consumer);
     let files: string[] | null = null;
     if (loc) {
@@ -392,11 +399,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         const nested = [...loc.nestedPaths].filter((q) => q !== loc.pkgPath && q !== '.' && under(q, loc.pkgPath));
         files = all
           .filter((f) => under(f, loc.pkgPath) && !nested.some((q) => under(f, q)))
-          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f, loc.globBase))
+          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f, loc.globBase, withTests))
           .sort(cmp);
       }
     }
-    fileCache.set(consumer, files);
+    fileCache.set(cacheKey, files);
     return files;
   };
 
@@ -411,10 +418,10 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return t;
   };
 
-  /** Files of C mentioning P (keyed C\0P). */
+  /** Files of C mentioning P (keyed C\0P\0withTests). */
   const mentionCache = new Map<string, string[]>();
-  const mentioning = (consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string): string[] => {
-    const key = `${consumer}\0${manager}:${pkgName}`;
+  const mentioning = (consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string, withTests: boolean): string[] => {
+    const key = `${consumer}\0${manager}:${pkgName}\0${withTests ? 1 : 0}`;
     let out = mentionCache.get(key);
     if (!out) {
       const res = mentionRegexes(manager, pkgName);
@@ -442,11 +449,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return out;
   };
 
-  const findHits = (row: PendingRow, plan: SearchPlan, consumer: string): Hit[] => {
-    const files = consumerFiles(consumer);
+  const findHits = (row: PendingRow, plan: SearchPlan, consumer: string, withTests = false): Hit[] => {
+    const files = consumerFiles(consumer, withTests);
     if (files === null) return [{ consumer, file: null, line: 0 }];
     const hits: Hit[] = [];
-    for (const f of mentioning(consumer, files, row.manager, row.pkg_name)) {
+    for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests)) {
       const text = readText(consumer, f);
       const lines = new Set<number>(nameLines(text, plan.names));
       if (plan.defaults) {
@@ -556,9 +563,10 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
        ORDER BY f.symbol_id`,
     )
     .all() as unknown as PendingRow[];
+  // dev = 1 when some dependency row of C on P is dev-only (same EXISTS rule as analyze.sql).
   const consumersOf = db.prepare(
-    `SELECT DISTINCT consumer_package_id AS c FROM package_deps
-     WHERE resolved_package_id = ? ORDER BY consumer_package_id`,
+    `SELECT consumer_package_id AS c, max(dev) AS dev FROM package_deps
+     WHERE resolved_package_id = ? GROUP BY consumer_package_id ORDER BY consumer_package_id`,
   );
   const del = db.prepare("DELETE FROM findings WHERE symbol_id = ? AND verdict = 'needs_review'");
   const insFinding = db.prepare('INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, ?, ?, ?)');
@@ -570,12 +578,12 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     for (const row of pending) {
       counts.checked += 1;
       const base = (JSON.parse(row.reasons) as string[]).filter((r) => r !== 'witness_pending');
-      const consumers = [
-        ...(consumersOf.all(row.package_id) as Array<{ c: string }>).map((r) => r.c),
-        ...new Set([...(ignoredConsumers.get(row.package_id) ?? []), ...ignoredAnyPackage]),
+      const consumers: Array<{ c: string; dev: boolean }> = [
+        ...(consumersOf.all(row.package_id) as Array<{ c: string; dev: number }>).map((r) => ({ c: r.c, dev: r.dev === 1 })),
+        ...[...new Set([...(ignoredConsumers.get(row.package_id) ?? []), ...ignoredAnyPackage])].map((c) => ({ c, dev: false })),
       ];
       const plan = planFor(row);
-      const hits = [...consumers.flatMap((c) => findHits(row, plan, c)), ...selfHits(row, plan)];
+      const hits = [...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev)), ...selfHits(row, plan)];
       del.run(row.symbol_id);
       if (hits.length > 0) {
         hits.sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);

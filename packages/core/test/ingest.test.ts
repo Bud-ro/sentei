@@ -5,7 +5,7 @@ import { create, toBinary } from '@bufbuild/protobuf';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.ts';
 import { ingestOrg, repoSlug, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
-import { IndexSchema } from '../src/scip/scip_pb.ts';
+import { IndexSchema, SymbolInformation_Kind } from '../src/scip/scip_pb.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
 function count(db: DatabaseSync, sql: string, ...params: Array<string | number>): number {
@@ -149,7 +149,7 @@ describe.skipIf(!scipTs)('ingestOrg on fixtures/org-small (scip-typescript)', ()
 // ---------------------------------------------------------------------------
 
 interface OccSpec { range: number[]; symbol: string; roles?: number; enclosing?: number[] }
-interface DocSpec { path: string; occurrences: OccSpec[] }
+interface DocSpec { path: string; occurrences: OccSpec[]; symbols?: Array<{ symbol: string; kind: SymbolInformation_Kind }> }
 
 const LIB = 'scip-typescript npm @acme/lib 2.0.0 ';
 const LIB_OLD = 'scip-typescript npm @acme/lib 1.0.0 ';
@@ -168,6 +168,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
       documents: docs.map((d) => ({
         relativePath: d.path,
         occurrences: d.occurrences.map((o) => ({ range: o.range, symbol: o.symbol, symbolRoles: o.roles ?? 0, enclosingRange: o.enclosing ?? [] })),
+        symbols: (d.symbols ?? []).map((x) => ({ symbol: x.symbol, kind: x.kind })),
       })),
     });
     writeFileSync(join(dir, file), toBinary(IndexSchema, idx));
@@ -783,7 +784,172 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", mod, bar)).toBe(1);
     expect(db.prepare('SELECT is_exported FROM symbols WHERE symbol_id = ?').get(bar)).toEqual({ is_exported: 0 });
     expect(c.unmatchedEntrySymbols).toBe(1);
+    expect(db.prepare('SELECT symbol_id FROM entry_symbols').all()).toEqual([{ symbol_id: bar }]);
     expect(logs.some((l) => /warning: 1 sidecar entry symbol\(s\) match no SCIP definition: npm:@acme\/lib nope at src\/a\.ts:41:1/.test(l))).toBe(true);
+  });
+
+  it('flags a package whose index has unparseable symbols index_failed and ingests the rest of the org', () => {
+    const BAD = [`${APP}src/\`main.ts\`/Foo#==().`, `${APP}null(tags)`];
+    writeScip('acme/mono', 'app.scip', [{
+      path: 'src/main.ts',
+      occurrences: [
+        { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 4, 1] },
+        { range: [3, 2, 5], symbol: BAD[0]!, roles: 1 },
+        { range: [3, 6, 9], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#bar().` },
+        { range: [4, 2, 5], symbol: BAD[1]! },
+        { range: [5, 2, 5], symbol: BAD[0]! },
+        { range: [6, 2, 5], symbol: 'scip-dart pub dart:core 3.11.0 dart:core/`map.dart`/Map#[]=().' }, // third-party: skipped
+      ],
+    }]);
+    const c = run();
+    expect(c.packageErrors).toBe(1);
+    expect(c.skippedInvalidOccurrences).toBe(0); // the whole package is skipped, not counted per occurrence
+    expect(db.prepare('SELECT package_id, flag, reason FROM package_flags').all()).toEqual([
+      { package_id: 'npm:@acme/app', flag: 'index_failed', reason: `invalid SCIP symbol ${JSON.stringify(BAD[0])} (+1 more)` },
+    ]);
+    // Nothing of the failed package (not even its sidecar); the rest of the org is ingested.
+    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:@acme/app'")).toBe(0);
+    expect(count(db, "SELECT count(*) AS n FROM symbols WHERE package_id = 'npm:@acme/app'")).toBe(0);
+    expect(db.prepare("SELECT name FROM symbols WHERE package_id = 'npm:@acme/lib' AND is_exported = 1 ORDER BY name").all())
+      .toEqual([{ name: 'Foo' }, { name: 'helper' }]);
+    expect(logs.some((l) => l.includes('npm:@acme/app: 2 invalid SCIP symbol(s)'))).toBe(true);
+    expect(logs.at(-1)).toMatch(/ packageErrors=1$/);
+
+    // An undecodable .scip fails its package the same way.
+    writeFileSync(join(workDir, 'index', 'acme__mono', 'app.scip'), Buffer.from([0xff, 0xff, 0xff, 0xff, 0x0f]));
+    const c2 = run();
+    expect(c2.packageErrors).toBe(1);
+    expect(db.prepare('SELECT package_id, flag, reason FROM package_flags').all()).toEqual([
+      { package_id: 'npm:@acme/app', flag: 'index_failed', reason: expect.stringMatching(/^unreadable \.scip: /) },
+    ]);
+    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:@acme/lib'")).toBe(1);
+  });
+
+  it('drops occurrences of unparseable third-party symbols (counted) without failing the package', () => {
+    const THIRD = ['scip-dart pub dart:core 3.11.0 dart:core/`map.dart`/Map#[]=().', 'scip-typescript npm left  pad 1.0.0 `x.ts`/a#==().'];
+    writeScip('acme/mono', 'app.scip', [{
+      path: 'src/main.ts',
+      occurrences: [
+        { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 4, 1] },
+        { range: [3, 2, 5], symbol: THIRD[0]! },
+        { range: [3, 6, 9], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#bar().` },
+        { range: [4, 2, 5], symbol: THIRD[0]! },
+        { range: [4, 6, 9], symbol: THIRD[1]! },
+      ],
+    }]);
+    const c = run();
+    expect(c.packageErrors).toBe(0);
+    expect(c.skippedInvalidOccurrences).toBe(3);
+    expect(count(db, 'SELECT count(*) AS n FROM package_flags')).toBe(0);
+    expect(count(db, "SELECT count(*) AS n FROM occurrences WHERE file = 'apps/app/src/main.ts'")).toBe(2); // main def + Foo#bar ref
+    expect(logs.at(-1)).toMatch(/ skippedInvalidOccurrences=3$/);
+    // A malformed symbol with no recognisable package still fails the package.
+    writeScip('acme/mono', 'app.scip', [{ path: 'src/main.ts', occurrences: [{ range: [0, 0, 1], symbol: 'scip-dart pub' }] }]);
+    expect(run().packageErrors).toBe(1);
+  });
+
+  it('gives a document to the package with the same manager as its index when an npm and a pub package share a dir', () => {
+    db.prepare("INSERT INTO repos (repo) VALUES ('acme/mix')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:mix', 'acme/mix', '.', 'npm', 'mix', 'private')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:mix', 'acme/mix', '.', 'pub', 'mix', 'private')").run();
+    const NPM = 'scip-typescript npm mix 1.0.0 ';
+    const PUB = 'scip-dart pub mix 1.0.0 ';
+    for (const order of [['npm', 'pub'], ['pub', 'npm']] as const) {
+      writeScip('acme/mix', 'npm.scip', [{ path: 'web/a.js', occurrences: [
+        { range: [0, 0, 0], symbol: `${NPM}web/\`a.js\`/`, roles: 1 },
+        { range: [1, 9, 12], symbol: `${NPM}web/\`a.js\`/jsFn().`, roles: 1 },
+      ] }]);
+      writeScip('acme/mix', 'pub.scip', [{ path: 'lib/a.dart', occurrences: [
+        { range: [0, 0, 0], symbol: `${PUB}lib/\`a.dart\`/`, roles: 1 },
+        { range: [1, 5, 11], symbol: `${PUB}lib/\`a.dart\`/dartFn().`, roles: 1 },
+      ] }]);
+      writeJson('acme/mix', 'npm.exports.json', sidecar('npm:mix'));
+      writeJson('acme/mix', 'pub.exports.json', sidecar('pub:mix'));
+      const entries = {
+        npm: { packageId: 'npm:mix', scip: 'npm.scip', exports: 'npm.exports.json' },
+        pub: { packageId: 'pub:mix', scip: 'pub.scip', exports: 'pub.exports.json' },
+      };
+      indexJson('acme/mix', order.map((m) => entries[m]));
+      const pkgsInOrder = order.map((m) => ({ packageId: `${m}:mix`, path: '.', entryPoints: [] }));
+      run({ repos: [...discover().repos, { repo: 'acme/mix', packages: pkgsInOrder }] });
+      expect(db.prepare("SELECT package_id, file FROM documents WHERE package_id LIKE '%:mix' ORDER BY package_id").all(), order.join()).toEqual([
+        { package_id: 'npm:mix', file: 'web/a.js' },
+        { package_id: 'pub:mix', file: 'lib/a.dart' },
+      ]);
+      expect(db.prepare("SELECT package_id, name FROM symbols WHERE name IN ('jsFn', 'dartFn') ORDER BY name").all()).toEqual([
+        { package_id: 'pub:mix', name: 'dartFn' },
+        { package_id: 'npm:mix', name: 'jsFn' },
+      ]);
+    }
+    // No same-manager package encloses the document: the longest-prefix rule still applies.
+    writeScip('acme/mono', 'lib.scip', [{ path: 'apps/app/src/x.ts', occurrences: [{ range: [0, 0, 0], symbol: `${APP}src/\`x.ts\`/`, roles: 1 }] }]);
+    writeScip('acme/mix', 'pub.scip', [{ path: '../tool/b.js', occurrences: [{ range: [0, 0, 0], symbol: `${NPM}tool/\`b.js\`/`, roles: 1 }] }]);
+    db.prepare("DELETE FROM packages WHERE package_id = 'npm:mix'").run();
+    db.prepare("UPDATE packages SET path = 'lib' WHERE package_id = 'pub:mix'").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:mix', 'acme/mix', '.', 'npm', 'mix', 'private')").run();
+    indexJson('acme/mix', [{ packageId: 'pub:mix', scip: 'pub.scip', exports: 'pub.exports.json' }, { packageId: 'npm:mix', status: 'failed' }]);
+    run({ repos: [...discover().repos, { repo: 'acme/mix', packages: [
+      { packageId: 'pub:mix', path: 'lib', entryPoints: [] }, { packageId: 'npm:mix', path: '.', entryPoints: [] },
+    ] }] });
+    // tool/b.js, seen by the pub index run in lib/: no pub package encloses it, the npm one at '.' does.
+    expect(db.prepare("SELECT package_id, file FROM documents WHERE package_id LIKE '%:mix'").all()).toEqual([{ package_id: 'npm:mix', file: 'tool/b.js' }]);
+    expect(db.prepare("SELECT package_id, file FROM documents WHERE file = 'apps/app/src/x.ts'").all()).toEqual([{ package_id: 'npm:@acme/app', file: 'apps/app/src/x.ts' }]);
+  });
+
+  it('marks scip-dart import prefixes (non-module namespaces) as kind import-prefix, and only those', () => {
+    db.prepare("INSERT INTO repos (repo) VALUES ('acme/dart')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:d', 'acme/dart', '.', 'pub', 'd', 'private')").run();
+    const D = 'scip-dart pub d 1.0.0 lib/`a.dart`/';
+    const NS = SymbolInformation_Kind.Namespace;
+    writeScip('acme/dart', 'd.scip', [{
+      path: 'lib/a.dart',
+      occurrences: [
+        { range: [0, 0, 0], symbol: D, roles: 1 },
+        { range: [1, 20, 22], symbol: `${D}$0.`, roles: 1 }, // import 'x.dart' as $0;
+        { range: [2, 20, 21], symbol: `${D}p.`, roles: 1 }, // import 'y.dart' as p;
+        { range: [3, 20, 21], symbol: `${D}q/`, roles: 1 }, // a fixed fork might emit a namespace descriptor
+        { range: [4, 5, 8], symbol: `${D}foo().`, roles: 1 },
+        { range: [5, 2, 4], symbol: `${D}$0.` },
+      ],
+      symbols: [{ symbol: D, kind: NS }, { symbol: `${D}$0.`, kind: NS }, { symbol: `${D}p.`, kind: NS }, { symbol: `${D}foo().`, kind: SymbolInformation_Kind.Function }],
+    }]);
+    writeJson('acme/dart', 'd.exports.json', sidecar('pub:d'));
+    indexJson('acme/dart', [{ packageId: 'pub:d', indexer: 'scip-dart', scip: 'd.scip', exports: 'd.exports.json' }]);
+    // A TypeScript namespace declaration of kind Namespace stays a namespace.
+    writeScip('acme/mono', 'lib.scip', [{
+      path: 'src/a.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 10, 12], symbol: `${LIB}src/\`a.ts\`/NS/`, roles: 1 },
+      ],
+      symbols: [{ symbol: `${LIB}src/\`a.ts\`/NS/`, kind: NS }],
+    }]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    const d = discover();
+    d.repos.push({ repo: 'acme/dart', packages: [{ packageId: 'pub:d', path: '.', entryPoints: ['lib/a.dart'] }] });
+    run(d);
+    expect(db.prepare("SELECT name, kind FROM symbols WHERE package_id IN ('pub:d', 'npm:@acme/lib') ORDER BY package_id, name").all()).toEqual([
+      { name: 'NS', kind: 'namespace' },
+      { name: 'src/a.ts', kind: '' },
+      { name: '$0', kind: 'import-prefix' },
+      { name: 'foo', kind: 'function' },
+      { name: 'lib/a.dart', kind: 'namespace' },
+      { name: 'p', kind: 'import-prefix' },
+      { name: 'q', kind: 'import-prefix' },
+    ]);
+  });
+
+  it('refuses to run before discover, and clears the analyzed marker', () => {
+    run();
+    db.exec("CREATE TABLE IF NOT EXISTS run_params (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT; INSERT INTO run_params VALUES ('analyzed_at', '1'), ('now', '1')");
+    run();
+    expect(db.prepare('SELECT key FROM run_params').all()).toEqual([{ key: 'now' }]);
+    const empty = openDb(':memory:');
+    try {
+      expect(() => ingestOrg({ db: empty, workDir, discover: { repos: [] }, log: () => {} })).toThrow(/no packages; run discover first/);
+    } finally {
+      empty.close();
+    }
   });
 
   it('leaves discover-owned rows and non-ingest flags alone, and is idempotent', () => {

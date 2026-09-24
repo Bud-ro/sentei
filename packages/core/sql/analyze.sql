@@ -12,7 +12,10 @@
 -- Query any of these directly against a work DB to debug a verdict, e.g.
 --   SELECT * FROM verdicts v JOIN symbols s USING (symbol_id) WHERE s.name = 'foo';
 
--- Per-run inputs that are not org policy. analyze.ts fills it: `now` (epoch seconds).
+-- Per-run inputs that are not org policy. analyze.ts fills it: `now` (epoch seconds)
+-- and `analyzed_at` (epoch seconds of the run, written last in the analyze
+-- transaction): the marker witness and report check so they never run on a DB that
+-- analyze has not processed (zero findings is a legitimate analyze result).
 CREATE TABLE IF NOT EXISTS run_params (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -45,6 +48,7 @@ DROP VIEW IF EXISTS owner_ref_occurrences;
 DROP VIEW IF EXISTS symbol_ancestors;
 DROP VIEW IF EXISTS symbol_owners;
 DROP VIEW IF EXISTS doc_files;
+DROP VIEW IF EXISTS generated_files;
 DROP VIEW IF EXISTS test_files;
 DROP VIEW IF EXISTS ref_occurrences;
 DROP VIEW IF EXISTS module_symbols;
@@ -114,6 +118,25 @@ WHERE ('/' || file) GLOB '*/docs/*'
    OR ('/' || file) GLOB '*/example/*'
    OR ('/' || file) GLOB '*/demo/*';
 
+-- Generated files (build_runner / protoc / freezed / mockito output, generated dirs):
+-- the SAME list as GENERATED_GLOBS in globs.ts (test/globs.test.ts checks). Nothing
+-- defined in them gets a verdict or a private_dead row (their declarations regenerate);
+-- references FROM them still count like any other file's.
+CREATE VIEW generated_files (package_id, file) AS
+SELECT package_id, file
+FROM documents
+WHERE substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.g.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pb.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbenum.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbjson.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbserver.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.freezed.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.mocks.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.over_react.g.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.generated.*'
+   OR ('/' || file) GLOB '*/generated/*'
+   OR ('/' || file) GLOB '*/__generated__/*';
+
 -- Structural owner of a symbol: its descriptor parent (Foo#bar(). -> Foo#), or the
 -- declaration whose body contains its definition (e.g. an object-literal property
 -- scip-typescript names `tag0:` inside function Widget). File pseudo-symbols are not
@@ -160,11 +183,18 @@ FROM ref_occurrences r
 JOIN symbol_ancestors a ON a.symbol_id = r.symbol_id;
 
 -- Cross-package uses (members count for their owners), tagged with whether the using
--- file is a test / docs file.
+-- file is a test / docs file, and whether the consumer declares the symbol's package
+-- ONLY as a dev dependency (package_deps.dev = 1): a test-support library's whole
+-- purpose is its consumers' tests, so those test uses count (external_refs).
 CREATE VIEW external_ref_occurrences AS
 SELECT r.symbol_id, r.member_symbol_id, r.package_id AS consumer_package_id, r.file, r.line, r.col,
        t.file IS NOT NULL AS in_test,
-       d.file IS NOT NULL AS in_docs
+       d.file IS NOT NULL AS in_docs,
+       EXISTS (SELECT 1 FROM symbols s
+               JOIN package_deps pd ON pd.resolved_package_id = s.package_id
+               WHERE s.symbol_id = r.symbol_id
+                 AND pd.consumer_package_id = r.package_id
+                 AND pd.dev = 1) AS dev_dep
 FROM owner_ref_occurrences r
 LEFT JOIN test_files t ON t.package_id = r.package_id AND t.file = r.file
 LEFT JOIN doc_files d ON d.package_id = r.package_id AND d.file = r.file
@@ -185,13 +215,14 @@ JOIN symbol_ancestors a ON a.symbol_id = e.to_symbol_id
 WHERE e.source = 'overlay';
 
 -- Counted cross-package references per consumer package. Test files count only with
--- countTestsAsConsumers, docs files only with countDocsAsConsumers.
+-- countTestsAsConsumers or when the consumer's dependency on the symbol's package is
+-- dev-only (dev_dep); docs files only with countDocsAsConsumers.
 CREATE VIEW external_refs (symbol_id, consumer_package_id, n) AS
 SELECT symbol_id, consumer_package_id, count(*)
 FROM (
   SELECT e.symbol_id, e.consumer_package_id
   FROM external_ref_occurrences e, analysis_params p
-  WHERE (NOT e.in_test OR p.count_tests) AND (NOT e.in_docs OR p.count_docs)
+  WHERE (NOT e.in_test OR p.count_tests OR e.dev_dep) AND (NOT e.in_docs OR p.count_docs)
   UNION ALL
   SELECT symbol_id, from_package_id FROM overlay_refs WHERE is_external
 )
@@ -232,10 +263,11 @@ GROUP BY symbol_id;
 -- Symbols with uses in excluded test files (any package, including their own) and no
 -- counted cross-package use: the report can say "delete the tests too" (reason
 -- only_test_refs). Counted internal uses may coexist (unexport + only_test_refs).
+-- A test use through a dev-only dependency is counted, never excluded.
 CREATE VIEW test_only_refs (symbol_id) AS
 SELECT e.symbol_id
 FROM external_ref_occurrences e, analysis_params p
-WHERE e.in_test AND NOT p.count_tests
+WHERE e.in_test AND NOT p.count_tests AND NOT e.dev_dep
 UNION
 SELECT i.symbol_id
 FROM internal_ref_occurrences i, analysis_params p
@@ -280,9 +312,11 @@ SELECT owner_id, symbol_id FROM symbol_owners
 UNION
 SELECT symbol_id, owner_id FROM symbol_owners;
 
--- Exported symbols + the file pseudo-symbols of entry documents.
+-- Exported symbols + runtime-invoked entry symbols + the file pseudo-symbols of entry documents.
 CREATE VIEW reach_seeds_before (symbol_id) AS
 SELECT symbol_id FROM symbols WHERE is_exported = 1
+UNION
+SELECT symbol_id FROM entry_symbols
 UNION
 SELECT module_symbol_id FROM documents WHERE is_entry = 1 AND module_symbol_id IS NOT NULL;
 
@@ -326,7 +360,8 @@ WHERE x.exported_as = 'default'
   AND NOT EXISTS (SELECT 1 FROM package_deps d WHERE d.resolved_package_id = s.package_id);
 
 -- Decision tree, per exported symbol S of package P not kept, not a runtime entry
--- default (runtime_entry_defaults) and with no counted external reference (those are
+-- default (runtime_entry_defaults), not a runtime-invoked entry symbol (entry_symbols), not defined in a generated file (generated_files:
+-- regenerated, never reported) and with no counted external reference (those are
 -- alive: no row):
 --   internal refs > 0:  closed_world & age ok -> unexport_candidate [internal_refs_only]
 --                       not closed_world      -> deprecation_candidate [internal_refs_only, open_world]
@@ -353,6 +388,8 @@ WITH base AS (
     AND NOT EXISTS (SELECT 1 FROM external_refs x WHERE x.symbol_id = s.symbol_id)
     AND NOT EXISTS (SELECT 1 FROM kept_symbols k WHERE k.symbol_id = s.symbol_id)
     AND NOT EXISTS (SELECT 1 FROM runtime_entry_defaults r WHERE r.symbol_id = s.symbol_id)
+    AND NOT EXISTS (SELECT 1 FROM entry_symbols e WHERE e.symbol_id = s.symbol_id)
+    AND NOT EXISTS (SELECT 1 FROM generated_files g WHERE g.package_id = s.package_id AND g.file = s.file)
 ),
 classified AS (
   SELECT symbol_id, package_id,
@@ -427,23 +464,31 @@ SELECT origin_id, symbol_id FROM reach;
 
 -- Symbols that may be reported private_dead: never exported, never a file symbol,
 -- never an anonymous-literal member (kind 'anonymous-member', set by ingest: members of
--- an anonymous object/type literal live and die with whatever contains it), not defined in a test/docs file (not entry points, so everything in them is
--- "unreachable"), not kept, and in a package we can see into (not opaque, not
--- blocked) that has at least one reachability seed (no entry and no export means
--- the entry points are unknown, not that everything is dead).
+-- an anonymous object/type literal live and die with whatever contains it), never an
+-- import prefix (kind 'import-prefix', set by ingest: scip-dart defines `import … as p`
+-- prefixes as symbols; they are syntax, not declarations), never a runtime-invoked
+-- entry symbol (entry_symbols; also a seed, so normally reachable anyway), not defined in a
+-- test/docs file (not entry points, so everything in them is "unreachable") or a
+-- generated file (regenerated, never reported), not kept, and in a package we can see
+-- into (not opaque, not blocked) that has at least one reachability seed (no entry and
+-- no export means the entry points are unknown, not that everything is dead).
 CREATE VIEW private_dead_eligible (symbol_id) AS
 SELECT s.symbol_id
 FROM symbols s
 WHERE s.is_exported = 0
   AND s.symbol_id NOT IN (SELECT symbol_id FROM module_symbols)
   AND s.kind IS NOT 'anonymous-member'
+  AND s.kind IS NOT 'import-prefix'
+  AND s.symbol_id NOT IN (SELECT symbol_id FROM entry_symbols)
   AND NOT EXISTS (SELECT 1 FROM test_files t WHERE t.package_id = s.package_id AND t.file = s.file)
+  AND NOT EXISTS (SELECT 1 FROM generated_files g WHERE g.package_id = s.package_id AND g.file = s.file)
   AND NOT EXISTS (SELECT 1 FROM doc_files d WHERE d.package_id = s.package_id AND d.file = s.file)
   AND s.symbol_id NOT IN (SELECT symbol_id FROM kept_symbols)
   AND s.package_id NOT IN (SELECT package_id FROM opaque_packages)
   AND s.package_id NOT IN (SELECT package_id FROM verdict_blockers)
   AND (EXISTS (SELECT 1 FROM symbols x WHERE x.package_id = s.package_id AND x.is_exported = 1)
-       OR EXISTS (SELECT 1 FROM documents d WHERE d.package_id = s.package_id AND d.is_entry = 1));
+       OR EXISTS (SELECT 1 FROM documents d WHERE d.package_id = s.package_id AND d.is_entry = 1)
+       OR EXISTS (SELECT 1 FROM entry_symbols e JOIN symbols x ON x.symbol_id = e.symbol_id WHERE x.package_id = s.package_id));
 
 -- Already dead before any removal: the private islands per-repo lints miss.
 CREATE VIEW unreachable_before (symbol_id) AS

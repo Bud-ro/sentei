@@ -33,8 +33,9 @@ Findings rows: `package_id`, `symbol`, `file` (repo-relative), `verdict`,
 | `app` | `@acme/app` | private | consumer of core (M0) |
 | `lib-y` | `@acme/y` | private | lib; consumed by widgets, consumer, broken, tool-py |
 | `lib-widgets` | `@acme/widgets` | **published-public** | lib with an `exports` map; depends on y |
-| `app-consumer` | `@acme/consumer` | private | consumer of widgets + y (all the static reference forms) |
+| `app-consumer` | `@acme/consumer` | private | consumer of widgets + y (all the static reference forms); `@acme/testkit` in `devDependencies` only |
 | `lib-dyn` | `@acme/dyn` | private | lib whose only consumer is dynamic |
+| `lib-testkit` | `@acme/testkit` | private | test-support lib; its only consumer uses it from a test file, as a dev dependency |
 | `app-dynamic` | `@acme/app-dynamic` | private | flagged `namespace_dynamic` + `dynamic_access` |
 | `app-skew` | `@acme/app-skew` | private | pinned to widgets `1.0.0`, names a removed export |
 | `repo-broken` | `@acme/broken` | private | invalid `tsconfig.json` → index fails |
@@ -62,6 +63,7 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | `import type` counts as a ref | `app-consumer/src/main.ts` → `WidgetOptions` | alive |
 | JSX `<Foo />` | `app-consumer/src/view.tsx` → `Widget` | alive |
 | Used only in `*.test.ts` of another repo → `only_test_refs` | `app-consumer/src/widgets.test.ts` → `testOnlyFn` | deletion_candidate `["only_test_refs"]` |
+| Used only in a test file of a consumer that declares the package only in `devDependencies` → counts | `app-consumer/src/widgets.test.ts` → `@acme/testkit#renderHelper`; `unusedKitHelper` never used | `renderHelper` alive; `unusedKitHelper` deletion_candidate `["no_refs"]` (the witness scans the test file too) |
 | Duplicate org package name → discover error | `fixtures/org-dup` (`one`, `two` both `@acme/dup`) | discover fails |
 | Consumer pinned to old P, refs symbol gone at HEAD → `version_skew` | `app-skew/src/main.ts` → `removedFn` | version_skew row on `@acme/app-skew`; `internalUsed` still alive |
 | Private circular island | `lib-core/src/fns.ts` `islandA`/`islandB` | private_dead `already_unreachable` |

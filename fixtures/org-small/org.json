@@ -7,6 +7,7 @@
     { "name": "app-skew", "default_branch": "main" },
     { "name": "lib-core", "default_branch": "main" },
     { "name": "lib-dyn", "default_branch": "main" },
+    { "name": "lib-testkit", "default_branch": "main" },
     { "name": "lib-widgets", "default_branch": "main" },
     { "name": "lib-y", "default_branch": "main" },
     { "name": "repo-broken", "default_branch": "main" },

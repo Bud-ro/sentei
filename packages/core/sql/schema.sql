@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS package_deps (
   dep_manager         TEXT NOT NULL CHECK (dep_manager IN ('npm', 'pub')),
   dep_constraint      TEXT,                      -- "constraint" is reserved in SQL
   resolved_package_id TEXT REFERENCES packages (package_id) ON DELETE SET NULL,
+  -- 1 = declared ONLY as a dev dependency (npm devDependencies / pub dev_dependencies):
+  -- the consumer's test files are then real consumers of the target (analyze.sql).
+  dev                 INTEGER NOT NULL DEFAULT 0 CHECK (dev IN (0, 1)),
   PRIMARY KEY (consumer_package_id, dep_manager, dep_name)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS package_deps_resolved ON package_deps (resolved_package_id);
@@ -116,6 +119,13 @@ CREATE TABLE IF NOT EXISTS symbol_exports (
   entry_file  TEXT NOT NULL,                     -- repo-relative entry point
   exported_as TEXT NOT NULL,                     -- `ns.x` for namespace re-exports
   PRIMARY KEY (symbol_id, entry_file, exported_as)
+) STRICT;
+
+-- Declarations the runtime or a tool invokes by name with no code reference (sidecar
+-- `entrySymbols`: Dart `main` of a script, a build.yaml builder factory, dart_dev's
+-- `config`). Reachability seeds; never given a verdict or a private_dead row.
+CREATE TABLE IF NOT EXISTS entry_symbols (
+  symbol_id INTEGER PRIMARY KEY REFERENCES symbols (symbol_id) ON DELETE CASCADE
 ) STRICT;
 
 -- Reachability graph: enclosing symbol -> referenced symbol, from SCIP or explicit overlays.

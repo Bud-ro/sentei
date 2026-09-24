@@ -25,6 +25,8 @@ export interface DiscoverDep {
   constraint: string | null;
   /** Org package this dep points at, or null for third-party deps. */
   resolvedPackageId: string | null;
+  /** Present (true) when declared only as a dev dependency (ManifestDep.dev). */
+  dev?: true;
 }
 
 export interface DiscoverPackage {
@@ -302,10 +304,12 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
 
   // Resolve deps by (manager, name). Path/workspace/file/link deps carry the target's
   // package name as the dep key, so name matching covers them too.
-  const resolveDep = (d: { name: string; manager: Manager; constraint: string | null }): DiscoverDep => {
+  const resolveDep = (d: { name: string; manager: Manager; constraint: string | null; dev?: true }): DiscoverDep => {
     const target = d.manager === 'npm' ? npmTargetName(d.name, d.constraint) : d.name;
     const id = `${d.manager}:${target}`;
-    return { name: d.name, manager: d.manager, constraint: d.constraint, resolvedPackageId: owners.has(id) ? id : null };
+    const out: DiscoverDep = { name: d.name, manager: d.manager, constraint: d.constraint, resolvedPackageId: owners.has(id) ? id : null };
+    if (d.dev === true) out.dev = true;
+    return out;
   };
   for (const r of repos) {
     r.ignoredManifests = r.ignored.map((m): DiscoverIgnoredManifest => ({
@@ -406,7 +410,7 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
     const insPkg = db.prepare(
       'INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, is_library, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const insDep = db.prepare(
-      'INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id) VALUES (?, ?, ?, ?, ?)');
+      'INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id, dev) VALUES (?, ?, ?, ?, ?, ?)');
     // Discover-owned flags; ingest deletes and rebuilds only its own flags, so these survive it.
     const insFlag = db.prepare('INSERT INTO package_flags (package_id, flag, reason, file) VALUES (?, ?, ?, ?)');
 
@@ -420,7 +424,7 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
     // Deps after all packages so resolved_package_id FKs point at existing rows.
     for (const r of model.repos) {
       for (const p of r.packages) {
-        for (const d of p.deps) insDep.run(p.packageId, d.name, d.manager, d.constraint, d.resolvedPackageId);
+        for (const d of p.deps) insDep.run(p.packageId, d.name, d.manager, d.constraint, d.resolvedPackageId, d.dev === true ? 1 : 0);
       }
     }
 

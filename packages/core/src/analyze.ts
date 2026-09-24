@@ -30,6 +30,22 @@ export interface AnalyzeCounts {
   total: number;
 }
 
+/** Throws unless ingest has produced symbols (a stage run on an un-ingested DB would silently report nothing). */
+export function requireIngested(db: DatabaseSync, stage: string): void {
+  const row = db.prepare('SELECT EXISTS (SELECT 1 FROM symbols) AS n').get() as { n: number };
+  if (row.n === 0) throw new Error(`sentei ${stage}: the database has no symbols; run ingest first`);
+}
+
+/**
+ * Throws unless analyze has run on this DB since the last ingest (run_params
+ * `analyzed_at`; ingest clears it). Zero findings after analyze is fine.
+ */
+export function requireAnalyzed(db: DatabaseSync, stage: string): void {
+  const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_params'").get();
+  const marker = hasTable ? db.prepare("SELECT 1 FROM run_params WHERE key = 'analyzed_at'").get() : undefined;
+  if (!marker) throw new Error(`sentei ${stage}: the database has not been analyzed; run analyze first`);
+}
+
 /**
  * Recompute every finding for the whole org in one transaction: delete findings and
  * witness_ok, set symbols.is_entry_reachable, insert the `verdicts` rows, then the
@@ -39,6 +55,8 @@ export function analyzeOrg(opts: AnalyzeOptions): AnalyzeCounts {
   const { db, log } = opts;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   if (!Number.isSafeInteger(now)) throw new Error(`sentei: analyze: now must be integer epoch seconds, got ${now}`);
+
+  requireIngested(db, 'analyze');
 
   const counts: AnalyzeCounts = { byVerdict: {}, reachable: 0, total: 0 };
   db.exec('BEGIN');
@@ -58,6 +76,8 @@ export function analyzeOrg(opts: AnalyzeOptions): AnalyzeCounts {
 
     const violations = db.prepare('PRAGMA foreign_key_check').all();
     if (violations.length > 0) throw new Error(`sentei: foreign_key_check failed after analyze: ${JSON.stringify(violations)}`);
+    // Written last: witness and report refuse a DB without it (requireAnalyzed).
+    db.prepare("INSERT INTO run_params (key, value) VALUES ('analyzed_at', ?)").run(String(Math.floor(Date.now() / 1000)));
 
     for (const r of db.prepare('SELECT verdict, count(*) AS n FROM findings GROUP BY verdict ORDER BY verdict').all() as Array<{ verdict: string; n: number }>) {
       counts.byVerdict[r.verdict] = r.n;

@@ -128,6 +128,15 @@ describe('parseBlamePorcelain', () => {
 });
 
 describe('runBlame', () => {
+  it('refuses to run before ingest (no symbols)', async () => {
+    const db = openDb(':memory:');
+    try {
+      await expect(runBlame({ db, discover: { repos: [] }, workDir: tmp(), log: () => {} })).rejects.toThrow(/no symbols; run ingest first/);
+    } finally {
+      db.close();
+    }
+  });
+
   it('dates exported symbols by blame of line+1, caches, and reads the cache back', async () => {
     const root = tmp();
     const dir = join(root, 'lib');

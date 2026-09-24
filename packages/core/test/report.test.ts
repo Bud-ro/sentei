@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { ASSUME_CLOSED_WORLD_WARNING, buildReport, formatSummary, formatTable, skewSymbolName } from '../src/report.ts';
 
@@ -73,7 +74,14 @@ function addSkew(consumer: string, target: string, symbolStr: string, file: stri
  *   acme/repo-broken failed  npm:@acme/broken (index_failed; consumer of core)
  *   acme/app-dyn    partial  npm:@acme/dyn (namespace_dynamic + dynamic_access; consumer of pub)
  */
+/** What analyzeOrg leaves behind besides findings: the views and the analyzed_at marker. */
+function markAnalyzed(d: DatabaseSync): void {
+  d.exec(analyzeSql());
+  d.prepare("INSERT OR REPLACE INTO run_params (key, value) VALUES ('analyzed_at', '0')").run();
+}
+
 function seed(): void {
+  markAnalyzed(db);
   setPolicy('minAgeDays', 0);
   setPolicy('assumeClosedWorld', true);
   addRepo('acme/lib-core', 'sha-core', 'ok');
@@ -273,6 +281,7 @@ describe('formatSummary', () => {
     const empty = openDb(':memory:');
     try {
       empty.prepare("UPDATE policy SET value = '180' WHERE key = 'minAgeDays'").run();
+      markAnalyzed(empty);
       const text = formatSummary(buildReport({ db: empty, now: NOW }));
       expect(text).not.toContain('WARNING');
       expect(text).toContain('Top blockers (opaque consumers preventing verdicts; fix these first)\n  none\n');
@@ -280,6 +289,30 @@ describe('formatSummary', () => {
     } finally {
       empty.close();
     }
+  });
+});
+
+describe('buildReport guards and skew filtering', () => {
+  it('refuses a DB that analyze has not processed', () => {
+    const fresh = openDb(':memory:');
+    try {
+      expect(() => buildReport({ db: fresh, now: NOW })).toThrow(/not been analyzed; run analyze first/);
+    } finally {
+      fresh.close();
+    }
+  });
+
+  it('drops version skew into a package whose index failed, with a warning counting it', () => {
+    const app = 'npm:@acme/app';
+    const broken = 'npm:@acme/broken';
+    addSkew(app, broken, 'scip-typescript npm @acme/broken . src/`index.ts`/anything().', 'src/main.ts', 1, 0);
+    addSkew(app, broken, 'brokenName', 'src/main.ts', 2, 0);
+    const r = buildReport({ db, now: NOW });
+    expect(r.versionSkew.map((v) => v.target_package_id)).not.toContain(broken);
+    expect(r.versionSkew).toHaveLength(3); // the seed's rows into healthy packages stay
+    expect(r.warnings).toContain(
+      '2 unresolved reference(s) into package(s) whose index failed (npm:@acme/broken) not reported as version skew: their definitions are unknown, not missing',
+    );
   });
 });
 

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
+import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { runWitness, stringLiterals, type WitnessDiscoverInput } from '../src/witness.ts';
 
@@ -22,6 +23,10 @@ interface OrgSpec {
   keep?: string[];
   /** Consumer checkout does not exist on disk. */
   missingCheckout?: boolean;
+  /** The consumer declares P only as a dev dependency (package_deps.dev = 1). */
+  devDep?: boolean;
+  /** Leave out the analyze marker (run_params analyzed_at). */
+  notAnalyzed?: boolean;
 }
 
 interface Org {
@@ -72,7 +77,7 @@ function buildOrg(spec: OrgSpec): Org {
   // Another org package nested inside the consumer's dir: its files must be skipped.
   const nestedName = manager === 'npm' ? '@acme/nested' : 'nested_pub';
   run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/app', 'pkg/nested', ?, ?, 'private')", `${manager}:${nestedName}`, manager, nestedName);
-  run('INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, ?, ?, ?)', C, libName, manager, P);
+  run('INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id, dev) VALUES (?, ?, ?, ?, ?)', C, libName, manager, P, spec.devDep ? 1 : 0);
   for (const [k, v] of Object.entries(spec.policy ?? {})) run('INSERT OR REPLACE INTO policy (key, value) VALUES (?, ?)', k, JSON.stringify(v));
   for (const k of spec.keep ?? []) run('INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, ?)', P, k);
 
@@ -90,6 +95,8 @@ function buildOrg(spec: OrgSpec): Org {
     }
     run("INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, 'needs_review', ?, '[]')", id, JSON.stringify(['no_refs', 'witness_pending']));
   }
+  db.exec(analyzeSql());
+  if (!spec.notAnalyzed) run("INSERT INTO run_params (key, value) VALUES ('analyzed_at', '0')");
 
   const discover: WitnessDiscoverInput = {
     repos: [
@@ -220,6 +227,28 @@ describe('runWitness', () => {
       'witness_mismatch:npm:@acme/app:pkg/src/lib.test.ts:2',
     ]);
     expectMismatch(on, on.ids['docOnly']!, ['witness_mismatch:npm:@acme/app:pkg/docs/example.ts:1']);
+  });
+
+  it('scans test files of a consumer whose dependency on P is dev-only (docs stay skipped)', () => {
+    const files = {
+      'src/lib.test.ts': "import { testOnly } from '@acme/lib';\ntestOnly();\n",
+      'docs/example.ts': "import { docOnly } from '@acme/lib';\n",
+    };
+    const org = buildOrg({ symbols: [{ name: 'testOnly' }, { name: 'docOnly' }, { name: 'unnamed' }], files, devDep: true });
+    expect(witness(org)).toEqual({ checked: 3, passed: 2, mismatched: 1 });
+    expectMismatch(org, org.ids['testOnly']!, [
+      'witness_mismatch:npm:@acme/app:pkg/src/lib.test.ts:1',
+      'witness_mismatch:npm:@acme/app:pkg/src/lib.test.ts:2',
+    ]);
+    expectPass(org, org.ids['docOnly']!);
+    expectPass(org, org.ids['unnamed']!);
+  });
+
+  it('refuses to run on a DB analyze has not processed, but accepts an analyzed DB with no findings', () => {
+    const org = buildOrg({ symbols: [{ name: 'deadFn' }], notAnalyzed: true });
+    expect(() => witness(org)).toThrow(/not been analyzed; run analyze first/);
+    const none = buildOrg({ symbols: [] });
+    expect(witness(none)).toEqual({ checked: 0, passed: 0, mismatched: 0 });
   });
 
   it('detects a multi-line import statement', () => {

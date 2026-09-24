@@ -257,6 +257,111 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([]);
   });
 
+  it('counts consumer test-file refs into a package the consumer declares only as a dev dependency', () => {
+    const kit = pkg('@acme/testkit');
+    dep(app, kit);
+    run('UPDATE package_deps SET dev = 1 WHERE consumer_package_id = ? AND resolved_package_id = ?', app, kit);
+    doc(kit, 'src/index.ts', true);
+    const helper = sym(kit, 'src/index.ts', 'renderHelper', { exported: true });
+    sym(kit, 'src/index.ts', 'unusedKit', { exported: true });
+    const testOnly = sym(lib, 'src/fns.ts', 'testOnly', { exported: true }); // lib is a regular dependency
+    const testMod = doc(app, 'src/widgets.test.ts');
+    use(testMod, helper, 'src/widgets.test.ts');
+    use(testMod, testOnly, 'src/widgets.test.ts');
+    analyze();
+    expect(findings()).toEqual([
+      f('testOnly', 'needs_review', ['only_test_refs', 'witness_pending']),
+      f('unusedKit', 'needs_review', DELETE),
+    ]);
+    expect(db.prepare('SELECT symbol_id, consumer_package_id FROM external_refs').all()).toEqual([{ symbol_id: helper, consumer_package_id: app }]);
+    expect(db.prepare('SELECT symbol_id FROM test_only_refs').all()).toEqual([{ symbol_id: testOnly }]);
+
+    // Also a regular dependency (dev = 0): the test use no longer counts.
+    run('UPDATE package_deps SET dev = 0 WHERE consumer_package_id = ? AND resolved_package_id = ?', app, kit);
+    analyze();
+    expect(findings().map((r) => [r.name, r.reasons])).toEqual([
+      ['testOnly', ['only_test_refs', 'witness_pending']],
+      ['renderHelper', ['only_test_refs', 'witness_pending']],
+      ['unusedKit', DELETE],
+    ]);
+  });
+
+  it('a dev dependency does not make its docs-file uses count', () => {
+    run('UPDATE package_deps SET dev = 1 WHERE consumer_package_id = ?', app);
+    const docsMod = doc(app, 'docs/example.ts');
+    const s = sym(lib, 'src/fns.ts', 'docOnly', { exported: true });
+    use(docsMod, s, 'docs/example.ts');
+    analyze();
+    expect(findings()).toEqual([f('docOnly', 'needs_review', DELETE)]);
+  });
+
+  it('never reports declarations of generated files, while references from generated files still count', () => {
+    aliveExport('used');
+    const genFiles = ['lib/src/a.g.dart', 'lib/b.pb.dart', 'lib/c.pbenum.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart',
+      'lib/f.freezed.dart', 'test/g.mocks.dart', 'lib/h.over_react.g.dart', 'src/i.generated.ts', 'src/generated/j.ts', 'src/__generated__/k.ts'];
+    for (const [i, file] of genFiles.entries()) {
+      doc(lib, file);
+      sym(lib, file, `genExport${i}`, { exported: true });
+      sym(lib, file, `genPrivate${i}`);
+    }
+    // A consumer's generated file referencing an export keeps it alive.
+    const target = sym(lib, 'src/fns.ts', 'usedByGenerated', { exported: true });
+    const gen = doc(app, 'lib/client.pb.dart');
+    use(gen, target, 'lib/client.pb.dart');
+    doc(lib, 'src/real.ts');
+    sym(lib, 'src/real.ts', 'reallyDead');
+    sym(lib, 'src/real.ts', 'reallyUnused', { exported: true });
+    doc(lib, 'src/generator.ts'); // not generated: `generator` is not `generated`
+    sym(lib, 'src/generator.ts', 'generatorDead');
+    analyze();
+    expect(findings()).toEqual([
+      f('generatorDead', 'private_dead', ['already_unreachable']),
+      f('reallyDead', 'private_dead', ['already_unreachable']),
+      f('reallyUnused', 'needs_review', DELETE),
+    ]);
+    const generated = (db.prepare('SELECT file FROM generated_files WHERE package_id = ? ORDER BY file').all(lib) as Array<{ file: string }>).map((r) => r.file);
+    expect(generated).toEqual([...genFiles].sort());
+  });
+
+  it('never reports import prefixes (kind import-prefix) as private_dead', () => {
+    aliveExport('used');
+    const prefix = insertSymbol(lib, 'src/fns.ts', '$0', 'import-prefix');
+    occ(prefix, lib, 'src/fns.ts', libFns, { role: 1 });
+    sym(lib, 'src/fns.ts', 'plainDead');
+    analyze();
+    expect(findings()).toEqual([f('plainDead', 'private_dead', ['already_unreachable'])]);
+  });
+
+  it('seeds reachability from entry_symbols and never reports them (non-exported in a non-entry file, or exported)', () => {
+    aliveExport('used');
+    doc(lib, 'benchmark/bench.dart');
+    const main = sym(lib, 'benchmark/bench.dart', 'main');
+    const work = sym(lib, 'benchmark/bench.dart', 'work');
+    use(main, work, 'benchmark/bench.dart');
+    const builder = sym(lib, 'src/fns.ts', 'acmeBuilder', { exported: true });
+    const helper = sym(lib, 'src/fns.ts', 'builderHelper');
+    use(builder, helper, 'src/fns.ts');
+    sym(lib, 'src/fns.ts', 'plainDead');
+    run('INSERT INTO entry_symbols (symbol_id) VALUES (?), (?)', main, builder);
+    analyze();
+    expect(findings()).toEqual([f('plainDead', 'private_dead', ['already_unreachable'])]);
+    const reachable = (id: number): number => (db.prepare('SELECT is_entry_reachable AS r FROM symbols WHERE symbol_id = ?').get(id) as { r: number }).r;
+    for (const id of [main, work, builder, helper]) expect(reachable(id)).toBe(1);
+  });
+
+  it('refuses to run before ingest, and marks the DB analyzed even with zero findings', () => {
+    const empty = openDb(':memory:');
+    try {
+      expect(() => analyzeOrg({ db: empty, now: NOW, log: () => {} })).toThrow(/no symbols; run ingest first/);
+    } finally {
+      empty.close();
+    }
+    aliveExport('used');
+    const counts = analyze();
+    expect(counts.total).toBe(0);
+    expect(db.prepare("SELECT count(*) AS n FROM run_params WHERE key = 'analyzed_at'").get()).toEqual({ n: 1 });
+  });
+
   it('applies minAgeDays to closed-world verdicts, failing closed on unknown age', () => {
     sym(lib, 'src/fns.ts', 'unknownAge', { exported: true, firstSeenAt: null });
     sym(lib, 'src/fns.ts', 'old', { exported: true, firstSeenAt: NOW - 181 * DAY });

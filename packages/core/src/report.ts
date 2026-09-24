@@ -8,6 +8,7 @@
 //     a repo that did not index cleanly) is a `warnings` line, printed first.
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
+import { requireAnalyzed } from './analyze.ts';
 import { parseDescriptors, parseScipSymbol } from './scip/read.ts';
 
 /** Verdicts every package row counts, in summary column order. */
@@ -160,6 +161,7 @@ function uniqSorted(xs: Iterable<string>): string[] {
 export function buildReport(opts: BuildReportOptions): Report {
   const { db } = opts;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
+  requireAnalyzed(db, 'report');
 
   // ---- policy ----------------------------------------------------------------
   const policyRows = db.prepare('SELECT key, value FROM policy').all() as Array<{ key: string; value: string }>;
@@ -216,9 +218,15 @@ export function buildReport(opts: BuildReportOptions): Report {
     FROM unresolved_refs u JOIN packages p ON p.package_id = u.consumer_package_id`).all() as Array<{
     package_id: string; repo: string; symbol_str: string; file: string; line: number | null; col: number | null; target_package_id: string;
   }>;
-  // A sidecar row and a SCIP row can name the same reference; keep one.
+  // A sidecar row and a SCIP row can name the same reference; keep one. A reference into
+  // a package whose own index failed is not skew: that package has no definitions at
+  // all, so "missing at HEAD" means nothing there (counted in a warning instead).
+  const indexFailed = new Set((db.prepare("SELECT DISTINCT package_id FROM package_flags WHERE flag = 'index_failed'").all() as Array<{
+    package_id: string;
+  }>).map((r) => r.package_id));
   const skewSeen = new Set<string>();
   const versionSkew: ReportVersionSkew[] = [];
+  const skewDropped = new Map<string, number>();
   for (const r of skewRows) {
     const row: ReportVersionSkew = {
       package_id: r.package_id,
@@ -232,7 +240,17 @@ export function buildReport(opts: BuildReportOptions): Report {
     const key = JSON.stringify([row.package_id, row.symbol, row.file, row.line, row.col, row.target_package_id]);
     if (skewSeen.has(key)) continue;
     skewSeen.add(key);
+    if (indexFailed.has(row.target_package_id)) {
+      skewDropped.set(row.target_package_id, (skewDropped.get(row.target_package_id) ?? 0) + 1);
+      continue;
+    }
     versionSkew.push(row);
+  }
+  if (skewDropped.size > 0) {
+    const n = [...skewDropped.values()].reduce((a, b) => a + b, 0);
+    const targets = [...skewDropped.keys()].sort(cmp).join(', ');
+    warnings.push(`${n} unresolved reference(s) into package(s) whose index failed (${targets}) not reported as version skew: `
+      + 'their definitions are unknown, not missing');
   }
   versionSkew.sort(cmpBy((v) => v.package_id, (v) => v.symbol, (v) => v.file, (v) => v.line, (v) => v.col, (v) => v.target_package_id));
 
