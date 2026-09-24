@@ -931,3 +931,46 @@ namespace members get owners; Wrangler/Pages/honox/Next/SvelteKit/Nuxt
 runtime entry conventions are modelled; Wrangler's header counts as
 generated; deprecation messages are not codegen; a bare default import
 vouches only for the root entry's default.
+
+### Workiva final verification (HEAD 8ef28d4)
+
+33 ok / 3 partial / 3 failed (over_react and over_react_analyzer_plugin now
+ok; the remaining ones need Dart ≥3.12, a pre-2.12 SDK, a real missing part
+in `lib/`, or pnpm's store lock). Analyze 4 s. DELETE 81, ISLAND 70,
+UNEXPORT 195, PRIV-DEAD 92, REVIEW 17, BLOCKED 347. **Spot check of 8
+deletion candidates: 1 right, 7 public-API-only, 0 wrong**; zero self-witness
+hits; pdfjs consistent. needs_review: 10 real (example apps under `example/`
+pubspecs, ignored as packages, witness-scanned), 7 noise from member-access
+names in indexed consumer files (`screen.findByTestId` vouching for the
+top-level `findByTestId`) and an English word in a comment. New finding:
+scip-dart emits reference occurrences for dartdoc `[Name]` links, so 19
+symbols mentioned only in documentation looked internally used (fork patch 4
+removes them). todo_client's own `export 'package:todo_client/…'` lines were
+reported as dynamic access on top of its failed pub get (suppressed). Real
+version skew found: over_react_analyzer_plugin pins over_react 5.7.0 and uses
+`nameLexeme`, gone at HEAD.
+
+### unjs final verification (HEAD 8ef28d4)
+
+72 ok / 40 partial / 2 failed; index 7.6 min, analyze 6.6 s. DELETE 94,
+ISLAND 56, UNEXPORT 472, PRIV-DEAD 109, REVIEW 24, BLOCKED 2738. Every
+previously wrong row is fixed (codeup utils, ocache digest, md4x-demo, capnp-es
+generated files, `SvelteStreamableHeadContext`); scule indexes via the no-docs
+shim; unhead-monorepo's `bench/` no longer blocks anything. **Spot check of 10
+non-island deletion candidates: 6 right, 4 public-API-only, 0 wrong.**
+
+Regression caught: the round-3 self-string precision rule ("a bare name
+literal counts only in a file that builds import text") was too narrow. unctx's
+template has no quotes after `from` (`from ${JSON.stringify(m)}`), capnp-es
+keeps names in `constants.ts` and templates in `generators/*.ts`, and unhead's
+presets list names in `autoImports.ts`; 14 real codegen uses fell back to
+deletion. Fix: the codegen qualifier is package-wide and any own literal
+containing the name as a whole word then counts. Other items adopted: witness
+vouching respects import subpaths; `exports` wildcards respect `files`; `bin`
+targets are runtime entries, not surface; re-exports of external declarations
+(`export default globalThis`) are not "unresolved" (unenv blocked its own
+1552 findings on that); self-imports from unindexed own config files feed the
+self-witness instead of flagging; template repos are remembered in the
+lockfile; subprocess diagnostics keep the error head as well as the tail.
+Environmental, unchanged: the newest pnpm 12's store lock in this sandbox, bun
+not installed, Nuxt apps that need built org packages at `nuxt prepare`.
