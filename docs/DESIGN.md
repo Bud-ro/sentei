@@ -385,3 +385,66 @@ the M3 agent run; decoded outputs were compared across pub.dev 1.6.2, git
 - scip_dart exits 0 on type errors and on unresolved `package:` imports
   (references silently vanish), so the adapter classifies resolution failures
   itself, like the TS adapter.
+
+### M2 — first dogfood run on honojs (2026-09-24)
+
+12 repos after excluding templates/examples/fixtures, 61 packages. Timings:
+discover 0.35 s from the lockfile, index ~30 s, ingest 1 s, blame 60 s (four
+unshallows), analyze/witness/report under 1 s each. Result: 0 deletion
+candidates, 61 blocked findings, 12 `private_dead` rows of which every checked
+one except a config file was a false "dead". M2 acceptance (spot-check 5 real
+deletion candidates) is **not met yet**. What the run taught, and the fixes
+adopted:
+
+- **Solution-style tsconfig** (`"files": []` + `references`, hono itself): the
+  export-surface program had no root files, all 119 entry points were "missing"
+  and the org's main package was opaque. Fix: follow project references when
+  building surface programs.
+- **Unbuilt libraries**: source links point at checkouts whose `exports`/`types`
+  target `dist/`, which a fresh clone lacks, so every consumer of hono was
+  `partial`. Fix: when a linked package's declared targets are missing, the
+  adapter creates a shadow package dir (rewritten `package.json` with the same
+  dist→src rule discover uses, plus symlinks to the checkout's files) instead of
+  a bare symlink; `realpath` still lands in the checkout so symbol strings are
+  unchanged.
+- **Monorepo module symbols**: the root index and the nested package's index both
+  carry the nested files; the module-symbol check compared the descriptor path
+  with the root index's relative path, so a synthetic file symbol shadowed the
+  real module symbol, which became an orphan `private_dead` row and entry seeds
+  never reached the file's code. Fix: compare package-relative paths and prefer
+  the owning package's index when documents collide.
+- **Config files outside any tsconfig** (`eslint.config.mjs` importing
+  `@hono/eslint-config` in 8 repos) are unindexed consumers; `config` would have
+  been a deletion candidate. Fix: the adapter text-scans JS/TS files that are in
+  no program for org imports and the flag they produce is **targeted**
+  (`package_flags.target_package_id`, schema v4): it blocks only the imported
+  package, not everything the consumer depends on.
+- **Members without an owner**: object-literal properties of a module-level
+  const (`npm0:`) and anonymous type-literal members (`typeLiteral3:__html.`)
+  have no parent in scip-typescript output and the owner's `enclosing_range`
+  does not cover the initializer. Fix: counter-suffixed anonymous member names
+  are a scip-typescript convention; they are never reported as declarations, and
+  undefined references to them are attributed to the nearest defined ancestor
+  (the counter differs per program, which also produced a false `version_skew`).
+- **`new X()` only references `X#<constructor>()`**: nothing made `X` reachable
+  from its member. Fix: member → owner edges in reachability.
+- **`build/` directories were skipped by name**, hiding a real package
+  (`packages/build`). Fix: in git checkouts, walk `git ls-files` (tracked plus
+  untracked-not-ignored) instead of skipping directory names.
+- **Same-package test refs** counted as internal refs, turning test-only exports
+  into `unexport_candidate`. Fix: internal refs follow the same test/docs policy.
+- **Package managers**: pnpm/yarn were missing; installs failed with a bare
+  "exited with -1". Fix: fall back to `npm exec --yes <pm>@<version>` (from the
+  `packageManager` field), recognise `bun.lock`, and never reuse a cached index
+  whose status was partial/failed.
+- Remaining public-API cases (`bunAdapter`, `nodeAdapter`, `createHono`) are
+  exactly what `assumeClosedWorld` hides; they are correct under the flag and
+  the banner says so.
+
+### M1 — witness (addendum)
+
+- Consumers of P are the manifest-declared ones **plus ignored manifests** whose
+  deps resolve to P (examples, templates). Their hits read
+  `witness_mismatch:ignored:<org>/<repo>/<manifest path>:<file>:<line>`; the
+  `ignored:` prefix cannot collide with a package id. Unparseable ignored
+  manifests are scanned for every package (deps unknown → fail closed).
