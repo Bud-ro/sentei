@@ -4,5 +4,5 @@
   "assumeClosedWorld": true,
   "countTestsAsConsumers": false,
   "countDocsAsConsumers": false,
-  "keep": []
+  "keep": ["npm:@acme/widgets#keptFn"]
 }

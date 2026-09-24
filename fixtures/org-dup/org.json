@@ -1,0 +1,7 @@
+{
+  "org": "acme",
+  "repos": [
+    { "name": "one", "default_branch": "main" },
+    { "name": "two", "default_branch": "main" }
+  ]
+}

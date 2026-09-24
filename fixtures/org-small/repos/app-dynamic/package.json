@@ -1,0 +1,14 @@
+{
+  "name": "@acme/app-dynamic",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "exports": {
+    ".": "./src/main.ts",
+    "./load": "./src/load.cts"
+  },
+  "dependencies": {
+    "@acme/dyn": "^1.0.0"
+  }
+}

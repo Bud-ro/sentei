@@ -1,0 +1,10 @@
+{
+  "name": "@acme/app-skew",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "dependencies": {
+    "@acme/widgets": "1.0.0"
+  }
+}

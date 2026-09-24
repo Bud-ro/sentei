@@ -1,0 +1,11 @@
+{
+  "name": "@acme/consumer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "dependencies": {
+    "@acme/widgets": "^1.0.0",
+    "@acme/y": "^1.0.0"
+  }
+}

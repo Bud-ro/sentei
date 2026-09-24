@@ -39,20 +39,34 @@ describe('discoverLocal on fixtures/org-small', () => {
     expect(model.org).toBe('acme');
     expect(model.source).toEqual({ kind: 'local', dir: FIXTURE });
     expect(model.generatedAt).toBe(1_700_000_000);
-    expect(model.repos.map((r) => r.repo)).toEqual(['acme/app', 'acme/lib-core']);
+    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'lib-core', 'lib-dyn', 'lib-widgets', 'lib-y', 'repo-broken'];
+    expect(model.repos.map((r) => r.repo)).toEqual(REPOS.map((n) => `acme/${n}`));
     expect(model.repos[0]!.localPath).toBe(join(FIXTURE, 'repos', 'app'));
 
     writeDiscoverToDb(db, model);
-    expect(all('SELECT repo, default_branch, head_sha, index_status FROM repos ORDER BY repo')).toEqual([
-      { repo: 'acme/app', default_branch: 'main', head_sha: null, index_status: null },
-      { repo: 'acme/lib-core', default_branch: 'main', head_sha: null, index_status: null },
-    ]);
+    expect(all('SELECT repo, default_branch, head_sha, index_status FROM repos ORDER BY repo')).toEqual(
+      REPOS.map((n) => ({ repo: `acme/${n}`, default_branch: 'main', head_sha: null, index_status: null })),
+    );
     expect(all('SELECT package_id, repo, path, manager, name, version, visibility, entry_points FROM packages ORDER BY package_id')).toEqual([
       { package_id: 'npm:@acme/app', repo: 'acme/app', path: '.', manager: 'npm', name: '@acme/app', version: '1.0.0', visibility: 'private', entry_points: '["src/main.ts"]' },
+      { package_id: 'npm:@acme/app-dynamic', repo: 'acme/app-dynamic', path: '.', manager: 'npm', name: '@acme/app-dynamic', version: '1.0.0', visibility: 'private', entry_points: '["src/load.cts","src/main.ts"]' },
+      { package_id: 'npm:@acme/app-skew', repo: 'acme/app-skew', path: '.', manager: 'npm', name: '@acme/app-skew', version: '1.0.0', visibility: 'private', entry_points: '["src/main.ts"]' },
+      { package_id: 'npm:@acme/broken', repo: 'acme/repo-broken', path: '.', manager: 'npm', name: '@acme/broken', version: '1.0.0', visibility: 'private', entry_points: '["src/main.ts"]' },
+      { package_id: 'npm:@acme/consumer', repo: 'acme/app-consumer', path: '.', manager: 'npm', name: '@acme/consumer', version: '1.0.0', visibility: 'private', entry_points: '["src/main.ts"]' },
       { package_id: 'npm:@acme/core', repo: 'acme/lib-core', path: '.', manager: 'npm', name: '@acme/core', version: '1.0.0', visibility: 'private', entry_points: '["src/index.ts"]' },
+      { package_id: 'npm:@acme/dyn', repo: 'acme/lib-dyn', path: '.', manager: 'npm', name: '@acme/dyn', version: '1.0.0', visibility: 'private', entry_points: '["src/index.ts"]' },
+      // published-public (no "private"), exports map incl. a "./deep/*" pattern resolved against the filesystem
+      { package_id: 'npm:@acme/widgets', repo: 'acme/lib-widgets', path: '.', manager: 'npm', name: '@acme/widgets', version: '1.0.0', visibility: 'published-public', entry_points: '["src/anon.ts","src/deep/thing.ts","src/index.ts","src/lazy.ts","src/unused-anon.ts"]' },
+      { package_id: 'npm:@acme/y', repo: 'acme/lib-y', path: '.', manager: 'npm', name: '@acme/y', version: '1.0.0', visibility: 'private', entry_points: '["src/index.ts"]' },
     ]);
-    expect(all('SELECT * FROM package_deps')).toEqual([
+    expect(all('SELECT * FROM package_deps ORDER BY consumer_package_id, dep_name')).toEqual([
       { consumer_package_id: 'npm:@acme/app', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/core' },
+      { consumer_package_id: 'npm:@acme/app-dynamic', dep_name: '@acme/dyn', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/dyn' },
+      { consumer_package_id: 'npm:@acme/app-skew', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '1.0.0', resolved_package_id: 'npm:@acme/widgets' },
+      { consumer_package_id: 'npm:@acme/broken', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
+      { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/widgets' },
+      { consumer_package_id: 'npm:@acme/consumer', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
+      { consumer_package_id: 'npm:@acme/widgets', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:@acme/y' },
     ]);
     expect(all('SELECT key, value FROM policy ORDER BY key')).toEqual([
       { key: 'assumeClosedWorld', value: 'true' },
@@ -61,7 +75,7 @@ describe('discoverLocal on fixtures/org-small', () => {
       { key: 'minAgeDays', value: '0' },
       { key: 'trustPrivateRegistry', value: 'true' },
     ]);
-    expect(all('SELECT * FROM keep_rules')).toEqual([]);
+    expect(all('SELECT * FROM keep_rules')).toEqual([{ package_id: 'npm:@acme/widgets', symbol_name: 'keptFn' }]);
   });
 
   it('is a whole-org rebuild: rerunning replaces rows (and cascades derived data)', () => {
@@ -70,7 +84,8 @@ describe('discoverLocal on fixtures/org-small', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/gone')").run();
     db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:@acme/core', 'src/index.ts', 'x')").run();
     writeDiscoverToDb(db, model);
-    expect(all('SELECT repo FROM repos ORDER BY repo')).toEqual([{ repo: 'acme/app' }, { repo: 'acme/lib-core' }]);
+    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 9 }]);
+    expect(all("SELECT count(*) AS n FROM repos WHERE repo = 'acme/gone'")).toEqual([{ n: 0 }]);
     expect(all('SELECT count(*) AS n FROM symbols')).toEqual([{ n: 0 }]);
   });
 });
@@ -182,6 +197,6 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 2 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 9 }]);
   });
 });
