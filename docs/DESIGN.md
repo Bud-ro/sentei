@@ -1028,3 +1028,30 @@ not installed, Nuxt apps that need built org packages at `nuxt prepare`.
   codegen protections lost in round 3.
 - Fixture `app-worker` covers wrangler `main`, a Pages function, a bin outside
   the program, namespaces and non-vouching imports.
+
+### honojs smoke run at the final HEAD (dc28a40)
+
+Fresh index, 217 s; analyze 1.9 s; 72 ok / 4 partial / 0 failed. DELETE 101,
+ISLAND 95, UNEXPORT 130, PRIV-DEAD 173, REVIEW 7, BLOCKED 392. All 7
+needs_review rows are real hits (starter templates, honox codegen). The 75
+false private_dead rows from ambient and app files are gone; `nextjs-stack`
+has zero rows on a fresh index. Spot checks: 5 deletion candidates → 2 right,
+3 public-API-only, 0 wrong; 5 private_dead → 4 right (one is the vendored
+esbuild typings block, correct but 22 % of the list), 1 wrong: a Cloudflare
+Pages project with no wrangler config (only `devDependencies.wrangler` and
+`wrangler pages` scripts), whose `functions/api/[[route]].ts#onRequest` is
+loaded by path. Also still open: a Durable Object class exported by name for
+the Workers runtime (`wrangler.toml` `class_name`) reads as an unexport
+candidate. Both are convention additions in `manifests.ts` (last tweak).
+Environmental as before: hono's pnpm 12 store lock in the sandbox; three
+example packages with unresolved `hono`.
+
+### Where this leaves the tool (2026-09-24)
+
+Across honojs, unjs and Workiva the final spot checks found no wrong deletion
+candidate; the lists are dominated by public API that nobody in the org uses,
+which is exactly what `assumeClosedWorld` asks for and what the report banner
+warns about. What remains is toolchain (pnpm 12 and bun in this sandbox, Dart
+≥3.12 for two Workiva packages, Nuxt apps needing built org packages) and the
+M5 real upload, which needs a repo owner. M6 (nightly runs, false-dead log
+as fixtures) has not started.
