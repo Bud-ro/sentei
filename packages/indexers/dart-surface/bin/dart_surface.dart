@@ -11,7 +11,8 @@
 //   - `missingParts`: `part` directives whose file does not exist (typically a
 //     `*.g.dart` build_runner output that was never generated): the library is
 //     incomplete and references inside the part are unknown → status partial
-//     (the adapter skips test/docs files the policy does not count);
+//     when the library is under lib/ or bin/ (elsewhere, and in test/docs files
+//     the policy does not count, the adapter only warns);
 //   - `diagnostics`: `warn:`/`info:` lines (other analyzer errors; never change status).
 //
 // Positions: 0-based line, 0-based UTF-16 column; files repo-relative POSIX.
@@ -38,7 +39,7 @@ Future<void> main(List<String> argv) async {
     ..addOption('package-id', mandatory: true, help: 'e.g. pub:acme_x')
     ..addMultiOption('entry', help: 'Entry file, repo-relative POSIX (repeatable)')
     ..addOption('org-packages', defaultsTo: '', help: 'Comma-separated pub names of all org packages')
-    ..addMultiOption('nested', help: 'Dir of a package nested inside this one (its files are not ours)')
+    ..addMultiOption('nested', help: 'Dir of a package, or of an ignored manifest, nested inside this one (its files are not ours)')
     ..addFlag('help', abbr: 'h', negatable: false);
   final ArgResults args;
   try {

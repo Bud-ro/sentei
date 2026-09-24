@@ -45,7 +45,9 @@ export const scipDart: Indexer = {
   // vendored fork or dart-surface changes output (it is the index cache key).
   // sentei.4: fork patch 3 (valid symbols), manager-prefixed output names,
   // Dart entry conventions (non-lib `main`, build.yaml factories, dart_dev config).
-  version: '1.7.0+sentei.4',
+  // sentei.5: ignored nested manifests are not ours (no entry symbols/exports
+  // there); missing parts outside lib/ and bin/ only warn.
+  version: '1.7.0+sentei.5',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -66,24 +68,7 @@ export const scipDart: Indexer = {
     // 2. Resolve. Offline when installs are disabled: path deps and anything
     //    already in the pub cache still resolve.
     const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
-    let proc = await exec('dart', args, dir);
-    log.push(`$ dart ${args.join(' ')}  (cwd ${dir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
-    // 2b. An org dep's HEAD can require versions the consumer's own constraints
-    //     exclude (e.g. HEAD moved to analyzer 14, the consumer pins analyzer 5).
-    //     Retry once without the source link for the dep(s) pub names: the
-    //     consumer then resolves the released version (its references still carry
-    //     the org package's symbols, version-normalized at ingest).
-    if (proc.code !== 0 && links.size > 0) {
-      const conflicts = parseOverrideConflicts(`${proc.stdout}\n${proc.stderr}`, new Set(links.keys()));
-      if (conflicts.length > 0) {
-        for (const c of conflicts) {
-          diagnostics.push(`warn: ${c.dep} not source-linked: HEAD conflicts with ${c.pkg ?? pkg.name ?? pkg.packageId}'s constraint (${c.detail})`);
-        }
-        writeOverrides(input, dir, diagnostics, new Set(conflicts.map((c) => c.dep)));
-        proc = await exec('dart', args, dir);
-        log.push(`$ dart ${args.join(' ')}  (cwd ${dir}; retry without ${conflicts.map((c) => c.dep).join(', ')})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
-      }
-    }
+    const proc = await pubGet(input, dir, args, links, diagnostics, log);
     if (proc.code !== 0) {
       status = 'partial';
       const why = firstLine(proc.stderr) ?? firstLine(proc.stdout) ?? '';
@@ -144,6 +129,14 @@ export const scipDart: Indexer = {
       .filter((d) => d !== packageDir(repo, pkg) && existsSync(d))
       .map((d) => realpathSync(d))
       .filter((d) => d.startsWith(dir + path.sep));
+    // Ignored manifests (examples, templates, fixtures) strictly inside this
+    // package are separate packages too: scip-dart does not index them, so an
+    // entry symbol or export found there could never match a definition.
+    const ignored = (repo.ignoredManifests ?? [])
+      .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
+      .filter((d) => existsSync(d))
+      .map((d) => realpathSync(d))
+      .filter((d) => d.startsWith(dir + path.sep) && !nested.includes(d));
     const orgNames = [
       ...new Set(input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'pub' && p.name !== null ? [p.name] : []))),
     ].sort();
@@ -154,7 +147,7 @@ export const scipDart: Indexer = {
       '--package-id', pkg.packageId,
       '--org-packages', orgNames.join(','),
       ...pkg.entryPoints.flatMap((e) => ['--entry', e]),
-      ...nested.flatMap((d) => ['--nested', d]),
+      ...[...nested, ...ignored].flatMap((d) => ['--nested', d]),
     ];
     const sp = await exec('dart', surfaceArgs, DART_SURFACE_DIR);
     log.push(`$ dart ${surfaceArgs.join(' ')}  (cwd ${DART_SURFACE_DIR})`, '--- stderr', sp.stderr);
@@ -190,12 +183,19 @@ export const scipDart: Indexer = {
     }
     // A missing part (typically an ungenerated `*.g.dart`: build_runner was not
     // run) leaves its library incomplete: references inside it are unknown.
-    // Test/docs files the policy does not count cannot hide a counted use.
+    // That matters for the package's library code (lib/, bin/): its surface and
+    // its uses of other packages. Missing parts elsewhere (web/ demos, example/,
+    // test/, tool/) and in test/docs files the policy does not count only warn.
     let incomplete = 0;
     for (const m of missingParts) {
       const at = `${m.file}:${m.line + 1}:${m.col + 1}`;
       if (isExcludedConsumerFile(m.file, input.policy)) {
         diagnostics.push(`warn: missing part '${m.uri}' at ${at} (not generated?); ignored: a test/docs file that does not count as a consumer`);
+        continue;
+      }
+      const top = path.posix.relative(pkg.path === '.' ? '' : pkg.path, m.file).split('/')[0];
+      if (top !== 'lib' && top !== 'bin') {
+        diagnostics.push(`warn: missing part '${m.uri}' at ${at} (not generated?); outside lib/ and bin/, references inside it are unknown`);
         continue;
       }
       incomplete++;
@@ -298,6 +298,47 @@ export function writeOverrides(
   if (text !== existingText) writeFileSync(file, text);
   diagnostics.push(`info: ${OVERRIDES}: ${[...links].map(([n, r]) => `${n} -> ${r}`).join(', ')}`);
   return links;
+}
+
+/** At most this many `pub get` retries, each dropping the source links pub rejected. */
+export const MAX_CONFLICT_RETRIES = 3;
+
+/**
+ * `dart pub get` in `dir`. An org dep's HEAD can require versions the
+ * consumer's own constraints exclude (HEAD moved to analyzer 14, the consumer
+ * pins analyzer 5). Each time pub names rejected source links, they are
+ * dropped (accumulating, user overrides restored) and pub get is retried, up
+ * to [MAX_CONFLICT_RETRIES] times: the consumer then resolves the released
+ * versions (its references still carry the org package's symbols,
+ * version-normalized at ingest). One `warn:` per dropped link. Returns the
+ * last run.
+ */
+export async function pubGet(
+  input: IndexerInput,
+  dir: string,
+  args: string[],
+  links: ReadonlyMap<string, string>,
+  diagnostics: string[],
+  log: string[],
+  run: (cmd: string, args: string[], cwd: string) => Promise<ExecResult> = exec,
+): Promise<ExecResult> {
+  const { pkg } = input;
+  let proc = await run('dart', args, dir);
+  log.push(`$ dart ${args.join(' ')}  (cwd ${dir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+  const excluded = new Set<string>();
+  let current = new Set(links.keys());
+  for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES && proc.code !== 0 && current.size > 0; attempt++) {
+    const conflicts = parseOverrideConflicts(`${proc.stdout}\n${proc.stderr}`, current).filter((c) => !excluded.has(c.dep));
+    if (conflicts.length === 0) break;
+    for (const c of conflicts) {
+      excluded.add(c.dep);
+      diagnostics.push(`warn: ${c.dep} not source-linked: HEAD conflicts with ${c.pkg ?? pkg.name ?? pkg.packageId}'s constraint (${c.detail})`);
+    }
+    current = new Set(writeOverrides(input, dir, diagnostics, excluded).keys());
+    proc = await run('dart', args, dir);
+    log.push(`$ dart ${args.join(' ')}  (cwd ${dir}; retry without ${[...excluded].join(', ')})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+  }
+  return proc;
 }
 
 /** One source link pub refused: `dep`'s checkout conflicts with a constraint of `pkg`. */
@@ -496,7 +537,7 @@ function firstLine(s: string): string | undefined {
   return s.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== '');
 }
 
-interface ExecResult {
+export interface ExecResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;

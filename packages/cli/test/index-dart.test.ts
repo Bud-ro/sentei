@@ -4,11 +4,13 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { parseDescriptors, parseScipSymbol, readScipIndex } from '@sentei/core/scip';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { OVERRIDES_HEADER, parseOverrideConflicts, parseYamlBlock, scipDart, writeOverrides } from '../src/indexers/scip-dart.ts';
+import { OVERRIDES_HEADER, parseOverrideConflicts, parseYamlBlock, pubGet, scipDart, writeOverrides } from '../src/indexers/scip-dart.ts';
 import type { DiscoverFile, DiscoveredPackage, DiscoveredRepo, ExportsSidecar, IndexerInput, OrgPackage } from '../src/indexers/types.ts';
+import { scipTypescript } from '../src/indexers/scip-typescript.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
 const FIXTURE = path.resolve(import.meta.dirname, '../../../fixtures/org-dart');
@@ -96,7 +98,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.4',
+        indexerVersion: '1.7.0+sentei.5',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -366,6 +368,70 @@ describe('pub get conflict with a source link', () => {
     ]);
   });
 
+  it('retries up to three times, accumulating the rejected links, with one warn each', async () => {
+    // over_react_analyzer_plugin: dropping over_react surfaced a second conflict (dependency_validator).
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-pubget-')));
+    try {
+      const names = ['over_react', 'dependency_validator', 'dart_dev', 'w_common', 'plugin'];
+      const repos = new Map(names.map((n) => [n, repoOf(root, n, pubPackage(n, [`lib/${n}.dart`]))]));
+      const plugin = repoOf(root, 'plugin', pubPackage('plugin', ['lib/plugin.dart'], names.slice(0, 4).map((n) => orgDep(n, '^1.0.0'))));
+      repos.set('plugin', plugin);
+      for (const r of repos.values()) mkdirSync(r.localPath, { recursive: true });
+      const byId = new Map<string, OrgPackage>([...repos.values()].map((r) => [r.packages[0]!.packageId, { repo: r, pkg: r.packages[0]! }]));
+      const inp: IndexerInput = { repo: plugin, pkg: plugin.packages[0]!, lookup: (id) => byId.get(id), orgPackages: [...byId.values()], options: { install: false, maxOldSpaceMb: 0 } };
+      const conflict = (dep: string) =>
+        `Because every version of ${dep} from path depends on analyzer >=10.0.0 and plugin depends on analyzer <7.0.0, ${dep} from path is forbidden.\n` +
+        `So, because plugin depends on ${dep} from path, version solving failed.\n`;
+      const overridesSeen: string[] = [];
+      const fake = (outputs: string[]) => {
+        let i = 0;
+        return async (_cmd: string, _args: string[], cwd: string) => {
+          overridesSeen.push(readFileSync(path.join(cwd, 'pubspec_overrides.yaml'), 'utf8'));
+          const out = outputs[i++];
+          return out === undefined ? { code: 0, signal: null, stdout: 'Got dependencies!\n', stderr: '' } : { code: 1, signal: null, stdout: '', stderr: out };
+        };
+      };
+      const run = async (outputs: string[]) => {
+        overridesSeen.length = 0;
+        const diagnostics: string[] = [];
+        const log: string[] = [];
+        const links = writeOverrides(inp, plugin.localPath, []);
+        const proc = await pubGet(inp, plugin.localPath, ['pub', 'get', '--offline'], links, diagnostics, log, fake(outputs));
+        return { proc, diagnostics, log };
+      };
+
+      const two = await run([conflict('over_react'), conflict('dependency_validator')]);
+      expect(two.proc.code).toBe(0);
+      expect(two.diagnostics.filter((d) => d.startsWith('warn:'))).toEqual([
+        "warn: over_react not source-linked: HEAD conflicts with plugin's constraint (every version of over_react from path depends on analyzer >=10.0.0 and plugin depends on analyzer <7.0.0)",
+        "warn: dependency_validator not source-linked: HEAD conflicts with plugin's constraint (every version of dependency_validator from path depends on analyzer >=10.0.0 and plugin depends on analyzer <7.0.0)",
+      ]);
+      expect(overridesSeen).toHaveLength(3);
+      expect(overridesSeen[1]).not.toMatch(/over_react:/);
+      expect(overridesSeen[1]).toMatch(/dependency_validator:/);
+      expect(overridesSeen[2]).not.toMatch(/over_react:|dependency_validator:/); // accumulated
+      expect(overridesSeen[2]).toMatch(/dart_dev:[\s\S]*w_common:/);
+      expect(two.log.filter((l) => l.startsWith('$ dart pub get'))).toEqual([
+        `$ dart pub get --offline  (cwd ${plugin.localPath})`,
+        `$ dart pub get --offline  (cwd ${plugin.localPath}; retry without over_react)`,
+        `$ dart pub get --offline  (cwd ${plugin.localPath}; retry without over_react, dependency_validator)`,
+      ]);
+
+      // Four conflicts in a row: three retries, then the last failure stands.
+      const many = await run([conflict('over_react'), conflict('dependency_validator'), conflict('dart_dev'), conflict('w_common')]);
+      expect(many.proc.code).toBe(1);
+      expect(overridesSeen).toHaveLength(4);
+      expect(many.diagnostics.filter((d) => d.startsWith('warn:')).map((d) => d.split(' ')[1])).toEqual(['over_react', 'dependency_validator', 'dart_dev']);
+
+      // The same conflict again (pub names an already-dropped link): no further retry.
+      const again = await run([conflict('over_react'), conflict('over_react')]);
+      expect(again.proc.code).toBe(1);
+      expect(overridesSeen).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('finds nothing when no overridden dep is named, or when solving did not fail', () => {
     expect(parseOverrideConflicts(W_FLUX_CODEMOD, new Set(['workiva_analysis_options']))).toEqual([]);
     expect(parseOverrideConflicts('Because codemod requires SDK version ^3.13.0, version solving failed.', new Set(['codemod']))).toEqual([]);
@@ -453,6 +519,60 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(gentest.diagnostics.some((d) => d.startsWith("warn: missing part 'gen_test.over_react.g.dart' at test/gen_test.dart:1:6"))).toBe(true);
   }, 300_000);
 
+  it('a missing part only makes the package partial in lib/ or bin/, not in web/ demo code', async () => {
+    // over_react: 19 ungenerated `*.over_react.g.dart` parts under web/ made the whole package partial.
+    write({
+      'genweb/pubspec.yaml': pubspec('acme_genweb', '1.0.0'),
+      'genweb/lib/acme_genweb.dart': 'int used() => 1;\n',
+      'genweb/web/demo.dart': "import 'package:acme_genweb/acme_genweb.dart';\n\npart 'demo.over_react.g.dart';\n\nvoid main() => print(used());\n",
+      'genbin/pubspec.yaml': pubspec('acme_genbin', '1.0.0'),
+      'genbin/bin/tool.dart': "part 'tool.g.dart';\n\nvoid main() {}\n",
+    });
+    const repos = [
+      repoOf(root, 'genweb', pubPackage('acme_genweb', ['lib/acme_genweb.dart'])),
+      repoOf(root, 'genbin', pubPackage('acme_genbin', ['bin/tool.dart'])),
+    ];
+    for (const r of repos) r.localPath = path.join(root, r.repo.split('/')[1]!);
+    const out = path.join(root, 'out-genweb');
+    mkdirSync(out);
+    const web = await scipDart.run(inputFor(repos, repos[0]!), out);
+    expect(web.status, web.diagnostics.join('\n')).toBe('ok');
+    expect(web.diagnostics).toContain(
+      "warn: missing part 'demo.over_react.g.dart' at web/demo.dart:3:6 (not generated?); outside lib/ and bin/, references inside it are unknown",
+    );
+    expect(web.diagnostics.some((d) => d.startsWith('error:'))).toBe(false);
+    const bin = await scipDart.run(inputFor(repos, repos[1]!), out);
+    expect(bin.status).toBe('partial');
+    expect(bin.diagnostics.some((d) => d.startsWith("error: missing generated part 'tool.g.dart' at bin/tool.dart:1:6"))).toBe(true);
+  }, 300_000);
+
+  it('records no entry symbols or exports inside an ignored nested manifest', async () => {
+    // dpx: example/dpx_hello (its own pubspec, ignored by discover) has bin/*.dart
+    // with `main`s scip-dart never indexes, so ingest could not match them.
+    write({
+      'withex/pubspec.yaml': pubspec('acme_withex', '1.0.0'),
+      'withex/lib/acme_withex.dart': "export 'src/a.dart';\n",
+      'withex/lib/src/a.dart': 'int a() => 1;\n',
+      'withex/bin/withex.dart': 'void main() {}\n',
+      'withex/example/hello/pubspec.yaml': pubspec('hello', '0.0.1'),
+      'withex/example/hello/bin/hello.dart': "import 'package:hello/nope.dart';\n\nvoid main() {}\n",
+      'withex/example/hello/lib/hello.dart': 'int h() => 1;\n',
+      'withex/example/loose.dart': 'void main() {}\n', // not under the ignored manifest: still ours
+    });
+    const repo = repoOf(root, 'withex', pubPackage('acme_withex', ['lib/acme_withex.dart', 'bin/withex.dart']));
+    repo.localPath = path.join(root, 'withex');
+    repo.ignoredManifests = [{ path: 'example/hello' }];
+    const out = path.join(root, 'out-withex');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor([repo], repo), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    const s = readJson<ExportsSidecar>(r.exportsFile);
+    expect(s.entrySymbols.map((e) => e.file)).toEqual(['bin/withex.dart', 'example/loose.dart']);
+    expect(s.exports.map((e) => [e.exportedAs, e.file])).toEqual([['a', 'lib/src/a.dart']]);
+    // Nothing from the ignored manifest leaks into diagnostics either (its unresolved import).
+    expect(r.diagnostics.some((d) => d.includes('example/hello'))).toBe(false);
+  }, 300_000);
+
   it('retries pub get without a source link whose HEAD conflicts with the consumer, restoring the user override', async () => {
     // acme_lib HEAD depends on `shared` from hosted; the consumer pins `shared` by
     // path. The user's own override points acme_lib at an older copy with no deps.
@@ -484,4 +604,75 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     const config = readFileSync(path.join(root, 'app/.dart_tool/package_config.json'), 'utf8');
     expect(config).toMatch(/"rootUri": "\.\.\/\.\.\/lib_old\/?"/);
   }, 300_000);
+});
+
+describe('scip-typescript on js_src-style npm packages in a Dart repo', () => {
+  // react_testing_library's js_src: JavaScript only, node_modules full of .d.ts.
+  // scip-typescript's --infer-tsconfig saw those and wrote `{}` (no allowJs):
+  // "no files got indexed", status failed.
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-jssrc-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  function setup(name: string, files: Record<string, string>): IndexerInput {
+    for (const [f, body] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(root, name, f)), { recursive: true });
+      writeFileSync(path.join(root, name, f), body);
+    }
+    const pkg: DiscoveredPackage = { packageId: `npm:${name}`, path: 'js_src', manager: 'npm', name, version: '1.0.0', entryPoints: ['js_src/src/index.js'], deps: [] };
+    const repo: DiscoveredRepo = { repo: `acme/${name}`, localPath: path.join(root, name), headSha: null, packages: [pkg] };
+    return { repo, pkg, lookup: () => undefined, orgPackages: [{ repo, pkg }], options: { install: false, maxOldSpaceMb: 2048 } };
+  }
+  const jsOnly = {
+    'js_src/package.json': JSON.stringify({ name: 'x_src', version: '1.0.0', private: true, main: 'src/index.js' }),
+    'js_src/babel.config.js': 'module.exports = {};\n',
+    'js_src/src/index.js': 'export function render() { return 1; }\n',
+    'js_src/node_modules/dep/index.d.ts': 'export declare const x: number;\n',
+  };
+
+  it('infers an allowJs tsconfig itself (node_modules not searched) and indexes the JavaScript', async () => {
+    const inp = setup('jsonly', jsOnly);
+    const out = path.join(root, 'out-jsonly');
+    mkdirSync(out);
+    const r = await scipTypescript.run(inp, out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(readFileSync(path.join(root, 'jsonly/js_src/tsconfig.json'), 'utf8')).toBe('{"compilerOptions":{"allowJs":true}}');
+    expect(r.diagnostics.find((d) => d.startsWith('info: no tsconfig.json'))).toMatch(/JavaScript sources only/);
+    expect(readScipIndex(r.scipFile).documents.map((d) => d.relativePath)).toContain('src/index.js');
+    expect(readJson<ExportsSidecar>(r.exportsFile).exports.map((e) => e.exportedAs)).toEqual(['render']);
+  }, 120_000);
+
+  it('upgrades a `{}` tsconfig left by an earlier run in a JavaScript-only package', async () => {
+    const inp = setup('stale', { ...jsOnly, 'js_src/tsconfig.json': '{}' });
+    const out = path.join(root, 'out-stale');
+    mkdirSync(out);
+    const r = await scipTypescript.run(inp, out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(r.diagnostics).toContain(
+      'info: tsconfig.json is {} but the package has JavaScript sources only (it would index nothing); rewrote it as {"compilerOptions":{"allowJs":true}}',
+    );
+    expect(readScipIndex(r.scipFile).documents.map((d) => d.relativePath)).toContain('src/index.js');
+  }, 120_000);
+
+  it('a package with no sources at all gets an empty index, status ok, and a warn', async () => {
+    const inp = setup('nocode', {
+      'js_src/package.json': JSON.stringify({ name: 'nocode', version: '1.0.0', private: true, scripts: { build: 'vite build' } }),
+      'js_src/tsconfig.json': '{}',
+      'js_src/README.md': '# bundle build\n',
+      'js_src/node_modules/dep/index.js': 'module.exports = 1;\n',
+    });
+    expect(scipTypescript.detect(inp)).toBe(true);
+    const out = path.join(root, 'out-nocode');
+    mkdirSync(out);
+    const r = await scipTypescript.run(inp, out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(r.diagnostics).toContain('warn: tsconfig has no input files: the package has no TypeScript/JavaScript sources; wrote an empty index');
+    const idx = readScipIndex(r.scipFile);
+    expect(idx.documents).toEqual([]);
+    expect(idx.metadata?.toolInfo?.name).toBe('scip-typescript');
+    expect(idx.metadata?.projectRoot).toBe(pathToFileURL(path.join(root, 'nocode/js_src')).href);
+    expect(readJson<ExportsSidecar>(r.exportsFile)).toMatchObject({ packageId: 'npm:nocode', exports: [], entryPoints: [] });
+  });
 });

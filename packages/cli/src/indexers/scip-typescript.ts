@@ -20,9 +20,9 @@ import {
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { SurfaceJob, SurfaceWorkerResult } from './surface-worker.ts';
-import type { DiscoveredPackage, DiscoveredRepo, Indexer, IndexerInput, IndexerResult, IndexStatus } from './types.ts';
+import type { DiscoveredPackage, DiscoveredRepo, ExportsSidecar, Indexer, IndexerInput, IndexerResult, IndexStatus } from './types.ts';
 import { worstStatus } from './types.ts';
 
 const require = createRequire(import.meta.url);
@@ -61,27 +61,80 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManager, string[]]> = [
   ['bun.lockb', 'bun', ['install', '--frozen-lockfile', '--ignore-scripts']],
 ];
 
-/** Directories never searched for sources when deciding `--infer-tsconfig`. */
+/** Directories never searched for sources (tsconfig inference, the no-code check). */
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'coverage']);
 
-function hasJsOrTsSources(dir: string, budget = { n: 2000 }): boolean {
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return false;
-  }
-  for (const e of entries) {
-    if (--budget.n < 0) return false;
-    if (e.isDirectory()) {
-      if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.') && hasJsOrTsSources(path.join(dir, e.name), budget)) {
-        return true;
-      }
-    } else if (/\.(?:[cm]?[jt]s|[jt]sx)$/.test(e.name) && !e.name.endsWith('.d.ts')) {
-      return true;
+/** What source files a package dir holds (outside SKIP_DIRS and dot dirs). */
+export interface SourceScan {
+  /** A `.ts`/`.tsx`/`.mts`/`.cts` file (declaration files included). */
+  ts: boolean;
+  /** A `.js`/`.jsx`/`.mjs`/`.cjs` file. */
+  js: boolean;
+  /** The walk hit its budget before finding a TypeScript file: absent kinds are unknown. */
+  truncated: boolean;
+}
+
+/** Walks `dir` for source files; stops at the first TypeScript file or after `budget` entries. */
+export function scanSources(dir: string, budget = { n: 5000 }): SourceScan {
+  const out: SourceScan = { ts: false, js: false, truncated: false };
+  const walk = (d: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
     }
+    for (const e of entries) {
+      if (out.ts || out.truncated) return;
+      if (--budget.n < 0) {
+        out.truncated = true;
+        return;
+      }
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) walk(path.join(d, e.name));
+      } else if (/\.[cm]?tsx?$/.test(e.name)) {
+        out.ts = true;
+      } else if (/\.(?:[cm]?js|jsx)$/.test(e.name)) {
+        out.js = true;
+      }
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+/** scip-typescript's inferred configs (`inferTsconfig.ts`): TypeScript sources, or JavaScript only. */
+const NO_JS_TSCONFIG = '{}';
+const ALLOW_JS_TSCONFIG = '{"compilerOptions":{"allowJs":true}}';
+
+/**
+ * Makes sure `<dir>/tsconfig.json` exists before scip-typescript runs, and
+ * returns what it did (an `info:` line) or undefined. We infer it ourselves
+ * rather than pass `--infer-tsconfig`: scip-typescript's inference walks
+ * node_modules, finds a `.ts` there and writes `{}` (no allowJs) for a
+ * JavaScript-only package, which then indexes nothing ("no files got
+ * indexed"; react_testing_library's js_src). The file stays in the checkout,
+ * as scip-typescript's did, and the export surface reads it too. A `{}` left by
+ * an earlier run in a package with JavaScript sources only is upgraded the same
+ * way (as `{}` it could only ever index nothing).
+ */
+export function ensureTsconfig(dir: string, scan: SourceScan): string | undefined {
+  const file = path.join(dir, 'tsconfig.json');
+  const wanted = !scan.ts && scan.js ? ALLOW_JS_TSCONFIG : NO_JS_TSCONFIG;
+  if (!existsSync(file)) {
+    writeFileSync(file, wanted);
+    return `info: no tsconfig.json; wrote ${wanted} (${wanted === ALLOW_JS_TSCONFIG ? 'JavaScript sources only' : 'TypeScript sources'}, node_modules not searched)`;
   }
-  return false;
+  if (wanted !== ALLOW_JS_TSCONFIG) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed) || Object.keys(parsed).length > 0) return undefined;
+  writeFileSync(file, wanted);
+  return `info: tsconfig.json is {} but the package has JavaScript sources only (it would index nothing); rewrote it as ${wanted}`;
 }
 
 export const scipTypescript: Indexer = {
@@ -94,10 +147,11 @@ export const scipTypescript: Indexer = {
   //   (declared outside every tsconfig's files).
   version: '0.4.0+sentei.2',
 
+  // Every npm package: one with no TypeScript/JavaScript sources at all gets an
+  // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
+  // (e.g. a `js_src/` bundle-build manifest in a Dart repo).
   detect({ repo, pkg }) {
-    if (pkg.manager !== 'npm') return false;
-    const dir = packageDir(repo, pkg);
-    return existsSync(path.join(dir, 'tsconfig.json')) || hasJsOrTsSources(dir);
+    return pkg.manager === 'npm' && existsSync(path.join(packageDir(repo, pkg), 'package.json'));
   },
 
   async prepare(input) {
@@ -132,15 +186,42 @@ export const scipTypescript: Indexer = {
     const repoRoot = realpathSync(repo.localPath);
     const dir = realpathSync(packageDir(repo, pkg));
     const tsconfig = path.join(dir, 'tsconfig.json');
-    const inferTsconfig = !existsSync(tsconfig);
     const log: string[] = [...prepared.log];
+
+    // No source file at all: nothing to index and nothing that could reference
+    // an org symbol. An empty index keeps the package from being opaque.
+    const scan = scanSources(dir);
+    if (!scan.ts && !scan.js && !scan.truncated) {
+      diagnostics.push(
+        existsSync(tsconfig)
+          ? 'warn: tsconfig has no input files: the package has no TypeScript/JavaScript sources; wrote an empty index'
+          : 'warn: no TypeScript/JavaScript sources in the package; wrote an empty index',
+      );
+      writeFileSync(scipFile, emptyScipIndex(pathToFileURL(dir).href));
+      const empty: ExportsSidecar = {
+        packageId: pkg.packageId,
+        entryPoints: [],
+        missingEntryPoints: [],
+        exports: [],
+        unresolved: [],
+        unresolvedImports: [],
+        flags: [],
+        namespaceMemberRefs: [],
+        shorthandRefs: [],
+        namespaceSpreadRefs: [],
+        unindexedImports: [],
+        entrySymbols: [],
+      };
+      writeFileSync(exportsFile, `${JSON.stringify(empty, null, 2)}\n`);
+      log.push('--- diagnostics', ...diagnostics);
+      writeFileSync(logFile, `${log.join('\n')}\n`);
+      return result();
+    }
+    const inferred = ensureTsconfig(dir, scan);
+    if (inferred !== undefined) diagnostics.push(inferred);
 
     // 3. Index (1–2 are `prepare`).
     const args = [scipTypescriptBin(), 'index', '--output', scipFile, '--no-progress-bar'];
-    if (inferTsconfig) {
-      args.push('--infer-tsconfig');
-      diagnostics.push('info: no tsconfig.json; running with --infer-tsconfig (scip-typescript writes one)');
-    }
     const proc = await runNode({
       what: 'scip-typescript',
       args,
@@ -217,6 +298,27 @@ export const scipTypescript: Indexer = {
     return result();
   },
 };
+
+/**
+ * A serialized `scip.Index` with metadata only (tool scip-typescript, the
+ * project root, UTF-8 documents) and no documents: hand-encoded protobuf.
+ */
+export function emptyScipIndex(projectRoot: string): Uint8Array {
+  const varint = (n: number): number[] => {
+    const out: number[] = [];
+    while (n > 0x7f) {
+      out.push((n & 0x7f) | 0x80);
+      n >>>= 7;
+    }
+    out.push(n);
+    return out;
+  };
+  const len = (field: number, bytes: number[]): number[] => [(field << 3) | 2, ...varint(bytes.length), ...bytes];
+  const str = (field: number, s: string): number[] => len(field, [...Buffer.from(s, 'utf8')]);
+  const toolInfo = [...str(1, 'scip-typescript'), ...str(2, '0.4.0')];
+  const metadata = [...len(2, toolInfo), ...str(3, projectRoot), (4 << 3) | 0, 1];
+  return Uint8Array.from(len(1, metadata));
+}
 
 /** Runs a subprocess; injectable so tests never spawn a package manager. `input` is written to its stdin. */
 export type Runner = (
