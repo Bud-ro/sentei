@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { matchGlob } from '../src/glob.ts';
-import { DOCS_GLOBS, GENERATED_GLOBS, TEST_GLOBS } from '../src/globs.ts';
+import { DOCS_GLOBS, GENERATED_GLOBS, SCRIPT_GLOBS, TEST_GLOBS } from '../src/globs.ts';
 
 // analyze.sql spells the test/docs globs as SQLite GLOB conditions (it is loaded
 // verbatim). Parse them back and compare with the TypeScript lists the witness uses.
@@ -30,7 +30,7 @@ function viewGlobs(view: string): string[] {
   return out;
 }
 
-describe('test/docs/generated globs: analyze.sql and globs.ts agree', () => {
+describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () => {
   it('test_files spells exactly TEST_GLOBS', () => {
     expect(viewGlobs('test_files')).toEqual([...TEST_GLOBS]);
   });
@@ -43,6 +43,10 @@ describe('test/docs/generated globs: analyze.sql and globs.ts agree', () => {
     expect(viewGlobs('generated_files')).toEqual([...GENERATED_GLOBS]);
   });
 
+  it('script_files spells exactly SCRIPT_GLOBS', () => {
+    expect(viewGlobs('script_files')).toEqual([...SCRIPT_GLOBS]);
+  });
+
   it('the views and matchGlob classify sample paths identically', () => {
     const paths = [
       'src/a.test.ts', 'b.spec.js', 'lib/f_test.dart', 'pkg/x_test.go', 'src/Button.stories.tsx', 'test/c.ts', 'src/test/d.ts',
@@ -52,6 +56,8 @@ describe('test/docs/generated globs: analyze.sql and globs.ts agree', () => {
       'lib/a.g.dart', 'lib/src/b.pb.dart', 'c.pbenum.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart',
       'test/g.mocks.dart', 'lib/h.over_react.g.dart', 'src/i.generated.ts', 'generated/j.ts', 'src/__generated__/k.ts',
       'lib/g.dart', 'lib/pb.dart', 'src/generator/l.ts', 'src/generated.ts', 'lib/x.g.dart.bak',
+      'playground/p.ts', 'src/playgrounds/q.ts', 'bench/r.ts', 'benchmark/s.ts', 'x/benchmarks/t.ts', 'sandbox/u.ts',
+      'scripts/v.ts', 'tool/w.dart', 'src/tools/x.ts', 'src/scripting/y.ts', 'src/toolsy/z.ts', 'scripts.ts',
     ];
     const db = openDb(':memory:');
     try {
@@ -66,6 +72,11 @@ describe('test/docs/generated globs: analyze.sql and globs.ts agree', () => {
       expect(inView('test_files')).toEqual(byGlob(TEST_GLOBS));
       expect(inView('doc_files')).toEqual(byGlob(DOCS_GLOBS));
       expect(inView('generated_files')).toEqual(byGlob(GENERATED_GLOBS));
+      expect(inView('script_files')).toEqual(byGlob(SCRIPT_GLOBS));
+      expect(inView('script_files')).toEqual([
+        'bench/r.ts', 'benchmark/s.ts', 'playground/p.ts', 'sandbox/u.ts', 'scripts/v.ts', 'src/playgrounds/q.ts',
+        'src/tools/x.ts', 'tool/w.dart', 'x/benchmarks/t.ts',
+      ]);
       expect(inView('generated_files')).toEqual([
         'c.pbenum.dart', 'generated/j.ts', 'lib/a.g.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart',
         'lib/h.over_react.g.dart', 'lib/src/b.pb.dart', 'src/__generated__/k.ts', 'src/i.generated.ts', 'test/g.mocks.dart',

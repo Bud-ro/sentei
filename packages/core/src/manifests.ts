@@ -40,6 +40,13 @@ export interface ManifestPackage {
   manifest: string;
   /** Entry files relative to the repo root, POSIX, sorted, deduplicated. */
   entryPoints: string[];
+  /**
+   * npm `main` / `module` / `types` / `typings` / `exports` leaves that look like code
+   * (CODE_EXT, incl. `.d.ts`) but resolve to no file, even through the dist→src rules,
+   * as written in the manifest, sorted, deduplicated. The package's surface is then
+   * partly unknown: discover flags it `opaque_consumer` (fail closed). [] for pub.
+   */
+  unresolvedEntryPoints: string[];
   /** Sorted by name; one entry per name. */
   deps: ManifestDep[];
 }
@@ -318,7 +325,7 @@ export function readNpmPackage(
   const version = typeof json['version'] === 'string' ? json['version'] : null;
 
   const files = repoFiles ?? listFiles(repoRoot);
-  const entryPoints = npmEntryPoints(dir, json, files, warn);
+  const { entryPoints, unresolved } = resolveNpmEntryPoints(dir, json, files, warn);
   return {
     manager: 'npm',
     name,
@@ -328,6 +335,7 @@ export function readNpmPackage(
     path: dir,
     manifest,
     entryPoints,
+    unresolvedEntryPoints: unresolved,
     deps: npmDeps(json, manifest, warn),
   };
 }
@@ -383,29 +391,50 @@ export function npmVisibility(json: Record<string, unknown>, manifest = 'package
  * Each declared path is resolved relative to the package dir by, in order:
  *   1. the file itself;
  *   2. Node's extension/directory probing: `<p>.{ts,tsx,js,mjs,cjs,jsx}`, `<p>/index.*`;
+ *      and the TypeScript source beside built output: `<p>` with its extension
+ *      (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) replaced by `.ts .tsx .mts .cts`;
  *   3. dist→src mapping for unbuilt TS repos: if `<p>` starts with `dist/`, `lib/`,
  *      `build/` or `out/`, replace that first segment with `src/` and the
- *      extension (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) with `.ts`, then `.tsx`.
- * Paths that resolve to nothing are dropped silently (npm manifests routinely
- * point at build output). Only code-looking files are kept (see CODE_EXT) plus
- * extension-less files (shebang bin scripts), so `"./package.json"` exports are ignored.
+ *      extension (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) with `.ts`, then `.tsx`,
+ *      then `/index.ts`, `/index.tsx` (`dist/vue.mjs` → `src/vue/index.ts`); a stem
+ *      ending in `/index` also tries the parent (`dist/x/index.js` → `src/x.ts`).
+ * Paths that resolve to nothing are dropped from the entry points (npm manifests
+ * routinely point at build output that the mapping cannot always find). Only
+ * code-looking files are kept (see CODE_EXT) plus extension-less files (shebang bin
+ * scripts), so `"./package.json"` exports are ignored.
  * If nothing resolves, fall back to the first existing of index.{ts,tsx,js,mjs,cjs},
  * src/index.{ts,tsx}.
  */
 export function npmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
 ): string[] {
-  const declared: string[] = [];
+  return resolveNpmEntryPoints(dir, json, repoFiles, warn).entryPoints;
+}
+
+/**
+ * npmEntryPoints plus `unresolved`: every code-looking (CODE_EXT) `main` / `module` /
+ * `types` / `typings` / `exports` leaf (a `*` pattern included) that resolved to no
+ * file, as written, sorted, deduplicated. `bin` and `browser` are not checked (bins
+ * are scripts run by name, not import surface). The index fallback does not clear them.
+ */
+export function resolveNpmEntryPoints(
+  dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
+): { entryPoints: string[]; unresolved: string[] } {
+  const declared: Array<{ path: string; surface: boolean }> = [];
   const patterns: string[] = [];
   for (const key of ['main', 'module', 'types', 'typings'] as const) {
     const v = json[key];
-    if (typeof v === 'string') declared.push(v);
+    if (typeof v === 'string') declared.push({ path: v, surface: true });
   }
   const bin = json['bin'];
-  if (typeof bin === 'string') declared.push(bin);
-  else if (isObject(bin)) for (const v of Object.values(bin)) if (typeof v === 'string') declared.push(v);
-  if (typeof json['browser'] === 'string') declared.push(json['browser']);
-  collectExportLeaves(json['exports'], (leaf) => (leaf.includes('*') ? patterns : declared).push(leaf));
+  if (typeof bin === 'string') declared.push({ path: bin, surface: false });
+  else if (isObject(bin)) for (const v of Object.values(bin)) if (typeof v === 'string') declared.push({ path: v, surface: false });
+  if (typeof json['browser'] === 'string') declared.push({ path: json['browser'], surface: false });
+  collectExportLeaves(json['exports'], (leaf) => {
+    if (leaf.includes('*')) patterns.push(leaf);
+    else declared.push({ path: leaf, surface: true });
+  });
+  const unresolved = new Set<string>();
 
   const pkgFiles = packageFiles(dir, repoFiles);
   const pkgFileSet = new Set(pkgFiles);
@@ -415,24 +444,33 @@ export function npmEntryPoints(
     if (!CODE_EXT.test(rel) && posix.extname(rel) !== '') return;
     found.add(joinRel(dir, rel));
   };
-  for (const p of declared) {
+  for (const { path: p, surface } of declared) {
     const n = normalizeRel(p);
     if (n === null) {
       warn(`${joinRel(dir, 'package.json')}: entry ${JSON.stringify(p)} escapes the package, ignored`);
       continue;
     }
-    add(resolveEntry(n, pkgFileSet));
+    const r = resolveEntry(n, pkgFileSet);
+    if (r === null && surface && CODE_EXT.test(n)) unresolved.add(p);
+    add(r);
   }
   for (const p of patterns) {
     const n = normalizeRel(p);
     if (n === null) continue;
-    // The pattern as written; only if it matches nothing, its dist→src variants (.ts and .tsx together).
-    for (const variants of [[n], distToSrc(n)]) {
+    // The pattern as written; only if it matches nothing, its dist→src variants, one group
+    // at a time (.ts and .tsx together; the index variants only if those match nothing: a
+    // `*` spans `/`, so `src/x/*.ts` for `dist/x/*/index.mjs` would also catch helpers).
+    let matched = false;
+    for (const variants of [[n], ...distToSrcGroups(n)]) {
       const res = variants.map(exportPatternRegExp);
       const hits = pkgFiles.filter((f) => res.some((re) => re.test(f)));
       hits.forEach(add);
-      if (hits.length > 0) break;
+      if (hits.length > 0) {
+        matched = true;
+        break;
+      }
     }
+    if (!matched && CODE_EXT.test(n)) unresolved.add(p);
   }
   if (found.size === 0) {
     for (const f of ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'index.cjs', 'src/index.ts', 'src/index.tsx']) {
@@ -443,7 +481,7 @@ export function npmEntryPoints(
     }
   }
   if (found.size === 0) warn(`${joinRel(dir, 'package.json')}: no entry points resolved`);
-  return [...found].sort(cmp);
+  return { entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp) };
 }
 
 function collectExportLeaves(v: unknown, out: (leaf: string) => void): void {
@@ -460,18 +498,35 @@ function resolveEntry(p: string, files: ReadonlySet<string>): string | null {
     const idx = p === '' ? `index${ext}` : `${p}/index${ext}`;
     if (files.has(idx)) return idx;
   }
-  for (const alt of distToSrc(p)) if (files.has(alt)) return alt;
+  // TypeScript source next to the declared output (`main.js` / `main.d.ts` → `main.ts`).
+  if (BUILT_EXT.test(p)) {
+    const stem = p.replace(BUILT_EXT, '');
+    for (const ext of ['.ts', '.tsx', '.mts', '.cts']) if (files.has(stem + ext)) return stem + ext;
+  }
+  for (const alt of distToSrcGroups(p).flat()) if (files.has(alt)) return alt;
   return null;
 }
 
 const BUILD_DIR = /^(?:dist|lib|build|out)\//;
 const BUILT_EXT = /(?:\.d\.[cm]?ts|\.[cm]?js|\.jsx)$/;
 
-/** dist/foo.js → [src/foo.ts, src/foo.tsx]; [] if the path is not build-output-shaped. */
-function distToSrc(p: string): string[] {
+/**
+ * dist→src candidates in priority groups:
+ * dist/foo.js → [[src/foo.ts, src/foo.tsx], [src/foo/index.ts, src/foo/index.tsx]];
+ * dist/x/index.js → [[src/x/index.ts, src/x/index.tsx], [src/x.ts, src/x.tsx]];
+ * [] if the path is not build-output-shaped.
+ */
+function distToSrcGroups(p: string): string[][] {
   if (!BUILD_DIR.test(p) || !BUILT_EXT.test(p)) return [];
   const stem = p.replace(BUILD_DIR, 'src/').replace(BUILT_EXT, '');
-  return [`${stem}.ts`, `${stem}.tsx`];
+  const out = [[`${stem}.ts`, `${stem}.tsx`]];
+  if (stem.endsWith('/index')) {
+    const parent = stem.slice(0, -'/index'.length);
+    if (parent !== 'src') out.push([`${parent}.ts`, `${parent}.tsx`]);
+  } else {
+    out.push([`${stem}/index.ts`, `${stem}/index.tsx`]);
+  }
+  return out;
 }
 
 /** Node `exports` target pattern: every `*` stands for the same (possibly slash-containing) string. */
@@ -518,6 +573,7 @@ export function readPubPackage(
     path: dir,
     manifest,
     entryPoints,
+    unresolvedEntryPoints: [],
     deps: pubDeps(doc, manifest, warn),
   };
 }

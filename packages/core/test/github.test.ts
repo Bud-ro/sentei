@@ -63,6 +63,21 @@ describe('listRepos', () => {
     }
   });
 
+  it('skips template repos (is_template) with a log line', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      [`${API}/orgs/acme/repos?type=all&per_page=100`]: {
+        body: [repo('real'), repo('starter', { is_template: true }), repo('old-tpl', { is_template: true, archived: true })],
+      },
+      ...branch('real', sha('d')),
+    });
+    const logs: string[] = [];
+    const repos = await listRepos({ org: 'acme', token: 't', fetchImpl, log: (l) => logs.push(l) });
+    expect(repos.map((r) => r.name)).toEqual(['real']);
+    expect(calls.some((c) => c.url.includes('/starter/'))).toBe(false);
+    expect(logs).toContain('skipping 1 template repo(s): starter');
+    expect(logs).toContain('skipping 1 archived repo(s)');
+  });
+
   it('falls back to the user endpoint when the org 404s', async () => {
     const { fetchImpl, calls } = fakeFetch({
       [`${API}/users/acme/repos?per_page=100`]: { body: [repo('solo')] },

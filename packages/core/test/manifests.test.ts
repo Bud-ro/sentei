@@ -277,6 +277,61 @@ describe('npm manifests', () => {
     expect(readRepoManifests(root, warn)[0]!.entryPoints).toEqual(['src/cli.ts', 'src/esm/mod.ts', 'src/index.ts', 'src/ui.tsx']);
   });
 
+  it('dist→src also tries index variants: dist/vue.mjs → src/vue/index.ts, dist/x/index.js → src/x.ts', () => {
+    pkgJson('package.json', {
+      name: 'x',
+      exports: {
+        '.': './dist/index.mjs',
+        './vue': { types: './dist/vue.d.mts', import: './dist/vue.mjs' },
+        './react': './dist/react/index.js',
+        './plugins/*': './dist/plugins/*.mjs',
+        // db0: the index group matches, so the parent group (src/integrations/*.ts, whose
+        // `*` would also catch drizzle/_utils.ts) is not tried.
+        './integrations/*': './dist/integrations/*/index.mjs',
+      },
+    });
+    write('src/index.ts');
+    write('src/vue/index.ts');
+    write('src/react.tsx');
+    write('src/plugins/a/index.ts');
+    write('src/integrations/drizzle/index.ts');
+    write('src/integrations/drizzle/_utils.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual([
+      'src/index.ts', 'src/integrations/drizzle/index.ts', 'src/plugins/a/index.ts', 'src/react.tsx', 'src/vue/index.ts',
+    ]);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('resolves built output to the TypeScript source beside it (recast: main.js / main.d.ts → main.ts)', () => {
+    pkgJson('package.json', { name: 'recast', main: 'main.js', types: 'main.d.ts', module: 'lib/esm.mjs' });
+    write('main.ts');
+    write('lib/esm.mts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['lib/esm.mts', 'main.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('records code-looking main/module/types/exports leaves that resolve to nothing (not bin, not non-code)', () => {
+    pkgJson('package.json', {
+      name: 'x',
+      main: './dist/index.cjs',
+      types: './dist/gone.d.ts',
+      bin: { x: './dist/cli.mjs' },
+      exports: {
+        '.': './dist/index.mjs',
+        './vue': './dist/vue.mjs',
+        './pkg': './package.json',
+        './styles': './dist/styles.css',
+        './gone/*': './dist/gone/*.js',
+      },
+    });
+    write('src/index.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['src/index.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual(['./dist/gone.d.ts', './dist/gone/*.js', './dist/vue.mjs']);
+  });
+
   it('prefers the built file when it exists (no src mapping)', () => {
     pkgJson('package.json', { name: 'x', main: 'lib/index.js' });
     write('lib/index.js');

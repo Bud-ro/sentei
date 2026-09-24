@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, posix } from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import { DISCOVER_REASON_PREFIX } from './discover.ts';
 import {
   normalizeSymbolVersion,
   occurrenceEnclosingSpan,
@@ -158,6 +159,11 @@ export interface IngestCounts {
   unmatchedShorthandRefs: number;
   /** symbol_exports rows (distinct (symbol, entry, exported name)). */
   exportAliases: number;
+  /**
+   * Sidecar unresolvedImports whose name the target exports at HEAD: recorded as uses
+   * (occurrences + edges), not as unresolved_refs.
+   */
+  resolvedUnresolvedImports: number;
   /** Sidecar entrySymbols that matched no definition (warned). */
   unmatchedEntrySymbols: number;
   /**
@@ -178,6 +184,9 @@ export interface IngestCounts {
  * is shared with discover: discover writes untargeted rows (files in languages we have
  * no indexer for), ingest writes targeted rows (sidecar unindexedImports). Ingest
  * deletes only the targeted ones, so discover's rows survive every ingest.
+ * `opaque_consumer` is shared too: discover writes rows whose reason starts with
+ * DISCOVER_REASON_PREFIX (`discover: unresolved entry point …`); ingest deletes only
+ * the others.
  */
 const INGEST_FLAGS = ['opaque_consumer', 'index_failed', 'dynamic_access', 'namespace_dynamic'] as const;
 type IngestFlag = (typeof INGEST_FLAGS)[number] | 'unindexed_consumer';
@@ -420,6 +429,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
   const counts: IngestCounts = {
     documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0,
     namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, shorthandRefs: 0, unmatchedShorthandRefs: 0, exportAliases: 0,
+    resolvedUnresolvedImports: 0,
     unmatchedEntrySymbols: 0, packageErrors: 0, skippedInvalidOccurrences: 0, warnings: 0,
   };
 
@@ -435,8 +445,10 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     db.exec('DELETE FROM documents');
     db.exec('DELETE FROM entry_symbols');
     db.exec('DELETE FROM symbols');
-    db.exec(`DELETE FROM package_flags WHERE flag IN (${INGEST_FLAGS.map((f) => `'${f}'`).join(', ')})
-      OR (flag = 'unindexed_consumer' AND target_package_id IS NOT NULL)`);
+    db.prepare(`DELETE FROM package_flags WHERE (flag IN (${INGEST_FLAGS.map((f) => `'${f}'`).join(', ')})
+        AND NOT (flag = 'opaque_consumer' AND substr(coalesce(reason, ''), 1, ?) = ?))
+      OR (flag = 'unindexed_consumer' AND target_package_id IS NOT NULL)`)
+      .run(DISCOVER_REASON_PREFIX.length, DISCOVER_REASON_PREFIX);
     // Findings are gone, so the DB is no longer analyzed (witness/report check this marker;
     // run_params is created by analyze.sql, so it may not exist yet).
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_params'").get()) {
@@ -961,17 +973,6 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         }
         addFlag(packageId, f.flag, f.reason, f.file ?? null, target);
       }
-      const manager = packageId.slice(0, packageId.indexOf(':'));
-      for (const u of data.unresolvedImports ?? []) {
-        const target = `${manager}:${barePackageName(u.module)}`;
-        if (!pkgs.has(target) || target === packageId) {
-          warn(`${packageId}: unresolved import ${JSON.stringify(u.name)} from ${JSON.stringify(u.module)} at ${u.file}`
-            + ` does not name another org package, ignored`);
-          continue;
-        }
-        st.unresolved.run(packageId, target, u.name, u.file, u.line ?? null, u.col ?? null);
-        counts.unresolved += 1;
-      }
       // Unindexed files importing an org package: we cannot see what they use, so the
       // target gets no verdict (blocked_packages); the consumer itself stays transparent.
       for (const u of data.unindexedImports ?? []) {
@@ -984,6 +985,51 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         addFlag(packageId, 'unindexed_consumer', `unindexed file imports ${u.module}`, u.file, target);
       }
     }
+    // ---- Sidecar unresolvedImports (after every sidecar's exports are known) -----
+    // The consumer's checker could not find `name` in the org package it imports. When
+    // the target exports that name at HEAD (an alias in symbol_exports, or an exported
+    // definition of that name), the miss is the consumer's compile options (c12 under
+    // nodenext cannot follow pathe's extensionless `export * from "./_path"`), not version
+    // skew: record a use (role 0 occurrence from the consumer document, enclosed by its
+    // module symbol, + edge) of every such symbol. Otherwise (the name is really gone, or
+    // the consumer file is not an indexed document) it is an unresolved_refs row.
+    {
+      const occAtPos = db.prepare('SELECT 1 FROM occurrences WHERE symbol_id = ? AND package_id = ? AND file = ? AND line = ? AND col = ? LIMIT 1');
+      const exportedNamed = db.prepare(`SELECT DISTINCT s.symbol_id FROM symbols s
+        WHERE s.package_id = ? AND s.is_exported = 1
+          AND (s.name = ? OR EXISTS (SELECT 1 FROM symbol_exports x WHERE x.symbol_id = s.symbol_id AND x.exported_as = ?))
+        ORDER BY s.symbol_id`);
+      for (const { packageId, repo, data } of sidecars) {
+        const manager = packageId.slice(0, packageId.indexOf(':'));
+        for (const u of data.unresolvedImports ?? []) {
+          const target = `${manager}:${barePackageName(u.module)}`;
+          if (!pkgs.has(target) || target === packageId) {
+            warn(`${packageId}: unresolved import ${JSON.stringify(u.name)} from ${JSON.stringify(u.module)} at ${u.file}`
+              + ` does not name another org package, ignored`);
+            continue;
+          }
+          const w = docByFile.get(`${repo}\0${u.file}`);
+          const ids = w && w.packageId === packageId
+            ? (exportedNamed.all(target, u.name, u.name) as Array<{ symbol_id: number }>).map((r) => r.symbol_id)
+            : [];
+          if (ids.length === 0) {
+            st.unresolved.run(packageId, target, u.name, u.file, u.line ?? null, u.col ?? null);
+            counts.unresolved += 1;
+            continue;
+          }
+          const from = byId.get(w!.moduleSymbolId)!;
+          for (const sid of ids) {
+            const to = byId.get(sid)!;
+            if (u.line != null && u.col != null && occAtPos.get(sid, packageId, u.file, u.line, u.col)) continue; // SCIP has it
+            st.occurrence.run(sid, packageId, to.packageId, u.file, u.line ?? null, u.col ?? null, 0, from.symbolId, 0);
+            counts.occurrences += 1;
+            edgeRun(st.edge, from, to, 'scip');
+          }
+          counts.resolvedUnresolvedImports += 1;
+        }
+      }
+    }
+
     counts.exported = exportedIds.size;
     counts.unmatchedExports = unmatched.length;
     if (unmatched.length > 0) warn(`${unmatched.length} sidecar export(s) match no SCIP definition: ${unmatched.join('; ')}`);
@@ -1030,6 +1076,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
   log(`[ingest] documents=${counts.documents} symbols=${counts.symbols} occurrences=${counts.occurrences} edges=${counts.edges} `
     + `exported=${counts.exported} unresolved=${counts.unresolved} flags=${counts.flags} unmatchedExports=${counts.unmatchedExports} `
     + `namespaceMemberRefs=${counts.namespaceMemberRefs} shorthandRefs=${counts.shorthandRefs} exportAliases=${counts.exportAliases}`
+    + (counts.resolvedUnresolvedImports > 0 ? ` resolvedUnresolvedImports=${counts.resolvedUnresolvedImports}` : '')
     + (counts.packageErrors > 0 ? ` packageErrors=${counts.packageErrors}` : '')
     + (counts.skippedInvalidOccurrences > 0 ? ` skippedInvalidOccurrences=${counts.skippedInvalidOccurrences}` : ''));
   return counts;

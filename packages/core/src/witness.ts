@@ -35,16 +35,28 @@
 // A plain `name: '@acme/x/bun'` or a deprecation message does not qualify; a real
 // `import … from 'P'` does not either (the literal `'P'` has no keyword). In a
 // qualifying file, a line naming S (any name) is a hit, consumer `self`.
+// P is also its OWN consumer: P's own files (same walk and rules) that import P by its
+// package name are scanned like any consumer's (step 1 + 2), with consumer `self`. Such
+// files are usually outside the tsconfig program (codeup's `actions/*.ts` doing
+// `import { defineAction } from "codeup"`), so the indexer never saw the use. Own files
+// importing only relatively do not mention P and are unaffected (they are indexed).
+// SELF-STRING step: any literal in P's own files (same walk and rules) whose content,
+// with `${…}` interpolations blanked, IS a name of S (`helperName: "executeAsync"`,
+// auto-import lists) or holds it in an import-clause shape (`{ N`, `N }`, `N as`,
+// `as N`, `, N,`; e.g. `` `import { executeAsync as __x } from "${mod}"` ``) is a hit,
+// consumer `self-string`: code we cannot follow may name S. `'executeAsyncMode'` is not.
 // Any hit (or a consumer dir we cannot read) → needs_review with reasons
 //   witness_mismatch:<consumer>:<file>:<line>      (1-based line, repo-relative file)
 //   witness_mismatch:<consumer>:checkout missing
 // where <consumer> is either a package id (`npm:<name>` / `pub:<name>`), `self` (P's
-// own generated-import files), or, for an ignored manifest, `ignored:<repo>/<manifest>`
+// own generated-import files, or own files importing P by name), `self-string` (a quoted
+// name in P's own files), or, for an ignored manifest, `ignored:<repo>/<manifest>`
 // with <repo> = `<org>/<name>` and <manifest> the repo-relative manifest file (ending in
 // `package.json` or `pubspec.yaml`), e.g.
 //   witness_mismatch:ignored:acme/app/examples/demo/package.json:examples/demo/src/x.ts:3
 //   witness_mismatch:self:src/vite/island-components.ts:189
-// The `ignored:` / `self` labels cannot collide with a package id (always `npm:`/`pub:`).
+//   witness_mismatch:self-string:src/runtime/helpers.ts:12
+// The `ignored:` / `self` / `self-string` labels cannot collide with a package id (always `npm:`/`pub:`).
 //
 // Default-import rule (npm). The default-bound forms are: `import X from`, `import
 // type X from`, `import X, {…} from`, `import { default as X } from`,
@@ -212,6 +224,73 @@ export function stringLiterals(text: string, dart = false): Array<{ start: numbe
   return out;
 }
 
+/**
+ * `text` with every `//` / `/* *\/` comment blanked to spaces (newlines kept, so lines
+ * and offsets are unchanged); strings and templates are skipped with the same loose
+ * rules as stringLiterals, so `'http://x'` is not a comment.
+ */
+export function blankComments(text: string, dart = false): string {
+  const lits = stringLiterals(text, dart);
+  let out = '';
+  let i = 0;
+  const blankTo = (end: number): void => {
+    out += text.slice(i, end).replace(/[^\n]/g, ' ');
+    i = end;
+  };
+  for (const lit of [...lits, { start: text.length, text: '' }]) {
+    // Between literals: find comments.
+    while (i < lit.start) {
+      const a = text.indexOf('//', i);
+      const b = text.indexOf('/*', i);
+      const next = [a, b].filter((x) => x !== -1 && x < lit.start).sort((x, y) => x - y)[0];
+      if (next === undefined) {
+        out += text.slice(i, lit.start);
+        i = lit.start;
+        break;
+      }
+      out += text.slice(i, next);
+      i = next;
+      if (next === a) {
+        const e = text.indexOf('\n', i);
+        blankTo(e === -1 ? text.length : e);
+      } else {
+        const e = text.indexOf('*/', i + 2);
+        blankTo(e === -1 ? text.length : e + 2);
+      }
+    }
+    if (i > lit.start) continue; // (a comment ran past this literal: it was not a real literal)
+    out += lit.text;
+    i = lit.start + lit.text.length;
+  }
+  return out;
+}
+
+/** `${…}` interpolations (brace-counted) replaced by spaces, newlines kept, so offsets are unchanged. */
+function blankInterpolations(s: string): string {
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === '\\') {
+      out += s.slice(i, i + 2);
+      i += 2;
+    } else if (s[i] === '$' && s[i + 1] === '{') {
+      let depth = 0;
+      let j = i + 1;
+      do {
+        if (s[j] === '{') depth += 1;
+        else if (s[j] === '}') depth -= 1;
+        j += 1;
+      } while (j < s.length && depth > 0);
+      out += s.slice(i, j).replace(/[^\n]/g, ' ');
+      i = j;
+    } else {
+      out += s[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
 /** 1-based line of a string offset. */
 function lineAt(text: string, index: number): number {
   let line = 1;
@@ -310,6 +389,8 @@ interface PendingRow {
   blocked_by: string;
   name: string;
   file: string;
+  /** 0-based definition line (symbols.line), or null. */
+  line: number | null;
   package_id: string;
   manager: 'npm' | 'pub';
   pkg_name: string;
@@ -418,15 +499,29 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return t;
   };
 
-  /** Files of C mentioning P (keyed C\0P\0withTests). */
+  /** readText with comments blanked (blankComments), for P's own files. */
+  const codeCache = new Map<string, string>();
+  const readCode = (consumer: string, rel: string): string => {
+    const key = `${consumer}\0${rel}`;
+    let t = codeCache.get(key);
+    if (t === undefined) {
+      t = blankComments(readText(consumer, rel), extname(rel) === '.dart');
+      codeCache.set(key, t);
+    }
+    return t;
+  };
+
+  /** Files of C mentioning P (keyed C\0P\0withTests\0code). */
   const mentionCache = new Map<string, string[]>();
-  const mentioning = (consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string, withTests: boolean): string[] => {
-    const key = `${consumer}\0${manager}:${pkgName}\0${withTests ? 1 : 0}`;
+  const mentioning = (
+    consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string, withTests: boolean, read = readText,
+  ): string[] => {
+    const key = `${consumer}\0${manager}:${pkgName}\0${withTests ? 1 : 0}\0${read === readCode ? 1 : 0}`;
     let out = mentionCache.get(key);
     if (!out) {
       const res = mentionRegexes(manager, pkgName);
       out = files.filter((f) => {
-        const text = readText(consumer, f);
+        const text = read(consumer, f);
         return res.some((re) => {
           re.lastIndex = 0;
           return re.test(text);
@@ -449,12 +544,18 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return out;
   };
 
-  const findHits = (row: PendingRow, plan: SearchPlan, consumer: string, withTests = false): Hit[] => {
+  /**
+   * Hits in consumer C (`label`: the consumer named in the reason; default C itself).
+   * `label` 'self' (P scanned as its own consumer) reads the files with comments
+   * blanked: a JSDoc `@example import { S } from 'P'` on S itself is not a use.
+   */
+  const findHits = (row: PendingRow, plan: SearchPlan, consumer: string, withTests = false, label = consumer): Hit[] => {
     const files = consumerFiles(consumer, withTests);
-    if (files === null) return [{ consumer, file: null, line: 0 }];
+    if (files === null) return [{ consumer: label, file: null, line: 0 }];
+    const read = label === 'self' ? readCode : readText;
     const hits: Hit[] = [];
-    for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests)) {
-      const text = readText(consumer, f);
+    for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests, read)) {
+      const text = read(consumer, f);
       const lines = new Set<number>(nameLines(text, plan.names));
       if (plan.defaults) {
         const t = plan.defaults;
@@ -472,7 +573,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
           }
         }
       }
-      for (const line of [...lines].sort((a, b) => a - b)) hits.push({ consumer, file: f, line });
+      for (const line of [...lines].sort((a, b) => a - b)) hits.push({ consumer: label, file: f, line });
     }
     return hits;
   };
@@ -511,6 +612,58 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     const files = selfGenFiles(row);
     if (files === null) return [{ consumer: 'self', file: null, line: 0 }];
     return files.flatMap((f) => nameLines(readText(row.package_id, f), plan.names).map((line) => ({ consumer: 'self', file: f, line })));
+  };
+
+  /**
+   * String literals of P's own files (same walk and test/docs rules), per package, with
+   * their content: delimiters stripped and every `${…}` interpolation blanked to spaces
+   * (same length, so offsets still map to lines; an interpolation is code the indexer
+   * sees, not a quoted name). null if P's checkout is missing.
+   */
+  const literalCache = new Map<string, Array<{ file: string; offset: number; content: string }> | null>();
+  const ownLiterals = (row: PendingRow): Array<{ file: string; offset: number; content: string }> | null => {
+    let out = literalCache.get(row.package_id);
+    if (out !== undefined) return out;
+    const files = consumerFiles(row.package_id);
+    out = files === null ? null : files.flatMap((f) => {
+      const dart = row.manager === 'pub';
+      return stringLiterals(readText(row.package_id, f), dart).map((lit) => {
+        const q = dart && (lit.text.startsWith("'''") || lit.text.startsWith('"""')) ? 3 : 1;
+        const close = lit.text.length >= 2 * q && lit.text.endsWith(lit.text.slice(0, q)) ? q : 0;
+        return { file: f, offset: lit.start + q, content: blankInterpolations(lit.text.slice(q, lit.text.length - close)) };
+      });
+    });
+    literalCache.set(row.package_id, out);
+    return out;
+  };
+
+  /**
+   * SELF-STRING step: a literal in P's own sources that quotes a name of S (header):
+   * its content IS the name (`helperName: "executeAsync"`, an auto-import list), or it
+   * holds the name in an import-clause shape (`{ N`, `N }`, `N as`, `as N`, `, N,`),
+   * i.e. generated code naming S with a module path we cannot follow.
+   */
+  const selfStringHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
+    const lits = ownLiterals(row);
+    if (lits === null) return [{ consumer: 'self-string', file: null, line: 0 }];
+    const hits: Hit[] = [];
+    for (const name of plan.names) {
+      const e = escapeRe(name);
+      const clause = new RegExp(
+        `\\{\\s*${e}(?![\\w$])|(?<![\\w$])${e}\\s*\\}|(?<![\\w$])${e}\\s+as\\b|\\bas\\s+${e}(?![\\w$])|,\\s*${e}\\s*,`,
+      );
+      for (const lit of lits) {
+        if (!lit.content.includes(name)) continue;
+        let at = -1;
+        if (lit.content === name) at = 0;
+        else {
+          const m = clause.exec(lit.content);
+          if (m) at = m.index;
+        }
+        if (at >= 0) hits.push({ consumer: 'self-string', file: lit.file, line: lineAt(readText(row.package_id, lit.file), lit.offset + at) });
+      }
+    }
+    return hits;
   };
 
   /** P's package.json `exports` (undefined if absent/unreadable), per package. */
@@ -553,7 +706,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
 
   const pending = db
     .prepare(
-      `SELECT f.symbol_id, f.reasons, f.blocked_by, s.name, s.file, s.package_id,
+      `SELECT f.symbol_id, f.reasons, f.blocked_by, s.name, s.file, s.line, s.package_id,
               p.manager, p.name AS pkg_name
        FROM findings f
        JOIN symbols s ON s.symbol_id = f.symbol_id
@@ -583,7 +736,26 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         ...[...new Set([...(ignoredConsumers.get(row.package_id) ?? []), ...ignoredAnyPackage])].map((c) => ({ c, dev: false })),
       ];
       const plan = planFor(row);
-      const hits = [...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev)), ...selfHits(row, plan)];
+      const all = [
+        ...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev)),
+        // P is its own consumer for own files that import it BY NAME (unindexed files
+        // outside the tsconfig program, e.g. codeup's `actions/*.ts` importing "codeup").
+        // The definition line itself is not a use (a Dart file routinely imports its own
+        // package by name, and so names S where it declares it).
+        ...findHits(row, plan, row.package_id, false, 'self')
+          .filter((h) => !(h.file === row.file && row.line !== null && h.line === row.line + 1)),
+        ...selfHits(row, plan),
+        ...selfStringHits(row, plan),
+      ];
+      // One reason per position; the self steps share a key (a codegen template naming S
+      // is both a `self` and a `self-string` hit: the first, `self`, is kept).
+      const seen = new Set<string>();
+      const hits = all.filter((h) => {
+        const k = `${h.consumer.startsWith('self') ? 'self' : h.consumer}\0${h.file ?? ''}\0${h.line}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
       del.run(row.symbol_id);
       if (hits.length > 0) {
         hits.sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);

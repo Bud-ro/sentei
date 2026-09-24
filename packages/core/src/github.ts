@@ -70,6 +70,8 @@ interface ApiRepo {
   fork: boolean;
   clone_url: string;
   pushed_at: string | null;
+  /** Template repositories are scaffolds copied into other repos, never consumers. */
+  is_template?: boolean;
 }
 
 class NotFound extends Error {}
@@ -106,7 +108,9 @@ function nextLink(link: string | null): string | null {
 /**
  * List `org`'s repos (falling back to the user endpoint when `org` is not an
  * org) with each default branch's head sha. Sorted by name. Empty repos (no
- * default branch commit) are skipped with a log line.
+ * default branch commit) and template repos (`is_template`: a scaffold whose copies are
+ * the real repos; its own `package.json` usually reuses a real package's name) are
+ * skipped with a log line.
  */
 export async function listRepos(opts: ListReposOptions): Promise<GithubRepo[]> {
   const apiUrl = (opts.apiUrl ?? DEFAULT_API_URL).replace(/\/+$/, '');
@@ -173,7 +177,11 @@ export async function listRepos(opts: ListReposOptions): Promise<GithubRepo[]> {
 
   const archived = listed.filter((r) => r.archived);
   if (archived.length > 0 && !opts.includeArchived) log(`skipping ${archived.length} archived repo(s)`);
-  const wanted = listed.filter((r) => opts.includeArchived || !r.archived).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const templates = listed.filter((r) => r.is_template === true && (opts.includeArchived || !r.archived));
+  if (templates.length > 0) {
+    log(`skipping ${templates.length} template repo(s): ${templates.map((r) => r.name).sort().join(', ')}`);
+  }
+  const wanted = listed.filter((r) => (opts.includeArchived || !r.archived) && r.is_template !== true).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
   const withSha = await mapPool(wanted, opts.concurrency ?? 8, async (r): Promise<GithubRepo | null> => {
     const [owner, name] = r.full_name.split('/').map(encodeURIComponent);

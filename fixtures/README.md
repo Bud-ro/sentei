@@ -64,7 +64,7 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | JSX `<Foo />` | `app-consumer/src/view.tsx` → `Widget` | alive |
 | Used only in `*.test.ts` of another repo → `only_test_refs` | `app-consumer/src/widgets.test.ts` → `testOnlyFn` | deletion_candidate `["only_test_refs"]` |
 | Used only in a test file of a consumer that declares the package only in `devDependencies` → counts | `app-consumer/src/widgets.test.ts` → `@acme/testkit#renderHelper`; `unusedKitHelper` never used | `renderHelper` alive; `unusedKitHelper` deletion_candidate `["no_refs"]` (the witness scans the test file too) |
-| Duplicate org package name → discover error | `fixtures/org-dup` (`one`, `two` both `@acme/dup`) | discover fails |
+| Duplicate org package name | `fixtures/org-dup` (`one`, `two` both non-private `@acme/dup`) | discover fails, listing both locations and `ignoreManifests` suggestions; duplicates that are private (`private: true` / `publish_to: none`) are auto-ignored instead and still witness-scanned (`packages/core/test/discover.test.ts`) |
 | Consumer pinned to old P, refs symbol gone at HEAD → `version_skew` | `app-skew/src/main.ts` → `removedFn` | version_skew row on `@acme/app-skew`; `internalUsed` still alive |
 | Private circular island | `lib-core/src/fns.ts` `islandA`/`islandB` | private_dead `already_unreachable` |
 | Private helper unlocked by a candidate | `lib-widgets/src/internal.ts` `unusedHelper` | private_dead `unlocked_by:internalUnused` (closed world only) |

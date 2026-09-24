@@ -592,7 +592,8 @@ describe('analyzeOrg on hand-built rows', () => {
     use(dead1, stillUsed, 'src/fns.ts');
     use(live, stillUsed, 'src/fns.ts');
     use(stillUsed, afterLive, 'src/fns.ts');
-    // An unexport candidate unlocks what only it reached, once nothing reaches it.
+    // An unexport candidate unlocks what only it reached, once nothing reaches it. Its only
+    // internal referrer (h2) is reached only through a candidate: a dead island (deletion).
     const unexp = sym(lib, 'src/fns.ts', 'unexp', { exported: true });
     use(h2, unexp, 'src/fns.ts');
     const h3 = sym(lib, 'src/fns.ts', 'h3');
@@ -606,8 +607,76 @@ describe('analyzeOrg on hand-built rows', () => {
       f('h2', 'private_dead', ['unlocked_by:dead1']),
       f('h3', 'private_dead', ['unlocked_by:dead1', 'unlocked_by:unexp']),
       f('shared', 'private_dead', ['unlocked_by:dead1', 'unlocked_by:dead2']),
-      f('unexp', 'unexport_candidate', ['internal_refs_only']),
+      f('unexp', 'needs_review', ['internal_refs_only', 'dead_island', 'witness_pending']),
     ]);
+  });
+
+  it('turns unexport candidates that only reference each other into dead-island deletions (nanotar)', () => {
+    // nanotar: createTar / createTarGzip / createTarGzipStream are exported; the gzip ones
+    // call createTar, createTarGzipStream calls createTarGzip, all use a private helper
+    // _writeString. No consumer uses any of them.
+    aliveExport('parseTar');
+    const createTar = sym(lib, 'src/fns.ts', 'createTar', { exported: true });
+    const createTarGzip = sym(lib, 'src/fns.ts', 'createTarGzip', { exported: true });
+    const createTarGzipStream = sym(lib, 'src/fns.ts', 'createTarGzipStream', { exported: true });
+    const writeString = sym(lib, 'src/fns.ts', '_writeString');
+    use(createTarGzip, createTar, 'src/fns.ts');
+    use(createTarGzipStream, createTarGzip, 'src/fns.ts');
+    use(createTarGzipStream, createTar, 'src/fns.ts');
+    use(createTar, writeString, 'src/fns.ts');
+    // Control: an unexport candidate still used by live code stays an unexport.
+    const helperExport = sym(lib, 'src/fns.ts', 'helperExport', { exported: true });
+    const parseTar = (db.prepare("SELECT symbol_id AS id FROM symbols WHERE name = 'parseTar'").get() as { id: number }).id;
+    use(parseTar, helperExport, 'src/fns.ts');
+    analyze();
+    const island = ['internal_refs_only', 'dead_island', 'witness_pending'];
+    expect(findings()).toEqual([
+      f('_writeString', 'private_dead', ['unlocked_by:createTar', 'unlocked_by:createTarGzip', 'unlocked_by:createTarGzipStream']),
+      f('createTar', 'needs_review', island),
+      f('createTarGzip', 'needs_review', island),
+      f('createTarGzipStream', 'needs_review', DELETE),
+      f('helperExport', 'unexport_candidate', ['internal_refs_only']),
+    ]);
+
+    // A use from a counted test file is a live referrer: with countTestsAsConsumers the
+    // test file seeds reachability, so createTar is an unexport again (not an island).
+    const t = doc(lib, 'src/tar.test.ts');
+    use(t, createTar, 'src/tar.test.ts');
+    analyze();
+    expect(findings().find((r) => r.name === 'createTar')).toEqual(
+      f('createTar', 'needs_review', ['internal_refs_only', 'only_test_refs', 'dead_island', 'witness_pending']));
+    setPolicy('countTestsAsConsumers', true);
+    analyze();
+    expect(findings().find((r) => r.name === 'createTar')).toEqual(f('createTar', 'unexport_candidate', ['internal_refs_only']));
+  });
+
+  it('script files (playground, bench, scripts, tools…): no verdicts or private_dead for their declarations; they seed reachability', () => {
+    aliveExport('used');
+    const scriptFiles = ['playground/a.ts', 'src/playgrounds/b.ts', 'bench/c.ts', 'benchmark/d.ts', 'benchmarks/e.ts',
+      'sandbox/f.ts', 'scripts/g.ts', 'tool/h.ts', 'src/tools/i.ts'];
+    for (const [i, file] of scriptFiles.entries()) {
+      const m = doc(lib, file);
+      sym(lib, file, `scriptExport${i}`, { exported: true });
+      const p = sym(lib, file, `scriptPrivate${i}`);
+      use(m, p, file);
+      sym(lib, file, `scriptUnused${i}`);
+    }
+    // A lib export used only by a script: an internal reference (unexport), not dead.
+    const onlyScript = sym(lib, 'src/fns.ts', 'onlyScript', { exported: true });
+    const scriptModule = (db.prepare("SELECT module_symbol_id AS m FROM documents WHERE file = 'scripts/g.ts'").get() as { m: number }).m;
+    use(scriptModule, onlyScript, 'scripts/g.ts');
+    // A private helper reached only from a script is alive (the script is run directly).
+    const scriptHelper = sym(lib, 'src/fns.ts', 'scriptHelper');
+    use(scriptModule, scriptHelper, 'scripts/g.ts');
+    doc(lib, 'src/scripting/x.ts'); // not a script dir
+    sym(lib, 'src/scripting/x.ts', 'notScript');
+    analyze();
+    expect(findings()).toEqual([
+      f('notScript', 'private_dead', ['already_unreachable']),
+      f('onlyScript', 'unexport_candidate', ['internal_refs_only']),
+    ]);
+    const scripts = (db.prepare('SELECT file FROM script_files WHERE package_id = ? ORDER BY file').all(lib) as Array<{ file: string }>).map((r) => r.file);
+    expect(scripts).toEqual([...scriptFiles].sort());
   });
 
   it('never reports members of an exported class, nor members of a reported/candidate declaration', () => {

@@ -18,6 +18,7 @@ function report(): Report {
   return {
     tool: { name: 'sentei', version: '0.0.0' },
     generatedAt: 1_700_000_000,
+    generatedAtIso: '2023-11-14T22:13:20.000Z',
     policy: { minAgeDays: 180, trustPrivateRegistry: true, assumeClosedWorld: true, countTestsAsConsumers: false, countDocsAsConsumers: false },
     warnings: [ASSUME_CLOSED_WORLD_WARNING],
     findings: [

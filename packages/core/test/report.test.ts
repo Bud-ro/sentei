@@ -142,6 +142,7 @@ describe('buildReport', () => {
     expect(report).toEqual({
       tool: { name: 'sentei', version: VERSION },
       generatedAt: NOW,
+      generatedAtIso: new Date(NOW * 1000).toISOString(),
       policy: { minAgeDays: 0, trustPrivateRegistry: true, assumeClosedWorld: true, countTestsAsConsumers: false, countDocsAsConsumers: false },
       warnings: [
         ASSUME_CLOSED_WORLD_WARNING,
@@ -229,9 +230,11 @@ describe('buildReport', () => {
 
   it('defaults generatedAt to the current time', () => {
     const before = Math.floor(Date.now() / 1000);
-    const { generatedAt } = buildReport({ db });
+    const { generatedAt, generatedAtIso } = buildReport({ db });
     expect(generatedAt).toBeGreaterThanOrEqual(before);
     expect(generatedAt).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+    expect(generatedAtIso).toBe(new Date(generatedAt * 1000).toISOString());
+    expect(buildReport({ db, now: 1_700_000_000 }).generatedAtIso).toBe('2023-11-14T22:13:20.000Z');
   });
 });
 

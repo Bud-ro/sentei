@@ -41,15 +41,32 @@ export interface DiscoverPackage {
   isLibrary?: boolean;
   /** Relative to the REPO root, POSIX, sorted. */
   entryPoints: string[];
+  /**
+   * Code-looking `main`/`module`/`types`/`typings`/`exports` leaves that resolve to no
+   * file (ManifestPackage.unresolvedEntryPoints), as written; each also gives an
+   * `opaque_consumer` flag. Optional: absent in older discover.json files (= []).
+   */
+  unresolvedEntryPoints?: string[];
   deps: DiscoverDep[];
-  /** package_flags discover owns (today only `unindexed_consumer`); [] when none. */
+  /** package_flags discover owns (`unindexed_consumer`, `opaque_consumer`); [] when none. */
   flags: DiscoverFlag[];
 }
 
+/**
+ * Every `opaque_consumer` reason discover writes starts with this, so ingest (which
+ * owns and rebuilds the other `opaque_consumer` rows) can keep discover's.
+ */
+export const DISCOVER_REASON_PREFIX = 'discover: ';
+
 export interface DiscoverFlag {
-  flag: 'unindexed_consumer';
+  /**
+   * `unindexed_consumer`: code in a language we cannot index. `opaque_consumer`: an
+   * entry point we cannot resolve, so the package's own surface is unknown (reason
+   * `discover: unresolved entry point <leaf>`). Both untargeted.
+   */
+  flag: 'unindexed_consumer' | 'opaque_consumer';
   reason: string;
-  /** Repo-relative POSIX path of the first offending file. */
+  /** Repo-relative POSIX path of the first offending file (the manifest for opaque_consumer). */
   file: string;
 }
 
@@ -290,17 +307,40 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     if (!usedIgnoreGlobs.has(g)) log(`warning: org sentei.json ignoreManifests ${JSON.stringify(g)} matched no manifest`);
   }
 
-  // (manager, name) must be unique across the org (PLAN §5.1): report every clash at once.
-  const owners = new Map<string, Array<{ loc: string; ignoreEntry: string }>>();
+  // (manager, name) must be unique across the org (PLAN §5.1). Private duplicates
+  // (npm `private: true`, pub `publish_to: none`: docs sites, playgrounds, app shells
+  // that reuse a name) are auto-ignored when at most one manifest of the name is not
+  // private: the non-private one (if any) is the package; the private ones become
+  // ignored manifests (not org packages, still witness-scanned). Only a clash between
+  // two non-private manifests is a hard error; report every such clash at once.
+  type Owner = { r: (typeof repos)[number]; m: ManifestPackage; loc: string; ignoreEntry: string };
+  const byName = new Map<string, Owner[]>();
   for (const r of repos) {
     const repoName = r.repo.slice(opts.org.length + 1);
     for (const m of r.manifests) {
       const id = `${m.manager}:${m.name}`;
-      owners.set(id, [...(owners.get(id) ?? []), { loc: `${r.repo}:${m.manifest}`, ignoreEntry: `${repoName}/${m.manifest}` }]);
+      byName.set(id, [...(byName.get(id) ?? []), { r, m, loc: `${r.repo}:${m.manifest}`, ignoreEntry: `${repoName}/${m.manifest}` }]);
     }
   }
-  const dups = [...owners].filter(([, locs]) => locs.length > 1);
+  const dups: Array<[string, Owner[]]> = [];
+  for (const [id, group] of byName) {
+    if (group.length < 2) continue;
+    const open = group.filter((o) => o.m.visibility !== 'private');
+    if (open.length > 1) {
+      dups.push([id, open]); // the private ones would be ignored anyway
+      continue;
+    }
+    for (const o of group) {
+      if (o.m.visibility !== 'private') continue;
+      const other = open[0] ?? group.find((x) => x !== o)!;
+      log(`${o.r.repo}: ignored private duplicate manifest ${o.r.repo}/${o.m.manifest} (same name as ${other.r.repo}/${other.m.manifest})`);
+      o.r.manifests = o.r.manifests.filter((x) => x !== o.m);
+      o.r.ignored.push({ path: o.m.path, manifest: o.m.manifest, manager: o.m.manager, name: o.m.name, deps: o.m.deps, depsUnknown: false });
+      o.r.ignored.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
+    }
+  }
   if (dups.length > 0) throw new Error(duplicateNamesMessage(dups));
+  const owners = new Set(repos.flatMap((r) => r.manifests.map((m) => `${m.manager}:${m.name}`)));
 
   // Resolve deps by (manager, name). Path/workspace/file/link deps carry the target's
   // package name as the dep key, so name matching covers them too.
@@ -329,9 +369,20 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       visibility: m.visibility,
       isLibrary: m.isLibrary,
       entryPoints: m.entryPoints,
+      unresolvedEntryPoints: m.unresolvedEntryPoints,
       deps: m.deps.map(resolveDep),
-      flags: [],
+      // An exports/main/types leaf that looks like code but resolves to nothing: an entry
+      // point (and every symbol only it exports) is missing from the surface, which would
+      // make live exports look dead. Untargeted: the package itself is opaque (fail closed).
+      flags: m.unresolvedEntryPoints.map((leaf): DiscoverFlag => ({
+        flag: 'opaque_consumer',
+        reason: `${DISCOVER_REASON_PREFIX}unresolved entry point ${leaf}`,
+        file: m.manifest,
+      })),
     }));
+    for (const p of r.packages) {
+      for (const f of p.flags) log(`warning: ${r.repo}: ${p.packageId} flagged opaque_consumer (${f.reason.slice(DISCOVER_REASON_PREFIX.length)})`);
+    }
     // unindexed_consumer (PLAN §2, M4): an org-package consumer with code we cannot index.
     for (const p of r.packages) {
       if (!p.deps.some((d) => d.resolvedPackageId !== null)) continue;
@@ -355,7 +406,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
 
 /** The §5.1 duplicate-name error: every location, plus copy-pasteable `ignoreManifests` entries. */
 function duplicateNamesMessage(dups: Array<[string, Array<{ loc: string; ignoreEntry: string }>]>): string {
-  const lines = ['sentei: duplicate org package names (must be unique per manager):'];
+  const lines = ['sentei: duplicate org package names (must be unique per manager; private duplicates are ignored automatically, these are not private):'];
   for (const [id, locs] of dups) lines.push(`  ${id}: ${locs.map((l) => l.loc).join(', ')}`);
   const entries = dups.flatMap(([, locs]) => locs.map((l) => l.ignoreEntry));
   lines.push(
@@ -393,7 +444,7 @@ function unindexedConsumerFlag(
 /**
  * Replace the whole org in the DB from `model`, in one transaction:
  * repos (cascade root, so every derived row goes), packages, package_deps,
- * discover-owned package_flags (unindexed_consumer), policy, keep_rules. Throws if PRAGMA foreign_key_check reports anything.
+ * discover-owned package_flags (unindexed_consumer, discover: opaque_consumer), policy, keep_rules. Throws if PRAGMA foreign_key_check reports anything.
  */
 export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: (m: string) => void = () => {}): void {
   db.exec('BEGIN');
@@ -411,7 +462,8 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
       'INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, is_library, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const insDep = db.prepare(
       'INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id, dev) VALUES (?, ?, ?, ?, ?, ?)');
-    // Discover-owned flags; ingest deletes and rebuilds only its own flags, so these survive it.
+    // Discover-owned flags; ingest deletes and rebuilds only its own flags (for
+    // opaque_consumer: those whose reason lacks DISCOVER_REASON_PREFIX), so these survive it.
     const insFlag = db.prepare('INSERT INTO package_flags (package_id, flag, reason, file) VALUES (?, ?, ?, ?)');
 
     for (const r of model.repos) {

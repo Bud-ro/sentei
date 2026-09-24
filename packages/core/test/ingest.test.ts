@@ -624,6 +624,51 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(c.warnings).toBe(2);
   });
 
+  it('an unresolved import of a name the target exports at HEAD is a use (occurrence + edge), not skew', () => {
+    // c12 (nodenext) cannot follow pathe's extensionless `export * from "./_path"`, so its
+    // checker reports `resolve` as not exported although pathe exports it at HEAD.
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [
+      exp('Foo', 'src/a.ts', 1, 13),
+      { ...exp('helper', 'src/a.ts', 8, 9), exportedAs: 'aliasedHelper' }, // export { helper as aliasedHelper }
+    ]));
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:@acme/app'),
+      unresolvedImports: [
+        { module: '@acme/lib', name: 'Foo', file: 'apps/app/src/main.ts', line: 10, col: 9 }, //          exported name
+        { module: '@acme/lib/sub', name: 'aliasedHelper', file: 'apps/app/src/main.ts', line: 11, col: 9 }, // alias
+        { module: '@acme/lib', name: 'removedFn', file: 'apps/app/src/main.ts', line: 12, col: 9 }, //   real skew
+        { module: '@acme/lib', name: 'Foo', file: 'apps/app/src/unindexed.ts', line: 0, col: 9 }, //   no document
+      ],
+    });
+    const c = run();
+    const foo = id('scip-typescript npm @acme/lib . src/`a.ts`/Foo#');
+    const helper = id('scip-typescript npm @acme/lib . src/`a.ts`/helper().');
+    const appModule = id('sentei file npm:@acme/app apps/app/src/main.ts');
+    expect(db.prepare(`SELECT symbol_id, line, col, role, enclosing_symbol_id, is_external FROM occurrences
+      WHERE package_id = 'npm:@acme/app' AND symbol_id IN (?, ?) AND line >= 10 ORDER BY line`).all(foo, helper)).toEqual([
+      { symbol_id: foo, line: 10, col: 9, role: 0, enclosing_symbol_id: appModule, is_external: 1 },
+      { symbol_id: helper, line: 11, col: 9, role: 0, enclosing_symbol_id: appModule, is_external: 1 },
+    ]);
+    expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", appModule, helper)).toBe(1);
+    expect(db.prepare("SELECT symbol_str, file FROM unresolved_refs WHERE symbol_str NOT LIKE 'scip-typescript %' ORDER BY symbol_str").all()).toEqual([
+      { symbol_str: 'Foo', file: 'apps/app/src/unindexed.ts' },
+      { symbol_str: 'removedFn', file: 'apps/app/src/main.ts' },
+    ]);
+    expect(c.resolvedUnresolvedImports).toBe(2);
+    expect(c.unresolved).toBe(3); // + goneFn from the SCIP index
+    expect(logs.at(-1)).toMatch(/ resolvedUnresolvedImports=2/);
+  });
+
+  it('keeps discover\'s opaque_consumer rows (reason prefix "discover: ") and rebuilds its own', () => {
+    db.prepare(`INSERT INTO package_flags (package_id, flag, reason, file) VALUES
+      ('npm:@acme/lib', 'opaque_consumer', 'discover: unresolved entry point ./dist/vue.mjs', 'package.json'),
+      ('npm:@acme/lib', 'opaque_consumer', 'stale from an earlier ingest', NULL)`).run();
+    run();
+    expect(db.prepare('SELECT package_id, flag, reason FROM package_flags').all()).toEqual([
+      { package_id: 'npm:@acme/lib', flag: 'opaque_consumer', reason: 'discover: unresolved entry point ./dist/vue.mjs' },
+    ]);
+  });
+
   it('flags partial / failed / missing packages and records repo status', () => {
     indexJson('acme/mono', [
       { packageId: 'npm:@acme/lib', status: 'partial', scip: 'lib.scip', exports: 'lib.exports.json', diagnostics: ['info: no lockfile', 'error: TS2307: nope\nmore', 'error: second'] },

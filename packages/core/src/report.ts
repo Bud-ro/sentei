@@ -80,7 +80,10 @@ export interface ReportRepo {
 
 export interface Report {
   tool: { name: string; version: string };
+  /** Epoch seconds. */
   generatedAt: number;
+  /** generatedAt as an ISO 8601 UTC string, for humans (`2026-09-24T10:00:00.000Z`). */
+  generatedAtIso: string;
   policy: ReportPolicy;
   warnings: string[];
   findings: ReportFinding[];
@@ -334,6 +337,7 @@ export function buildReport(opts: BuildReportOptions): Report {
   return {
     tool: { name: 'sentei', version: toolVersion() },
     generatedAt: now,
+    generatedAtIso: new Date(now * 1000).toISOString(),
     policy,
     warnings,
     findings,

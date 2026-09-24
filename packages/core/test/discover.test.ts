@@ -114,6 +114,59 @@ describe('discoverLocal on a synthetic org', () => {
       /npm:@acme\/dup: acme\/a:package\.json, acme\/b:packages\/x\/package\.json/);
   });
 
+  it('private duplicates are auto-ignored (kept as ignored manifests); the non-private one is the package', () => {
+    org(['lib', 'docs', 'site']);
+    write('org/repos/lib/package.json', { name: '@acme/lib' });
+    write('org/repos/lib/apps/demo/package.json', { name: '@acme/lib', private: true, dependencies: { '@acme/lib': 'workspace:*' } });
+    // All private: every one is ignored (none is an org package).
+    write('org/repos/docs/package.json', { name: 'docs', private: true });
+    write('org/repos/site/package.json', { name: 'docs', private: true, dependencies: { '@acme/lib': '^1' } });
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos.flatMap((r) => r.packages.map((p) => `${r.repo}:${p.path}:${p.packageId}`))).toEqual(['acme/lib:.:npm:@acme/lib']);
+    expect(m.repos.map((r) => r.ignoredManifests.map((i) => [i.manifest, i.name, i.deps.map((d) => d.resolvedPackageId)]))).toEqual([
+      [['package.json', 'docs', []]],
+      [['apps/demo/package.json', '@acme/lib', ['npm:@acme/lib']]],
+      [['package.json', 'docs', ['npm:@acme/lib']]],
+    ]);
+    expect(logs.filter((l) => l.includes('ignored private duplicate'))).toEqual([
+      'acme/docs: ignored private duplicate manifest acme/docs/package.json (same name as acme/site/package.json)',
+      'acme/site: ignored private duplicate manifest acme/site/package.json (same name as acme/docs/package.json)',
+      'acme/lib: ignored private duplicate manifest acme/lib/apps/demo/package.json (same name as acme/lib/package.json)',
+    ]);
+  });
+
+  it('pub: publish_to: none duplicates are private too; two non-private ones still clash', () => {
+    org(['a', 'b', 'c']);
+    write('org/repos/a/pubspec.yaml', 'name: shared\n');
+    write('org/repos/b/pubspec.yaml', 'name: shared\npublish_to: none\n');
+    write('org/repos/c/package.json', { name: 'x' });
+    write('org/repos/c/sub/package.json', { name: 'x', private: true });
+    write('org/repos/c/other/package.json', { name: 'x' });
+    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(
+      /npm:x: acme\/c:package\.json, acme\/c:other\/package\.json\n/);
+    write('org/repos/c/other/package.json', { name: 'y' });
+    const m = discoverLocal({ orgDir: join(tmp, 'org') });
+    expect(m.repos.flatMap((r) => r.packages.map((p) => `${r.repo}:${p.packageId}`))).toEqual(['acme/a:pub:shared', 'acme/c:npm:x', 'acme/c:npm:y']);
+  });
+
+  it('flags a package whose code-looking entry point resolves to nothing opaque_consumer; ingest keeps the flag', () => {
+    org(['lib']);
+    write('org/repos/lib/package.json', { name: '@acme/lib', exports: { '.': './dist/index.mjs', './vue': './dist/vue.mjs' } });
+    write('org/repos/lib/src/index.ts', '');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    const p = m.repos[0]!.packages[0]!;
+    expect(p.unresolvedEntryPoints).toEqual(['./dist/vue.mjs']);
+    expect(p.flags).toEqual([{ flag: 'opaque_consumer', reason: 'discover: unresolved entry point ./dist/vue.mjs', file: 'package.json' }]);
+    expect(logs).toContain('warning: acme/lib: npm:@acme/lib flagged opaque_consumer (unresolved entry point ./dist/vue.mjs)');
+    writeDiscoverToDb(db, m);
+    expect(all('SELECT package_id, flag, reason, file, target_package_id FROM package_flags')).toEqual([
+      { package_id: 'npm:@acme/lib', flag: 'opaque_consumer', reason: 'discover: unresolved entry point ./dist/vue.mjs', file: 'package.json', target_package_id: null },
+    ]);
+    expect(all('SELECT package_id FROM opaque_packages')).toEqual([{ package_id: 'npm:@acme/lib' }]);
+  });
+
   it('the clash message lists every location and copy-pasteable ignoreManifests suggestions', () => {
     org(['hono', 'starter', 'vscode', 'examples']);
     write('org/repos/hono/package.json', { name: 'hono' });

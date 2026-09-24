@@ -10,6 +10,8 @@
 // `git log -S<name> --reverse` for a creation estimate on candidates only.
 //
 // Per repo (discover.json `localPath` with a `.git`):
+//   0. if the cache is for `git rev-parse <headSha|HEAD>` and already holds every target
+//      line, use it and stop: no unshallow, no blame, no network;
 //   1. `git rev-parse --is-shallow-repository`; if `true`,
 //      `git fetch --unshallow --filter=blob:none` (fallback: `git fetch --unshallow`;
 //      if both fail the repo is skipped and its symbols stay NULL).
@@ -232,41 +234,68 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
       counts.skippedRepos++;
       continue;
     }
-    if (!(await ensureFullHistory(dir, repo, log))) {
-      counts.skippedRepos++;
-      continue;
-    }
-    let sha: string;
-    try {
-      sha = (await git(dir, ['rev-parse', '--verify', `${d.headSha ?? 'HEAD'}^{commit}`])).trim();
-    } catch (e) {
-      log(`[blame] ${repo}: ${(e as Error).message}; skipping (ages unknown)`);
-      counts.skippedRepos++;
-      continue;
-    }
-
+    const revParse = async (): Promise<string> =>
+      (await git(dir, ['rev-parse', '--verify', `${d.headSha ?? 'HEAD'}^{commit}`])).trim();
     const cachePath = join(cacheDir, `${repoSlug(repo)}.json`);
     const old = readCache(cachePath);
-    const cache: BlameCache = { sha, files: old && old.sha === sha ? old.files : {} };
+    /** Split this repo's targets into cache hits (recorded) and files to blame, for `cache`. */
+    const plan = (cache: BlameCache): { toBlame: Array<[string, Target[]]>; hits: Array<[Target, BlameLine]>; noLine: number } => {
+      const toBlame: Array<[string, Target[]]> = [];
+      const hits: Array<[Target, BlameLine]> = [];
+      let missingLine = 0;
+      for (const [file, list] of files) {
+        const withLine = list.filter((t) => t.line !== null);
+        missingLine += list.length - withLine.length;
+        if (withLine.length === 0) continue;
+        const entry = cache.files[file];
+        if (entry && withLine.every((t) => entry[String(t.line! + 1)])) {
+          for (const t of withLine) hits.push([t, entry[String(t.line! + 1)]!]);
+        } else {
+          toBlame.push([file, withLine]);
+        }
+      }
+      return { toBlame, hits, noLine: missingLine };
+    };
 
-    const toBlame: Array<[string, Target[]]> = [];
-    for (const [file, list] of files) {
-      const withLine = list.filter((t) => t.line !== null);
-      noLine += list.length - withLine.length;
-      if (withLine.length === 0) continue;
-      const entry = cache.files[file];
-      if (entry && withLine.every((t) => entry[String(t.line! + 1)])) {
-        for (const t of withLine) results.set(t.symbolId, entry[String(t.line! + 1)]!);
-        counts.cached += withLine.length;
-      } else {
-        toBlame.push([file, withLine]);
+    // Cache first: when the cache is for the current sha and holds every target line,
+    // nothing is blamed, so the (network) unshallow is skipped. The head commit of a
+    // shallow clone resolves locally; if it does not, go the long way.
+    let sha: string | null = null;
+    if (old !== null) {
+      try {
+        sha = await revParse();
+      } catch {
+        sha = null;
       }
     }
+    let cache: BlameCache;
+    let work = sha !== null && old!.sha === sha ? plan(old!) : null;
+    if (work !== null && work.toBlame.length === 0) {
+      cache = old!;
+    } else {
+      if (!(await ensureFullHistory(dir, repo, log))) {
+        counts.skippedRepos++;
+        continue;
+      }
+      try {
+        sha = await revParse();
+      } catch (e) {
+        log(`[blame] ${repo}: ${(e as Error).message}; skipping (ages unknown)`);
+        counts.skippedRepos++;
+        continue;
+      }
+      cache = { sha, files: old && old.sha === sha ? old.files : {} };
+      work = plan(cache);
+    }
+    noLine += work.noLine;
+    for (const [t, b] of work.hits) results.set(t.symbolId, b);
+    counts.cached += work.hits.length;
+    const toBlame = work.toBlame;
 
     await pool(toBlame, concurrency, async ([file, list]) => {
       let lines: Map<number, BlameLine>;
       try {
-        lines = parseBlamePorcelain(await git(dir, ['blame', '--porcelain', sha, '--', file]));
+        lines = parseBlamePorcelain(await git(dir, ['blame', '--porcelain', cache.sha, '--', file]));
       } catch (e) {
         log(`[blame] ${repo}: ${(e as Error).message}; ages unknown for ${list.length} symbol(s)`);
         return;

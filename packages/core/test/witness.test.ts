@@ -6,7 +6,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { runWitness, stringLiterals, type WitnessDiscoverInput } from '../src/witness.ts';
+import { blankComments, runWitness, stringLiterals, type WitnessDiscoverInput } from '../src/witness.ts';
 
 // A hand-built org: library P (npm:@acme/lib or pub:lib_pub) with one consumer C
 // whose package dir is <repo>/pkg. Every symbol gets a witness_pending finding.
@@ -16,7 +16,7 @@ interface OrgSpec {
   /** Consumer files, relative to the consumer package dir. */
   files?: Record<string, string>;
   /** Symbols of P: name + defining file (default src/index.ts) + symbol_exports rows [entry, exportedAs]. */
-  symbols: Array<{ name: string; file?: string; exports?: Array<[string, string]> }>;
+  symbols: Array<{ name: string; file?: string; line?: number; exports?: Array<[string, string]> }>;
   /** Library (P) files, relative to P's dir (the acme/lib repo root). */
   libFiles?: Record<string, string>;
   policy?: Record<string, unknown>;
@@ -85,8 +85,8 @@ function buildOrg(spec: OrgSpec): Org {
   for (const s of spec.symbols) {
     const file = s.file ?? 'src/index.ts';
     const r = db
-      .prepare('INSERT INTO symbols (symbol_str, package_id, file, name, is_exported) VALUES (?, ?, ?, ?, 1)')
-      .run(`sym ${P} ${file} ${s.name}`, P, file, s.name);
+      .prepare('INSERT INTO symbols (symbol_str, package_id, file, line, name, is_exported) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(`sym ${P} ${file} ${s.name}`, P, file, s.line ?? null, s.name);
     const id = Number(r.lastInsertRowid);
     ids[`${file}#${s.name}`] = id;
     ids[s.name] ??= id;
@@ -514,22 +514,22 @@ describe('runWitness: self-witness (generated imports of P in P itself)', () => 
         ].join('\n'),
         // The statement itself inside a template literal.
         'src/tpl.ts': "export const code = `import { InTemplate } from '@acme/lib/components'`;\n",
-        // A real (self-)import names the symbol but generates nothing.
+        // A real self-import by name: P is its own consumer (the indexer may not have seen it).
         'src/real.ts': "import { OnlyImported } from '@acme/lib/components';\nexport {\n  OnlyImported,\n} from '@acme/lib';\n",
         // Test files are skipped (policy).
         'src/gen.test.ts': "const s = '@acme/lib'; Unmentioned;\n",
       },
     });
-    expect(witness(org)).toEqual({ checked: 4, passed: 2, mismatched: 2 });
+    expect(witness(org)).toEqual({ checked: 4, passed: 1, mismatched: 3 });
     expectMismatch(org, org.ids['IslandWrapper']!, ['witness_mismatch:self:src/gen.ts:3']);
     expectMismatch(org, org.ids['InTemplate']!, ['witness_mismatch:self:src/tpl.ts:1']);
     expectPass(org, org.ids['Unmentioned']!);
-    expectPass(org, org.ids['OnlyImported']!);
+    expectMismatch(org, org.ids['OnlyImported']!, ['witness_mismatch:self:src/real.ts:1', 'witness_mismatch:self:src/real.ts:3']);
   });
 
   it('only code templates qualify: plugin names and messages do not; multi-line templates do', () => {
     const org = buildOrg({
-      symbols: [{ name: 'bunPlugin' }, { name: 'getAuth' }, { name: 'Wrapper' }, { name: 'Other' }, { name: 'documented' }],
+      symbols: [{ name: 'bunPlugin' }, { name: 'getAuth' }, { name: 'Wrapper' }, { name: 'Other' }, { name: 'documented', file: 'src/doc.ts', line: 5 }],
       libFiles: {
         // Vite plugin name: P's name in a string, no import keyword.
         'src/bun.ts': "export const bunPlugin = () => ({\n  name: '@acme/lib/bun',\n});\n",
@@ -537,18 +537,19 @@ describe('runWitness: self-witness (generated imports of P in P itself)', () => 
         'src/dep.ts': "warn('@acme/lib', 'use @other/lib instead of the import');\nexport const getAuth = 1;\n",
         // Multi-line template writing an import of P.
         'src/gen.ts': 'export const out = (x) => `\n// generated\nimport { Wrapper } from "@acme/lib/components";\n${x}\n`;\n',
-        // A JSDoc code fence is a comment, not a template.
+        // A JSDoc code fence is a comment: not a template, and not a self-import either. The
+        // definition line (line 6) is not a use.
         'src/doc.ts': "/**\n * ```ts\n * import { documented } from '@acme/lib';\n * ```\n */\nexport const documented = `${1}`;\n",
-        // A longer package name is not P.
+        // A longer package name is not P (but the import clause quotes Other: self-string).
         'src/other.ts': "const code = `import { Other } from '@acme/lib-extra'`;\n",
       },
     });
-    expect(witness(org)).toEqual({ checked: 5, passed: 4, mismatched: 1 });
+    expect(witness(org)).toEqual({ checked: 5, passed: 3, mismatched: 2 });
     expectPass(org, org.ids['documented']!);
     expectPass(org, org.ids['bunPlugin']!);
     expectPass(org, org.ids['getAuth']!);
     expectMismatch(org, org.ids['Wrapper']!, ['witness_mismatch:self:src/gen.ts:3']);
-    expectPass(org, org.ids['Other']!);
+    expectMismatch(org, org.ids['Other']!, ['witness_mismatch:self-string:src/other.ts:1']);
   });
 
   it('searches export aliases in self files and fails closed when P\'s checkout is missing', () => {
@@ -568,15 +569,116 @@ describe('runWitness: self-witness (generated imports of P in P itself)', () => 
   it('pub: a `package:` string that is not an import directive', () => {
     const org = buildOrg({
       manager: 'pub',
-      symbols: [{ name: 'Generated' }, { name: 'Plain' }],
+      symbols: [{ name: 'Generated' }, { name: 'Plain' }, { name: 'Plain2', file: 'lib/plain2.dart', line: 1 }],
       libFiles: {
         'lib/builder.dart': "import 'package:lib_pub/src/x.dart';\nfinal out = \"import 'package:lib_pub/gen.dart' show Generated;\";\n",
         'lib/plain.dart': "import 'package:lib_pub/src/x.dart';\nvoid f() => Plain();\n",
+        // Declares Plain2 on line 2 of a file importing its own package: not a use.
+        'lib/plain2.dart': "import 'package:lib_pub/src/x.dart';\nclass Plain2 {}\n",
       },
     });
     witness(org);
     expectMismatch(org, org.ids['Generated']!, ['witness_mismatch:self:lib/builder.dart:2']);
-    expectPass(org, org.ids['Plain']!);
+    // The import directive is no code template, but the file imports P by name and names
+    // Plain: P is its own consumer.
+    expectMismatch(org, org.ids['Plain']!, ['witness_mismatch:self:lib/plain.dart:2']);
+    expectPass(org, org.ids['Plain2']!);
+  });
+});
+
+describe('runWitness: P as its own consumer, and quoted names (self-string)', () => {
+  it('own files importing P by name are scanned (codeup actions/), relative importers and comments are not', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'defineAction', file: 'src/action.ts', line: 0 },
+        { name: 'relOnly', file: 'src/action.ts', line: 1 },
+        { name: 'inComment', file: 'src/action.ts', line: 2 },
+      ],
+      libFiles: {
+        'src/action.ts': 'export function defineAction() {}\nexport function relOnly() {}\nexport function inComment() {}\n',
+        // Outside src/, unindexed: imports the package by name.
+        'actions/unjs/eslint.ts': 'import { defineAction } from "@acme/lib";\n\nexport default defineAction({});\n',
+        // Imports relatively: indexed, so the indexer's answer stands.
+        'src/other.ts': "import { relOnly } from './action';\nrelOnly();\n",
+        // Names P and S only in a comment.
+        'src/doc.ts': "/** @example import { inComment } from '@acme/lib' */\nexport const x = 1;\n",
+      },
+    });
+    expect(witness(org)).toEqual({ checked: 3, passed: 2, mismatched: 1 });
+    expectMismatch(org, org.ids['defineAction']!, [
+      'witness_mismatch:self:actions/unjs/eslint.ts:1',
+      'witness_mismatch:self:actions/unjs/eslint.ts:3',
+    ]);
+    expectPass(org, org.ids['relOnly']!);
+    expectPass(org, org.ids['inComment']!);
+  });
+
+  it('a literal equal to a name of S, or quoting it in an import-clause shape, is a self-string hit', () => {
+    const org = buildOrg({
+      symbols: [
+        { name: 'executeAsync', file: 'src/ctx.ts' },
+        { name: 'HeadStream', file: 'src/head.ts' },
+        { name: 'impl', file: 'src/x.ts', exports: [['src/index.ts', 'aliased']] },
+        { name: 'withCtx', file: 'src/x.ts' },
+        { name: 'listed', file: 'src/x.ts' },
+        { name: 'executeAsyncModeOnly', file: 'src/x.ts' },
+        { name: 'interpolated', file: 'src/x.ts' },
+        { name: 'commented', file: 'src/x.ts' },
+        { name: 'gone', file: 'src/x.ts' },
+      ],
+      libFiles: {
+        // unctx: the transform names the helper in a string and generates the import with
+        // a variable module path (not P), so the codegen rule cannot see it.
+        'src/transform.ts': [
+          'export const plugin = {',
+          '  helperName: "executeAsync",',
+          '  code: (x, mod) => `import { ${x} as __${x} } from "${mod}"`,',
+          '};',
+        ].join('\n'),
+        'src/tags.ts': "export const tags = ['HeadStream'];\nconst mode = 'executeAsyncMode';\n",
+        'src/alias.ts': 'const out = `export { aliased as default }`;\n',
+        'src/gen.ts': "const a = 'import { withCtx } from \"x\"';\nconst b = 'a, listed, b';\nconst c = `${interpolated}`;\n// 'commented'\n",
+        'src/gone.test.ts': "const t = 'gone';\n",
+      },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self-string:src/transform.ts:2']);
+    expectMismatch(org, org.ids['HeadStream']!, ['witness_mismatch:self-string:src/tags.ts:1']);
+    expectMismatch(org, org.ids['impl']!, ['witness_mismatch:self-string:src/alias.ts:1']);
+    expectMismatch(org, org.ids['withCtx']!, ['witness_mismatch:self-string:src/gen.ts:1']);
+    expectMismatch(org, org.ids['listed']!, ['witness_mismatch:self-string:src/gen.ts:2']);
+    expectPass(org, org.ids['executeAsyncModeOnly']!); // 'executeAsyncMode' is not it either
+    expectPass(org, org.ids['interpolated']!);
+    expectPass(org, org.ids['commented']!);
+    expectPass(org, org.ids['gone']!); // test files are skipped
+  });
+
+  it('the codegen template case: a self hit, reported once per line', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'executeAsync', file: 'src/ctx.ts' }, { name: 'executeAsyncMode', file: 'src/ctx.ts' }],
+      libFiles: {
+        'src/transform.ts': 'const helperName = "executeAsync";\nexport const out = (x) => `import { ${x} as __${x} } from "@acme/lib"`;\n',
+      },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['executeAsync']!, ['witness_mismatch:self:src/transform.ts:1']);
+    expectPass(org, org.ids['executeAsyncMode']!);
+  });
+
+  it('fails closed on a missing checkout of P (one self reason: the self steps share a key)', () => {
+    const org = buildOrg({ symbols: [{ name: 'impl' }] });
+    org.discover.repos = org.discover.repos.filter((r) => r.repo !== 'acme/lib');
+    witness(org);
+    expectMismatch(org, org.ids['impl']!, ['witness_mismatch:self:checkout missing']);
+  });
+});
+
+describe('blankComments', () => {
+  it('blanks comments, keeps strings, templates, lines and offsets', () => {
+    const src = "a(); // x\nconst u = 'http://y'; /* b\nc */ d(`//${e}`);\n";
+    const out = blankComments(src);
+    expect(out.length).toBe(src.length);
+    expect(out).toBe("a();     \nconst u = 'http://y';     \n     d(`//${e}`);\n");
   });
 });
 
@@ -626,14 +728,16 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
     expectPass(org, org.ids['otherFn']!);
   });
 
-  it('an ignored manifest that does not depend on P is not scanned', () => {
+  it('an ignored manifest that does not depend on P is not scanned (as an ignored consumer)', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
     withIgnored(org, [
       { path: 'examples/other', deps: [null, 'npm:@acme/app'], files: { 'src/x.ts': IMPORTS } },
       { path: 'templates/none', deps: [], files: { 'src/x.ts': IMPORTS } },
     ]);
     witness(org);
-    expectPass(org, org.ids['deadFn']!);
+    // Both dirs sit inside P's own repo dir, though: templates/ (not docs) is P's own code
+    // importing P by name, so the self consumer sees it; examples/ is docs.
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:self:templates/none/src/x.ts:2']);
   });
 
   it('fails closed: a missing ignored-manifest dir is a mismatch; unknown deps are scanned for every package', () => {

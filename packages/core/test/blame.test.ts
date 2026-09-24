@@ -237,6 +237,34 @@ describe('runBlame', () => {
     expect(ages(db, ids['acme/lib:b']!)).toEqual({ sha: c2, at: T2 });
   });
 
+  it('uses a complete cache for the current sha without unshallowing (no fetch); a miss still unshallows', async () => {
+    const root = tmp();
+    const origin = join(root, 'origin');
+    const { c2 } = makeRepo(origin);
+    const clone = join(root, 'clone');
+    git(root, ['clone', '-q', '--depth=1', `file://${origin}`, clone]);
+    const workDir = join(root, 'w');
+    mkdirSync(join(workDir, 'blame'), { recursive: true });
+    const cache: BlameCache = { sha: c2, files: { 'src/index.ts': { '1': { sha: 'f'.repeat(40), authorTime: 42 } } } };
+    writeFileSync(join(workDir, 'blame', 'acme__lib.json'), JSON.stringify(cache));
+    // The origin is gone: any unshallow would fail, so success proves no fetch happened.
+    rmSync(origin, { recursive: true, force: true });
+    const { db, ids } = makeDb(['acme/lib'], [{ repo: 'acme/lib', name: 'a', line: 0 }]);
+    const logs: string[] = [];
+    const discover = { repos: [{ repo: 'acme/lib', localPath: clone, headSha: c2 }] };
+    const r = await runBlame({ db, discover, workDir, log: (l) => logs.push(l) });
+    expect(r).toEqual({ symbols: 1, blamed: 0, skippedRepos: 0, cached: 1 });
+    expect(ages(db, ids['acme/lib:a']!)).toEqual({ sha: 'f'.repeat(40), at: 42 });
+    expect(git(clone, ['rev-parse', '--is-shallow-repository']).trim()).toBe('true');
+    expect(logs.some((l) => l.includes('shallow clone; fetching history'))).toBe(false);
+
+    // A target line missing from the cache needs blame, hence the unshallow (which fails here).
+    const more = makeDb(['acme/lib'], [{ repo: 'acme/lib', name: 'a', line: 0 }, { repo: 'acme/lib', name: 'b', line: 2 }]);
+    const r2 = await runBlame({ db: more.db, discover, workDir, log: (l) => logs.push(l) });
+    expect(r2).toEqual({ symbols: 2, blamed: 0, skippedRepos: 1, cached: 0 });
+    expect(logs.some((l) => l.includes('shallow clone; fetching history'))).toBe(true);
+  });
+
   it('skips a shallow repo whose history cannot be fetched (ages stay NULL)', async () => {
     const root = tmp();
     const origin = join(root, 'origin');

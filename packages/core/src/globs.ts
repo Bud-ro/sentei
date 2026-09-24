@@ -1,6 +1,6 @@
-// Test / docs / generated file globs (PLAN.md §6.5), shared by the text witness (witness.ts,
-// matched with glob.ts) and analyze (the `test_files` / `doc_files` / `generated_files` views in
-// sql/analyze.sql). analyze.sql is loaded verbatim, so it spells the same patterns
+// Test / docs / generated / script file globs (PLAN.md §6.5), shared by the text witness
+// (witness.ts, matched with glob.ts) and analyze (the `test_files` / `doc_files` /
+// `generated_files` / `script_files` views in sql/analyze.sql). analyze.sql is loaded verbatim, so it spells the same patterns
 // as SQLite GLOB conditions; test/globs.test.ts parses them back out of analyze.sql
 // and asserts they equal these lists, so the two cannot drift.
 //
@@ -54,4 +54,23 @@ export const GENERATED_GLOBS: readonly string[] = Object.freeze([
   '**/*.generated.*',
   '**/generated/**',
   '**/__generated__/**',
+]);
+
+/**
+ * Runnable code that is neither library surface nor a test: playgrounds, benchmarks,
+ * sandboxes, scripts and tools. Their references count like any other file's, their
+ * documents are reachability seeds (they are run directly), and nothing DEFINED in them
+ * gets a verdict or a private_dead row. Same shapes as above; the `script_files` view in
+ * analyze.sql spells the same list.
+ */
+export const SCRIPT_GLOBS: readonly string[] = Object.freeze([
+  '**/playground/**',
+  '**/playgrounds/**',
+  '**/bench/**',
+  '**/benchmark/**',
+  '**/benchmarks/**',
+  '**/sandbox/**',
+  '**/scripts/**',
+  '**/tool/**',
+  '**/tools/**',
 ]);

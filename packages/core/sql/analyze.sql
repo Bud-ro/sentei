@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS run_params (
 ) STRICT;
 
 -- Dependents first, so every DROP succeeds.
+DROP VIEW IF EXISTS verdicts;
 DROP VIEW IF EXISTS private_dead;
 DROP VIEW IF EXISTS private_dead_unlocked;
 DROP VIEW IF EXISTS candidate_reach;
@@ -30,7 +31,7 @@ DROP VIEW IF EXISTS reach_seeds_after;
 DROP VIEW IF EXISTS unreachable_before;
 DROP VIEW IF EXISTS private_dead_eligible;
 DROP VIEW IF EXISTS candidate_symbols;
-DROP VIEW IF EXISTS verdicts;
+DROP VIEW IF EXISTS base_verdicts;
 DROP VIEW IF EXISTS verdict_blockers;
 DROP VIEW IF EXISTS runtime_entry_defaults;
 DROP VIEW IF EXISTS reachable;
@@ -48,6 +49,7 @@ DROP VIEW IF EXISTS owner_ref_occurrences;
 DROP VIEW IF EXISTS symbol_ancestors;
 DROP VIEW IF EXISTS symbol_owners;
 DROP VIEW IF EXISTS doc_files;
+DROP VIEW IF EXISTS script_files;
 DROP VIEW IF EXISTS generated_files;
 DROP VIEW IF EXISTS test_files;
 DROP VIEW IF EXISTS ref_occurrences;
@@ -136,6 +138,23 @@ WHERE substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.g.da
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.generated.*'
    OR ('/' || file) GLOB '*/generated/*'
    OR ('/' || file) GLOB '*/__generated__/*';
+
+-- Script files (playgrounds, benchmarks, sandboxes, scripts, tools): the SAME list as
+-- SCRIPT_GLOBS in globs.ts (test/globs.test.ts checks). Runnable code: references FROM
+-- them count like any other file's and their documents seed reachability (they are run
+-- directly, not imported), but nothing defined in them gets a verdict or a private_dead row.
+CREATE VIEW script_files (package_id, file) AS
+SELECT package_id, file
+FROM documents
+WHERE ('/' || file) GLOB '*/playground/*'
+   OR ('/' || file) GLOB '*/playgrounds/*'
+   OR ('/' || file) GLOB '*/bench/*'
+   OR ('/' || file) GLOB '*/benchmark/*'
+   OR ('/' || file) GLOB '*/benchmarks/*'
+   OR ('/' || file) GLOB '*/sandbox/*'
+   OR ('/' || file) GLOB '*/scripts/*'
+   OR ('/' || file) GLOB '*/tool/*'
+   OR ('/' || file) GLOB '*/tools/*';
 
 -- Structural owner of a symbol: its descriptor parent (Foo#bar(). -> Foo#), or the
 -- declaration whose body contains its definition (e.g. an object-literal property
@@ -312,13 +331,35 @@ SELECT owner_id, symbol_id FROM symbol_owners
 UNION
 SELECT symbol_id, owner_id FROM symbol_owners;
 
--- Exported symbols + runtime-invoked entry symbols + the file pseudo-symbols of entry documents.
+-- Exported symbols + runtime-invoked entry symbols + the file pseudo-symbols of entry
+-- documents and of script documents (script_files: run directly, so entry points too)
+-- + everything in a test / docs file when the policy counts those files as consumers
+-- (their uses are counted references, so they must keep what they use reachable, or an
+-- export used only by counted tests would look like a dead island) + the source of
+-- every overlay edge (an explicit "this file uses that symbol").
 CREATE VIEW reach_seeds_before (symbol_id) AS
 SELECT symbol_id FROM symbols WHERE is_exported = 1
 UNION
 SELECT symbol_id FROM entry_symbols
 UNION
-SELECT module_symbol_id FROM documents WHERE is_entry = 1 AND module_symbol_id IS NOT NULL;
+SELECT module_symbol_id FROM documents WHERE is_entry = 1 AND module_symbol_id IS NOT NULL
+UNION
+SELECT d.module_symbol_id
+FROM documents d
+JOIN script_files sf ON sf.package_id = d.package_id AND sf.file = d.file
+WHERE d.module_symbol_id IS NOT NULL
+UNION
+SELECT s.symbol_id
+FROM symbols s
+JOIN test_files t ON t.package_id = s.package_id AND t.file = s.file
+WHERE (SELECT count_tests FROM analysis_params)
+UNION
+SELECT s.symbol_id
+FROM symbols s
+JOIN doc_files d ON d.package_id = s.package_id AND d.file = s.file
+WHERE (SELECT count_docs FROM analysis_params)
+UNION
+SELECT from_symbol_id FROM edges WHERE source = 'overlay';
 
 CREATE VIEW reachable (symbol_id) AS
 WITH RECURSIVE reach (symbol_id) AS (
@@ -359,10 +400,12 @@ WHERE x.exported_as = 'default'
   AND p.is_library = 0
   AND NOT EXISTS (SELECT 1 FROM package_deps d WHERE d.resolved_package_id = s.package_id);
 
--- Decision tree, per exported symbol S of package P not kept, not a runtime entry
--- default (runtime_entry_defaults), not a runtime-invoked entry symbol (entry_symbols), not defined in a generated file (generated_files:
--- regenerated, never reported) and with no counted external reference (those are
--- alive: no row):
+-- Decision tree (first stage; `verdicts` below adds dead islands), per exported symbol
+-- S of package P not kept, not a runtime entry default (runtime_entry_defaults), not a
+-- runtime-invoked entry symbol (entry_symbols), not defined in a generated file
+-- (generated_files: regenerated, never reported) or a script file (script_files:
+-- runnable code, not library surface) and with no counted external reference (those
+-- are alive: no row):
 --   internal refs > 0:  closed_world & age ok -> unexport_candidate [internal_refs_only]
 --                       not closed_world      -> deprecation_candidate [internal_refs_only, open_world]
 --                       closed_world, young   -> no row
@@ -376,7 +419,7 @@ WHERE x.exported_as = 'default'
 -- Any would-be verdict in a package with a verdict_blockers row becomes `blocked`,
 -- keeping the base reasons, with blocked_by = sorted distinct '<blocker>:<flag>'.
 -- The age rule gates only closed-world verdicts, exactly as in the §6.5 tree.
-CREATE VIEW verdicts (symbol_id, verdict, reasons, blocked_by) AS
+CREATE VIEW base_verdicts (symbol_id, verdict, reasons, blocked_by) AS
 WITH base AS (
   SELECT s.symbol_id, s.package_id,
          EXISTS (SELECT 1 FROM internal_refs i WHERE i.symbol_id = s.symbol_id) AS has_internal,
@@ -390,6 +433,7 @@ WITH base AS (
     AND NOT EXISTS (SELECT 1 FROM runtime_entry_defaults r WHERE r.symbol_id = s.symbol_id)
     AND NOT EXISTS (SELECT 1 FROM entry_symbols e WHERE e.symbol_id = s.symbol_id)
     AND NOT EXISTS (SELECT 1 FROM generated_files g WHERE g.package_id = s.package_id AND g.file = s.file)
+    AND NOT EXISTS (SELECT 1 FROM script_files sf WHERE sf.package_id = s.package_id AND sf.file = s.file)
 ),
 classified AS (
   SELECT symbol_id, package_id,
@@ -429,9 +473,10 @@ WHERE c.verdict IS NOT NULL;
 -- ---------------------------------------------------------------------------
 
 -- Exports that the verdicts propose to delete or unexport: they stop being seeds.
+-- (base_verdicts, not verdicts: a dead island is a candidate either way.)
 CREATE VIEW candidate_symbols (symbol_id, package_id, name) AS
 SELECT s.symbol_id, s.package_id, s.name
-FROM verdicts v
+FROM base_verdicts v
 JOIN symbols s ON s.symbol_id = v.symbol_id
 WHERE v.verdict = 'unexport_candidate'
    OR (v.verdict = 'needs_review'
@@ -449,6 +494,30 @@ WITH RECURSIVE reach (symbol_id) AS (
   SELECT e.to_symbol_id FROM reach_edges e JOIN reach r ON e.from_symbol_id = r.symbol_id
 )
 SELECT symbol_id FROM reach;
+
+-- The verdicts (PLAN.md §6.5), with dead islands: an unexport_candidate that is not in
+-- reachable_after has internal references only from other candidates (nanotar's
+-- createTar / createTarGzip / createTarGzipStream calling each other, nothing else
+-- calling them). Unexporting them all would leave an unreachable island, so each is a
+-- deletion instead: needs_review with reasons [internal_refs_only(, only_test_refs),
+-- dead_island, witness_pending], which the witness promotes or downgrades like any
+-- other would-be deletion. candidate_symbols is the same set either way, so the
+-- private_dead cascade (unlocked_by) already agrees.
+CREATE VIEW verdicts (symbol_id, verdict, reasons, blocked_by) AS
+SELECT v.symbol_id,
+       CASE WHEN i.symbol_id IS NOT NULL THEN 'needs_review' ELSE v.verdict END,
+       CASE
+         WHEN i.symbol_id IS NOT NULL
+           THEN json_insert(json_insert(v.reasons, '$[#]', 'dead_island'), '$[#]', 'witness_pending')
+         ELSE v.reasons
+       END,
+       v.blocked_by
+FROM base_verdicts v
+LEFT JOIN (
+  SELECT symbol_id FROM base_verdicts WHERE verdict = 'unexport_candidate'
+  EXCEPT
+  SELECT symbol_id FROM reachable_after
+) i ON i.symbol_id = v.symbol_id;
 
 -- What each candidate reaches that nothing else still reaches (the walk stops at
 -- symbols in reachable_after, which cannot be unlocked by anything).
@@ -468,8 +537,8 @@ SELECT origin_id, symbol_id FROM reach;
 -- import prefix (kind 'import-prefix', set by ingest: scip-dart defines `import … as p`
 -- prefixes as symbols; they are syntax, not declarations), never a runtime-invoked
 -- entry symbol (entry_symbols; also a seed, so normally reachable anyway), not defined in a
--- test/docs file (not entry points, so everything in them is "unreachable") or a
--- generated file (regenerated, never reported), not kept, and in a package we can see
+-- test/docs file (not entry points, so everything in them is "unreachable"), a
+-- generated file (regenerated, never reported) or a script file (runnable code), not kept, and in a package we can see
 -- into (not opaque, not blocked) that has at least one reachability seed (no entry and
 -- no export means the entry points are unknown, not that everything is dead).
 CREATE VIEW private_dead_eligible (symbol_id) AS
@@ -483,6 +552,7 @@ WHERE s.is_exported = 0
   AND NOT EXISTS (SELECT 1 FROM test_files t WHERE t.package_id = s.package_id AND t.file = s.file)
   AND NOT EXISTS (SELECT 1 FROM generated_files g WHERE g.package_id = s.package_id AND g.file = s.file)
   AND NOT EXISTS (SELECT 1 FROM doc_files d WHERE d.package_id = s.package_id AND d.file = s.file)
+  AND NOT EXISTS (SELECT 1 FROM script_files sf WHERE sf.package_id = s.package_id AND sf.file = s.file)
   AND s.symbol_id NOT IN (SELECT symbol_id FROM kept_symbols)
   AND s.package_id NOT IN (SELECT package_id FROM opaque_packages)
   AND s.package_id NOT IN (SELECT package_id FROM verdict_blockers)
