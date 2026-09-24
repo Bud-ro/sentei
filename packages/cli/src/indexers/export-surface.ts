@@ -7,6 +7,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
+import { checkConsumerFiles } from './consumer-checks.ts';
 import type { ExportRecord, ExportsSidecar, SourcePosition } from './types.ts';
 
 export interface ExportSurfaceInput {
@@ -21,6 +22,8 @@ export interface ExportSurfaceInput {
   entryPoints: string[];
   /** Absolute tsconfig path, or undefined to build a program from the entry files. */
   tsconfig: string | undefined;
+  /** npm names of all org packages (imports of these are checked for resolution). */
+  orgPackageNames: ReadonlySet<string>;
 }
 
 export interface ExportSurfaceResult {
@@ -49,6 +52,8 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         missingEntryPoints: [...input.entryPoints],
         exports: [],
         unresolved: [],
+        unresolvedImports: [],
+        flags: [],
       },
       diagnostics,
       partial: true,
@@ -63,18 +68,32 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     return !input.nestedPackageDirs.some((d) => isInside(abs, d));
   };
 
-  // Compiler errors in our own files (PLAN.md §6.2: any error diagnostic → partial).
-  // Unresolved imports (TS2307) are the ones that matter most: a consumer whose
-  // import of an org package does not resolve silently loses its references.
+  // Only symbol-resolution failures affect linking (see consumer-checks.ts), and
+  // they are detected from the AST + checker, never from diagnostic messages.
+  // An org module that does not resolve drops references silently → partial.
+  // A missing named import is version skew → recorded, status unchanged.
+  const ownFiles = program.getSourceFiles().filter((sf) => isOwnFile(sf.fileName));
+  const consumer = checkConsumerFiles(ownFiles, checker, input.orgPackageNames, toRepoRel);
+  for (const m of consumer.unresolvedOrgModules) {
+    partial = true;
+    diagnostics.push(`error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`);
+  }
+  for (const u of consumer.unresolvedImports) {
+    diagnostics.push(`warn: '${u.name}' is not exported by org module '${u.module}' at ${u.file}:${u.line + 1}:${u.col + 1}`);
+  }
+  for (const f of consumer.flags) {
+    diagnostics.push(`warn: ${f.flag} at ${f.file}:${f.line + 1}:${f.col + 1}: ${f.reason}`);
+  }
+
+  // Every other compiler error is informational: it does not change what SCIP links.
   const compilerErrors = ts
     .getPreEmitDiagnostics(program)
     .filter((d) => d.category === ts.DiagnosticCategory.Error)
     .filter((d) => d.file === undefined || isOwnFile(d.file.fileName));
   if (compilerErrors.length > 0) {
-    partial = true;
-    diagnostics.push(`error: ${compilerErrors.length} TypeScript error diagnostic(s) in the package`);
+    diagnostics.push(`warn: ${compilerErrors.length} TypeScript error diagnostic(s) in the package (status unaffected)`);
     for (const d of compilerErrors.slice(0, MAX_REPORTED_DIAGNOSTICS)) {
-      diagnostics.push(`error: ${formatDiagnostic(d, toRepoRel)}`);
+      diagnostics.push(`warn: ${formatDiagnostic(d, toRepoRel)}`);
     }
   }
 
@@ -159,6 +178,8 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       missingEntryPoints,
       exports,
       unresolved: [...unresolved].sort(),
+      unresolvedImports: consumer.unresolvedImports,
+      flags: consumer.flags,
     },
     diagnostics,
     partial,
@@ -195,6 +216,7 @@ function createProgram(input: ExportSurfaceInput, diagnostics: string[]): ts.Pro
 
 /**
  * Positions of identifiers inside export statements reachable from `entry`,
+ * and of import bindings in those same files (`import { a }; export { a }`),
  * keyed by the symbol they finally resolve to. These occurrences are not uses
  * and must not count as internal references. Follows `export ... from` and
  * `export *` into the package's own files; an unresolvable module specifier on
@@ -242,6 +264,19 @@ function collectExportSites(
             unresolved.add(stmt.moduleSpecifier.text);
           } else if (modFile !== undefined && isOwnFile(modFile.fileName)) {
             queue.push(modFile);
+          }
+        }
+      } else if (ts.isImportDeclaration(stmt) && stmt.importClause !== undefined) {
+        const clause = stmt.importClause;
+        if (clause.name !== undefined) add(resolve(checker.getSymbolAtLocation(clause.name)), sf, clause.name);
+        const bindings = clause.namedBindings;
+        if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+          add(resolve(checker.getSymbolAtLocation(bindings.name)), sf, bindings.name);
+        } else if (bindings !== undefined) {
+          for (const el of bindings.elements) {
+            const target = resolve(checker.getSymbolAtLocation(el.name));
+            if (el.propertyName !== undefined) add(target, sf, el.propertyName);
+            add(target, sf, el.name);
           }
         }
       } else if (ts.isExportAssignment(stmt) && ts.isIdentifier(stmt.expression)) {

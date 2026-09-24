@@ -78,10 +78,29 @@ export const scipTypescript: Indexer = {
     return existsSync(path.join(dir, 'tsconfig.json')) || hasJsOrTsSources(dir);
   },
 
-  async run(input, outDir) {
+  async prepare(input) {
     const { repo, pkg, options } = input;
     const diagnostics: string[] = [];
+    const log: string[] = [];
     let status: IndexStatus = 'ok';
+    const dir = realpathSync(packageDir(repo, pkg));
+    // 1. Install third-party deps (before source-linking: links create node_modules).
+    if (options.install) {
+      const installed = await install(realpathSync(repo.localPath), dir, diagnostics, log);
+      if (!installed) status = 'partial';
+    } else {
+      diagnostics.push('info: install skipped (--no-install)');
+    }
+    // 2. Source-link org dependencies so references resolve to the org checkout's symbols.
+    linkOrgDeps(input, dir, diagnostics);
+    return { status, diagnostics, log };
+  },
+
+  async run(input, outDir) {
+    const { repo, pkg, options } = input;
+    const prepared = input.prepared ?? (await this.prepare!(input));
+    const diagnostics: string[] = [...prepared.diagnostics];
+    let status: IndexStatus = prepared.status;
     const slug = packageSlug(pkg);
     const scipFile = path.join(outDir, `${slug}.scip`);
     const exportsFile = path.join(outDir, `${slug}.exports.json`);
@@ -92,20 +111,9 @@ export const scipTypescript: Indexer = {
     const dir = realpathSync(packageDir(repo, pkg));
     const tsconfig = path.join(dir, 'tsconfig.json');
     const inferTsconfig = !existsSync(tsconfig);
-    const log: string[] = [];
+    const log: string[] = [...prepared.log];
 
-    // 1. Install third-party deps (before source-linking: links create node_modules).
-    if (options.install) {
-      const installed = await install(repoRoot, dir, diagnostics, log);
-      if (!installed) status = worstStatus(status, 'partial');
-    } else {
-      diagnostics.push('info: install skipped (--no-install)');
-    }
-
-    // 2. Source-link org dependencies so references resolve to the org checkout's symbols.
-    linkOrgDeps(input, dir, diagnostics);
-
-    // 3. Index.
+    // 3. Index (1–2 are `prepare`).
     const args = [scipTypescriptBin(), 'index', '--output', scipFile, '--no-progress-bar'];
     if (inferTsconfig) {
       args.push('--infer-tsconfig');
@@ -148,6 +156,9 @@ export const scipTypescript: Indexer = {
         nestedPackageDirs: nested,
         entryPoints: pkg.entryPoints,
         tsconfig: existsSync(tsconfig) ? tsconfig : undefined,
+        orgPackageNames: new Set(
+          input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'npm' && p.name !== null ? [p.name] : [])),
+        ),
       });
       writeFileSync(exportsFile, `${JSON.stringify(surface.sidecar, null, 2)}\n`);
       diagnostics.push(...surface.diagnostics);

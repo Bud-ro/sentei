@@ -58,7 +58,19 @@ export interface IndexerInput {
   pkg: DiscoveredPackage;
   /** Look up any org package by package id (across all repos). */
   lookup: (packageId: string) => OrgPackage | undefined;
+  /** Every org package (all repos), e.g. to tell org imports from third-party ones. */
+  orgPackages: readonly OrgPackage[];
   options: IndexerOptions;
+  /** Result of this package's `prepare`, merged into the `run` result. */
+  prepared?: PrepareResult;
+}
+
+/** Outcome of `Indexer.prepare` (install + source links). */
+export interface PrepareResult {
+  status: IndexStatus;
+  diagnostics: string[];
+  /** Subprocess output for the package's log file. */
+  log: string[];
 }
 
 export type IndexStatus = 'ok' | 'partial' | 'failed';
@@ -79,6 +91,13 @@ export interface Indexer {
   version: string;
   /** Does this indexer own this package? Only `repo`/`pkg` are consulted. */
   detect(input: Pick<IndexerInput, 'repo' | 'pkg'>): boolean;
+  /**
+   * Makes the package's dependencies resolvable (install, org source links).
+   * The stage calls it for every package in the org before any `run`, because
+   * resolution is transitive: a consumer's import of org package A resolves A's
+   * own org imports through A's node_modules.
+   */
+  prepare?(input: IndexerInput): Promise<PrepareResult>;
   run(input: IndexerInput, outDir: string): Promise<IndexerResult>;
 }
 
@@ -92,6 +111,26 @@ export interface ExportsSidecar {
   exports: ExportRecord[];
   /** Module specifiers (or entry files) whose exports could not be resolved. */
   unresolved: string[];
+  /**
+   * Named imports from org modules that resolve to nothing: the org package
+   * does not export that name (version skew). Does not change status.
+   */
+  unresolvedImports: UnresolvedImport[];
+  /** Consumer-side constructs that hide which org members are used. */
+  flags: ConsumerFlag[];
+}
+
+export interface UnresolvedImport extends SourcePosition {
+  /** Module specifier as written. */
+  module: string;
+  /** Imported (not local) name; position is that identifier. */
+  name: string;
+}
+
+export interface ConsumerFlag extends SourcePosition {
+  flag: 'namespace_dynamic' | 'dynamic_access';
+  /** One line naming the construct. */
+  reason: string;
 }
 
 export interface SourcePosition {

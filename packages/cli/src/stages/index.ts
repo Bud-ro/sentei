@@ -10,6 +10,7 @@ import type {
   IndexerOptions,
   IndexStatus,
   OrgPackage,
+  PrepareResult,
 } from '../indexers/types.ts';
 import { worstStatus } from '../indexers/types.ts';
 
@@ -59,7 +60,21 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
     for (const pkg of repo.packages) byId.set(pkg.packageId, { repo, pkg });
   }
   const lookup = (id: string): OrgPackage | undefined => byId.get(id);
+  const orgPackages = [...byId.values()];
 
+  // Phase 1: make every org package resolvable (install + source links) before
+  // indexing any, since a consumer resolves an org dep's own org imports through
+  // that dep's node_modules. Cached repos are prepared too (others resolve through them).
+  const prepared = new Map<string, PrepareResult>();
+  for (const repo of discovered.repos) {
+    for (const pkg of repo.packages) {
+      const indexer = INDEXERS.find((ix) => ix.detect({ repo, pkg }));
+      if (indexer?.prepare === undefined) continue;
+      prepared.set(pkg.packageId, await indexer.prepare({ repo, pkg, lookup, orgPackages, options }));
+    }
+  }
+
+  // Phase 2: index.
   for (const repo of discovered.repos) {
     const outDir = path.resolve(ctx.work, 'index', repoSlug(repo.repo));
     const indexJson = path.join(outDir, 'index.json');
@@ -85,7 +100,9 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
           diagnostics: ['error: no indexer'],
         };
       } else {
-        const r = await indexer.run({ repo, pkg, lookup, options }, outDir);
+        const input = { repo, pkg, lookup, orgPackages, options };
+        const prep = prepared.get(pkg.packageId);
+        const r = await indexer.run(prep === undefined ? input : { ...input, prepared: prep }, outDir);
         entry = {
           packageId: pkg.packageId,
           indexer: indexer.name,
