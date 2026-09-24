@@ -873,3 +873,40 @@ needs_review 9 → 41, skew 272 → 45.
 - **Nuxt apps**: `nuxt prepare` runs once during prepare when installs are on
   and `.nuxt/tsconfig.json` is missing; devtools-app went from failed to
   partial (an unresolved `unhead/validate` remains).
+
+### Core round 3 (as built)
+
+- **Witness outcomes propagate.** `candidate_symbols` reads `findings`, so
+  the private-dead closure and the dead-island verdicts are recomputed after
+  the witness (`insertPrivateDead`, `reconcileDeadIslands`, bounded fixpoint).
+  A dead island whose only user was downgraded reverts to `unexport_candidate`.
+  On honojs: 26 wrongly-cascaded `private_dead` rows → 0, witness noise 18 → 8.
+- **Materialized scratch tables** (`mat_reachable`, `mat_reachable_after`,
+  `mat_base_verdicts`): the recursion is still defined once, in views; every
+  downstream view reads the tables. The cost was not the recursion but views
+  re-evaluated per row (correlated EXISTS in the decision tree, a per-symbol
+  package-seed scan, a CTE evaluated twice). Analyze on honojs: 25 s → 1.8 s.
+  `analyzeOrg` stages base verdicts in `findings` before computing islands
+  because the island rule needs `reachable_after`, which needs candidates.
+- **Self-witness precision**: module specifiers never count; a bare name
+  literal counts only in a file that also builds import text; codegen hits
+  name only the symbols inside the literal; the self consumer scans only own
+  files that are not indexed documents and not generated, in the package's own
+  language, ignoring directive lines and the defining line.
+- **Runtime entry points** (`ManifestPackage.runtimeEntryPoints`): package.json
+  `imports` arms and Vite/HTML client entries are not export surface (that
+  would make the arm TypeScript picks an unexport candidate and the other a
+  deletion); their exported top-level declarations become `entry_symbols`.
+- **Spread refs**: edges to every symbol of the target document always;
+  occurrences on top-level exports only within the same package, or across
+  packages when the consumer carries no dynamic flag for that target
+  (otherwise the flag's blocker would be hidden by a counted use).
+- **Scoped unindexed imports** and relative single-file-component imports go to
+  `witness_files` (schema v8) and never flag; generated files
+  (`documents.is_generated`) get no verdicts and are never self-scanned.
+- `**/testing/**` as a test glob also catches public test-support entry points
+  (hono's `src/helper/testing`); uses from those files no longer count, so a
+  few exports gained `only_test_refs`. Acceptable under the policy; revisit if
+  a real org objects.
+- Fixture `lib-cascade` exercises the cascade, exports conditions, `imports`
+  arms and the HTML client entry end to end.
