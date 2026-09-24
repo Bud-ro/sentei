@@ -39,6 +39,10 @@ Commands:
 Options:
   --work <dir>   Work directory (default: ./work)
   --db <file>    Database file (default: <work>/sentei.db)
+  --org-dir <dir>  Local org directory for discover (org.json + repos/<name>/)
+  --force        index: re-index repos even when cached for the same headSha
+  --no-install   index: do not run npm ci / pnpm / yarn install
+  --max-old-space-mb <n>  index: indexer heap limit in MB (default: 8192)
   -h, --help     Show this help
 `;
 
@@ -51,8 +55,13 @@ export async function main(argv: readonly string[]): Promise<number> {
       options: {
         work: { type: 'string', default: './work' },
         db: { type: 'string' },
+        'org-dir': { type: 'string' },
+        force: { type: 'boolean', default: false },
+        install: { type: 'boolean', default: true },
+        'max-old-space-mb': { type: 'string', default: '8192' },
         help: { type: 'boolean', short: 'h', default: false },
       },
+      allowNegative: true,
     });
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n\n${USAGE}`);
@@ -76,6 +85,13 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 2;
   }
 
+  const maxOldSpaceMb = Number(values['max-old-space-mb']);
+  if (!Number.isInteger(maxOldSpaceMb) || maxOldSpaceMb <= 0) {
+    process.stderr.write(`--max-old-space-mb must be a positive integer\n\n${USAGE}`);
+    return 2;
+  }
+  const indexOptions = { force: values.force, install: values.install, maxOldSpaceMb };
+
   const work = values.work;
   const dbPath = values.db ?? join(work, 'sentei.db');
   mkdirSync(work, { recursive: true });
@@ -83,8 +99,9 @@ export async function main(argv: readonly string[]): Promise<number> {
   const db = openDb(dbPath);
   try {
     const ctx: StageContext = { work, dbPath, db, log: (line) => process.stdout.write(`${line}\n`) };
-    for (const [, stage] of selected) {
-      await stage(ctx);
+    if (values['org-dir'] !== undefined) ctx.orgDir = values['org-dir'];
+    for (const [name, stage] of selected) {
+      await (name === 'index' ? index(ctx, indexOptions) : stage(ctx));
     }
   } finally {
     db.close();

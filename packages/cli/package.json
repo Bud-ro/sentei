@@ -10,9 +10,11 @@
     "node": ">=26"
   },
   "dependencies": {
-    "@sentei/core": "0.0.0"
+    "@sentei/core": "0.0.0",
+    "@sourcegraph/scip-typescript": "0.4.0",
+    "typescript": "5.9.3"
   },
   "scripts": {
-    "typecheck": "tsc -p ."
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p ."
   }
 }
