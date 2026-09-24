@@ -199,6 +199,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     namespaceSpreadRefs: [],
   };
   const compilerErrors = new Set<string>();
+  const ambient: Array<SourcePosition & { name: string; dts: boolean }> = [];
   const checked = new Set<string>();
   const pending = new Map(input.entryPoints.map((e) => [e, path.resolve(input.repoRoot, ...e.split('/'))] as const));
   const found = new Set<string>();
@@ -212,6 +213,11 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       .getSourceFiles()
       .filter((sf) => isOwnFile(sf.fileName) && !checked.has(path.resolve(sf.fileName)));
     for (const sf of files) checked.add(path.resolve(sf.fileName));
+    for (const sf of files) {
+      // Only files SCIP indexes can match a definition (see indexedFiles above).
+      if (rootsKnown && !indexedFiles.has(path.resolve(sf.fileName))) continue;
+      ambient.push(...collectAmbientDeclarations(sf, toRepoRel));
+    }
     const r = checkConsumerFiles(files, checker, input.orgPackageNames, toRepoRel, input.orgPackageDirs);
     consumer.unresolvedOrgModules.push(...r.unresolvedOrgModules);
     consumer.unresolvedImports.push(...r.unresolvedImports);
@@ -317,6 +323,13 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     (a, b) =>
       cmp(a.entry, b.entry) || cmp(a.exportedAs, b.exportedAs) || cmp(a.file, b.file) || a.line - b.line || a.col - b.col,
   );
+  // Ambient contributions (see collectAmbientDeclarations): top-level `.d.ts`
+  // declarations already on the export surface stay ordinary exports.
+  const exportedAt = new Set(exports.map((e) => `${e.file}:${e.line}:${e.col}`));
+  const entrySymbols = ambient
+    .filter((a) => !(a.dts && exportedAt.has(`${a.file}:${a.line}:${a.col}`)))
+    .map(({ file, line, col, name }) => ({ file, line, col, name }))
+    .sort((a, b) => cmp(a.file, b.file) || a.line - b.line || a.col - b.col);
   return {
     sidecar: {
       packageId: input.packageId,
@@ -330,7 +343,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       shorthandRefs: consumer.shorthandRefs,
       namespaceSpreadRefs: consumer.namespaceSpreadRefs,
       unindexedImports,
-      entrySymbols: [],
+      entrySymbols,
     },
     diagnostics,
     partial,
@@ -467,6 +480,83 @@ function collectExportSites(
     }
   }
   return sites;
+}
+
+/**
+ * Declarations that contribute to another scope rather than being used by
+ * reference, so they can never be "unreachable":
+ *  - everything inside an ambient module augmentation (`declare module 'x' {}`)
+ *    or a global augmentation (`declare global {}`), at any nesting, plus the
+ *    module declaration's own name: they merge into the augmented module or the
+ *    global scope, which consumes them;
+ *  - top-level declarations of a `.d.ts` file (`declare const process`,
+ *    `declare namespace JSX`): ambient script declarations. `dts: true` marks
+ *    them so the caller drops those that are on the export surface. A
+ *    declaration with `export` in a module `.d.ts` is imported like any other
+ *    and is not included.
+ * Members of ordinary namespaces are not included; members of recorded
+ * declarations are reachable through their owner.
+ */
+function collectAmbientDeclarations(
+  sf: ts.SourceFile,
+  toRepoRel: (abs: string) => string,
+): Array<SourcePosition & { name: string; dts: boolean }> {
+  const out: Array<SourcePosition & { name: string; dts: boolean }> = [];
+  const add = (nameNode: ts.Node, name: string, dts: boolean): void => {
+    out.push({ ...position(sf, nameNode.getStart(sf), toRepoRel), name, dts });
+  };
+  const isAmbientModule = (s: ts.Statement): s is ts.ModuleDeclaration =>
+    ts.isModuleDeclaration(s) && (ts.isStringLiteral(s.name) || (s.flags & ts.NodeFlags.GlobalAugmentation) !== 0);
+  /** Names declared by one statement (with the name node), not descending into bodies. */
+  const declared = (s: ts.Statement): Array<[ts.Node, string]> => {
+    if (ts.isVariableStatement(s)) {
+      return s.declarationList.declarations.filter((d) => ts.isIdentifier(d.name)).map((d) => [d.name, (d.name as ts.Identifier).text]);
+    }
+    if (
+      ts.isFunctionDeclaration(s) ||
+      ts.isClassDeclaration(s) ||
+      ts.isInterfaceDeclaration(s) ||
+      ts.isTypeAliasDeclaration(s) ||
+      ts.isEnumDeclaration(s) ||
+      ts.isModuleDeclaration(s)
+    ) {
+      if (s.name === undefined) return []; // `export default class {}`
+      return [[s.name, s.name.text]];
+    }
+    return [];
+  };
+  /** Every declaration inside an ambient module body, at any nesting. */
+  const visitAmbient = (m: ts.ModuleDeclaration): void => {
+    add(m.name, m.name.text, false);
+    let body = m.body;
+    // `declare module 'x' { namespace A.B {} }` nests bodies as ModuleDeclarations.
+    while (body !== undefined && ts.isModuleDeclaration(body)) {
+      add(body.name, body.name.text, false);
+      body = body.body;
+    }
+    if (body === undefined || !ts.isModuleBlock(body)) return;
+    for (const s of body.statements) {
+      if (ts.isModuleDeclaration(s)) {
+        visitAmbient(s);
+        continue;
+      }
+      for (const [node, name] of declared(s)) add(node, name, false);
+    }
+  };
+  const dts = sf.isDeclarationFile;
+  for (const s of sf.statements) {
+    if (isAmbientModule(s)) {
+      visitAmbient(s);
+    } else if (dts && !hasExportModifier(s)) {
+      // An exported declaration of a module `.d.ts` is imported by reference like any other.
+      for (const [node, name] of declared(s)) add(node, name, true);
+    }
+  }
+  return out;
+}
+
+function hasExportModifier(s: ts.Statement): boolean {
+  return ts.canHaveModifiers(s) && (ts.getModifiers(s)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false);
 }
 
 /** The node whose position identifies a declaration, and its declared name. */

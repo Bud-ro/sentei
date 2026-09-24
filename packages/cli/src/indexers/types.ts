@@ -202,7 +202,13 @@ export interface ExportsSidecar {
    * `builder_factory` of the `import:` library; dart_dev's
    * `tool/dart_dev/config.dart` top-level `config`. The file need not be a
    * discover entry point, and the symbol may be exported (a builder factory in
-   * a `lib/*.dart` library). Position is the declaration's name. Empty for npm.
+   * a `lib/*.dart` library). Position is the declaration's name. TypeScript
+   * (export-surface): ambient contributions consumed by the augmented module or
+   * the global scope, never by reference: every declaration inside `declare
+   * module 'x' {}` / `declare global {}` at any nesting (and the module
+   * declaration's own name), and non-exported top-level declarations of `.d.ts`
+   * files that are not on the export surface (`declare const process`,
+   * `declare namespace JSX`). Members of ordinary namespaces are not included.
    */
   entrySymbols: Array<SourcePosition & { name: string }>;
 }

@@ -3,7 +3,26 @@
     "src/load.cts",
     "src/main.ts"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 14,
+      "file": "src/globals.d.ts",
+      "line": 10,
+      "name": "module"
+    },
+    {
+      "col": 14,
+      "file": "src/globals.d.ts",
+      "line": 3,
+      "name": "process"
+    },
+    {
+      "col": 14,
+      "file": "src/globals.d.ts",
+      "line": 8,
+      "name": "require"
+    }
+  ],
   "exports": [],
   "flags": [
     {

@@ -956,7 +956,29 @@ describe('unjs fixes', () => {
       'src/typedefs.js': `/** @typedef {{ a: number }} Shape */\nexport const real = 1;\n`,
       'lib/extra.d.ts': `export interface Hidden { h: number }\n`,
     });
-    const repos = [pkg('spread', '@acme/spread', ['src/main.ts']), pkg('surface', '@acme/surface', ['src/index.ts'])];
+    // Ambient augmentations and script declarations: entry symbols.
+    write('ambient', {
+      'package.json': { name: '@acme/ambient', version: '1.0.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': [
+        `export const v = 1;`,
+        `declare module 'hono' {`,
+        `  interface ContextVariableMap { user: string }`,
+        `}`,
+        `declare global {`,
+        `  interface Window { x: number }`,
+        `}`,
+        `export namespace N { export const a = 1; }`, // ordinary namespace: not recorded
+        '',
+      ].join('\n'),
+      'src/globals.d.ts': `declare const process: { argv: string[] };\n`,
+      'src/types.d.ts': `export interface Exported { e: number }\ninterface Local { l: number }\n`,
+    });
+    const repos = [
+      pkg('spread', '@acme/spread', ['src/main.ts']),
+      pkg('surface', '@acme/surface', ['src/index.ts']),
+      pkg('ambient', '@acme/ambient', ['src/index.ts']),
+    ];
     uwork = path.join(root, 'work');
     mkdirSync(uwork);
     writeFileSync(path.join(uwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
@@ -1002,6 +1024,24 @@ describe('unjs fixes', () => {
     expect(diags).toContain('info: exports declared in JSON modules not recorded: package.json');
     // The sidecar field exists (empty) for every package.
     expect(sidecar.namespaceSpreadRefs).toEqual([]);
+  });
+
+  it('records declarations in ambient module/global augmentations and .d.ts script declarations as entry symbols', () => {
+    const { sidecar } = result('ambient');
+    expect(sidecar.entrySymbols).toEqual([
+      { file: 'src/globals.d.ts', line: 0, col: 14, name: 'process' },
+      { file: 'src/index.ts', line: 1, col: 15, name: 'hono' },
+      { file: 'src/index.ts', line: 2, col: 12, name: 'ContextVariableMap' },
+      { file: 'src/index.ts', line: 4, col: 8, name: 'global' },
+      { file: 'src/index.ts', line: 5, col: 12, name: 'Window' },
+      { file: 'src/types.d.ts', line: 1, col: 10, name: 'Local' },
+    ]);
+    const defs = new Set(
+      readScipIndex(path.join(uwork, 'index/acme__ambient/npm__acme__ambient.scip')).documents.flatMap((doc) =>
+        doc.occurrences.filter((o) => (o.symbolRoles & 1) !== 0 && !o.symbol.startsWith('local ')).map((o) => `${doc.relativePath}:${o.range[0]}:${o.range[1]}`),
+      ),
+    );
+    expect(sidecar.entrySymbols.filter((e) => !defs.has(`${e.file}:${e.line}:${e.col}`))).toEqual([]);
   });
 
   it('(2) a failing export-surface worker fails the package with its stderr tail', async () => {

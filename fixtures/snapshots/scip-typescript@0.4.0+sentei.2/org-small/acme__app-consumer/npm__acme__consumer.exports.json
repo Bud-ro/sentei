@@ -2,7 +2,14 @@
   "entryPoints": [
     "src/main.ts"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 18,
+      "file": "src/jsx.d.ts",
+      "line": 3,
+      "name": "JSX"
+    }
+  ],
   "exports": [],
   "flags": [],
   "missingEntryPoints": [],
