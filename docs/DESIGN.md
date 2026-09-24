@@ -974,3 +974,23 @@ self-witness instead of flagging; template repos are remembered in the
 lockfile; subprocess diagnostics keep the error head as well as the tail.
 Environmental, unchanged: the newest pnpm 12's store lock in this sandbox, bun
 not installed, Nuxt apps that need built org packages at `nuxt prepare`.
+
+### Final adapter rounds (as built)
+
+- **Dart fork patch 4 (`1.7.0+sentei.7`)**: `CommentReference` nodes produce no
+  occurrences, so dartdoc `[Name]` links are documentation, not uses.
+- **Failed `pub get`**: own `package:<self>/…` URIs that cannot resolve are
+  reported once as "package unresolvable (pub get failed)" instead of per-export
+  `unresolved` entries that turned into `dynamic_access` flags.
+- **External re-exports** (`export default globalThis`, `export { basename }
+  from 'pathe'`) are neither surface records nor unresolved; only aliases that
+  resolve to nothing stay unresolved.
+- **Self-imports** from own files, in or outside the tsconfig program, are
+  recorded against the package itself and feed the self-witness (never a
+  partial status); JavaScript entries outside the program are text-scanned
+  and their exports reported as unresolved with a clear warning.
+- **Diagnostics** keep the first three and last five lines of subprocess
+  output so error heads survive (`nuxt prepare`'s "Cannot find module").
+- Adapter versions: scip-typescript `0.4.0+sentei.5`, scip-dart
+  `1.7.0+sentei.7`; every version bump invalidates the index cache and renames
+  the snapshot directory, which is the intended review trigger (§6.6).
