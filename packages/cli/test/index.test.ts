@@ -4,7 +4,10 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
-import type { DiscoverFile, ExportsSidecar } from '../src/indexers/types.ts';
+import { readScipIndex } from '@sentei/core/scip';
+import { isCached } from '../src/indexers/cache.ts';
+import { install, scipTypescript, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
 const FIXTURE = path.resolve(import.meta.dirname, '../../../fixtures/org-small');
@@ -330,5 +333,353 @@ describe('consumer checks and import sites', () => {
       [1, 7], // import d
       [2, 13], // export { ..., d }
     ]);
+  });
+});
+
+describe('real-org fixes (honojs dogfood)', () => {
+  let root: string;
+  let hwork: string;
+  const TSCONFIG = {
+    compilerOptions: { strict: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler', noEmit: true, skipLibCheck: true, types: [] },
+    include: ['src'],
+  };
+  type Pkg = DiscoverFile['repos'][number]['packages'][number];
+  const repos: DiscoverFile['repos'] = [];
+
+  /** Writes `repos/<repo>/<file>` for each entry. */
+  function write(repo: string, files: Record<string, string | object>): void {
+    for (const [f, body] of Object.entries(files)) {
+      const abs = path.join(root, 'repos', repo, ...f.split('/'));
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+    }
+  }
+  function addRepo(repo: string, pkg: Partial<Pkg> & { name: string; entryPoints: string[] }, deps: string[] = []): void {
+    repos.push({
+      repo: `acme/${repo}`,
+      localPath: path.join(root, 'repos', repo),
+      headSha: null,
+      packages: [
+        {
+          packageId: `npm:${pkg.name}`,
+          path: '.',
+          manager: 'npm',
+          version: '1.0.0',
+          deps: deps.map((d) => ({ name: d, manager: 'npm', resolvedPackageId: `npm:${d}` })),
+          ...pkg,
+        },
+      ],
+    });
+  }
+  const result = (repo: string, pkg: string) => ({
+    index: readJson<RepoIndex>(hwork, 'index', `acme__${repo}`, 'index.json'),
+    sidecar: readJson<ExportsSidecar>(hwork, 'index', `acme__${repo}`, `${pkg}.exports.json`),
+  });
+
+  beforeAll(async () => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-hono-')));
+
+    // (1) Solution-style tsconfig: no files of its own, two referenced projects.
+    write('solution', {
+      'package.json': { name: '@acme/solution', version: '1.0.0', type: 'module' },
+      'tsconfig.json': { files: [], references: [{ path: './tsconfig.a.json' }, { path: './packages-b' }] },
+      'tsconfig.a.json': { ...TSCONFIG, include: ['src/a'] },
+      'packages-b/tsconfig.json': { ...TSCONFIG, include: ['../src/b'] },
+      'src/a/index.ts': `export function fromA(): number { return 1; }\n`,
+      'src/b/index.ts': `export function fromB(): number { return 2; }\n`,
+    });
+    addRepo('solution', { name: '@acme/solution', entryPoints: ['src/a/index.ts', 'src/b/index.ts'] });
+
+    // (2) A lib whose package.json points at unbuilt dist/ output, and its consumer.
+    write('unbuilt', {
+      'package.json': {
+        name: '@acme/unbuilt',
+        version: '2.0.0',
+        type: 'module',
+        main: 'dist/cjs/index.js',
+        types: 'dist/types/index.d.ts',
+        exports: {
+          '.': { types: './dist/types/index.d.ts', import: './dist/index.js', require: './dist/cjs/index.js' },
+          './sub': { types: './dist/types/sub.d.ts', import: './dist/sub.js' },
+          './utils/*': { import: './dist/utils/*.js' },
+          './package.json': './package.json',
+        },
+      },
+      'tsconfig.json': TSCONFIG,
+      'README.md': '# unbuilt\n',
+      'src/index.ts': `export class Foo { run(): number { return 1; } }\n`,
+      'src/sub.ts': `export function bar(): number { return 2; }\n`,
+      'src/utils/text.ts': `export function upper(s: string): string { return s.toUpperCase(); }\n`,
+    });
+    addRepo('unbuilt', { name: '@acme/unbuilt', entryPoints: ['src/index.ts', 'src/sub.ts', 'src/utils/text.ts'] });
+    // A lib whose declared targets all exist keeps a plain symlink.
+    write('built', {
+      'package.json': { name: '@acme/built', version: '1.0.0', type: 'module', types: 'src/index.ts', exports: { '.': './src/index.ts' } },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': `export const built = 1;\n`,
+    });
+    addRepo('built', { name: '@acme/built', entryPoints: ['src/index.ts'] });
+
+    write('consumer', {
+      'package.json': { name: '@acme/consumer', version: '1.0.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      'src/main.ts': [
+        `import { Foo } from '@acme/unbuilt';`,
+        `import { bar } from '@acme/unbuilt/sub';`,
+        `import { upper } from '@acme/unbuilt/utils/text';`,
+        `import { built } from '@acme/built';`,
+        `declare const x: string;`,
+        // (5c) a data: URL module is not an org package.
+        'const url = `data:text/javascript,export default ${x}`;',
+        `export const r = [new Foo().run(), bar(), upper('a'), built, import(url)];`,
+        '',
+      ].join('\n'),
+      // (5b) test files do not count as consumers: no flag, no partial.
+      'src/main.test.ts': `declare const require: (s: string) => unknown;\ndeclare const y: string;\nrequire('@acme/' + y);\nimport { nope } from '@acme/unbuilt/missing';\nnope();\n`,
+      // (4) config files outside every tsconfig.
+      'eslint.config.mjs': `import config from '@acme/built';\nimport self from '@acme/consumer/x';\nexport default [...config, self];\n`,
+      'scripts/gen.cjs': `const { Foo } = require("@acme/unbuilt/sub");\nrequire('lodash');\n`,
+      'test/setup.test.mjs': `import '@acme/built';\n`,
+      'docs/example.mjs': `export * from '@acme/built';\n`,
+      'dist/bundle.js': `import '@acme/built';\n`,
+    });
+    addRepo('consumer', { name: '@acme/consumer', entryPoints: ['src/main.ts'] }, ['@acme/unbuilt', '@acme/built']);
+    // A stale shadow left by a previous run is ours and gets replaced.
+    write('consumer', { 'node_modules/@acme/unbuilt/.sentei-shadow': '', 'node_modules/@acme/unbuilt/stale.txt': 'x' });
+
+    hwork = path.join(root, 'work');
+    mkdirSync(hwork);
+    writeFileSync(path.join(hwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
+    await index({ work: hwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+  }, 120_000);
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('(1) reads the export surface of a solution-style tsconfig from its referenced projects', () => {
+    const { index: ix, sidecar } = result('solution', 'acme__solution');
+    expect(ix.status).toBe('ok');
+    expect(sidecar.entryPoints).toEqual(['src/a/index.ts', 'src/b/index.ts']);
+    expect(sidecar.missingEntryPoints).toEqual([]);
+    expect(sidecar.exports.map((e) => [e.entry, e.name, e.file])).toEqual([
+      ['src/a/index.ts', 'fromA', 'src/a/index.ts'],
+      ['src/b/index.ts', 'fromB', 'src/b/index.ts'],
+    ]);
+    expect(sidecar.unindexedImports).toEqual([]);
+  });
+
+  it('(2) shadows an unbuilt org lib: rewritten package.json, symlinked contents, checkout symbols', () => {
+    const shadow = path.join(root, 'repos/consumer/node_modules/@acme/unbuilt');
+    expect(lstatSync(shadow).isDirectory()).toBe(true);
+    expect(existsSync(path.join(shadow, '.sentei-shadow'))).toBe(true);
+    expect(existsSync(path.join(shadow, 'stale.txt'))).toBe(false);
+    expect(existsSync(path.join(shadow, 'node_modules'))).toBe(false);
+    expect(lstatSync(path.join(shadow, 'package.json')).isSymbolicLink()).toBe(false);
+    for (const e of ['src', 'README.md', 'tsconfig.json']) {
+      expect(lstatSync(path.join(shadow, e)).isSymbolicLink(), e).toBe(true);
+    }
+    expect(realpathSync(path.join(shadow, 'src'))).toBe(path.join(root, 'repos/unbuilt/src'));
+    const pj = readJson<Record<string, unknown>>(shadow, 'package.json');
+    expect(pj).toMatchObject({
+      name: '@acme/unbuilt',
+      version: '2.0.0',
+      type: 'module',
+      main: 'src/index.ts',
+      types: 'src/index.ts',
+      exports: {
+        '.': { types: './src/index.ts', import: './src/index.ts', require: './src/index.ts' },
+        './sub': { types: './src/sub.ts', import: './src/sub.ts' },
+        './utils/*': { import: './src/utils/*.ts' },
+        './package.json': './package.json',
+      },
+    });
+
+    // A lib with every declared target present keeps a plain symlink.
+    const plain = path.join(root, 'repos/consumer/node_modules/@acme/built');
+    expect(lstatSync(plain).isSymbolicLink()).toBe(true);
+    expect(realpathSync(plain)).toBe(path.join(root, 'repos/built'));
+
+    const { index: ix, sidecar } = result('consumer', 'acme__consumer');
+    expect(ix.status).toBe('ok');
+    expect(ix.packages[0]!.diagnostics.some((d) => d.startsWith('info: node_modules/@acme/unbuilt is a shadow of'))).toBe(true);
+    expect(sidecar.flags).toEqual([]);
+
+    // The consumer's reference is the lib's own definition symbol string.
+    const libIndex = readScipIndex(path.join(hwork, 'index/acme__unbuilt/acme__unbuilt.scip'));
+    const defs = libIndex.documents.flatMap((d) => d.occurrences.filter((o) => (o.symbolRoles & 1) === 1).map((o) => o.symbol));
+    const fooDef = defs.find((s) => s.endsWith('/Foo#'));
+    expect(fooDef).toBe('scip-typescript npm @acme/unbuilt 2.0.0 src/`index.ts`/Foo#');
+    const consumerIndex = readScipIndex(path.join(hwork, 'index/acme__consumer/acme__consumer.scip'));
+    const main = consumerIndex.documents.find((d) => d.relativePath === 'src/main.ts')!;
+    const refs = new Set(main.occurrences.map((o) => o.symbol));
+    expect(refs.has(fooDef!)).toBe(true);
+    expect(refs.has(defs.find((s) => s.endsWith('/bar().'))!)).toBe(true);
+    expect(refs.has(defs.find((s) => s.endsWith('/upper().'))!)).toBe(true);
+  });
+
+  it('(2) replaces its own shadow on a re-run and never displaces it', async () => {
+    const r = repos.find((x) => x.repo === 'acme/consumer')!;
+    const byId = new Map(repos.flatMap((x) => x.packages.map((p) => [p.packageId, { repo: x, pkg: p }] as const)));
+    const prep = await scipTypescript.prepare!({
+      repo: r,
+      pkg: r.packages[0]!,
+      lookup: (id) => byId.get(id),
+      orgPackages: [...byId.values()],
+      options: { install: false, maxOldSpaceMb: 1024 },
+    });
+    expect(prep.status).toBe('ok');
+    expect(existsSync(path.join(root, 'repos/consumer/node_modules/.sentei-displaced'))).toBe(false);
+    expect(existsSync(path.join(root, 'repos/consumer/node_modules/@acme/unbuilt/.sentei-shadow'))).toBe(true);
+    expect(prep.diagnostics.filter((d) => d.includes('@acme/unbuilt'))).toHaveLength(1);
+    expect(prep.diagnostics.some((d) => d.includes('displaced') || d.includes('@acme/built'))).toBe(false); // symlink already right
+  });
+
+  it('(4) records org imports from code files outside every tsconfig, skipping tests, docs, build output and self-imports', () => {
+    const { index: ix, sidecar } = result('consumer', 'acme__consumer');
+    expect(sidecar.unindexedImports).toEqual([
+      { file: 'eslint.config.mjs', module: '@acme/built', targetPackage: '@acme/built' },
+      { file: 'scripts/gen.cjs', module: '@acme/unbuilt/sub', targetPackage: '@acme/unbuilt' },
+    ]);
+    expect(ix.status).toBe('ok');
+    expect(ix.packages[0]!.diagnostics).toContain(
+      "warn: eslint.config.mjs is in no tsconfig and imports org module '@acme/built' (unindexed consumer of @acme/built)",
+    );
+  });
+
+  it('(5b/c) drops flags and unresolved org modules from test files; exempts data: URL imports', () => {
+    const { index: ix, sidecar } = result('consumer', 'acme__consumer');
+    expect(sidecar.flags).toEqual([]);
+    const diags = ix.packages[0]!.diagnostics;
+    expect(diags.some((d) => d.startsWith('warn: dynamic_access at src/main.test.ts:3:1') && d.endsWith('dropped)'))).toBe(true);
+    expect(diags.some((d) => d.startsWith("warn: unresolved org module '@acme/unbuilt/missing' at src/main.test.ts"))).toBe(true);
+    expect(diags.some((d) => d.startsWith('error:'))).toBe(false);
+    expect(diags.some((d) => d.includes('import() with a non-literal specifier: url'))).toBe(false);
+  });
+});
+
+describe('package-manager fallbacks (no network: the runner is faked)', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-pm-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  function fakeRunner(missing: string[], calls: Array<[string, string[]]>): Runner {
+    return async (cmd, args): Promise<ExecResult> => {
+      calls.push([cmd, args]);
+      if (missing.includes(cmd)) {
+        return { code: -1, signal: null, stdout: '', stderr: `spawn ${cmd} ENOENT\n`, errno: 'ENOENT', errorMessage: `spawn ${cmd} ENOENT` };
+      }
+      return { code: 0, signal: null, stdout: '', stderr: '' };
+    };
+  }
+  function repo(name: string, files: Record<string, string>): string {
+    const dir = path.join(root, name);
+    mkdirSync(dir, { recursive: true });
+    for (const [f, body] of Object.entries(files)) writeFileSync(path.join(dir, f), body);
+    return dir;
+  }
+
+  it('(3) runs a missing pnpm through npm exec at the packageManager version', async () => {
+    const dir = repo('pnpm-repo', {
+      'package.json': JSON.stringify({ name: 'x', packageManager: 'pnpm@9.1.0+sha512.abc' }),
+      'pnpm-lock.yaml': 'lockfileVersion: 9.0\n',
+    });
+    const calls: Array<[string, string[]]> = [];
+    const diagnostics: string[] = [];
+    expect(await install(dir, dir, diagnostics, [], fakeRunner(['pnpm'], calls))).toBe(true);
+    expect(calls).toEqual([
+      ['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts']],
+      ['npm', ['exec', '--yes', '--package=pnpm@9.1.0', '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts']],
+    ]);
+    expect(diagnostics).toContain(
+      'info: pnpm is not installed (spawn pnpm ENOENT); falling back to npm exec --yes --package=pnpm@9.1.0 (version 9.1.0 from packageManager in package.json)',
+    );
+  });
+
+  it('(3) uses latest without a packageManager field, and yarn berry through @yarnpkg/cli-dist', async () => {
+    const plain = repo('yarn-classic', { 'package.json': '{}', 'yarn.lock': '' });
+    const calls: Array<[string, string[]]> = [];
+    const diagnostics: string[] = [];
+    await install(plain, plain, diagnostics, [], fakeRunner(['yarn'], calls));
+    expect(calls[1]).toEqual(['npm', ['exec', '--yes', '--package=yarn@latest', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts']]);
+    expect(diagnostics[0]).toContain('(version latest (no matching packageManager field))');
+
+    const berry = repo('yarn-berry', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.10.3' }), 'yarn.lock': '' });
+    const calls2: Array<[string, string[]]> = [];
+    await install(berry, berry, [], [], fakeRunner(['yarn'], calls2));
+    expect(calls2[1]).toEqual(['npm', ['exec', '--yes', '--package=@yarnpkg/cli-dist@4.10.3', '--', 'yarn', 'install', '--immutable', '--mode=skip-build']]);
+  });
+
+  it('(3) skips a bun install with a warning when bun is missing, and names ENOENT when the fallback cannot start', async () => {
+    const bun = repo('bun-repo', { 'package.json': '{}', 'bun.lock': '' });
+    const diagnostics: string[] = [];
+    expect(await install(bun, bun, diagnostics, [], fakeRunner(['bun'], []))).toBe(true);
+    expect(diagnostics).toEqual(['warn: bun is not installed (spawn bun ENOENT); install skipped in .']);
+
+    const npmRepo = repo('npm-repo', { 'package.json': '{}', 'package-lock.json': '{}' });
+    const d2: string[] = [];
+    expect(await install(npmRepo, npmRepo, d2, [], fakeRunner(['npm'], []))).toBe(false);
+    expect(d2).toEqual(['error: npm ci --ignore-scripts in . could not start (ENOENT: spawn npm ENOENT)']);
+  });
+});
+
+describe('index cache', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-cache-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  const repo: DiscoveredRepo = {
+    repo: 'acme/r',
+    localPath: '/nowhere',
+    headSha: 'sha1',
+    packages: [
+      { packageId: 'npm:a', path: '.', manager: 'npm', name: 'a', entryPoints: [], deps: [] },
+      { packageId: 'pub:b', path: 'b', manager: 'pub', name: 'b', entryPoints: [], deps: [] },
+    ],
+  };
+  const owners = [
+    [repo.packages[0]!, scipTypescript],
+    [repo.packages[1]!, undefined],
+  ] as const;
+  function indexJson(status: 'ok' | 'partial' | 'failed', install: boolean | undefined): string {
+    const f = path.join(root, `${status}-${String(install)}.json`);
+    writeFileSync(
+      f,
+      JSON.stringify({
+        repo: 'acme/r',
+        headSha: 'sha1',
+        status: 'failed',
+        ...(install === undefined ? {} : { install }),
+        packages: [
+          { packageId: 'npm:a', indexer: 'scip-typescript', indexerVersion: scipTypescript.version, status },
+          // A package no indexer owns is always failed; it does not block reuse.
+          { packageId: 'pub:b', indexer: null, indexerVersion: null, status: 'failed' },
+        ],
+      }),
+    );
+    return f;
+  }
+
+  it('(5a) reuses an ok index, refuses a partial/failed one and says why', () => {
+    const log: string[] = [];
+    expect(isCached(indexJson('ok', false), repo, owners, { install: false, log: (l) => log.push(l) })).toBe(true);
+    expect(isCached(indexJson('partial', false), repo, owners, { install: false, log: (l) => log.push(l) })).toBe(false);
+    expect(isCached(indexJson('failed', true), repo, owners, { install: true, log: (l) => log.push(l) })).toBe(false);
+    expect(log).toEqual([
+      '[index] acme/r: not reusing cached index (previous status npm:a=partial; partial/failed results are always retried)',
+      '[index] acme/r: not reusing cached index (previous status npm:a=failed; partial/failed results are always retried)',
+    ]);
+  });
+
+  it('(5a) refuses an index made without install when this run installs', () => {
+    expect(isCached(indexJson('ok', undefined), repo, owners, { install: true })).toBe(false);
+    expect(isCached(indexJson('ok', false), repo, owners, { install: true })).toBe(false);
+    expect(isCached(indexJson('ok', true), repo, owners, { install: true })).toBe(true);
+    expect(isCached(indexJson('ok', true), repo, owners, { install: false })).toBe(true);
+    expect(isCached(indexJson('ok', true), { ...repo, headSha: 'sha2' }, owners, { install: true })).toBe(false);
   });
 });

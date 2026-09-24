@@ -12,10 +12,17 @@
 //     symbol that no longer exists (version skew) → `unresolvedImports`;
 //   - a namespace import used as a value, or a computed require/import: the
 //     accessed members are not statically known → `flags`.
+import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { realpathSync } from 'node:fs';
-import type { ConsumerFlag, NamespaceMemberRef, SourcePosition, UnresolvedImport } from './types.ts';
+import type {
+  ConsumerFlag,
+  ConsumerPolicy,
+  NamespaceMemberRef,
+  SourcePosition,
+  UnindexedImport,
+  UnresolvedImport,
+} from './types.ts';
 
 /** An org npm package and its checkout dir (realpath). */
 export interface OrgPackageDir {
@@ -138,7 +145,7 @@ function checkFile(
       const arg = node.arguments[0];
       if (arg !== undefined && ts.isStringLiteralLike(arg)) {
         checkModule(arg);
-      } else if (arg === undefined || !isRelativeComputed(arg)) {
+      } else if (arg === undefined || !isExemptComputed(arg, checker)) {
         const what = node.expression.kind === ts.SyntaxKind.ImportKeyword ? 'import()' : 'require()';
         out.flags.push({
           flag: 'dynamic_access',
@@ -173,8 +180,20 @@ function isRequireOrImport(call: ts.CallExpression): boolean {
   );
 }
 
-/** A template literal or `+` concatenation whose leading literal text is a relative/absolute path. */
-function isRelativeComputed(arg: ts.Expression): boolean {
+/**
+ * Leading literal texts that can never name an org package: relative/absolute
+ * paths and URL-ish specifiers (`data:` modules built at runtime, `node:`
+ * builtins, `file:` / `http(s):` URLs).
+ */
+const EXEMPT_LEADS = ['./', '../', '/', 'data:', 'node:', 'file:', 'http:', 'https:'];
+
+/**
+ * A computed specifier whose leading literal text is exempt (see EXEMPT_LEADS):
+ * a template literal, a `+` concatenation, or an identifier bound by `const` to
+ * one of those (one hop, e.g. `const url = \`data:...${x}\`; import(url)`).
+ */
+function isExemptComputed(arg: ts.Expression, checker: ts.TypeChecker, hops = 1): boolean {
+  while (ts.isParenthesizedExpression(arg)) arg = arg.expression;
   let lead: string | undefined;
   if (ts.isTemplateExpression(arg)) {
     lead = arg.head.text;
@@ -183,8 +202,21 @@ function isRelativeComputed(arg: ts.Expression): boolean {
     while (ts.isBinaryExpression(left) && left.operatorToken.kind === ts.SyntaxKind.PlusToken) left = left.left;
     while (ts.isParenthesizedExpression(left)) left = left.expression;
     if (ts.isStringLiteralLike(left)) lead = left.text;
+  } else if (ts.isIdentifier(arg) && hops > 0) {
+    const decl = checker.getSymbolAtLocation(arg)?.valueDeclaration;
+    if (
+      decl !== undefined &&
+      ts.isVariableDeclaration(decl) &&
+      decl.initializer !== undefined &&
+      ts.isVariableDeclarationList(decl.parent) &&
+      (decl.parent.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      const init = decl.initializer;
+      if (ts.isStringLiteralLike(init)) lead = init.text;
+      else return isExemptComputed(init, checker, hops - 1);
+    }
   }
-  return lead !== undefined && (lead.startsWith('./') || lead.startsWith('../') || lead.startsWith('/'));
+  return lead !== undefined && EXEMPT_LEADS.some((p) => lead.startsWith(p));
 }
 
 /**
@@ -280,4 +312,116 @@ function inTypePosition(node: ts.Node): boolean {
 function truncate(s: string, max = 80): string {
   const one = s.replace(/\s+/g, ' ');
   return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+}
+
+// ---------------------------------------------------------------------------
+// Consumer policy (tests / docs)
+// ---------------------------------------------------------------------------
+
+/**
+ * True when a repo-relative POSIX file is a test or docs file that does not
+ * count as a consumer under the policy. Mirrors the test_files / doc_files views
+ * in packages/core/sql/analyze.sql (PLAN.md §6.5 globs `**\/*.test.*`,
+ * `**\/test/**`, `**\/__tests__/**`, `**\/docs/**`): references from such files
+ * are ignored by analyze, so nothing found there can hide a counted use.
+ */
+export function isExcludedConsumerFile(file: string, policy: Partial<ConsumerPolicy> | undefined): boolean {
+  const withSlash = `/${file}`;
+  const base = file.slice(file.lastIndexOf('/') + 1);
+  const isTest = /\.test\..+/.test(base) || /\/(?:test|__tests__)\//.test(withSlash);
+  const isDocs = /\/docs\//.test(withSlash);
+  return (isTest && policy?.countTestsAsConsumers !== true) || (isDocs && policy?.countDocsAsConsumers !== true);
+}
+
+// ---------------------------------------------------------------------------
+// Unindexed files (config files outside every tsconfig)
+// ---------------------------------------------------------------------------
+
+/** Code files that can import an npm package. */
+const CODE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+/**
+ * Directories never walked for unindexed files: dependencies, VCS and build /
+ * tool output (generated, never hand-written consumers).
+ */
+const UNINDEXED_SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'coverage', 'out',
+  '.yarn', '.pnpm-store', '.turbo', '.next', '.nuxt', '.output', '.svelte-kit', '.wrangler', '.vercel', '.cache',
+]);
+
+/**
+ * Module specifiers in a text scan (comments are not stripped: a commented-out
+ * import errs toward blocking). Group 1 is the specifier.
+ */
+const SPECIFIER_RES: readonly RegExp[] = [
+  // import x from 's' / import { a } from 's' / import type ... from 's' / import 's'
+  /\bimport\s+(?:[\w*{}\s,$]*?\bfrom\s*)?['"]([^'"\n]+)['"]/g,
+  // export { a } from 's' / export * from 's' / export * as ns from 's'
+  /\bexport\s+(?:type\s+)?(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s*from\s*['"]([^'"\n]+)['"]/g,
+  // require('s') / import('s') / require.resolve('s')
+  /\b(?:require(?:\.resolve)?|import)\s*\(\s*(?:['"]([^'"\n]+)['"]|`([^`$\n]+)`)/g,
+];
+
+export interface UnindexedScanInput {
+  repoRoot: string;
+  pkgDir: string;
+  /** Absolute dirs of other packages nested inside `pkgDir` (not walked). */
+  nestedPackageDirs: readonly string[];
+  /** Absolute paths of every file some indexed program has as a root file. */
+  indexedFiles: ReadonlySet<string>;
+  orgPackageNames: ReadonlySet<string>;
+  /** This package's own npm name (self-imports are not consumers). */
+  selfName: string | null;
+  policy: Partial<ConsumerPolicy> | undefined;
+}
+
+/**
+ * Text-scans code files in the package that no indexed program covers (e.g.
+ * `eslint.config.mjs` outside every tsconfig) for imports of org packages. Such
+ * a file consumes the org package invisibly to SCIP, so each hit is recorded
+ * (ingest turns it into a targeted `unindexed_consumer` flag on that package).
+ * Never a source of edges (PLAN.md §12).
+ */
+export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport[] {
+  const out: UnindexedImport[] = [];
+  const seen = new Set<string>();
+  const nested = input.nestedPackageDirs.map((d) => path.resolve(d));
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (UNINDEXED_SKIP_DIRS.has(e.name) || nested.includes(abs)) continue;
+        walk(abs);
+      } else if (e.isFile() && CODE_FILE.test(e.name) && !input.indexedFiles.has(abs)) {
+        const file = path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
+        if (isExcludedConsumerFile(file, input.policy)) continue;
+        let text: string;
+        try {
+          text = readFileSync(abs, 'utf8');
+        } catch {
+          continue;
+        }
+        for (const re of SPECIFIER_RES) {
+          for (const m of text.matchAll(re)) {
+            const module = m[1] ?? m[2];
+            if (module === undefined) continue;
+            const target = barePackageName(module);
+            if (target === undefined || target === input.selfName || !input.orgPackageNames.has(target)) continue;
+            const key = `${file}\0${module}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ file, module, targetPackage: target });
+          }
+        }
+      }
+    }
+  };
+  walk(path.resolve(input.pkgDir));
+  return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.module < b.module ? -1 : a.module > b.module ? 1 : 0));
 }

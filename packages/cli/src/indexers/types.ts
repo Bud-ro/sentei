@@ -5,7 +5,17 @@
 /** Shape of `work/discover.json`, restricted to the fields the index stage reads. */
 export interface DiscoverFile {
   org: string;
+  /** Org policy (discover copies it from sentei.json); absent keys read as false. */
+  policy?: Partial<ConsumerPolicy>;
   repos: DiscoveredRepo[];
+}
+
+/** The policy keys the index stage reads (PLAN.md §6.5). */
+export interface ConsumerPolicy {
+  /** When false, test files (`**\/*.test.*`, `**\/test/**`, `**\/__tests__/**`) are not consumers. */
+  countTestsAsConsumers: boolean;
+  /** When false, docs files (`**\/docs/**`) are not consumers. */
+  countDocsAsConsumers: boolean;
 }
 
 export interface DiscoveredRepo {
@@ -61,6 +71,8 @@ export interface IndexerInput {
   /** Every org package (all repos), e.g. to tell org imports from third-party ones. */
   orgPackages: readonly OrgPackage[];
   options: IndexerOptions;
+  /** Org policy from discover.json (absent: tests and docs do not count as consumers). */
+  policy?: Partial<ConsumerPolicy>;
   /** Result of this package's `prepare`, merged into the `run` result. */
   prepared?: PrepareResult;
 }
@@ -129,6 +141,29 @@ export interface ExportsSidecar {
    * dedupes against existing occurrences.
    */
   namespaceMemberRefs: NamespaceMemberRef[];
+  /**
+   * Imports of org packages found by a text scan of code files in the package
+   * that no indexed program covers (config files such as `eslint.config.mjs`
+   * outside every tsconfig). Each is a consumer SCIP cannot see; ingest turns
+   * it into a targeted `unindexed_consumer` flag blocking `targetPackage` only.
+   * Test/docs files are skipped unless the policy counts them.
+   */
+  unindexedImports: UnindexedImport[];
+  /**
+   * Declarations the runtime invokes with no reference in code (Dart: top-level
+   * `main` of a `bin/**` or `lib/*.dart` entry). Position is the declaration's
+   * name. Ingest makes them reachable from their file, never exported. Empty for npm.
+   */
+  entrySymbols: Array<SourcePosition & { name: string }>;
+}
+
+export interface UnindexedImport {
+  /** Repo-relative POSIX path of the unindexed file. */
+  file: string;
+  /** Module specifier as written. */
+  module: string;
+  /** npm name of the org package it imports. */
+  targetPackage: string;
 }
 
 export interface NamespaceMemberRef extends SourcePosition {

@@ -7,8 +7,14 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { checkConsumerFiles, type OrgPackageDir } from './consumer-checks.ts';
-import type { ExportRecord, ExportsSidecar, SourcePosition } from './types.ts';
+import {
+  checkConsumerFiles,
+  isExcludedConsumerFile,
+  scanUnindexedImports,
+  type ConsumerCheckResult,
+  type OrgPackageDir,
+} from './consumer-checks.ts';
+import type { ConsumerPolicy, ExportRecord, ExportsSidecar, SourcePosition } from './types.ts';
 
 export interface ExportSurfaceInput {
   packageId: string;
@@ -26,6 +32,10 @@ export interface ExportSurfaceInput {
   orgPackageNames: ReadonlySet<string>;
   /** Org npm packages with their checkout dirs (realpath), for namespace member resolution. */
   orgPackageDirs: readonly OrgPackageDir[];
+  /** This package's npm name (its self-imports are not consumers of an org package). */
+  packageName?: string | null;
+  /** Consumer policy; absent keys: tests and docs do not count. */
+  policy?: Partial<ConsumerPolicy>;
 }
 
 export interface ExportSurfaceResult {
@@ -45,8 +55,8 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   const toRepoRel = (abs: string): string =>
     path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
 
-  const program = createProgram(input, diagnostics);
-  if (program === undefined) {
+  const specs = createPrograms(input, diagnostics);
+  if (specs === undefined) {
     return {
       sidecar: {
         packageId: input.packageId,
@@ -57,12 +67,13 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         unresolvedImports: [],
         flags: [],
         namespaceMemberRefs: [],
+        unindexedImports: [],
+        entrySymbols: [],
       },
       diagnostics,
       partial: true,
     };
   }
-  const checker = program.getTypeChecker();
 
   const isOwnFile = (fileName: string): boolean => {
     const abs = path.resolve(fileName);
@@ -71,93 +82,153 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     return !input.nestedPackageDirs.some((d) => isInside(abs, d));
   };
 
+  const exports: ExportRecord[] = [];
+  const readEntry = (entry: string, sf: ts.SourceFile, checker: ts.TypeChecker): void => {
+  const moduleSymbol = checker.getSymbolAtLocation(sf);
+  if (moduleSymbol === undefined) return; // a script file, not a module: it exports nothing
+
+  const sites = collectExportSites(sf, checker, isOwnFile, unresolved, toRepoRel);
+  const seen = new Set<ts.Symbol>();
+
+  const addExports = (mod: ts.Symbol, prefix: string): void => {
+    let members: ts.Symbol[];
+    try {
+      members = checker.getExportsOfModule(mod);
+    } catch (err) {
+      unresolved.add(entry);
+      diagnostics.push(`error: getExportsOfModule failed for ${entry}: ${(err as Error).message}`);
+      return;
+    }
+    for (const exp of members) {
+      const exportedAs = prefix + exp.name;
+      const target = exp.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exp) : exp;
+      const decls = target.declarations ?? [];
+      if (decls.length === 0) {
+        // An alias that resolves to nothing (`unknown` symbol).
+        unresolved.add(`${entry}#${exportedAs}`);
+        continue;
+      }
+      // `export * as ns from './x'` / `export { ns }` of a namespace import:
+      // every export of that module is reachable through the entry.
+      const moduleDecl = decls.find(ts.isSourceFile);
+      if (moduleDecl !== undefined) {
+        if (isOwnFile(moduleDecl.fileName) && !seen.has(target)) {
+          seen.add(target);
+          addExports(target, `${exportedAs}.`);
+        }
+        continue;
+      }
+      for (const decl of decls) {
+        const declSf = decl.getSourceFile();
+        if (!isOwnFile(declSf.fileName)) continue;
+        const { node, name, note } = nameOf(decl, target);
+        const pos = position(declSf, node.getStart(declSf), toRepoRel);
+        const record: ExportRecord = { entry, exportedAs, name, ...pos, sites: sites.get(target) ?? [] };
+        if (note !== undefined) record.note = note;
+        exports.push(record);
+      }
+    }
+  };
+  addExports(moduleSymbol, '');
+  };
+
+  // Programs are built one at a time and dropped after use: a monorepo root whose
+  // tsconfig references every workspace package would not fit in memory at once.
+  // A referenced program with no root file of this package (and no pending entry)
+  // is not built at all: every file it indexes belongs to another package.
+  //
   // Only symbol-resolution failures affect linking (see consumer-checks.ts), and
   // they are detected from the AST + checker, never from diagnostic messages.
   // An org module that does not resolve drops references silently → partial.
   // A missing named import is version skew → recorded, status unchanged.
-  const ownFiles = program.getSourceFiles().filter((sf) => isOwnFile(sf.fileName));
-  const consumer = checkConsumerFiles(ownFiles, checker, input.orgPackageNames, toRepoRel, input.orgPackageDirs);
+  // Each own file is checked once, with the first program (root first) that has it;
+  // each entry is read from the first program that contains it.
+  const consumer: ConsumerCheckResult = { unresolvedOrgModules: [], unresolvedImports: [], flags: [], namespaceMemberRefs: [] };
+  const compilerErrors = new Set<string>();
+  const checked = new Set<string>();
+  const pending = new Map(input.entryPoints.map((e) => [e, path.resolve(input.repoRoot, ...e.split('/'))] as const));
+  const found = new Set<string>();
+  const indexedFiles = new Set<string>();
+  for (const spec of specs) {
+    const roots = spec.rootNames.map((f) => path.resolve(f));
+    roots.forEach((f) => indexedFiles.add(f));
+    const rootSet = new Set(roots);
+    if (!roots.some(isOwnFile) && ![...pending.values()].some((abs) => rootSet.has(abs))) continue;
+    const program = spec.create();
+    const checker = program.getTypeChecker();
+    const files = program
+      .getSourceFiles()
+      .filter((sf) => isOwnFile(sf.fileName) && !checked.has(path.resolve(sf.fileName)));
+    for (const sf of files) checked.add(path.resolve(sf.fileName));
+    const r = checkConsumerFiles(files, checker, input.orgPackageNames, toRepoRel, input.orgPackageDirs);
+    consumer.unresolvedOrgModules.push(...r.unresolvedOrgModules);
+    consumer.unresolvedImports.push(...r.unresolvedImports);
+    consumer.flags.push(...r.flags);
+    consumer.namespaceMemberRefs.push(...r.namespaceMemberRefs);
+    // Every other compiler error is informational: it does not change what SCIP links.
+    // Per own file (plus the program's global/options diagnostics), deduplicated.
+    const fileDiags = files.length > 0 ? files.flatMap((sf) => ts.getPreEmitDiagnostics(program, sf)) : [];
+    for (const d of fileDiags) {
+      if (d.category !== ts.DiagnosticCategory.Error) continue;
+      if (d.file !== undefined && !isOwnFile(d.file.fileName)) continue;
+      compilerErrors.add(formatDiagnostic(d, toRepoRel));
+    }
+    for (const [entry, abs] of pending) {
+      const sf = program.getSourceFile(abs);
+      if (sf === undefined) continue;
+      pending.delete(entry);
+      found.add(entry);
+      readEntry(entry, sf, checker);
+    }
+  }
+  if (specs.length > 1) {
+    diagnostics.push(`info: export surface read from ${specs.length} tsconfig projects (tsconfig + project references)`);
+  }
+
+  // Test/docs files that the policy does not count as consumers: analyze ignores
+  // their references, so neither an unresolved org module nor a dynamic construct
+  // there can hide a counted use.
+  const excluded = (f: { file: string }): boolean => isExcludedConsumerFile(f.file, input.policy);
   for (const m of consumer.unresolvedOrgModules) {
-    partial = true;
-    diagnostics.push(`error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`);
+    const where = `'${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`;
+    if (excluded(m)) {
+      diagnostics.push(`warn: unresolved org module ${where} (test/docs file, not a counted consumer; status unaffected)`);
+    } else {
+      partial = true;
+      diagnostics.push(`error: unresolved org module ${where}`);
+    }
   }
   for (const u of consumer.unresolvedImports) {
     diagnostics.push(`warn: '${u.name}' is not exported by org module '${u.module}' at ${u.file}:${u.line + 1}:${u.col + 1}`);
   }
+  const flags = consumer.flags.filter((f) => !excluded(f));
   for (const f of consumer.flags) {
-    diagnostics.push(`warn: ${f.flag} at ${f.file}:${f.line + 1}:${f.col + 1}: ${f.reason}`);
+    diagnostics.push(
+      `warn: ${f.flag} at ${f.file}:${f.line + 1}:${f.col + 1}: ${f.reason}` +
+        (excluded(f) ? ' (test/docs file, not a counted consumer; dropped)' : ''),
+    );
+  }
+  if (compilerErrors.size > 0) {
+    diagnostics.push(`warn: ${compilerErrors.size} TypeScript error diagnostic(s) in the package (status unaffected)`);
+    for (const d of [...compilerErrors].slice(0, MAX_REPORTED_DIAGNOSTICS)) diagnostics.push(`warn: ${d}`);
   }
 
-  // Every other compiler error is informational: it does not change what SCIP links.
-  const compilerErrors = ts
-    .getPreEmitDiagnostics(program)
-    .filter((d) => d.category === ts.DiagnosticCategory.Error)
-    .filter((d) => d.file === undefined || isOwnFile(d.file.fileName));
-  if (compilerErrors.length > 0) {
-    diagnostics.push(`warn: ${compilerErrors.length} TypeScript error diagnostic(s) in the package (status unaffected)`);
-    for (const d of compilerErrors.slice(0, MAX_REPORTED_DIAGNOSTICS)) {
-      diagnostics.push(`warn: ${formatDiagnostic(d, toRepoRel)}`);
-    }
+  // Code files no program indexes (scip-typescript indexes exactly each config's root files).
+  const unindexedImports = scanUnindexedImports({
+    repoRoot: input.repoRoot,
+    pkgDir: input.pkgDir,
+    nestedPackageDirs: input.nestedPackageDirs,
+    indexedFiles,
+    orgPackageNames: input.orgPackageNames,
+    selfName: input.packageName ?? null,
+    policy: input.policy,
+  });
+  for (const u of unindexedImports) {
+    diagnostics.push(`warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})`);
   }
 
-  const entryPoints: string[] = [];
-  const missingEntryPoints: string[] = [];
-  const exports: ExportRecord[] = [];
-
-  for (const entry of input.entryPoints) {
-    const sf = program.getSourceFile(path.resolve(input.repoRoot, ...entry.split('/')));
-    if (sf === undefined) {
-      missingEntryPoints.push(entry);
-      continue;
-    }
-    entryPoints.push(entry);
-    const moduleSymbol = checker.getSymbolAtLocation(sf);
-    if (moduleSymbol === undefined) continue; // a script file, not a module: it exports nothing
-
-    const sites = collectExportSites(sf, checker, isOwnFile, unresolved, toRepoRel);
-    const seen = new Set<ts.Symbol>();
-
-    const addExports = (mod: ts.Symbol, prefix: string): void => {
-      let members: ts.Symbol[];
-      try {
-        members = checker.getExportsOfModule(mod);
-      } catch (err) {
-        unresolved.add(entry);
-        diagnostics.push(`error: getExportsOfModule failed for ${entry}: ${(err as Error).message}`);
-        return;
-      }
-      for (const exp of members) {
-        const exportedAs = prefix + exp.name;
-        const target = exp.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exp) : exp;
-        const decls = target.declarations ?? [];
-        if (decls.length === 0) {
-          // An alias that resolves to nothing (`unknown` symbol).
-          unresolved.add(`${entry}#${exportedAs}`);
-          continue;
-        }
-        // `export * as ns from './x'` / `export { ns }` of a namespace import:
-        // every export of that module is reachable through the entry.
-        const moduleDecl = decls.find(ts.isSourceFile);
-        if (moduleDecl !== undefined) {
-          if (isOwnFile(moduleDecl.fileName) && !seen.has(target)) {
-            seen.add(target);
-            addExports(target, `${exportedAs}.`);
-          }
-          continue;
-        }
-        for (const decl of decls) {
-          const declSf = decl.getSourceFile();
-          if (!isOwnFile(declSf.fileName)) continue;
-          const { node, name, note } = nameOf(decl, target);
-          const pos = position(declSf, node.getStart(declSf), toRepoRel);
-          const record: ExportRecord = { entry, exportedAs, name, ...pos, sites: sites.get(target) ?? [] };
-          if (note !== undefined) record.note = note;
-          exports.push(record);
-        }
-      }
-    };
-    addExports(moduleSymbol, '');
-  }
+  const entryPoints = input.entryPoints.filter((e) => found.has(e));
+  const missingEntryPoints = input.entryPoints.filter((e) => !found.has(e));
 
   if (missingEntryPoints.length > 0) {
     partial = true;
@@ -182,40 +253,72 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       exports,
       unresolved: [...unresolved].sort(),
       unresolvedImports: consumer.unresolvedImports,
-      flags: consumer.flags,
+      flags,
       namespaceMemberRefs: consumer.namespaceMemberRefs,
+      unindexedImports,
+      entrySymbols: [],
     },
     diagnostics,
     partial,
   };
 }
 
-function createProgram(input: ExportSurfaceInput, diagnostics: string[]): ts.Program | undefined {
+/**
+ * The programs scip-typescript indexes for this package: the tsconfig's own
+ * program and, recursively (deduplicated), one per project reference, the way
+ * scip-typescript's `indexSingleProject` walks them (references first, each
+ * created without `projectReferences`, configs with no files skipped). A
+ * solution-style tsconfig (`"files": []` + `references`) has only referenced
+ * programs. Order: the root first, then references depth-first; an entry file
+ * is read from the first program that contains it.
+ */
+interface ProgramSpec {
+  rootNames: readonly string[];
+  create: () => ts.Program;
+}
+
+function createPrograms(input: ExportSurfaceInput, diagnostics: string[]): ProgramSpec[] | undefined {
   if (input.tsconfig !== undefined && existsSync(input.tsconfig)) {
-    let fatal: ts.Diagnostic | undefined;
-    const parsed = ts.getParsedCommandLineOfConfigFile(input.tsconfig, undefined, {
-      ...ts.sys,
-      onUnRecoverableConfigFileDiagnostic: (d) => {
-        fatal = d;
-      },
-    });
-    if (parsed === undefined) {
-      diagnostics.push(`error: cannot read ${input.tsconfig}: ${fatal ? flatten(fatal) : 'unknown error'}`);
-      return undefined;
-    }
-    // TS18003 "no inputs" is reported by scip-typescript itself (no documents).
-    const errors = parsed.errors.filter((d) => d.code !== 18003 && d.category === ts.DiagnosticCategory.Error);
-    for (const d of errors) diagnostics.push(`error: tsconfig: ${flatten(d)}`);
-    return ts.createProgram({
-      rootNames: parsed.fileNames,
-      options: { ...parsed.options, noEmit: true },
-      ...(parsed.projectReferences ? { projectReferences: parsed.projectReferences } : {}),
-    });
+    const programs: ProgramSpec[] = [];
+    const seen = new Set<string>();
+    const visit = (configFile: string, isRoot: boolean): boolean => {
+      const key = path.resolve(configFile);
+      if (seen.has(key)) return true;
+      seen.add(key);
+      const rel = path.relative(input.pkgDir, key) || path.basename(key);
+      if (!existsSync(key)) {
+        diagnostics.push(`warn: project reference ${rel} does not exist; skipped`);
+        return true;
+      }
+      let fatal: ts.Diagnostic | undefined;
+      const parsed = ts.getParsedCommandLineOfConfigFile(key, undefined, {
+        ...ts.sys,
+        onUnRecoverableConfigFileDiagnostic: (d) => {
+          fatal = d;
+        },
+      });
+      if (parsed === undefined) {
+        diagnostics.push(`error: cannot read ${key}: ${fatal ? flatten(fatal) : 'unknown error'}`);
+        return !isRoot;
+      }
+      // TS18003 "no inputs" is expected for solution-style configs (and reported by scip-typescript).
+      const errors = parsed.errors.filter((d) => d.code !== 18003 && d.category === ts.DiagnosticCategory.Error);
+      for (const d of errors) diagnostics.push(`error: tsconfig${isRoot ? '' : ` ${rel}`}: ${flatten(d)}`);
+      if (parsed.fileNames.length > 0) {
+        const { fileNames, options } = parsed;
+        programs.push({ rootNames: fileNames, create: () => ts.createProgram({ rootNames: fileNames, options: { ...options, noEmit: true } }) });
+      }
+      for (const ref of parsed.projectReferences ?? []) visit(ts.resolveProjectReferencePath(ref), false);
+      return true;
+    };
+    if (!visit(input.tsconfig, true)) return undefined;
+    return programs;
   }
   // No tsconfig: default options from the entry files (allowJs so JS entries load).
   const rootNames = input.entryPoints.map((e) => path.resolve(input.repoRoot, ...e.split('/')));
   diagnostics.push('info: export surface computed from entry files with default compiler options');
-  return ts.createProgram({ rootNames, options: { ...ts.getDefaultCompilerOptions(), allowJs: true, noEmit: true } });
+  const options = { ...ts.getDefaultCompilerOptions(), allowJs: true, noEmit: true };
+  return [{ rootNames, create: () => ts.createProgram({ rootNames, options }) }];
 }
 
 /**
