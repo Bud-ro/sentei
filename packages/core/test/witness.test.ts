@@ -332,3 +332,68 @@ describe('runWitness', () => {
     expect(witnessOk(org, org.ids['deadFn']!)).toBe(false);
   });
 });
+
+describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
+  // Ignored manifests live in the library repo acme/lib (localPath <root>/lib).
+  function withIgnored(
+    org: Org,
+    manifests: Array<{ path: string; deps: Array<string | null>; depsUnknown?: boolean; files?: Record<string, string> }>,
+  ): void {
+    const lib = org.discover.repos.find((r) => r.repo === 'acme/lib')!;
+    lib.ignoredManifests = manifests.map((m) => {
+      for (const [rel, text] of Object.entries(m.files ?? {})) write(lib.localPath, `${m.path}/${rel}`, text);
+      return {
+        path: m.path,
+        manifest: `${m.path}/package.json`,
+        deps: m.deps.map((resolvedPackageId) => ({ resolvedPackageId })),
+        ...(m.depsUnknown !== undefined ? { depsUnknown: m.depsUnknown } : {}),
+      };
+    });
+  }
+  const IMPORTS = "import { liveFn } from '@acme/lib';\nliveFn(deadFn);\n";
+
+  it('an ignored manifest depending on P is scanned: a hit downgrades with the ignored:<repo>/<manifest> consumer', () => {
+    const org = buildOrg({ symbols: [{ name: 'deadFn' }, { name: 'otherFn' }] });
+    withIgnored(org, [
+      { path: 'examples/demo', deps: ['npm:@acme/lib', null], files: { 'src/x.ts': IMPORTS, 'node_modules/y/i.ts': IMPORTS } },
+    ]);
+    expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:ignored:acme/lib/examples/demo/package.json:examples/demo/src/x.ts:2']);
+    expectPass(org, org.ids['otherFn']!);
+  });
+
+  it('an ignored manifest that does not depend on P is not scanned', () => {
+    const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
+    withIgnored(org, [
+      { path: 'examples/other', deps: [null, 'npm:@acme/app'], files: { 'src/x.ts': IMPORTS } },
+      { path: 'templates/none', deps: [], files: { 'src/x.ts': IMPORTS } },
+    ]);
+    witness(org);
+    expectPass(org, org.ids['deadFn']!);
+  });
+
+  it('fails closed: a missing ignored-manifest dir is a mismatch; unknown deps are scanned for every package', () => {
+    const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
+    withIgnored(org, [
+      { path: 'examples/gone', deps: ['npm:@acme/lib'] },
+      { path: 'fixtures/bad', deps: [], depsUnknown: true, files: { 'a.ts': IMPORTS } },
+    ]);
+    witness(org);
+    expectMismatch(org, org.ids['deadFn']!, [
+      'witness_mismatch:ignored:acme/lib/examples/gone/package.json:checkout missing',
+      'witness_mismatch:ignored:acme/lib/fixtures/bad/package.json:fixtures/bad/a.ts:2',
+    ]);
+  });
+
+  it('skips test/docs files in an ignored dir under the same policy and org packages nested in it', () => {
+    const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
+    withIgnored(org, [{
+      path: 'examples/demo',
+      deps: ['npm:@acme/lib'],
+      files: { 'src/x.test.ts': IMPORTS, 'docs/d.ts': IMPORTS, 'real/src/x.ts': IMPORTS },
+    }]);
+    org.discover.repos.find((r) => r.repo === 'acme/lib')!.packages.push({ packageId: 'npm:@acme/real', path: 'examples/demo/real' });
+    witness(org);
+    expectPass(org, org.ids['deadFn']!);
+  });
+});

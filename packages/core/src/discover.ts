@@ -15,8 +15,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { defaultOrgConfig, parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig } from './config.ts';
 import { matchGlob } from './glob.ts';
 import {
-  DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readRepoManifests,
-  type Manager, type ManifestPackage, type Visibility,
+  DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readRepoManifestsWithIgnored,
+  type IgnoredManifest, type Manager, type ManifestPackage, type Visibility,
 } from './manifests.ts';
 
 export interface DiscoverDep {
@@ -62,6 +62,24 @@ export const UNINDEXED_LANGUAGE_EXTS: ReadonlySet<string> = new Set([
   '.hs', '.ml', '.fs', '.r', '.jl',
 ]);
 
+/**
+ * A manifest skipped as "not an org package" (ignoreManifestDirs / ignoreManifests),
+ * with its deps resolved against org packages. Recorded in discover.json only (never
+ * in the DB): its code is not indexed, so it adds no edges; the witness scans its dir
+ * as an extra consumer of every package it depends on (PLAN §12).
+ */
+export interface DiscoverIgnoredManifest {
+  /** Manifest dir relative to the repo root, POSIX; '.' for the root. */
+  path: string;
+  /** Manifest file relative to the repo root, POSIX. */
+  manifest: string;
+  manager: Manager;
+  name: string | null;
+  deps: DiscoverDep[];
+  /** Unparseable manifest: deps unknown, the witness scans it for every package. */
+  depsUnknown: boolean;
+}
+
 export interface DiscoverRepo {
   repo: string;
   localPath: string;
@@ -69,6 +87,8 @@ export interface DiscoverRepo {
   headSha: string | null;
   config: RepoConfig;
   packages: DiscoverPackage[];
+  /** Sorted by (path, manager); [] when none. */
+  ignoredManifests: DiscoverIgnoredManifest[];
 }
 
 export type DiscoverSource =
@@ -210,7 +230,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   const ignoreDirs: ReadonlySet<string> = new Set(ignoreDirList);
   const usedIgnoreGlobs = new Set<string>();
 
-  const repos: Array<DiscoverRepo & { manifests: ManifestPackage[]; files: string[] }> = [];
+  const repos: Array<DiscoverRepo & { manifests: ManifestPackage[]; ignored: IgnoredManifest[]; files: string[] }> = [];
   for (const r of [...opts.repos].sort((a, b) => cmp(a.name, b.name))) {
     const repo = `${opts.org}/${r.name}`;
     const localPath = r.localPath;
@@ -224,7 +244,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     const warn = (m: string): void => log(`warning: ${repo}: ${m}`);
     const config = readRepoConfig(localPath);
     const files = listFiles(localPath);
-    const manifests = readRepoManifests(localPath, warn, files, {
+    const { packages: manifests, ignored } = readRepoManifestsWithIgnored(localPath, warn, files, {
       ignoreDirs: ignoreDirList,
       ignoreManifest: (manifest) => {
         const hit = orgConfig.ignoreManifests.find((g) => matchGlob(g, `${r.name}/${manifest}`));
@@ -256,7 +276,9 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       headSha: r.headSha,
       config,
       packages: [],
+      ignoredManifests: [],
       manifests,
+      ignored,
       files,
     });
   }
@@ -278,7 +300,20 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
 
   // Resolve deps by (manager, name). Path/workspace/file/link deps carry the target's
   // package name as the dep key, so name matching covers them too.
+  const resolveDep = (d: { name: string; manager: Manager; constraint: string | null }): DiscoverDep => {
+    const target = d.manager === 'npm' ? npmTargetName(d.name, d.constraint) : d.name;
+    const id = `${d.manager}:${target}`;
+    return { name: d.name, manager: d.manager, constraint: d.constraint, resolvedPackageId: owners.has(id) ? id : null };
+  };
   for (const r of repos) {
+    r.ignoredManifests = r.ignored.map((m): DiscoverIgnoredManifest => ({
+      path: m.path,
+      manifest: m.manifest,
+      manager: m.manager,
+      name: m.name,
+      deps: m.deps.map(resolveDep),
+      depsUnknown: m.depsUnknown,
+    }));
     r.packages = r.manifests.map((m): DiscoverPackage => ({
       packageId: `${m.manager}:${m.name}`,
       path: m.path,
@@ -287,11 +322,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       version: m.version,
       visibility: m.visibility,
       entryPoints: m.entryPoints,
-      deps: m.deps.map((d) => {
-        const target = d.manager === 'npm' ? npmTargetName(d.name, d.constraint) : d.name;
-        const id = `${d.manager}:${target}`;
-        return { name: d.name, manager: d.manager, constraint: d.constraint, resolvedPackageId: owners.has(id) ? id : null };
-      }),
+      deps: m.deps.map(resolveDep),
       flags: [],
     }));
     // unindexed_consumer (PLAN §2, M4): an org-package consumer with code we cannot index.
@@ -311,7 +342,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     generatedAt: opts.now ?? Math.floor(Date.now() / 1000),
     policy: orgConfig.policy,
     keep: orgConfig.keep,
-    repos: repos.map(({ manifests: _m, files: _f, ...r }) => r),
+    repos: repos.map(({ manifests: _m, ignored: _i, files: _f, ...r }) => r),
   };
 }
 

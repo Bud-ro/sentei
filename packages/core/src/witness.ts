@@ -4,13 +4,29 @@
 //
 // Input: `findings` rows with verdict 'needs_review' whose reasons contain
 // 'witness_pending' (written by analyze). For each such symbol S of package P, every
-// manifest-declared consumer C of P (package_deps.resolved_package_id = P) is searched:
-//   1. files in C that import/require/re-export P (per-language regex, whole file);
+// consumer C of P is searched:
+//   - manifest-declared consumers: package_deps.resolved_package_id = P; the files
+//     scanned are those under C's package dir (minus nested org packages);
+//   - ignored manifests (discover.json `repos[].ignoredManifests`: examples, templates,
+//     fixtures… skipped as org packages, so unindexed and absent from package_deps)
+//     whose deps resolve to P, or whose deps are unknown (unparseable manifest); the
+//     files scanned are those under the manifest's dir (minus nested org packages).
+//     PLAN §12: this unindexed code can only downgrade a verdict, never add edges.
+// In each C:
+//   1. files that import/require/re-export P (per-language regex, whole file);
 //   2. in those files, S's name as a whole identifier (or, for `default`, a default
 //      import of the matching module specifier).
-// Any hit (or a consumer checkout we cannot read) → needs_review with
-// `witness_mismatch:<consumer>:<file>:<line>` reasons. No hit → witness_ok row and a
-// deletion_candidate (the schema triggers still guard that insert).
+// Any hit (or a consumer dir we cannot read) → needs_review with reasons
+//   witness_mismatch:<consumer>:<file>:<line>      (1-based line, repo-relative file)
+//   witness_mismatch:<consumer>:checkout missing
+// where <consumer> is either a package id (`npm:<name>` / `pub:<name>`) or, for an
+// ignored manifest, `ignored:<repo>/<manifest>` with <repo> = `<org>/<name>` and
+// <manifest> the repo-relative manifest file (ending in `package.json` or
+// `pubspec.yaml`), e.g.
+//   witness_mismatch:ignored:acme/app/examples/demo/package.json:examples/demo/src/x.ts:3
+// The `ignored:` prefix cannot collide with a package id (always `npm:`/`pub:`).
+// No hit → witness_ok row and a deletion_candidate (the schema triggers still guard
+// that insert).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -22,6 +38,14 @@ export interface WitnessDiscoverInput {
     repo: string;
     localPath: string;
     packages: Array<{ packageId: string; path: string }>;
+    /** Optional (older discover.json files lack it); default []. */
+    ignoredManifests?: Array<{
+      path: string;
+      manifest: string;
+      deps: Array<{ resolvedPackageId: string | null }>;
+      /** Unparseable manifest: scanned for every package. Default false. */
+      depsUnknown?: boolean;
+    }>;
   }>;
 }
 
@@ -144,6 +168,9 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   const now = opts.now ?? Math.floor(Date.now() / 1000);
 
   const locs = new Map<string, ConsumerLoc>();
+  /** Ignored-manifest consumers by resolved package id; `anyPackage` = deps unknown. */
+  const ignoredConsumers = new Map<string, Set<string>>();
+  const ignoredAnyPackage: string[] = [];
   for (const r of discover.repos) {
     for (const p of r.packages) {
       locs.set(p.packageId, {
@@ -151,6 +178,22 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         pkgPath: p.path,
         nestedPaths: new Set(r.packages.filter((q) => q.packageId !== p.packageId).map((q) => q.path)),
       });
+    }
+    for (const m of r.ignoredManifests ?? []) {
+      const key = `ignored:${r.repo}/${m.manifest}`;
+      locs.set(key, {
+        repoDir: r.localPath,
+        pkgPath: m.path,
+        // Org packages nested under the ignored dir are indexed consumers in their own right.
+        nestedPaths: new Set(r.packages.map((q) => q.path).filter((q) => q !== m.path)),
+      });
+      if (m.depsUnknown === true) ignoredAnyPackage.push(key);
+      for (const d of m.deps) {
+        if (d.resolvedPackageId === null) continue;
+        let set = ignoredConsumers.get(d.resolvedPackageId);
+        if (!set) ignoredConsumers.set(d.resolvedPackageId, (set = new Set()));
+        set.add(key);
+      }
     }
   }
 
@@ -275,7 +318,10 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     for (const row of pending) {
       counts.checked += 1;
       const base = (JSON.parse(row.reasons) as string[]).filter((r) => r !== 'witness_pending');
-      const consumers = (consumersOf.all(row.package_id) as Array<{ c: string }>).map((r) => r.c);
+      const consumers = [
+        ...(consumersOf.all(row.package_id) as Array<{ c: string }>).map((r) => r.c),
+        ...new Set([...(ignoredConsumers.get(row.package_id) ?? []), ...ignoredAnyPackage]),
+      ];
       const hits = consumers.flatMap((c) => findHits(row, c));
       del.run(row.symbol_id);
       if (hits.length > 0) {

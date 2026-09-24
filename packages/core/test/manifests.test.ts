@@ -2,7 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_IGNORE_MANIFEST_DIRS, listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests } from '../src/manifests.ts';
+import {
+  DEFAULT_IGNORE_MANIFEST_DIRS, listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
+} from '../src/manifests.ts';
 
 let root: string;
 let warnings: string[];
@@ -35,6 +37,36 @@ describe('listFiles', () => {
 });
 
 describe('ignored manifest dirs', () => {
+  it('readRepoManifestsWithIgnored returns skipped manifests with their deps; malformed ones only warn', () => {
+    pkgJson('package.json', { name: 'real', main: 'src/index.ts' });
+    write('src/index.ts');
+    pkgJson('examples/demo/package.json', {
+      name: 'demo', dependencies: { real: '^1' }, peerDependencies: { real: '^2' }, devDependencies: { vitest: '^1' },
+    });
+    write('templates/app/pubspec.yaml', 'name: app\ndependencies:\n  real_pub:\n    path: ../..\ndev_dependencies:\n  test: any\n');
+    write('fixtures/bad/package.json', '{ nope');
+    pkgJson('gen/x/package.json', { dependencies: { real: '*' } });
+    const r = readRepoManifestsWithIgnored(root, warn, listFiles(root), { ignoreManifest: (m) => m.startsWith('gen/') });
+    expect(r.packages.map((p) => p.name)).toEqual(['real']);
+    expect(r.ignored).toEqual([
+      { path: 'examples/demo', manifest: 'examples/demo/package.json', manager: 'npm', name: 'demo', depsUnknown: false, deps: [
+        { name: 'real', manager: 'npm', constraint: '^1' },
+        { name: 'vitest', manager: 'npm', constraint: '^1' },
+      ] },
+      { path: 'fixtures/bad', manifest: 'fixtures/bad/package.json', manager: 'npm', name: null, deps: [], depsUnknown: true },
+      { path: 'gen/x', manifest: 'gen/x/package.json', manager: 'npm', name: null, depsUnknown: false, deps: [
+        { name: 'real', manager: 'npm', constraint: '*' },
+      ] },
+      { path: 'templates/app', manifest: 'templates/app/pubspec.yaml', manager: 'pub', name: 'app', depsUnknown: false, deps: [
+        { name: 'real_pub', manager: 'pub', constraint: 'path:../..' },
+        { name: 'test', manager: 'pub', constraint: 'any' },
+      ] },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^fixtures\/bad\/package\.json \(ignored manifest\): cannot parse: .*; its deps are unknown$/);
+    expect(readRepoManifests(root, () => {}, listFiles(root))).toEqual(r.packages);
+  });
+
   it('manifests under default ignore dirs (any depth) are skipped with one log line; their files are still listed', () => {
     pkgJson('package.json', { name: 'real', main: 'src/index.ts' });
     write('src/index.ts');

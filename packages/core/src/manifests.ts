@@ -94,24 +94,66 @@ export function listFiles(root: string): string[] {
 }
 
 /**
+ * A manifest skipped as "not an org package" (ignored dir or `ignoreManifest`),
+ * parsed only for its deps. Its code is not indexed and it never becomes a
+ * package; the text witness scans it as an extra consumer (PLAN §12: unindexed
+ * code may block or downgrade, never add edges).
+ */
+export interface IgnoredManifest {
+  /** Manifest dir relative to the repo root, POSIX; '.' for the root. */
+  path: string;
+  /** Manifest file relative to the repo root, POSIX. */
+  manifest: string;
+  manager: Manager;
+  /** Declared name, or null when absent. */
+  name: string | null;
+  /** Sorted by name; one entry per name. [] when the manifest could not be parsed. */
+  deps: ManifestDep[];
+  /**
+   * True when the manifest could not be parsed (warned): its deps are unknown, so
+   * the witness treats it as a consumer of every package (fail closed).
+   */
+  depsUnknown: boolean;
+}
+
+export interface RepoManifests {
+  packages: ManifestPackage[];
+  /** Sorted by (path, manager). */
+  ignored: IgnoredManifest[];
+}
+
+/**
  * Find and parse every manifest in a repo. Packages without a name are skipped with
  * a warning. Manifests under an ignored dir (`opts.ignoreDirs`) or rejected by
- * `opts.ignoreManifest` are skipped (not parsed), reported in one `opts.log` line.
+ * `opts.ignoreManifest` are skipped as packages, reported in one `opts.log` line.
  */
 export function readRepoManifests(
   repoRoot: string, warn: Warn = () => {}, files: readonly string[] = listFiles(repoRoot), opts: ManifestOptions = {},
 ): ManifestPackage[] {
+  return readRepoManifestsWithIgnored(repoRoot, warn, files, opts).packages;
+}
+
+/**
+ * readRepoManifests plus the skipped manifests, parsed just enough to know their
+ * deps (IgnoredManifest). A malformed ignored manifest is a warning, not an error;
+ * it is recorded with `depsUnknown: true`.
+ */
+export function readRepoManifestsWithIgnored(
+  repoRoot: string, warn: Warn = () => {}, files: readonly string[] = listFiles(repoRoot), opts: ManifestOptions = {},
+): RepoManifests {
   const ignoreDirs = new Set(opts.ignoreDirs ?? DEFAULT_IGNORE_MANIFEST_DIRS);
   const pkgs: ManifestPackage[] = [];
+  const ignored: IgnoredManifest[] = [];
   const skipped: string[] = [];
   for (const file of files) {
     const base = posix.basename(file);
     if (base !== 'package.json' && base !== 'pubspec.yaml') continue;
+    const dir = posix.dirname(file); // '.' for the root
     if (inIgnoredDir(file, ignoreDirs) || opts.ignoreManifest?.(file)) {
       skipped.push(file);
+      ignored.push(readIgnoredManifest(repoRoot, dir, base === 'package.json' ? 'npm' : 'pub', warn));
       continue;
     }
-    const dir = posix.dirname(file); // '.' for the root
     const pkg = base === 'package.json'
       ? readNpmPackage(repoRoot, dir, files, warn)
       : readPubPackage(repoRoot, dir, files, warn);
@@ -122,7 +164,29 @@ export function readRepoManifests(
       skipped.slice(0, 3).join(', ')}${skipped.length > 3 ? ', ...' : ''}`);
   }
   pkgs.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
-  return pkgs;
+  ignored.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
+  return { packages: pkgs, ignored };
+}
+
+/** Parse an ignored manifest for its name and deps only; parse errors are warnings. */
+function readIgnoredManifest(repoRoot: string, dir: string, manager: Manager, warn: Warn): IgnoredManifest {
+  const manifest = joinRel(dir, manager === 'npm' ? 'package.json' : 'pubspec.yaml');
+  const out: IgnoredManifest = { path: dir, manifest, manager, name: null, deps: [], depsUnknown: false };
+  let doc: Record<string, unknown>;
+  try {
+    const text = readFileSync(join(repoRoot, manifest), 'utf8');
+    const parsed: unknown = manager === 'npm' ? JSON.parse(text) : parsePubspecYaml(text);
+    if (!isObject(parsed)) throw new Error('not an object');
+    doc = parsed;
+  } catch (err) {
+    warn(`${manifest} (ignored manifest): cannot parse: ${(err as Error).message}; its deps are unknown`);
+    out.depsUnknown = true;
+    return out;
+  }
+  const name = doc['name'];
+  out.name = typeof name === 'string' && name !== '' ? name : null;
+  out.deps = manager === 'npm' ? npmDeps(doc, manifest, warn) : pubDeps(doc as YamlMap, manifest, warn);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +218,22 @@ export function readNpmPackage(
   }
   const version = typeof json['version'] === 'string' ? json['version'] : null;
 
-  // Deps: first non-dev field wins; devDependencies only if the name is nowhere else.
+  const files = repoFiles ?? listFiles(repoRoot);
+  const entryPoints = npmEntryPoints(dir, json, files, warn);
+  return {
+    manager: 'npm',
+    name,
+    version,
+    visibility: npmVisibility(json, manifest, warn),
+    path: dir,
+    manifest,
+    entryPoints,
+    deps: npmDeps(json, manifest, warn),
+  };
+}
+
+/** npm deps: first non-dev field wins; devDependencies only if the name is nowhere else. Sorted by name. */
+function npmDeps(json: Record<string, unknown>, manifest: string, warn: Warn): ManifestDep[] {
   const deps = new Map<string, ManifestDep>();
   for (const field of [...NPM_DEP_FIELDS_NON_DEV, 'devDependencies'] as const) {
     const block = json[field];
@@ -168,19 +247,7 @@ export function readNpmPackage(
       deps.set(dep, { name: dep, manager: 'npm', constraint: typeof spec === 'string' ? spec : null });
     }
   }
-
-  const files = repoFiles ?? listFiles(repoRoot);
-  const entryPoints = npmEntryPoints(dir, json, files, warn);
-  return {
-    manager: 'npm',
-    name,
-    version,
-    visibility: npmVisibility(json, manifest, warn),
-    path: dir,
-    manifest,
-    entryPoints,
-    deps: [...deps.values()].sort((a, b) => cmp(a.name, b.name)),
-  };
+  return [...deps.values()].sort((a, b) => cmp(a.name, b.name));
 }
 
 /** PLAN §6.1 step 5 (npm). */
@@ -330,20 +397,6 @@ export function readPubPackage(
   }
   const version = typeof doc['version'] === 'string' ? doc['version'] : null;
 
-  const deps = new Map<string, ManifestDep>();
-  for (const field of ['dependencies', 'dev_dependencies'] as const) {
-    const block = doc[field];
-    if (block === undefined || block === null) continue;
-    if (typeof block === 'string') {
-      warn(`${manifest}: "${field}" is not a map, ignored`);
-      continue;
-    }
-    for (const [dep, spec] of Object.entries(block)) {
-      if (deps.has(dep)) continue;
-      deps.set(dep, { name: dep, manager: 'pub', constraint: pubConstraint(spec) });
-    }
-  }
-
   const files = packageFiles(dir, repoFiles ?? listFiles(repoRoot));
   const entryPoints = files
     .filter((f) => f.endsWith('.dart') && ((f.startsWith('lib/') && !f.slice(4).includes('/')) || f.startsWith('bin/')))
@@ -359,8 +412,26 @@ export function readPubPackage(
     path: dir,
     manifest,
     entryPoints,
-    deps: [...deps.values()].sort((a, b) => cmp(a.name, b.name)),
+    deps: pubDeps(doc, manifest, warn),
   };
+}
+
+/** pub deps (dependencies, then dev_dependencies for names not already seen). Sorted by name. */
+function pubDeps(doc: YamlMap, manifest: string, warn: Warn): ManifestDep[] {
+  const deps = new Map<string, ManifestDep>();
+  for (const field of ['dependencies', 'dev_dependencies'] as const) {
+    const block = doc[field];
+    if (block === undefined || block === null) continue;
+    if (typeof block === 'string') {
+      warn(`${manifest}: "${field}" is not a map, ignored`);
+      continue;
+    }
+    for (const [dep, spec] of Object.entries(block)) {
+      if (deps.has(dep)) continue;
+      deps.set(dep, { name: dep, manager: 'pub', constraint: pubConstraint(spec) });
+    }
+  }
+  return [...deps.values()].sort((a, b) => cmp(a.name, b.name));
 }
 
 /** PLAN §6.1 step 5 (pub). An explicit pub.dev URL counts as the public registry. */

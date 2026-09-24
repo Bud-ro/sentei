@@ -165,6 +165,46 @@ describe('discoverLocal on a synthetic org', () => {
     expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/npm:hono: acme\/hono:package\.json, acme\/starter:templates\/vercel\/package\.json/);
   });
 
+  it('records ignored manifests per repo with deps resolved against org packages (discover.json only, not the DB)', () => {
+    org(['lib', 'app']);
+    write('org/repos/lib/package.json', { name: '@acme/lib', main: 'src/index.ts' });
+    write('org/repos/lib/src/index.ts', '');
+    write('org/repos/lib/examples/demo/package.json', {
+      name: 'demo', dependencies: { '@acme/lib': 'workspace:*', react: '^18' }, devDependencies: { aliased: 'npm:@acme/lib@^1' },
+    });
+    write('org/repos/lib/examples/demo/src/x.ts', '');
+    write('org/repos/app/package.json', { name: '@acme/app' });
+    write('org/repos/app/fixtures/broken/package.json', '{ nope');
+    write('org/repos/app/templates/dart/pubspec.yaml', 'dependencies:\n  lib_pub: ^1.0.0\n');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    const [app, lib] = m.repos;
+    expect(lib!.ignoredManifests).toEqual([{
+      path: 'examples/demo',
+      manifest: 'examples/demo/package.json',
+      manager: 'npm',
+      name: 'demo',
+      deps: [
+        { name: '@acme/lib', manager: 'npm', constraint: 'workspace:*', resolvedPackageId: 'npm:@acme/lib' },
+        { name: 'aliased', manager: 'npm', constraint: 'npm:@acme/lib@^1', resolvedPackageId: 'npm:@acme/lib' },
+        { name: 'react', manager: 'npm', constraint: '^18', resolvedPackageId: null },
+      ],
+      depsUnknown: false,
+    }]);
+    expect(app!.ignoredManifests).toEqual([
+      { path: 'fixtures/broken', manifest: 'fixtures/broken/package.json', manager: 'npm', name: null, deps: [], depsUnknown: true },
+      {
+        path: 'templates/dart', manifest: 'templates/dart/pubspec.yaml', manager: 'pub', name: null,
+        deps: [{ name: 'lib_pub', manager: 'pub', constraint: '^1.0.0', resolvedPackageId: null }], depsUnknown: false,
+      },
+    ]);
+    expect(logs.some((l) => /^warning: acme\/app: fixtures\/broken\/package\.json \(ignored manifest\): cannot parse/.test(l))).toBe(true);
+    // Nothing of it reaches the DB.
+    writeDiscoverToDb(db, m);
+    expect(all('SELECT package_id FROM packages ORDER BY package_id')).toEqual([{ package_id: 'npm:@acme/app' }, { package_id: 'npm:@acme/lib' }]);
+    expect(all('SELECT count(*) AS n FROM package_deps')).toEqual([{ n: 0 }]);
+  });
+
   describe('unindexed_consumer', () => {
     function flags(m: ReturnType<typeof discoverLocal>): unknown[] {
       writeDiscoverToDb(db, m);
