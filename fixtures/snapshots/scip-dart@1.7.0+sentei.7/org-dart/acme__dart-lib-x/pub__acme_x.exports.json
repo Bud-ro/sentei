@@ -1,0 +1,173 @@
+{
+  "entryPoints": [
+    "lib/acme_x.dart",
+    "lib/builder.dart",
+    "lib/syntax.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "benchmark/bench.dart",
+      "kind": "runtime",
+      "line": 5,
+      "name": "main"
+    },
+    {
+      "col": 6,
+      "file": "tool/dart_dev/config.dart",
+      "kind": "runtime",
+      "line": 5,
+      "name": "config"
+    },
+    {
+      "col": 7,
+      "file": "lib/builder.dart",
+      "kind": "runtime",
+      "line": 5,
+      "name": "acmeBuilder"
+    }
+  ],
+  "exports": [
+    {
+      "col": 10,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "IntTimes",
+      "file": "lib/acme_x.dart",
+      "line": 29,
+      "name": "IntTimes",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "docOnly",
+      "file": "lib/acme_x.dart",
+      "line": 37,
+      "name": "docOnly",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "implUnused",
+      "file": "lib/src/impl.dart",
+      "line": 6,
+      "name": "implUnused",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "implUsed",
+      "file": "lib/src/impl.dart",
+      "line": 3,
+      "name": "implUsed",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "partUnused",
+      "file": "lib/src/part_a.dart",
+      "line": 8,
+      "name": "partUnused",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "partUsed",
+      "file": "lib/src/part_a.dart",
+      "line": 5,
+      "name": "partUsed",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "shownOnly",
+      "file": "lib/src/impl.dart",
+      "line": 10,
+      "name": "shownOnly",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "unusedFn",
+      "file": "lib/acme_x.dart",
+      "line": 15,
+      "name": "unusedFn",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "usedFn",
+      "file": "lib/acme_x.dart",
+      "line": 12,
+      "name": "usedFn",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "Shown",
+      "file": "lib/src/shown.dart",
+      "line": 3,
+      "name": "Shown",
+      "sites": [
+        {
+          "col": 29,
+          "file": "lib/acme_x.dart",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "col": 6,
+      "entry": "lib/syntax.dart",
+      "exportedAs": "Vec",
+      "file": "lib/syntax.dart",
+      "line": 9,
+      "name": "Vec",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "lib/builder.dart",
+      "exportedAs": "acmeBuilder",
+      "file": "lib/builder.dart",
+      "line": 5,
+      "name": "acmeBuilder",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "lib/syntax.dart",
+      "exportedAs": "labelOf",
+      "file": "lib/syntax.dart",
+      "line": 39,
+      "name": "labelOf",
+      "sites": []
+    },
+    {
+      "col": 8,
+      "entry": "lib/syntax.dart",
+      "exportedAs": "Mapper",
+      "file": "lib/syntax.dart",
+      "line": 36,
+      "name": "Mapper",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme_x",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

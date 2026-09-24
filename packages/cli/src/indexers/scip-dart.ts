@@ -3,7 +3,8 @@
 //   - packages/indexers/scip-dart: vendored scip-dart 1.7.0 (Workiva/scip-dart
 //     @ 8d017a25874efb8513617e85e508a573692cbb63) with the patches listed in its
 //     PATCHES.md (SDK floor 3.11; `--private-symbols`, which we always pass;
-//     valid symbols for operators, nameless elements and import prefixes);
+//     valid symbols for operators, nameless elements and import prefixes;
+//     no occurrences for dartdoc `[Name]` links);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar.
 // Org dependencies are source-linked with a `pubspec_overrides.yaml`
@@ -39,7 +40,12 @@ interface SurfaceOutput extends Omit<ExportsSidecar, 'namespaceSpreadRefs' | 'en
   /** `part` directives whose file does not exist (an ungenerated `*.g.dart`): the library is incomplete. */
   missingParts?: Array<SourcePosition & { uri: string }>;
   diagnostics: string[];
+  /** With `--pub-get-failed`: own `package:<self>/…` URIs that did not resolve (left out of the lists above). */
+  unresolvedOwnUris?: number;
 }
+
+/** The `prepare` diagnostic for a failed `dart pub get` (see [pubGetFailed]). */
+const PUB_GET_FAILED = /^error: dart pub get(?: --offline)? exited with /;
 
 export const scipDart: Indexer = {
   name: 'scip-dart',
@@ -50,7 +56,9 @@ export const scipDart: Indexer = {
   // sentei.5: ignored nested manifests are not ours (no entry symbols/exports
   // there); missing parts outside lib/ and bin/ only warn.
   // sentei.6: entrySymbols[].kind (`runtime`, set by the adapter).
-  version: '1.7.0+sentei.6',
+  // sentei.7: fork patch 4 (dartdoc `[Name]` links are not references); after
+  // a failed pub get, unresolved own `package:` URIs collapse into one error.
+  version: '1.7.0+sentei.7',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -151,6 +159,10 @@ export const scipDart: Indexer = {
       '--org-packages', orgNames.join(','),
       ...pkg.entryPoints.flatMap((e) => ['--entry', e]),
       ...[...nested, ...ignored].flatMap((d) => ['--nested', d]),
+      // Without a package config mapping the package itself (pub get failed;
+      // any config found is an enclosing package's), none of its own
+      // `package:` URIs resolve: one error says so, not one per directive.
+      ...(prepared.diagnostics.some((d) => PUB_GET_FAILED.test(d)) ? ['--pub-get-failed'] : []),
     ];
     const sp = await exec('dart', surfaceArgs, DART_SURFACE_DIR);
     log.push(`$ dart ${surfaceArgs.join(' ')}  (cwd ${DART_SURFACE_DIR})`, '--- stderr', sp.stderr);
@@ -169,7 +181,7 @@ export const scipDart: Indexer = {
       diagnostics.push('error: export surface failed');
       return finish();
     }
-    const { unresolvedOrgModules, missingParts = [], diagnostics: surfaceDiagnostics, ...rest } = out;
+    const { unresolvedOrgModules, missingParts = [], diagnostics: surfaceDiagnostics, unresolvedOwnUris = 0, ...rest } = out;
     const sidecar: ExportsSidecar = {
       ...rest,
       shorthandRefs: rest.shorthandRefs ?? [],
@@ -181,6 +193,10 @@ export const scipDart: Indexer = {
         .map((e) => ({ ...e, kind: e.kind ?? 'runtime' })),
     };
     writeFileSync(exportsFile, `${JSON.stringify(sidecar satisfies ExportsSidecar, null, 2)}\n`);
+    if (unresolvedOwnUris > 0) {
+      status = worstStatus(status, 'partial');
+      diagnostics.push(`error: package unresolvable (pub get failed): ${unresolvedOwnUris} own package: import/export URI(s) do not resolve`);
+    }
     for (const m of unresolvedOrgModules) {
       diagnostics.push(`error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`);
     }

@@ -13,7 +13,12 @@
 //     incomplete and references inside the part are unknown → status partial
 //     when the library is under lib/ or bin/ (elsewhere, and in test/docs files
 //     the policy does not count, the adapter only warns);
-//   - `diagnostics`: `warn:`/`info:` lines (other analyzer errors; never change status).
+//   - `diagnostics`: `warn:`/`info:` lines (other analyzer errors; never change status);
+//   - `unresolvedOwnUris`: with `--pub-get-failed`, how many of the package's
+//     own `package:<self>/...` import/export URIs did not resolve. They are left
+//     out of `unresolved` and `unresolvedOrgModules`: without a package config
+//     that maps the package itself, none of them can resolve, so they say
+//     nothing beyond "pub get failed" (the adapter reports that once).
 //
 // Positions: 0-based line, 0-based UTF-16 column; files repo-relative POSIX.
 import 'dart:convert';
@@ -39,6 +44,7 @@ Future<void> main(List<String> argv) async {
     ..addOption('package-id', mandatory: true, help: 'e.g. pub:acme_x')
     ..addMultiOption('entry', help: 'Entry file, repo-relative POSIX (repeatable)')
     ..addOption('org-packages', defaultsTo: '', help: 'Comma-separated pub names of all org packages')
+    ..addFlag('pub-get-failed', negatable: false, help: 'pub get failed for this package: own package: URIs that do not resolve are counted, not listed')
     ..addMultiOption('nested', help: 'Dir of a package, or of an ignored manifest, nested inside this one (its files are not ours)')
     ..addFlag('help', abbr: 'h', negatable: false);
   final ArgResults args;
@@ -59,6 +65,7 @@ Future<void> main(List<String> argv) async {
     entries: args['entry'] as List<String>,
     orgPackages: (args['org-packages'] as String).split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toSet(),
     nested: (args['nested'] as List<String>).map((d) => p.normalize(p.absolute(d))).toList(),
+    pubGetFailed: args['pub-get-failed'] as bool,
   );
   final out = await surface.compute();
   stdout.writeln(const JsonEncoder.withIndent('  ').convert(out));
@@ -98,6 +105,9 @@ class Surface {
   final Set<String> orgPackages;
   final List<String> nested;
 
+  /// `dart pub get` failed for this package (see [unresolvedOwnUris]).
+  final bool pubGetFailed;
+
   Surface({
     required this.repoRoot,
     required this.packageRoot,
@@ -105,6 +115,7 @@ class Surface {
     required this.entries,
     required this.orgPackages,
     required this.nested,
+    this.pubGetFailed = false,
   });
 
   final diagnostics = <String>[];
@@ -112,6 +123,22 @@ class Surface {
   final unresolvedImports = <Map<String, Object>>[];
   final unresolvedOrgModules = <Map<String, Object>>[];
   final missingParts = <Map<String, Object>>[];
+
+  /// Own `package:<self>/...` directive URIs that did not resolve after a
+  /// failed pub get: the package config does not map the package itself (it
+  /// may come from an enclosing package, or not exist), so every such URI
+  /// fails for that one reason. Counted instead of listed. After a successful
+  /// pub get an unresolved own URI is a missing file and is listed as usual.
+  /// Keyed by file and URI (an export directive is seen twice).
+  final unresolvedOwnUris = <String>{};
+
+  /// See [unresolvedOwnUris]: true (and counted) when [uriText] is an own
+  /// `package:` URI whose failure pub get already explains.
+  bool _ownUriUnresolvable(String file, String uriText) {
+    if (!pubGetFailed || _packageOf(uriText) != packageName) return false;
+    unresolvedOwnUris.add('$file\u0000$uriText');
+    return true;
+  }
 
   /// Declarations the runtime or a tool invokes by convention, with no
   /// reference in code (the sidecar's `entrySymbols`), keyed by position:
@@ -230,6 +257,7 @@ class Surface {
       'entrySymbols': entrySymbols.values.toList()..sort(_byPosition),
       'unresolvedOrgModules': unresolvedOrgModules,
       'missingParts': missingParts,
+      'unresolvedOwnUris': unresolvedOwnUris.length,
       'diagnostics': diagnostics,
     };
   }
@@ -298,6 +326,7 @@ class Surface {
           final target = exp.exportedLibrary;
           final uriText = _uriText(exp.uri);
           if (target == null || target.isOriginNotExistingFile) {
+            if (_ownUriUnresolvable(file, uriText)) continue;
             unresolved.add("${repoRel(file)}: export '$uriText'");
             continue;
           }
@@ -504,6 +533,7 @@ class Surface {
     if (!relative && (pkg == null || !orgPackages.contains(pkg))) return;
     final at = directive == null ? null : positionIn(file, unit, directive.uri.offset);
     if (target == null || target.isOriginNotExistingFile) {
+      if (_ownUriUnresolvable(file, text)) return;
       unresolvedOrgModules.add({
         'module': text,
         if (at != null) ...at.toJson() else ...{'file': repoRel(file), 'line': 0, 'col': 0},

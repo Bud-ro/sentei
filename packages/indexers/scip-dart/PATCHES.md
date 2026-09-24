@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.6` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.7` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -287,6 +287,39 @@ The diff is against the file with patch 2 applied.
 +class _NamelessElement implements Exception {
 +  const _NamelessElement();
 +}
+```
+
+## 4. Dartdoc links are not references (`lib/src/scip_visitor.dart`)
+
+Upstream visits the `CommentReference` nodes of doc comments like code, so
+`/// See [foo].` emits a reference occurrence for `foo`. A public declaration
+named only in another declaration's dartdoc then looked used from its own
+package (`internal_refs_only`) and became an unexport candidate instead of a
+deletion candidate (19 rows on the Workiva run; opentracing's
+`lib/src/ext/constants.dart` links its constants from each other's docs). A doc
+link documents a symbol, it does not use it: deleting `foo` leaves a dangling
+link (a dartdoc warning), not a compile error. The visitor now returns at a
+`CommentReference` without descending, so it emits no occurrence for it or for
+the identifiers inside it (`[Foo.bar]`, `[new Foo]`). `Comment` visits only its
+references, so nothing else in a doc comment is affected.
+
+Upstreamable as an option at most: code navigation wants doc links as
+references, dead-code analysis does not.
+
+```diff
+--- a/lib/src/scip_visitor.dart
++++ b/lib/src/scip_visitor.dart
+@@ -47,6 +47,10 @@
+ 
+   @override
+   void visitNode(AstNode node) {
++    // A dartdoc link (`/// See [foo].`) names a symbol but does not use it:
++    // no occurrence for it or anything inside it.
++    if (node is CommentReference) return;
++
+     // [visitDeclaration] on the [GeneralizingAstVisitor] does not match parameters
+     // even though the parameter node extends [Declaration]. This is a workaround
+     // to correctly parse all [Declaration] ast nodes.
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)

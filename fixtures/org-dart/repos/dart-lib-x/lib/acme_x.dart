@@ -29,5 +29,10 @@ int _islandB(int n) => n <= 0 ? 1 : _islandA(n - 1);
 // no identifier in the consumer names IntTimes, only its member.
 extension IntTimes on int {
   // Expected: alive, no finding (member of a live extension; external ref `3.doubled`).
+  /// Twice the value. See [docOnly].
   int get doubled => this * 2;
 }
+
+// Expected: deletion_candidate, reasons ["no_refs"]. Named only by the dartdoc
+// link `[docOnly]` on `doubled` above: a doc link is not a reference (fork patch 4).
+int docOnly() => 3;

@@ -1,0 +1,275 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## benchmark/bench.dart
+  // A runnable script outside lib/ (`dart run benchmark/bench.dart`): not a
+//^ definition scip-dart pub acme_x . benchmark/`bench.dart`/
+  // discover entry point, but its main is run directly.
+  import 'package:acme_x/acme_x.dart';
+
+  // Expected: alive, no finding (entry symbol: main of a script outside lib/).
+  void main() {
+//     ^^^^ definition scip-dart pub acme_x . benchmark/`bench.dart`/main(). enclosing [5:0-7:1]
+    print(work(1000));
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^ reference scip-dart pub acme_x . benchmark/`bench.dart`/work().
+  }
+
+  // Expected: alive, no finding (reachable from main).
+  int work(int n) => List.generate(n, (i) => usedFn()).length;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^ definition scip-dart pub acme_x . benchmark/`bench.dart`/work(). enclosing [10:0-10:60]
+//         ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//             ^ definition local 0 enclosing [10:9-10:14]
+//                   ^^^^ reference scip-dart pub dart:core . dart:core/`list.dart`/List#
+//                        ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`list.dart`/List#generate().
+//                                 ^ reference local 0
+//                                     ^ definition local 1 enclosing [10:37-10:38]
+//                                           ^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/usedFn().
+//                                                     ^^^^^^ reference scip-dart pub dart:core . dart:core/`list.dart`/List#`<get>length`.
+
+## lib/acme_x.dart
+  // Package entry point for acme_x (lib/*.dart, not lib/src/): defines the export surface.
+//^ definition scip-dart pub acme_x . lib/`acme_x.dart`/
+  library;
+
+  // Re-export of a whole src/ library: implUsed and implUnused join the surface.
+  export 'src/impl.dart';
+  // `show` combinator: only Shown joins the surface; Hidden does not.
+  export 'src/shown.dart' show Shown;
+//                             ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#
+
+  // A part file: its declarations belong to this library, so they are surface too.
+  part 'src/part_a.dart';
+
+  // Expected: alive, no finding (external ref from acme_app bin/main.dart, unqualified call).
+  int usedFn() => _privateFn() + 1;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/usedFn(). enclosing [12:0-12:33]
+//                ^^^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/_privateFn().
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (public in the entry file, referenced nowhere).
+  int unusedFn() => 0;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/unusedFn(). enclosing [15:0-15:20]
+
+  // Expected: alive, no finding (private, never exported; reachable via usedFn).
+  int _privateFn() => 1;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_privateFn(). enclosing [18:0-18:22]
+
+  // Expected: private_dead, reasons ["already_unreachable"] (island with _islandB, reached by nothing).
+  // ignore: unused_element
+  int _islandA(int n) => n <= 0 ? 0 : _islandB(n - 1);
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_islandA(). enclosing [22:0-22:52]
+//             ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                 ^ definition local 0 enclosing [22:13-22:18]
+//                       ^ reference local 0
+//                                    ^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/_islandB().
+//                                             ^ reference local 0
+
+  // Expected: private_dead, reasons ["already_unreachable"] (island with _islandA, reached by nothing).
+  int _islandB(int n) => n <= 0 ? 1 : _islandA(n - 1);
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_islandB(). enclosing [25:0-25:52]
+//             ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                 ^ definition local 1 enclosing [25:13-25:18]
+//                       ^ reference local 1
+//                                    ^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/_islandA().
+//                                             ^ reference local 1
+
+  // Expected: alive, no finding. Used only implicitly by acme_app (`3.doubled`):
+  // no identifier in the consumer names IntTimes, only its member.
+  extension IntTimes on int {
+//          ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/IntTimes# enclosing [29:0-33:1]
+//                      ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+    // Expected: alive, no finding (member of a live extension; external ref `3.doubled`).
+    /// Twice the value. See [docOnly].
+    int get doubled => this * 2;
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//          ^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/IntTimes#`<get>doubled`. enclosing [31:2-32:30]
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"]. Named only by the dartdoc
+  // link `[docOnly]` on `doubled` above: a doc link is not a reference (fork patch 4).
+  int docOnly() => 3;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/docOnly(). enclosing [37:0-37:19]
+
+## lib/builder.dart
+  // build_runner builder library, named by build.yaml (`import:`). A real
+//^ definition scip-dart pub acme_x . lib/`builder.dart`/
+  // builder returns a `Builder` from package:build; the fixture has no deps.
+
+  // Expected: alive, no finding. build.yaml `builder_factories: ["acmeBuilder"]`:
+  // build_runner calls it by name, nothing in code references it (entry symbol).
+  Object acmeBuilder(Map<String, Object?> options) => 'acme builder';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//       ^^^^^^^^^^^ definition scip-dart pub acme_x . lib/`builder.dart`/acmeBuilder(). enclosing [5:0-5:67]
+//                   ^^^ reference scip-dart pub dart:core . dart:core/`map.dart`/Map#
+//                       ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                               ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                                        ^^^^^^^ definition local 0 enclosing [5:19-5:47]
+
+## lib/src/impl.dart
+  // Re-exported whole by lib/acme_x.dart (`export 'src/impl.dart';`).
+//^ definition scip-dart pub acme_x . lib/src/`impl.dart`/
+
+  // Expected: alive, no finding (external ref from acme_app bin/main.dart).
+  int implUsed() => 2;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/implUsed(). enclosing [3:0-3:20]
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (surface via export, referenced nowhere).
+  int implUnused() => 3;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/implUnused(). enclosing [6:0-6:22]
+
+  // Expected: alive, no finding. acme_app names it in an import `show` list but never
+  // calls it; a shown name counts as a reference (fail closed, like a TS import binding).
+  int shownOnly() => 6;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/shownOnly(). enclosing [10:0-10:21]
+
+## lib/src/part_a.dart
+  // Part of the entry library: lives under lib/src/ but its public names are on the
+//^ definition scip-dart pub acme_x . lib/src/`part_a.dart`/
+  // acme_x surface because the library is lib/acme_x.dart.
+  part of '../acme_x.dart';
+
+  // Expected: alive, no finding (external ref from acme_app bin/main.dart).
+  int partUsed() => 4;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/src/`part_a.dart`/partUsed(). enclosing [5:0-5:20]
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (surface via the part, referenced nowhere).
+  int partUnused() => 5;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`part_a.dart`/partUnused(). enclosing [8:0-8:22]
+
+## lib/src/shown.dart
+  // Re-exported by lib/acme_x.dart with `show Shown`: Hidden is NOT on the surface.
+//^ definition scip-dart pub acme_x . lib/src/`shown.dart`/
+
+  // Expected: alive, no finding (external ref: acme_app constructs Shown() and reads label).
+  class Shown {
+//      ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Shown# enclosing [3:0-6:1]
+    // Expected: alive, no finding (member of a live class).
+    final String label = 'shown';
+//        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//               ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Shown#label. enclosing [5:15-5:30]
+  }
+
+  // Expected: private_dead, reasons ["already_unreachable"]. Public name in lib/src/, but
+  // the only export of this file is `show Shown`, so Hidden is not on the surface and
+  // nothing reaches it. It must never be a deletion_candidate (it is not an export).
+  class Hidden {
+//      ^^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Hidden# enclosing [11:0-14:1]
+    // Expected: no finding (member of Hidden; only the outermost dead declaration is reported).
+    final String label = 'hidden';
+//        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//               ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Hidden#label. enclosing [13:15-13:31]
+  }
+
+## lib/syntax.dart
+  // Second entry library of acme_x (lib/*.dart): declarations whose SCIP symbols
+//^ definition scip-dart pub acme_x . lib/`syntax.dart`/
+  // needed scip-dart fork patch 3 (packages/indexers/scip-dart/PATCHES.md):
+  // operator methods, nameless elements, an import prefix.
+  library;
+
+  // An import prefix is not a declaration: `p` gets a local symbol.
+  import 'src/shown.dart' as p;
+//                           ^ definition local 0 enclosing [6:27-6:28]
+
+  // Expected: alive, no finding (acme_app bin/shapes.dart constructs Vec and uses == and []).
+  class Vec {
+//      ^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec# enclosing [9:0-25:1]
+    // Expected: alive, no finding (member of a live class).
+    final int x;
+//        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//            ^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#x. enclosing [11:12-11:13]
+
+    const Vec(this.x);
+//        ^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#`<constructor>`(). enclosing [13:2-13:20]
+//                 ^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#x.
+
+    // Expected: alive, no finding (member of a live class). Symbol `Vec#`==`().`
+    @override
+//   ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`annotations.dart`/override.
+    bool operator ==(Object other) => other is Vec && other.x == x;
+//  ^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//                ^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#`==`(). enclosing [16:2-17:65]
+//                   ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                          ^^^^^ definition local 1 enclosing [17:19-17:31]
+//                                    ^^^^^ reference local 1
+//                                             ^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#
+//                                                    ^^^^^ reference local 1
+//                                                          ^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#x.
+//                                                               ^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#x.
+
+    // Expected: alive, no finding (member of a live class).
+    @override
+//   ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`annotations.dart`/override.
+    int get hashCode => x.hashCode;
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//          ^^^^^^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#`<get>hashCode`. enclosing [20:2-21:33]
+//                      ^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#x.
+//                        ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`num.dart`/num#`<get>hashCode`.
+
+    // Expected: alive, no finding (member of a live class). Symbol `Vec#`[]`().`
+    int operator [](int i) => i == 0 ? x : 0;
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//               ^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#`[]`(). enclosing [24:2-24:43]
+//                  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                      ^ definition local 2 enclosing [24:18-24:23]
+//                            ^ reference local 2
+//                                     ^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#x.
+  }
+
+  // No finding: an unnamed extension has no name, so it and its members get
+  // local symbols (never verdict subjects). Used by labelOf below.
+  extension on String {
+//^ definition local 3 enclosing [29:0-31:1]
+//             ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+    String get shout => toUpperCase();
+//  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//             ^^^^^ definition local 4 enclosing [30:2-30:36]
+//                      ^^^^^^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#toUpperCase().
+  }
+
+  // Expected: alive, no finding (acme_app bin/shapes.dart names it). A generic
+  // function type: its type parameter T and named parameter `times` get no
+  // global symbol.
+  typedef Mapper = T Function<T>(T value, {int? times});
+//        ^^^^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Mapper# enclosing [36:0-36:54]
+//                 ^ reference local 5
+//                            ^ definition local 5 enclosing [36:28-36:29]
+//                               ^ reference local 5
+//                                         ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+
+  // Expected: alive, no finding (external ref from acme_app bin/shapes.dart).
+  String labelOf(Mapper m) => m<String>(p.Shown().label.shout);
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/labelOf(). enclosing [39:0-39:61]
+//               ^^^^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Mapper#
+//                      ^ definition local 6 enclosing [39:15-39:23]
+//                            ^ reference local 6
+//                              ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                                      ^ reference local 0
+//                                        ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#`<constructor>`().
+//                                                ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#label.
+//                                                      ^^^^^ reference local 4
+
+## tool/dart_dev/config.dart
+  // dart_dev (Workiva's task runner) convention: `dart run dart_dev` generates a
+//^ definition scip-dart pub acme_x . tool/dart_dev/`config.dart`/
+  // run script that imports this library and reads its top-level `config`. A real
+  // config maps task names to `DevTool`s from package:dart_dev.
+
+  // Expected: alive, no finding (entry symbol: dart_dev reads it by name).
+  final config = <String, Object>{'format': 'dart format .'};
+//      ^^^^^^ definition scip-dart pub acme_x . tool/dart_dev/`config.dart`/config. enclosing [5:6-5:58]
+//                ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                        ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#

@@ -47,6 +47,10 @@ class ScipVisitor extends GeneralizingAstVisitor {
 
   @override
   void visitNode(AstNode node) {
+    // A dartdoc link (`/// See [foo].`) names a symbol but does not use it:
+    // no occurrence for it or anything inside it.
+    if (node is CommentReference) return;
+
     // [visitDeclaration] on the [GeneralizingAstVisitor] does not match parameters
     // even though the parameter node extends [Declaration]. This is a workaround
     // to correctly parse all [Declaration] ast nodes.

@@ -98,7 +98,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.6',
+        indexerVersion: '1.7.0+sentei.7',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -139,6 +139,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(rows).toEqual([
       ['IntTimes', 'IntTimes', 'lib/acme_x.dart', 29, 10],
       ['Shown', 'Shown', 'lib/src/shown.dart', 3, 6],
+      ['docOnly', 'docOnly', 'lib/acme_x.dart', 37, 4],
       ['implUnused', 'implUnused', 'lib/src/impl.dart', 6, 4],
       ['implUsed', 'implUsed', 'lib/src/impl.dart', 3, 4],
       ['partUnused', 'partUnused', 'lib/src/part_a.dart', 8, 4],
@@ -211,6 +212,17 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(defsAt(36)).toEqual([`${X}Mapper#`, 'local 5']); // typedef; T of the generic function type
     // Every operator anywhere is backticked.
     for (const { symbol } of all) expect(symbol).not.toMatch(/#(==|\[\]=?|<=?|>=?|[%*\/~^|&])\(\)\./);
+  });
+
+  it('records no occurrence for a dartdoc [Name] link (fork patch 4)', () => {
+    const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));
+    const entry = lib.documents.find((d) => d.relativePath === 'lib/acme_x.dart')!;
+    const docOnly = 'scip-dart pub acme_x 1.0.0 lib/`acme_x.dart`/docOnly().';
+    // `  /// Twice the value. See [docOnly].` on line 32: a doc link, not a use.
+    const line = readFileSync(path.join(FIXTURE, 'repos/dart-lib-x/lib/acme_x.dart'), 'utf8').split('\n')[31]!;
+    expect(line).toContain('[docOnly]');
+    expect(entry.occurrences.filter((o) => o.range[0] === 31)).toEqual([]);
+    expect(entry.occurrences.filter((o) => o.symbol === docOnly).map((o) => [o.range[0], o.symbolRoles & 1])).toEqual([[37, 1]]);
   });
 
   it('gives private declarations global symbols (patched scip-dart), consumer refs carry the lib symbols', () => {
@@ -571,6 +583,49 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(s.exports.map((e) => [e.exportedAs, e.file])).toEqual([['a', 'lib/src/a.dart']]);
     // Nothing from the ignored manifest leaks into diagnostics either (its unresolved import).
     expect(r.diagnostics.some((d) => d.includes('example/hello'))).toBe(false);
+  }, 300_000);
+
+  it('after a failed pub get, unresolved own package: URIs are one error, not unresolved exports', async () => {
+    // over_react's app/over_react_redux/todo_client: pub get fails on an old SDK
+    // bound, the enclosing package's config (which does not map todo_client) is
+    // found instead, and every own `package:todo_client/...` directive failed.
+    write({
+      'outer/pubspec.yaml': pubspec('acme_outer', '1.0.0'),
+      'outer/lib/acme_outer.dart': 'int o() => 1;\n',
+      'outer/app/inner/pubspec.yaml': "name: acme_inner\nversion: 1.0.0\npublish_to: none\nenvironment:\n  sdk: '>=2.11.0 <3.0.0'\n",
+      'outer/app/inner/lib/acme_inner.dart': "export 'package:acme_inner/src/a.dart';\n",
+      'outer/app/inner/lib/src/a.dart': "import 'package:acme_inner/src/b.dart';\n\nint a() => b();\n",
+      'outer/app/inner/lib/src/b.dart': 'int b() => 1;\n',
+      // pub get succeeds: an own export of a file that does not exist stays unresolved.
+      'selfmiss/pubspec.yaml': pubspec('acme_selfmiss', '1.0.0'),
+      'selfmiss/lib/acme_selfmiss.dart': "export 'package:acme_selfmiss/src/missing.dart';\n",
+    });
+    const outer = repoOf(root, 'outer', pubPackage('acme_outer', ['lib/acme_outer.dart']));
+    const inner = repoOf(root, 'inner', pubPackage('acme_inner', ['lib/acme_inner.dart']));
+    const selfmiss = repoOf(root, 'selfmiss', pubPackage('acme_selfmiss', ['lib/acme_selfmiss.dart']));
+    outer.localPath = path.join(root, 'outer');
+    inner.localPath = path.join(root, 'outer/app/inner');
+    selfmiss.localPath = path.join(root, 'selfmiss');
+    const repos = [outer, inner, selfmiss];
+    expect((await scipDart.prepare!(inputFor(repos, outer))).status).toBe('ok');
+    const out = path.join(root, 'out-selfuri');
+    mkdirSync(out);
+
+    const r = await scipDart.run(inputFor(repos, inner), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('partial');
+    expect(r.diagnostics.some((d) => /^error: dart pub get --offline exited with 65/.test(d))).toBe(true);
+    expect(r.diagnostics.filter((d) => d.startsWith('error: package unresolvable'))).toEqual([
+      'error: package unresolvable (pub get failed): 2 own package: import/export URI(s) do not resolve',
+    ]);
+    expect(r.diagnostics.some((d) => d.includes('unresolved org module') || d.includes('unresolved export'))).toBe(false);
+    const s = readJson<ExportsSidecar>(r.exportsFile);
+    expect(s.unresolved).toEqual([]); // no dynamic_access at ingest
+    expect(s).not.toHaveProperty('unresolvedOwnUris');
+
+    const m = await scipDart.run(inputFor(repos, selfmiss), out);
+    expect(m.status).toBe('partial');
+    expect(m.diagnostics.some((d) => d.startsWith('error: package unresolvable'))).toBe(false);
+    expect(readJson<ExportsSidecar>(m.exportsFile).unresolved).toEqual(["lib/acme_selfmiss.dart: export 'package:acme_selfmiss/src/missing.dart'"]);
   }, 300_000);
 
   it('retries pub get without a source link whose HEAD conflicts with the consumer, restoring the user override', async () => {
