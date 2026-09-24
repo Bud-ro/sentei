@@ -910,3 +910,24 @@ needs_review 9 → 41, skew 272 → 45.
   a real org objects.
 - Fixture `lib-cascade` exercises the cascade, exports conditions, `imports`
   arms and the HTML client entry end to end.
+
+### honojs final verification (HEAD 8ef28d4)
+
+72 ok / 4 partial / 0 failed; analyze 2.1 s. DELETE 97, ISLAND 95, UNEXPORT
+130, PRIV-DEAD 246, REVIEW 11, BLOCKED 396. **Spot check of 10 non-island
+deletion candidates: 1 right, 9 public-API-only, 0 wrong.** needs_review: 7
+real hits (starter-template imports, honox codegen), 4 noise (a deprecation
+message that quotes an import line; a bare default import vouching for every
+subpath default). The list's character is now "public API nobody in the org
+uses", which is what `assumeClosedWorld` produces by design.
+
+One regression: ambient declarations (711 in Wrangler's generated
+`worker-configuration.d.ts`) counted as reachability seeds *for eligibility*,
+so app packages whose real entries are runtime conventions became eligible for
+private_dead and 75 false rows appeared (their own declarations, honox
+`app/server.ts`, a Pages function, a Worker `export default app`). Fixes:
+entry symbols carry a kind and only runtime ones make a package eligible;
+namespace members get owners; Wrangler/Pages/honox/Next/SvelteKit/Nuxt
+runtime entry conventions are modelled; Wrangler's header counts as
+generated; deprecation messages are not codegen; a bare default import
+vouches only for the root entry's default.
