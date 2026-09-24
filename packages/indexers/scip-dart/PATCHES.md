@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.5` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.6` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,

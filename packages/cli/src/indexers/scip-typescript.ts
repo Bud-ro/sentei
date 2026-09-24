@@ -147,7 +147,9 @@ export const scipTypescript: Indexer = {
   //   (declared outside every tsconfig's files).
   // +sentei.3: unindexedImports `scope`, SFC scan (`relative` own imports),
   //   generatedFiles; heap retry without hover signatures; nuxt prepare.
-  version: '0.4.0+sentei.3',
+  // +sentei.4: entrySymbols[].kind (`ambient`), members of `.d.ts` script
+  //   namespaces, more generated-file headers and names (Wrangler, Go-style).
+  version: '0.4.0+sentei.4',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference

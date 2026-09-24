@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { TEST_GLOBS, matchGlob } from '@sentei/core';
 import { isExcludedConsumerFile } from './consumer-checks.ts';
 import { packageDir, packageSlug } from './scip-typescript.ts';
-import type { ExportsSidecar, Indexer, IndexerInput, IndexStatus, IndexerResult, SourcePosition } from './types.ts';
+import type { EntrySymbol, ExportsSidecar, Indexer, IndexerInput, IndexStatus, IndexerResult, SourcePosition } from './types.ts';
 import { worstStatus } from './types.ts';
 
 const INDEXERS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../indexers');
@@ -32,7 +32,9 @@ const BACKUP_DIR = '.sentei-backup';
 export const OVERRIDES_HEADER = '# Written by sentei: source links for org dependencies. Original (if any) in .sentei-backup/.';
 
 /** Output of dart-surface: the sidecar plus three adapter-only keys (stripped before writing). */
-interface SurfaceOutput extends Omit<ExportsSidecar, 'namespaceSpreadRefs'> {
+interface SurfaceOutput extends Omit<ExportsSidecar, 'namespaceSpreadRefs' | 'entrySymbols'> {
+  /** dart-surface emits no `kind`; the adapter sets `runtime`. */
+  entrySymbols: Array<Omit<EntrySymbol, 'kind'> & { kind?: EntrySymbol['kind'] }>;
   unresolvedOrgModules: Array<SourcePosition & { module: string }>;
   /** `part` directives whose file does not exist (an ungenerated `*.g.dart`): the library is incomplete. */
   missingParts?: Array<SourcePosition & { uri: string }>;
@@ -47,7 +49,8 @@ export const scipDart: Indexer = {
   // Dart entry conventions (non-lib `main`, build.yaml factories, dart_dev config).
   // sentei.5: ignored nested manifests are not ours (no entry symbols/exports
   // there); missing parts outside lib/ and bin/ only warn.
-  version: '1.7.0+sentei.5',
+  // sentei.6: entrySymbols[].kind (`runtime`, set by the adapter).
+  version: '1.7.0+sentei.6',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -172,7 +175,10 @@ export const scipDart: Indexer = {
       shorthandRefs: rest.shorthandRefs ?? [],
       namespaceSpreadRefs: [],
       // A test's `main` is run by the test runner; test files never get verdicts.
-      entrySymbols: rest.entrySymbols.filter((e) => !TEST_GLOBS.some((g) => matchGlob(g, e.file))),
+      // dart-surface emits no kind: every Dart entry symbol is invoked by the runtime or a tool.
+      entrySymbols: rest.entrySymbols
+        .filter((e) => !TEST_GLOBS.some((g) => matchGlob(g, e.file)))
+        .map((e) => ({ ...e, kind: e.kind ?? 'runtime' })),
     };
     writeFileSync(exportsFile, `${JSON.stringify(sidecar satisfies ExportsSidecar, null, 2)}\n`);
     for (const m of unresolvedOrgModules) {

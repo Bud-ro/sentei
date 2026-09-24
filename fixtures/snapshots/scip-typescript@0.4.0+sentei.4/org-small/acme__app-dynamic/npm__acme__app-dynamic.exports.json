@@ -7,18 +7,21 @@
     {
       "col": 14,
       "file": "src/globals.d.ts",
+      "kind": "ambient",
       "line": 10,
       "name": "module"
     },
     {
       "col": 14,
       "file": "src/globals.d.ts",
+      "kind": "ambient",
       "line": 3,
       "name": "process"
     },
     {
       "col": 14,
       "file": "src/globals.d.ts",
+      "kind": "ambient",
       "line": 8,
       "name": "require"
     }

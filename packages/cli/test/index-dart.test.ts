@@ -98,7 +98,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.5',
+        indexerVersion: '1.7.0+sentei.6',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -165,18 +165,18 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(s.unresolvedImports).toEqual([]);
     // `void main() {` on line 10: the runtime calls it, nothing references it.
     expect(s.entrySymbols).toEqual([
-      { name: 'main', file: 'bin/main.dart', line: 9, col: 5 },
-      { name: 'main', file: 'bin/shapes.dart', line: 4, col: 5 },
+      { name: 'main', file: 'bin/main.dart', line: 9, col: 5, kind: 'runtime' },
+      { name: 'main', file: 'bin/shapes.dart', line: 4, col: 5, kind: 'runtime' },
     ]);
-    expect(sidecar('dart-bad', 'acme_bad').entrySymbols).toEqual([{ name: 'main', file: 'bin/main.dart', line: 2, col: 5 }]);
+    expect(sidecar('dart-bad', 'acme_bad').entrySymbols).toEqual([{ name: 'main', file: 'bin/main.dart', line: 2, col: 5, kind: 'runtime' }]);
   });
 
   it('records Dart entry conventions: main outside lib/ (not tests), build.yaml builder factories, dart_dev config', () => {
     // Positions are the declarations' names, as SCIP defines them (ingest matches on them).
     expect(sidecar('dart-lib-x', 'acme_x').entrySymbols).toEqual([
-      { name: 'main', file: 'benchmark/bench.dart', line: 5, col: 5 }, // runnable script, not a discover entry
-      { name: 'acmeBuilder', file: 'lib/builder.dart', line: 5, col: 7 }, // build.yaml builder_factories
-      { name: 'config', file: 'tool/dart_dev/config.dart', line: 5, col: 6 }, // dart_dev convention
+      { name: 'main', file: 'benchmark/bench.dart', line: 5, col: 5, kind: 'runtime' }, // runnable script, not a discover entry
+      { name: 'acmeBuilder', file: 'lib/builder.dart', line: 5, col: 7, kind: 'runtime' }, // build.yaml builder_factories
+      { name: 'config', file: 'tool/dart_dev/config.dart', line: 5, col: 6, kind: 'runtime' }, // dart_dev convention
     ]); // test/x_test.dart's main is not one
     const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));
     const defs = new Set(

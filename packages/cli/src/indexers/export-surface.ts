@@ -202,7 +202,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     namespaceSpreadRefs: [],
   };
   const compilerErrors = new Set<string>();
-  const ambient: Array<SourcePosition & { name: string; dts: boolean }> = [];
+  const ambient: Array<SourcePosition & { name: string; dts?: string }> = [];
   const checked = new Set<string>();
   const pending = new Map(input.entryPoints.map((e) => [e, path.resolve(input.repoRoot, ...e.split('/'))] as const));
   const found = new Set<string>();
@@ -349,11 +349,12 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       cmp(a.entry, b.entry) || cmp(a.exportedAs, b.exportedAs) || cmp(a.file, b.file) || a.line - b.line || a.col - b.col,
   );
   // Ambient contributions (see collectAmbientDeclarations): top-level `.d.ts`
-  // declarations already on the export surface stay ordinary exports.
+  // declarations already on the export surface (and their namespace members)
+  // stay ordinary exports.
   const exportedAt = new Set(exports.map((e) => `${e.file}:${e.line}:${e.col}`));
   const entrySymbols = ambient
-    .filter((a) => !(a.dts && exportedAt.has(`${a.file}:${a.line}:${a.col}`)))
-    .map(({ file, line, col, name }) => ({ file, line, col, name }))
+    .filter((a) => !(a.dts !== undefined && exportedAt.has(a.dts)))
+    .map(({ file, line, col, name }) => ({ file, line, col, name, kind: 'ambient' as const }))
     .sort((a, b) => cmp(a.file, b.file) || a.line - b.line || a.col - b.col);
   return {
     sidecar: {
@@ -516,20 +517,25 @@ function collectExportSites(
  *    module declaration's own name: they merge into the augmented module or the
  *    global scope, which consumes them;
  *  - top-level declarations of a `.d.ts` file (`declare const process`,
- *    `declare namespace JSX`): ambient script declarations. `dts: true` marks
- *    them so the caller drops those that are on the export surface. A
- *    declaration with `export` in a module `.d.ts` is imported like any other
- *    and is not included.
- * Members of ordinary namespaces are not included; members of recorded
- * declarations are reachable through their owner.
+ *    `declare namespace JSX`): ambient script declarations. `dts` holds the
+ *    position key of the top-level declaration so the caller drops those that
+ *    are on the export surface. A declaration with `export` in a module `.d.ts`
+ *    is imported like any other and is not included;
+ *  - the members of such a top-level `.d.ts` namespace, at any nesting
+ *    (`declare namespace WebAssembly { class CompileError }`): they merge into
+ *    the global scope like the namespace itself. They carry the namespace's
+ *    `dts` key and are dropped with it.
+ * Members of ordinary (non-ambient) namespaces are not included.
  */
 function collectAmbientDeclarations(
   sf: ts.SourceFile,
   toRepoRel: (abs: string) => string,
-): Array<SourcePosition & { name: string; dts: boolean }> {
-  const out: Array<SourcePosition & { name: string; dts: boolean }> = [];
-  const add = (nameNode: ts.Node, name: string, dts: boolean): void => {
-    out.push({ ...position(sf, nameNode.getStart(sf), toRepoRel), name, dts });
+): Array<SourcePosition & { name: string; dts?: string }> {
+  const out: Array<SourcePosition & { name: string; dts?: string }> = [];
+  const add = (nameNode: ts.Node, name: string, dts: string | undefined): SourcePosition => {
+    const at = position(sf, nameNode.getStart(sf), toRepoRel);
+    out.push({ ...at, name, ...(dts !== undefined ? { dts } : {}) });
+    return at;
   };
   const isAmbientModule = (s: ts.Statement): s is ts.ModuleDeclaration =>
     ts.isModuleDeclaration(s) && (ts.isStringLiteral(s.name) || (s.flags & ts.NodeFlags.GlobalAugmentation) !== 0);
@@ -551,31 +557,41 @@ function collectAmbientDeclarations(
     }
     return [];
   };
-  /** Every declaration inside an ambient module body, at any nesting. */
-  const visitAmbient = (m: ts.ModuleDeclaration): void => {
-    add(m.name, m.name.text, false);
+  /**
+   * The declaration's name and every declaration inside its body, at any
+   * nesting. `dts` is the top-level `.d.ts` namespace's key (undefined inside
+   * `declare module` / `declare global`); `self` is false when the caller
+   * already recorded the name.
+   */
+  const visitBody = (m: ts.ModuleDeclaration, dts: string | undefined, self: boolean): void => {
+    if (self) add(m.name, m.name.text, dts);
     let body = m.body;
-    // `declare module 'x' { namespace A.B {} }` nests bodies as ModuleDeclarations.
+    // `namespace A.B {}` nests bodies as ModuleDeclarations.
     while (body !== undefined && ts.isModuleDeclaration(body)) {
-      add(body.name, body.name.text, false);
+      add(body.name, body.name.text, dts);
       body = body.body;
     }
     if (body === undefined || !ts.isModuleBlock(body)) return;
     for (const s of body.statements) {
       if (ts.isModuleDeclaration(s)) {
-        visitAmbient(s);
+        visitBody(s, dts, true);
         continue;
       }
-      for (const [node, name] of declared(s)) add(node, name, false);
+      for (const [node, name] of declared(s)) add(node, name, dts);
     }
   };
+  const key = (p: SourcePosition): string => `${p.file}:${p.line}:${p.col}`;
   const dts = sf.isDeclarationFile;
   for (const s of sf.statements) {
     if (isAmbientModule(s)) {
-      visitAmbient(s);
+      visitBody(s, undefined, true);
     } else if (dts && !hasExportModifier(s)) {
       // An exported declaration of a module `.d.ts` is imported by reference like any other.
-      for (const [node, name] of declared(s)) add(node, name, true);
+      for (const [node, name] of declared(s)) {
+        const at = position(sf, node.getStart(sf), toRepoRel);
+        add(node, name, key(at));
+        if (ts.isModuleDeclaration(s)) visitBody(s, key(at), false);
+      }
     }
   }
   return out;

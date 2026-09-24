@@ -7,12 +7,14 @@
     {
       "col": 5,
       "file": "bin/main.dart",
+      "kind": "runtime",
       "line": 9,
       "name": "main"
     },
     {
       "col": 5,
       "file": "bin/shapes.dart",
+      "kind": "runtime",
       "line": 4,
       "name": "main"
     }

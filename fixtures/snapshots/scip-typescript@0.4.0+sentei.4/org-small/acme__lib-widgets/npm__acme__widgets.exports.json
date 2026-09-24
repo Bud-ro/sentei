@@ -8,8 +8,16 @@
   ],
   "entrySymbols": [
     {
+      "col": 12,
+      "file": "src/jsx.d.ts",
+      "kind": "ambient",
+      "line": 6,
+      "name": "Element"
+    },
+    {
       "col": 18,
       "file": "src/jsx.d.ts",
+      "kind": "ambient",
       "line": 4,
       "name": "JSX"
     }

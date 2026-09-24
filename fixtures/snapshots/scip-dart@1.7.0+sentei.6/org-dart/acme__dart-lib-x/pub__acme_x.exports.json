@@ -8,18 +8,21 @@
     {
       "col": 5,
       "file": "benchmark/bench.dart",
+      "kind": "runtime",
       "line": 5,
       "name": "main"
     },
     {
       "col": 6,
       "file": "tool/dart_dev/config.dart",
+      "kind": "runtime",
       "line": 5,
       "name": "config"
     },
     {
       "col": 7,
       "file": "lib/builder.dart",
+      "kind": "runtime",
       "line": 5,
       "name": "acmeBuilder"
     }
