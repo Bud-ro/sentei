@@ -1,11 +1,15 @@
 export { openDb, schemaSql, SCHEMA_VERSION } from './db.ts';
-export { discoverLocal, writeDiscoverToDb } from './discover.ts';
-export type { DiscoverDep, DiscoverModel, DiscoverPackage, DiscoverRepo } from './discover.ts';
+export { discoverLocal, discoverRepos, writeDiscoverToDb } from './discover.ts';
+export type { DiscoverDep, DiscoverModel, DiscoverPackage, DiscoverRepo, DiscoverRepoInput, DiscoverReposOptions, DiscoverSource } from './discover.ts';
 export { runWitness } from './witness.ts';
 export type { RunWitnessOptions, WitnessCounts, WitnessDiscoverInput } from './witness.ts';
 export { buildReport, formatSummary } from './report.ts';
 export type { Report, ReportBlocker, ReportFinding, ReportPackage, ReportRepo, ReportVersionSkew } from './report.ts';
 export { analyzeOrg, analyzeSql } from './analyze.ts';
 export type { AnalyzeCounts, AnalyzeOptions } from './analyze.ts';
+export { DEFAULT_API_URL, discoverGithub, findToken, listRepos, readLockfile, resolveToken, selectRepo, writeLockfile } from './github.ts';
+export type { DiscoverGithubOptions, GithubRepo, ListReposOptions, Lockfile, RepoFilter } from './github.ts';
+export { ensureClone, git, headSha, isShallow } from './git.ts';
+export type { EnsureCloneOptions, EnsureCloneResult, GitOptions } from './git.ts';
 export { runBlame, parseBlamePorcelain } from './blame.ts';
 export type { BlameCache, BlameCounts, BlameDiscoverInput, BlameLine, RunBlameOptions } from './blame.ts';

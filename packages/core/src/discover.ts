@@ -1,15 +1,18 @@
-// `discover` stage core (PLAN.md §6.1), M1 scope: a local org directory.
+// `discover` stage core (PLAN.md §6.1).
 //
+// discoverRepos builds the org model (the exact shape of work/discover.json) from
+// a list of checked-out repos; it is shared by both sources:
+//   - local (discoverLocal, below): a directory laid out as
 //   <orgDir>/org.json            { "org": "acme", "repos": [{ "name", "default_branch" }] }
 //   <orgDir>/sentei.json         optional org policy + keep (config.ts)
 //   <orgDir>/repos/<name>/       one checkout per repo; optional <repo>/sentei.json overlays
 //
-// discoverLocal builds the org model (the exact shape of work/discover.json);
+//   - github (github.ts discoverGithub): API listing + shallow clones.
 // writeDiscoverToDb replaces the whole org in the DB from that model.
 import { readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig } from './config.ts';
+import { DEFAULT_POLICY, parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig } from './config.ts';
 import { matchGlob } from './glob.ts';
 import { listFiles, readRepoManifests, type Manager, type ManifestPackage, type Visibility } from './manifests.ts';
 
@@ -43,9 +46,20 @@ export interface DiscoverRepo {
   packages: DiscoverPackage[];
 }
 
+export type DiscoverSource =
+  | { kind: 'local'; dir: string }
+  | {
+    kind: 'github';
+    org: string;
+    apiUrl: string;
+    /** Lockfile read or written for this run, or null when none was given. */
+    lockfile: string | null;
+    clonesDir: string;
+  };
+
 export interface DiscoverModel {
   org: string;
-  source: { kind: 'local'; dir: string };
+  source: DiscoverSource;
   /** Epoch seconds. */
   generatedAt: number;
   policy: Policy;
@@ -55,6 +69,27 @@ export interface DiscoverModel {
 
 export interface DiscoverLocalOptions {
   orgDir: string;
+  log?: (line: string) => void;
+  /** Epoch seconds; defaults to now (injectable for tests). */
+  now?: number;
+}
+
+/** One checked-out repo handed to discoverRepos. */
+export interface DiscoverRepoInput {
+  /** Repo name without the org prefix. */
+  name: string;
+  defaultBranch: string | null;
+  /** Absolute path of the checkout. */
+  localPath: string;
+  headSha: string | null;
+}
+
+export interface DiscoverReposOptions {
+  org: string;
+  source: DiscoverSource;
+  repos: readonly DiscoverRepoInput[];
+  /** Directory holding the org-level sentei.json, or null for defaults. */
+  orgConfigDir: string | null;
   log?: (line: string) => void;
   /** Epoch seconds; defaults to now (injectable for tests). */
   now?: number;
@@ -121,15 +156,36 @@ function npmTargetName(name: string, constraint: string | null): string {
 
 /** Build the org model from a local org directory. Throws on duplicate (manager, name). */
 export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
-  const log = opts.log ?? (() => {});
   const orgDir = resolve(opts.orgDir);
   const listing = readOrgListing(orgDir);
-  const orgConfig = readOrgConfig(orgDir);
+  return discoverRepos({
+    org: listing.org,
+    source: { kind: 'local', dir: orgDir },
+    repos: listing.repos.map((r) => ({
+      name: r.name,
+      defaultBranch: r.defaultBranch,
+      localPath: join(orgDir, 'repos', r.name),
+      headSha: null,
+    })),
+    orgConfigDir: orgDir,
+    ...(opts.log ? { log: opts.log } : {}),
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
+  });
+}
+
+/**
+ * Build the org model from checked-out repos (any source). Walks manifests,
+ * applies sentei.json overlays, resolves deps by (manager, name).
+ * Throws on a missing checkout or a duplicate (manager, name).
+ */
+export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
+  const log = opts.log ?? (() => {});
+  const orgConfig = opts.orgConfigDir === null ? { policy: { ...DEFAULT_POLICY }, keep: [] } : readOrgConfig(opts.orgConfigDir);
 
   const repos: Array<DiscoverRepo & { manifests: ManifestPackage[] }> = [];
-  for (const r of [...listing.repos].sort((a, b) => cmp(a.name, b.name))) {
-    const repo = `${listing.org}/${r.name}`;
-    const localPath = join(orgDir, 'repos', r.name);
+  for (const r of [...opts.repos].sort((a, b) => cmp(a.name, b.name))) {
+    const repo = `${opts.org}/${r.name}`;
+    const localPath = r.localPath;
     let isDir = false;
     try {
       isDir = statSync(localPath).isDirectory();
@@ -161,7 +217,7 @@ export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
       repo,
       localPath,
       defaultBranch: r.defaultBranch,
-      headSha: null,
+      headSha: r.headSha,
       config,
       packages: [],
       manifests,
@@ -203,8 +259,8 @@ export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
   }
 
   return {
-    org: listing.org,
-    source: { kind: 'local', dir: orgDir },
+    org: opts.org,
+    source: opts.source,
     generatedAt: opts.now ?? Math.floor(Date.now() / 1000),
     policy: orgConfig.policy,
     keep: orgConfig.keep,

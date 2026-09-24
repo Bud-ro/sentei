@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.ts';
-import { discoverLocal, writeDiscoverToDb } from '../src/discover.ts';
+import { discoverLocal, discoverRepos, writeDiscoverToDb } from '../src/discover.ts';
 
 const FIXTURE = fileURLToPath(new URL('../../../fixtures/org-small', import.meta.url));
 
@@ -198,5 +198,29 @@ describe('discoverLocal on a synthetic org', () => {
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
     expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 9 }]);
+  });
+});
+
+describe('discoverRepos', () => {
+  it('builds the model from explicit checkouts: github source, head shas, default policy without a config dir', () => {
+    write('clones/b/package.json', { name: 'b', dependencies: { a: '^1' } });
+    write('clones/a/package.json', { name: 'a' });
+    const source = { kind: 'github' as const, org: 'acme', apiUrl: 'https://api.github.com', lockfile: null, clonesDir: join(tmp, 'clones') };
+    const m = discoverRepos({
+      org: 'acme',
+      source,
+      repos: ['b', 'a'].map((name, i) => ({ name, defaultBranch: 'main', localPath: join(tmp, 'clones', name), headSha: String(i).repeat(40) })),
+      orgConfigDir: null,
+      now: 1,
+    });
+    expect(m.source).toEqual(source);
+    expect(m.policy.minAgeDays).toBe(180);
+    expect(m.repos.map((r) => [r.repo, r.headSha])).toEqual([['acme/a', '1'.repeat(40)], ['acme/b', '0'.repeat(40)]]);
+    expect(m.repos[1]!.packages[0]!.deps[0]!.resolvedPackageId).toBe('npm:a');
+    writeDiscoverToDb(db, m);
+    expect(all('SELECT repo, head_sha FROM repos ORDER BY repo')).toEqual([
+      { repo: 'acme/a', head_sha: '1'.repeat(40) },
+      { repo: 'acme/b', head_sha: '0'.repeat(40) },
+    ]);
   });
 });

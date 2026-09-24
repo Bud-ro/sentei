@@ -39,7 +39,20 @@ Commands:
 Options:
   --work <dir>   Work directory (default: ./work)
   --db <file>    Database file (default: <work>/sentei.db)
-  --org-dir <dir>  Local org directory for discover (org.json + repos/<name>/)
+  --org <name>     discover: GitHub org or user to list and shallow-clone
+                   (token: GITHUB_TOKEN, GH_TOKEN, or \`gh auth token\`)
+  --org-dir <dir>  discover: local org directory (org.json + repos/<name>/)
+                   (exactly one of --org / --org-dir)
+  --lockfile <file>     discover --org: pin repo head shas; read if it exists
+                        (no API calls), else written after listing
+  --update-lockfile     discover --org: relist and rewrite the lockfile
+  --include <glob>      discover --org: only repos whose name matches (repeatable)
+  --exclude <glob>      discover --org: skip repos whose name matches (repeatable)
+  --include-forks       discover --org: keep forks (skipped by default: they are
+                        usually other people's code and duplicate package names)
+  --clones-dir <dir>    discover --org: where clones live (default: <work>/repos)
+  --config-dir <dir>    discover --org: dir with the org sentei.json
+                        (default: cwd if it has one, else defaults)
   --force        index: re-index repos even when cached for the same headSha
   --no-install   index: do not run npm ci / pnpm / yarn install
   --max-old-space-mb <n>  index: indexer heap limit in MB (default: 8192)
@@ -56,6 +69,14 @@ export async function main(argv: readonly string[]): Promise<number> {
         work: { type: 'string', default: './work' },
         db: { type: 'string' },
         'org-dir': { type: 'string' },
+        org: { type: 'string' },
+        lockfile: { type: 'string' },
+        'update-lockfile': { type: 'boolean', default: false },
+        include: { type: 'string', multiple: true, default: [] },
+        exclude: { type: 'string', multiple: true, default: [] },
+        'include-forks': { type: 'boolean', default: false },
+        'clones-dir': { type: 'string' },
+        'config-dir': { type: 'string' },
         force: { type: 'boolean', default: false },
         install: { type: 'boolean', default: true },
         'max-old-space-mb': { type: 'string', default: '8192' },
@@ -100,6 +121,16 @@ export async function main(argv: readonly string[]): Promise<number> {
   try {
     const ctx: StageContext = { work, dbPath, db, log: (line) => process.stdout.write(`${line}\n`) };
     if (values['org-dir'] !== undefined) ctx.orgDir = values['org-dir'];
+    if (values.org !== undefined) ctx.org = values.org;
+    ctx.github = {
+      updateLockfile: values['update-lockfile'],
+      include: values.include,
+      exclude: values.exclude,
+      includeForks: values['include-forks'],
+      ...(values.lockfile !== undefined ? { lockfile: values.lockfile } : {}),
+      ...(values['clones-dir'] !== undefined ? { clonesDir: values['clones-dir'] } : {}),
+      ...(values['config-dir'] !== undefined ? { configDir: values['config-dir'] } : {}),
+    };
     for (const [name, stage] of selected) {
       await (name === 'index' ? index(ctx, indexOptions) : stage(ctx));
     }
