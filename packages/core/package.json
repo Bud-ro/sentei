@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./analyze": "./src/analyze.ts",
     "./db": "./src/db.ts",
     "./ingest": "./src/ingest.ts",
     "./scip": "./src/scip/read.ts"

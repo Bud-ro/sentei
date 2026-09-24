@@ -176,7 +176,9 @@ CREATE TABLE IF NOT EXISTS findings (
   symbol_id  INTEGER NOT NULL REFERENCES symbols (symbol_id) ON DELETE CASCADE,
   verdict    TEXT NOT NULL CHECK (verdict IN (
                'deletion_candidate', 'deprecation_candidate', 'unexport_candidate',
-               'private_dead', 'needs_review', 'version_skew')),
+               'private_dead', 'needs_review', 'version_skew',
+               -- would have had a verdict, but an opaque consumer (or the package itself) hides refs
+               'blocked')),
   reasons    TEXT NOT NULL DEFAULT '[]'
              CHECK (json_valid(reasons) AND json_type(reasons) = 'array'),
   blocked_by TEXT NOT NULL DEFAULT '[]'

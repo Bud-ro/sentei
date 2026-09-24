@@ -86,7 +86,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBe(3);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -94,7 +94,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 2/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 3/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -438,6 +438,13 @@ describe('findings invariants', () => {
   it('accepts a deletion_candidate when every guard is satisfied', () => {
     addFinding(a, 'deletion_candidate');
     expect(count('SELECT count(*) AS n FROM findings')).toBe(1);
+  });
+
+  it('accepts a blocked verdict (analyze reports blockers instead of a verdict)', () => {
+    run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'index_failed', 'tsc crashed')", app);
+    run(`INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, 'blocked', '["no_refs"]', ?)`,
+      a, JSON.stringify([`${app}:index_failed`]));
+    expect(count("SELECT count(*) AS n FROM findings WHERE verdict = 'blocked'")).toBe(1);
   });
 
   it('rejects an unknown verdict', () => {
