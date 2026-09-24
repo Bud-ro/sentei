@@ -27,10 +27,11 @@
 // The `ignored:` prefix cannot collide with a package id (always `npm:`/`pub:`).
 // No hit → witness_ok row and a deletion_candidate (the schema triggers still guard
 // that insert).
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { matchGlob } from './glob.ts';
+import { listFiles } from './manifests.ts';
 
 /** The part of work/discover.json (DiscoverModel) the witness reads. */
 export interface WitnessDiscoverInput {
@@ -66,7 +67,6 @@ export interface WitnessCounts {
 /** Max witness_mismatch reasons recorded per symbol. */
 const MAX_HITS = 5;
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '.dart_tool', 'build', 'dist', 'vendor', 'third_party']);
 const CODE_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.dart']);
 /** Same globs analyze uses (PLAN.md §6.5), matched against repo-relative paths. */
 const TEST_GLOBS = ['**/*.test.*', '**/*_test.dart', '**/test/**', '**/__tests__/**'];
@@ -140,7 +140,7 @@ interface ConsumerLoc {
   repoDir: string;
   /** Package dir, repo-relative POSIX; '.' for the root. */
   pkgPath: string;
-  /** Other org package dirs in the same repo (repo-relative), skipped during the walk. */
+  /** Other org package dirs in the same repo (repo-relative); those nested under pkgPath are skipped. */
   nestedPaths: Set<string>;
 }
 
@@ -203,8 +203,15 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     (!countTests && TEST_GLOBS.some((g) => matchGlob(g, relFile))) ||
     (!countDocs && DOCS_GLOBS.some((g) => matchGlob(g, relFile)));
 
-  /** Candidate code files of a consumer (repo-relative), or null if its checkout is missing. */
+  /**
+   * Candidate code files of a consumer (repo-relative), or null if its checkout is
+   * missing. The repo's files come from discover's listFiles (git ls-files in a
+   * checkout, so ignored build output is skipped but a real package named `build` is
+   * not), restricted to the consumer's dir minus org packages nested under it.
+   */
+  const repoFileCache = new Map<string, string[]>();
   const fileCache = new Map<string, string[] | null>();
+  const under = (file: string, dir: string): boolean => dir === '.' || file.startsWith(`${dir}/`);
   const consumerFiles = (consumer: string): string[] | null => {
     if (fileCache.has(consumer)) return fileCache.get(consumer)!;
     const loc = locs.get(consumer);
@@ -212,21 +219,13 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     if (loc) {
       const root = loc.pkgPath === '.' ? loc.repoDir : join(loc.repoDir, loc.pkgPath);
       if (existsSync(root) && statSync(root).isDirectory()) {
-        files = [];
-        const walk = (rel: string): void => {
-          const abs = rel === '.' ? loc.repoDir : join(loc.repoDir, rel);
-          for (const e of readdirSync(abs, { withFileTypes: true })) {
-            const childRel = rel === '.' ? e.name : `${rel}/${e.name}`;
-            if (e.isDirectory()) {
-              if (SKIP_DIRS.has(e.name) || loc.nestedPaths.has(childRel)) continue;
-              walk(childRel);
-            } else if (e.isFile() && CODE_EXTS.has(extname(e.name)) && !excluded(childRel)) {
-              files!.push(childRel);
-            }
-          }
-        };
-        walk(loc.pkgPath);
-        files.sort(cmp);
+        let all = repoFileCache.get(loc.repoDir);
+        if (!all) repoFileCache.set(loc.repoDir, (all = listFiles(loc.repoDir)));
+        const nested = [...loc.nestedPaths].filter((q) => q !== loc.pkgPath && q !== '.' && under(q, loc.pkgPath));
+        files = all
+          .filter((f) => under(f, loc.pkgPath) && !nested.some((q) => under(f, q)))
+          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f))
+          .sort(cmp);
       }
     }
     fileCache.set(consumer, files);

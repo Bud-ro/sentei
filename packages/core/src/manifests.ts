@@ -4,7 +4,8 @@
 //
 // All returned paths are POSIX. `path` is the package dir relative to the repo
 // root ('.' for the root); `entryPoints` are relative to the REPO root.
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 
 export type Manager = 'npm' | 'pub';
@@ -34,21 +35,25 @@ export interface ManifestPackage {
 
 export type Warn = (message: string) => void;
 
-/** Directory names never descended into (dependencies, build output, VCS, vendored code). */
-export const SKIP_DIRS: ReadonlySet<string> = new Set([
-  'node_modules', '.dart_tool', 'build', 'dist', '.git', 'vendor', 'third_party',
-]);
+/**
+ * Directory names never descended into, at any depth, in a git checkout or not:
+ * installed dependencies and VCS / tool metadata.
+ */
+export const ALWAYS_SKIP_DIRS: ReadonlySet<string> = new Set(['node_modules', '.git', '.dart_tool']);
 
 /**
- * Default `ignoreManifestDirs` (org sentei.json replaces this list when present).
- * A manifest whose directory path contains one of these names as a segment, at any
- * depth, is not an org package: templates, fixtures, examples, benchmarks and
- * tests are neither published nor consumed through a manifest, and they routinely
- * reuse real package names (which would trip the PLAN §5.1 duplicate-name error).
- *
- * Unlike SKIP_DIRS these dirs are still walked: their files stay in the listing
- * and belong to the enclosing package for indexing; only the manifest is ignored.
+ * Directory names also skipped when the repo is NOT a git checkout (fixtures, plain
+ * directories), where .gitignore is not available to tell build output from source.
+ * `build` and `dist` are kept when the directory itself holds a manifest
+ * (package.json / pubspec.yaml): that is a real package named like a build dir (e.g.
+ * honojs `packages/build`), not build output.
  */
+export const SKIP_DIRS: ReadonlySet<string> = new Set([
+  ...ALWAYS_SKIP_DIRS, 'build', 'dist', 'vendor', 'third_party',
+]);
+const OUTPUT_DIRS: ReadonlySet<string> = new Set(['build', 'dist']);
+const MANIFEST_NAMES = ['package.json', 'pubspec.yaml'];
+
 export const DEFAULT_IGNORE_MANIFEST_DIRS: readonly string[] = Object.freeze([
   'fixtures', '__fixtures__', 'fixture', 'templates', 'template', 'examples', 'example',
   'benchmarks', 'bench', 'playground', 'playgrounds', 'sandbox', '__mocks__', 'test', 'tests', '__tests__',
@@ -71,11 +76,54 @@ export interface ManifestOptions {
 }
 
 /**
- * Every file under `root`, as sorted POSIX paths relative to `root`. Skips
- * SKIP_DIRS by name at any depth. Symlinks are not followed (a symlinked dir
- * could loop or escape the repo).
+ * Every file under `root`, as sorted POSIX paths relative to `root` (sorted per
+ * directory level: 'a/b' before 'a-c').
+ *
+ * - Git checkout (`root/.git` exists): `git ls-files -z --cached --others
+ *   --exclude-standard`, i.e. tracked files plus untracked files that are not
+ *   ignored, so .gitignore decides what is build output. Only ALWAYS_SKIP_DIRS are
+ *   skipped by name; symlinks, submodules and tracked-but-deleted files are dropped.
+ *   If git fails, falls back to the walk below.
+ * - Otherwise: a filesystem walk skipping SKIP_DIRS by name at any depth, except a
+ *   `build` / `dist` dir that contains a manifest. Symlinks are not followed (a
+ *   symlinked dir could loop or escape the repo).
  */
 export function listFiles(root: string): string[] {
+  if (existsSync(join(root, '.git'))) {
+    const files = gitListFiles(root);
+    if (files) return files;
+  }
+  return walkFiles(root);
+}
+
+function gitListFiles(root: string): string[] | null {
+  const git = (args: string[]): string =>
+    execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] });
+  let out: string;
+  try {
+    // `root` must be the work tree's top level: a broken or bare `.git` inside some
+    // other checkout would otherwise make git answer for the enclosing repository.
+    if (git(['rev-parse', '--show-cdup']).trim() !== '') return null;
+    out = git(['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+  } catch {
+    return null;
+  }
+  const seen = new Set<string>();
+  for (const f of out.split('\0')) {
+    if (f === '' || seen.has(f)) continue; // --cached lists each stage of a conflicted file
+    const segs = f.split('/');
+    if (segs.some((seg) => ALWAYS_SKIP_DIRS.has(seg))) continue;
+    try {
+      if (!lstatSync(join(root, f)).isFile()) continue;
+    } catch {
+      continue; // tracked but deleted from the working tree
+    }
+    seen.add(f);
+  }
+  return [...seen].sort(comparePaths);
+}
+
+function walkFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (rel: string): void => {
     const entries = readdirSync(rel === '' ? root : join(root, rel), { withFileTypes: true });
@@ -84,6 +132,7 @@ export function listFiles(root: string): string[] {
       const child = rel === '' ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) {
         if (!SKIP_DIRS.has(e.name)) walk(child);
+        else if (OUTPUT_DIRS.has(e.name) && MANIFEST_NAMES.some((m) => existsSync(join(root, child, m)))) walk(child);
       } else if (e.isFile()) {
         out.push(child);
       }
@@ -91,6 +140,16 @@ export function listFiles(root: string): string[] {
   };
   walk('');
   return out;
+}
+
+/** Path order of the walk: segment by segment, each by code unit. */
+function comparePaths(a: string, b: string): number {
+  const x = a.split('/');
+  const y = b.split('/');
+  for (let i = 0; i < Math.min(x.length, y.length); i += 1) {
+    if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
+  }
+  return x.length - y.length;
 }
 
 /**

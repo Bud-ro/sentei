@@ -86,7 +86,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(3);
+    expect(SCHEMA_VERSION).toBe(4);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -94,7 +94,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 3/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 4/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -409,6 +409,64 @@ describe('package_flags invariants', () => {
     addRepo();
     const lib = addPackage('@acme/lib');
     expect(() => run("INSERT INTO package_flags (package_id, flag) VALUES (?, 'looks_fine')", lib)).toThrow(REJECTED);
+  });
+});
+
+describe('targeted package_flags (target_package_id)', () => {
+  let lib: string;
+  let other: string;
+  let app: string;
+  const blocked = (): unknown[] =>
+    db.prepare('SELECT package_id, blocker_package_id, flag FROM blocked_packages ORDER BY package_id, blocker_package_id').all();
+  const opaque = (): unknown[] => db.prepare('SELECT package_id FROM opaque_packages ORDER BY package_id').all();
+
+  beforeEach(() => {
+    addRepo();
+    lib = addPackage('@acme/lib');
+    other = addPackage('@acme/other');
+    app = addPackage('@acme/app');
+    for (const dep of [lib, other]) {
+      run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, ?, 'npm', ?)",
+        app, dep.slice('npm:'.length), dep);
+    }
+  });
+
+  it('an untargeted flag blocks every dependency and makes the consumer opaque', () => {
+    run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'unindexed_consumer', 'build.py')", app);
+    expect(blocked()).toEqual([
+      { package_id: lib, blocker_package_id: app, flag: 'unindexed_consumer' },
+      { package_id: other, blocker_package_id: app, flag: 'unindexed_consumer' },
+    ]);
+    expect(opaque()).toEqual([{ package_id: app }]);
+  });
+
+  it('a targeted flag blocks only its target and does not make the consumer opaque', () => {
+    run("INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, 'unindexed_consumer', 'x', 'eslint.config.mjs', ?)",
+      app, lib);
+    expect(blocked()).toEqual([{ package_id: lib, blocker_package_id: app, flag: 'unindexed_consumer' }]);
+    expect(opaque()).toEqual([]);
+    const s = addSymbol(lib, 'a');
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s, 1);
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion_candidate blocked by opaque consumer/);
+    const t = addSymbol(other, 't');
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', t, 1);
+    addFinding(t, 'deletion_candidate');
+  });
+
+  it('a targeted flag blocks its target even without a manifest dependency', () => {
+    const tool = addPackage('@acme/tool');
+    run("INSERT INTO package_flags (package_id, flag, reason, target_package_id) VALUES (?, 'unindexed_consumer', 'x', ?)", tool, lib);
+    expect(blocked()).toEqual([{ package_id: lib, blocker_package_id: tool, flag: 'unindexed_consumer' }]);
+  });
+
+  it('rejects an unknown or self target, and cascades when the target goes', () => {
+    expect(() => run("INSERT INTO package_flags (package_id, flag, target_package_id) VALUES (?, 'unindexed_consumer', 'npm:nope')", app))
+      .toThrow(REJECTED);
+    expect(() => run("INSERT INTO package_flags (package_id, flag, target_package_id) VALUES (?, 'unindexed_consumer', ?)", app, app))
+      .toThrow(REJECTED);
+    run("INSERT INTO package_flags (package_id, flag, target_package_id) VALUES (?, 'unindexed_consumer', ?)", app, other);
+    run('DELETE FROM packages WHERE package_id = ?', other);
+    expect(count('SELECT count(*) AS n FROM package_flags')).toBe(0);
   });
 });
 

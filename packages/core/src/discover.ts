@@ -362,7 +362,7 @@ function duplicateNamesMessage(dups: Array<[string, Array<{ loc: string; ignoreE
 
 /**
  * First-file summary of files in unindexed languages owned by `pkg`: files under its
- * dir, minus nested packages' dirs, SKIP_DIRS (already absent from `files`) and
+ * dir, minus nested packages' dirs, skipped dirs (already absent from `files`, see listFiles) and
  * ignored manifest dirs. null if there are none.
  */
 function unindexedConsumerFlag(

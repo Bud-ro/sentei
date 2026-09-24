@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -309,6 +310,36 @@ describe('runWitness', () => {
       'witness_mismatch:npm:@acme/app:pkg/src/2.ts:1',
       'witness_mismatch:npm:@acme/app:pkg/src/3.ts:1',
     ]);
+  });
+
+  it('outside git: scans a build/ dir holding a manifest (a real package), skips build output', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'usedInBuildPkg' }, { name: 'onlyInDist' }],
+      files: {
+        'build/package.json': '{"name":"@acme/vite-build"}',
+        'build/src/x.ts': "import { usedInBuildPkg } from '@acme/lib';\n",
+        'dist/out.js': "import { onlyInDist } from '@acme/lib';\n",
+      },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['usedInBuildPkg']!, ['witness_mismatch:npm:@acme/app:pkg/build/src/x.ts:1']);
+    expectPass(org, org.ids['onlyInDist']!);
+  });
+
+  it('in a git checkout: follows .gitignore instead of skipping build/dist by name', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'usedInBuild' }, { name: 'onlyInIgnored' }],
+      files: {
+        'build/x.ts': "import { usedInBuild } from '@acme/lib';\n", // no manifest, but not ignored
+        'out/y.js': "import { onlyInIgnored } from '@acme/lib';\n",
+      },
+    });
+    const appDir = org.discover.repos[1]!.localPath;
+    write(appDir, '.gitignore', 'out/\n');
+    execFileSync('git', ['init', '-q'], { cwd: appDir, stdio: 'ignore' });
+    witness(org);
+    expectMismatch(org, org.ids['usedInBuild']!, ['witness_mismatch:npm:@acme/app:pkg/build/x.ts:1']);
+    expectPass(org, org.ids['onlyInIgnored']!);
   });
 
   it('fails closed when a consumer checkout is missing', () => {

@@ -36,6 +36,7 @@ DROP VIEW IF EXISTS kept_symbols;
 DROP VIEW IF EXISTS symbol_age_ok;
 DROP VIEW IF EXISTS internal_refs;
 DROP VIEW IF EXISTS test_only_refs;
+DROP VIEW IF EXISTS internal_ref_occurrences;
 DROP VIEW IF EXISTS external_refs;
 DROP VIEW IF EXISTS overlay_refs;
 DROP VIEW IF EXISTS external_ref_occurrences;
@@ -179,33 +180,51 @@ FROM (
 )
 GROUP BY symbol_id, consumer_package_id;
 
--- Symbols with cross-package uses, all of them in (excluded) test files: the report
--- can say "delete the tests too" (reason only_test_refs).
-CREATE VIEW test_only_refs (symbol_id) AS
-SELECT e.symbol_id
-FROM external_ref_occurrences e, analysis_params p
-WHERE e.in_test AND NOT p.count_tests
-EXCEPT
-SELECT symbol_id FROM external_refs;
-
 -- Same-package uses (members count for their owners), excluding self-references: a
 -- use enclosed by the symbol itself or by anything nested in it (a recursive function
 -- used nowhere else has none; a method using its own class, or a sibling member, is
--- not a use of the class).
+-- not a use of the class). Tagged like external_ref_occurrences: the package's own
+-- tests are no more a consumer than another package's tests.
+CREATE VIEW internal_ref_occurrences AS
+SELECT r.symbol_id, r.member_symbol_id, r.package_id, r.file, r.line, r.col,
+       t.file IS NOT NULL AS in_test,
+       d.file IS NOT NULL AS in_docs
+FROM owner_ref_occurrences r
+LEFT JOIN symbol_ancestors a
+  ON a.symbol_id = r.enclosing_symbol_id AND a.ancestor_id = r.symbol_id
+LEFT JOIN test_files t ON t.package_id = r.package_id AND t.file = r.file
+LEFT JOIN doc_files d ON d.package_id = r.package_id AND d.file = r.file
+WHERE r.is_external = 0
+  AND r.enclosing_symbol_id IS NOT r.symbol_id
+  AND a.symbol_id IS NULL;
+
+-- Counted same-package uses, under the same test/docs policy as external_refs (an
+-- export used only by its own package's tests is a deletion with only_test_refs, not
+-- an unexport).
 CREATE VIEW internal_refs (symbol_id, n) AS
 SELECT symbol_id, count(*)
 FROM (
-  SELECT r.symbol_id
-  FROM owner_ref_occurrences r
-  LEFT JOIN symbol_ancestors a
-    ON a.symbol_id = r.enclosing_symbol_id AND a.ancestor_id = r.symbol_id
-  WHERE r.is_external = 0
-    AND r.enclosing_symbol_id IS NOT r.symbol_id
-    AND a.symbol_id IS NULL
+  SELECT i.symbol_id
+  FROM internal_ref_occurrences i, analysis_params p
+  WHERE (NOT i.in_test OR p.count_tests) AND (NOT i.in_docs OR p.count_docs)
   UNION ALL
   SELECT symbol_id FROM overlay_refs WHERE NOT is_external
 )
 GROUP BY symbol_id;
+
+-- Symbols with uses in excluded test files (any package, including their own) and no
+-- counted cross-package use: the report can say "delete the tests too" (reason
+-- only_test_refs). Counted internal uses may coexist (unexport + only_test_refs).
+CREATE VIEW test_only_refs (symbol_id) AS
+SELECT e.symbol_id
+FROM external_ref_occurrences e, analysis_params p
+WHERE e.in_test AND NOT p.count_tests
+UNION
+SELECT i.symbol_id
+FROM internal_ref_occurrences i, analysis_params p
+WHERE i.in_test AND NOT p.count_tests
+EXCEPT
+SELECT symbol_id FROM external_refs;
 
 -- ---------------------------------------------------------------------------
 -- Policy filters
@@ -233,11 +252,16 @@ WHERE k.symbol_name = '*' OR k.symbol_name = s.name;
 --   candidate_reach  seeds each candidate separately, keyed by origin
 -- ---------------------------------------------------------------------------
 
--- Intra-package graph: same-package edges plus owner -> nested declaration.
+-- Intra-package graph: same-package edges, owner -> nested declaration, and nested
+-- declaration -> owner. The last one: using a member requires its owner (`new X()`
+-- names only X#<constructor>()., `o.label` only the property), so a reachable member
+-- makes its owner reachable, and with it every sibling member (fail closed).
 CREATE VIEW reach_edges (from_symbol_id, to_symbol_id) AS
 SELECT from_symbol_id, to_symbol_id FROM edges WHERE from_package_id = to_package_id
 UNION
-SELECT owner_id, symbol_id FROM symbol_owners;
+SELECT owner_id, symbol_id FROM symbol_owners
+UNION
+SELECT symbol_id, owner_id FROM symbol_owners;
 
 -- Exported symbols + the file pseudo-symbols of entry documents.
 CREATE VIEW reach_seeds_before (symbol_id) AS
@@ -259,11 +283,12 @@ SELECT symbol_id FROM reach;
 
 -- Why a package gets no verdict: an opaque manifest consumer (schema view
 -- blocked_packages) or the package itself being opaque (its own index is partial /
--- dynamic, so its internal references are uncertain).
+-- dynamic, so its internal references are uncertain). Only untargeted flags make the
+-- package itself opaque (same rule as the schema view opaque_packages).
 CREATE VIEW verdict_blockers (package_id, blocker_package_id, flag) AS
 SELECT package_id, blocker_package_id, flag FROM blocked_packages
 UNION
-SELECT package_id, package_id, flag FROM package_flags;
+SELECT package_id, package_id, flag FROM package_flags WHERE target_package_id IS NULL;
 
 -- Decision tree, per exported symbol S of package P not kept and with no counted
 -- external reference (those are alive: no row):
@@ -274,8 +299,9 @@ SELECT package_id, package_id, flag FROM package_flags;
 --                                                (the witness stage turns it into deletion_candidate)
 --                       not closed_world      -> deprecation_candidate [no_refs, open_world]
 --                       closed_world, young   -> no row
--- no_refs becomes only_test_refs when the only external uses are excluded test files
--- (and only_test_refs is appended after internal_refs_only in the first branch).
+-- no_refs becomes only_test_refs when the only uses (same-package or cross-package) are
+-- in excluded test files (and only_test_refs is appended after internal_refs_only in the
+-- first branch when there are also excluded test uses).
 -- Any would-be verdict in a package with a verdict_blockers row becomes `blocked`,
 -- keeping the base reasons, with blocked_by = sorted distinct '<blocker>:<flag>'.
 -- The age rule gates only closed-world verdicts, exactly as in the §6.5 tree.
@@ -363,7 +389,8 @@ WITH RECURSIVE reach (origin_id, symbol_id) AS (
 SELECT origin_id, symbol_id FROM reach;
 
 -- Symbols that may be reported private_dead: never exported, never a file symbol,
--- not defined in a test/docs file (not entry points, so everything in them is
+-- never an anonymous-literal member (kind 'anonymous-member', set by ingest: members of
+-- an anonymous object/type literal live and die with whatever contains it), not defined in a test/docs file (not entry points, so everything in them is
 -- "unreachable"), not kept, and in a package we can see into (not opaque, not
 -- blocked) that has at least one reachability seed (no entry and no export means
 -- the entry points are unknown, not that everything is dead).
@@ -372,6 +399,7 @@ SELECT s.symbol_id
 FROM symbols s
 WHERE s.is_exported = 0
   AND s.symbol_id NOT IN (SELECT symbol_id FROM module_symbols)
+  AND s.kind IS NOT 'anonymous-member'
   AND NOT EXISTS (SELECT 1 FROM test_files t WHERE t.package_id = s.package_id AND t.file = s.file)
   AND NOT EXISTS (SELECT 1 FROM doc_files d WHERE d.package_id = s.package_id AND d.file = s.file)
   AND s.symbol_id NOT IN (SELECT symbol_id FROM kept_symbols)

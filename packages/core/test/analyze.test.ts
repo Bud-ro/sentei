@@ -381,6 +381,75 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([f('unused', 'blocked', ['no_refs'], ['npm:@acme/lib:opaque_consumer'])]);
   });
 
+  it('a targeted consumer flag blocks only its target, and leaves the consumer transparent', () => {
+    const other = pkg('@acme/other');
+    dep(app, other);
+    const otherIndex = doc(other, 'src/index.ts', true);
+    sym(other, 'src/index.ts', 'otherUnused', { exported: true, enclosing: otherIndex });
+    sym(lib, 'src/fns.ts', 'libUnused', { exported: true });
+    sym(app, 'src/main.ts', 'appUnused', { exported: true });
+    sym(app, 'src/main.ts', 'appIsland'); // private_dead: app itself is not opaque
+    run("INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, 'unindexed_consumer', 'x', 'eslint.config.mjs', ?)",
+      app, lib);
+    analyze();
+    expect(findings()).toEqual([
+      f('appIsland', 'private_dead', ['already_unreachable']),
+      f('appUnused', 'needs_review', DELETE),
+      f('libUnused', 'blocked', ['no_refs'], ['npm:@acme/app:unindexed_consumer']),
+      f('otherUnused', 'needs_review', DELETE),
+    ]);
+  });
+
+  it('keeps a private class alive when only its constructor is used (member -> owner reachability)', () => {
+    aliveExport('used');
+    const cls = sym(lib, 'src/fns.ts', 'PrivateClass');
+    const ctor = sym(lib, 'src/fns.ts', '<constructor>', { parent: cls });
+    sym(lib, 'src/fns.ts', 'otherMethod', { parent: cls });
+    use(libIndex, ctor, 'src/index.ts'); // `new PrivateClass()` names only the constructor
+    const deadCls = sym(lib, 'src/fns.ts', 'DeadClass');
+    sym(lib, 'src/fns.ts', 'deadCtor', { parent: deadCls });
+    analyze();
+    expect(findings()).toEqual([f('DeadClass', 'private_dead', ['already_unreachable'])]);
+    expect(db.prepare('SELECT is_entry_reachable AS r FROM symbols WHERE symbol_id = ?').get(cls)).toEqual({ r: 1 });
+  });
+
+  it('never reports anonymous-literal members (kind anonymous-member) as private_dead', () => {
+    aliveExport('used');
+    const prop = insertSymbol(lib, 'src/fns.ts', 'npm0', 'anonymous-member');
+    occ(prop, lib, 'src/fns.ts', libFns, { role: 1 });
+    sym(lib, 'src/fns.ts', 'plainDead');
+    analyze();
+    expect(findings()).toEqual([f('plainDead', 'private_dead', ['already_unreachable'])]);
+  });
+
+  it('does not count uses from the package\'s own test / docs files as internal refs', () => {
+    const libTest = doc(lib, 'src/fns.test.ts');
+    const libDocs = doc(lib, 'docs/guide.ts');
+    const testOnly = sym(lib, 'src/fns.ts', 'testOnly', { exported: true });
+    use(libTest, testOnly, 'src/fns.test.ts');
+    const docsOnly = sym(lib, 'src/fns.ts', 'docsOnly', { exported: true });
+    use(libDocs, docsOnly, 'docs/guide.ts');
+    const both = sym(lib, 'src/fns.ts', 'both', { exported: true });
+    use(libTest, both, 'src/fns.test.ts');
+    const user = aliveExport('user');
+    use(user, both, 'src/fns.ts');
+    analyze();
+    expect(findings()).toEqual([
+      f('both', 'unexport_candidate', ['internal_refs_only', 'only_test_refs']),
+      f('docsOnly', 'needs_review', DELETE),
+      f('testOnly', 'needs_review', ['only_test_refs', 'witness_pending']),
+    ]);
+
+    setPolicy('countTestsAsConsumers', true);
+    setPolicy('countDocsAsConsumers', true);
+    analyze();
+    expect(findings()).toEqual([
+      f('both', 'unexport_candidate', ['internal_refs_only']),
+      f('docsOnly', 'unexport_candidate', ['internal_refs_only']),
+      f('testOnly', 'unexport_candidate', ['internal_refs_only']),
+    ]);
+  });
+
   it('reports a private circular island as already_unreachable', () => {
     aliveExport('used');
     const a = sym(lib, 'src/fns.ts', 'islandA');

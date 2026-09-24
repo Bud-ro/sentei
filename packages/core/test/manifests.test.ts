@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -28,11 +29,49 @@ afterEach(() => {
 });
 
 describe('listFiles', () => {
-  it('skips dependency, build and VCS dirs', () => {
+  it('outside git: skips dependency, build and VCS dirs (a bogus .git dir does not make it a checkout)', () => {
     for (const d of ['node_modules', '.dart_tool', 'build', 'dist', '.git', 'vendor', 'third_party']) write(`${d}/x/package.json`, '{}');
     write('pkgs/a/node_modules/b/package.json', '{}');
     write('pkgs/a/src/x.ts');
     expect(listFiles(root)).toEqual(['pkgs/a/src/x.ts']);
+  });
+
+  it('outside git: keeps a build/dist dir that holds a manifest (a package), skips build output', () => {
+    write('dist/index.js');
+    write('pkgs/a/dist/y.js');
+    write('pkgs/a/build/z.js');
+    write('build/package.json', '{}');
+    write('build/src/x.ts');
+    write('build/dist/out.js'); // the package's own output is still skipped
+    write('pkgs/dist/pubspec.yaml', 'name: d');
+    write('pkgs/dist/lib/d.dart');
+    write('a-b.ts');
+    write('a/c.ts');
+    expect(listFiles(root)).toEqual(['a/c.ts', 'a-b.ts', 'build/package.json', 'build/src/x.ts', 'pkgs/dist/lib/d.dart', 'pkgs/dist/pubspec.yaml']);
+  });
+
+  it('in a git checkout: tracked + untracked-not-ignored files, .gitignore decides build output', () => {
+    const git = (...args: string[]): void => {
+      execFileSync('git', ['-c', 'init.defaultBranch=main', ...args], { cwd: root, stdio: 'ignore' });
+    };
+    git('init', '-q');
+    write('.gitignore', 'dist/\n*.log\n');
+    write('dist/index.js'); // ignored output
+    write('packages/build/package.json', '{"name":"@acme/vite-build"}');
+    write('packages/build/src/index.ts');
+    write('packages/build/dist/out.js'); // ignored by the dist/ pattern at any depth
+    write('vendor/lib/x.ts'); // not a name skip in a checkout
+    write('debug.log');
+    write('gone.ts');
+    write('a-b.ts');
+    write('a/c.ts');
+    git('add', '.gitignore', 'packages', 'gone.ts', 'a');
+    rmSync(join(root, 'gone.ts')); // tracked, deleted from the work tree
+    write('untracked.ts'); // untracked, not ignored
+    write('node_modules/m/index.js');
+    expect(listFiles(root)).toEqual([
+      '.gitignore', 'a/c.ts', 'a-b.ts', 'packages/build/package.json', 'packages/build/src/index.ts', 'untracked.ts', 'vendor/lib/x.ts',
+    ]);
   });
 });
 

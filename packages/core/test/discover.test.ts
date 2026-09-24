@@ -79,7 +79,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     ]);
     expect(all('SELECT * FROM keep_rules')).toEqual([{ package_id: 'npm:@acme/widgets', symbol_name: 'keptFn' }]);
     expect(all('SELECT * FROM package_flags')).toEqual([
-      { package_id: 'npm:@acme/tool-py', flag: 'unindexed_consumer', reason: '1 .py file(s), e.g. scripts/build.py', file: 'scripts/build.py' },
+      { package_id: 'npm:@acme/tool-py', flag: 'unindexed_consumer', reason: '1 .py file(s), e.g. scripts/build.py', file: 'scripts/build.py', target_package_id: null },
     ]);
     expect(all('SELECT * FROM blocked_packages ORDER BY package_id')).toEqual([
       { package_id: 'npm:@acme/y', blocker_package_id: 'npm:@acme/tool-py', flag: 'unindexed_consumer' },
@@ -230,7 +230,7 @@ describe('discoverLocal on a synthetic org', () => {
       const root = m.repos[1]!.packages.find((p) => p.packageId === 'npm:root')!;
       expect(root.flags).toEqual([{ flag: 'unindexed_consumer', reason: '2 .py, 1 .rb file(s), e.g. scripts/Tool.RB', file: 'scripts/Tool.RB' }]);
       expect(flags(m)).toEqual([
-        { package_id: 'npm:root', flag: 'unindexed_consumer', reason: '2 .py, 1 .rb file(s), e.g. scripts/Tool.RB', file: 'scripts/Tool.RB' },
+        { package_id: 'npm:root', flag: 'unindexed_consumer', reason: '2 .py, 1 .rb file(s), e.g. scripts/Tool.RB', file: 'scripts/Tool.RB', target_package_id: null },
       ]);
       expect(all('SELECT package_id, blocker_package_id, flag FROM blocked_packages')).toEqual([
         { package_id: 'npm:@acme/lib', blocker_package_id: 'npm:root', flag: 'unindexed_consumer' },

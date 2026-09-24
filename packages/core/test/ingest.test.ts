@@ -316,6 +316,53 @@ describe('ingestOrg (synthetic SCIP)', () => {
     ]);
   });
 
+  it('attributes undefined anonymous-literal members to the nearest defined ancestor; other missing members stay unresolved', () => {
+    // The typeLiteral / property counters depend on the program that indexed the file, so
+    // the consumer's `Foo#typeLiteral9:foo.` never matches the library's name.
+    writeScip('acme/mono', 'app.scip', [{
+      path: 'src/main.ts',
+      occurrences: [
+        { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 9, 1] },
+        { range: [3, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#typeLiteral9:foo.` },
+        { range: [4, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#bar().typeLiteral1:x.typeLiteral2:y.` },
+        { range: [5, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#gone().` },
+        { range: [6, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#gone.typeLiteral1:x.` }, // gone. is real skew
+        { range: [7, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#\`<constructor>\`().typeLiteral0:opt.` },
+      ],
+    }]);
+    run();
+    const foo = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#`);
+    const bar = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#bar().`);
+    expect(db.prepare(`SELECT symbol_id, line FROM occurrences WHERE package_id = 'npm:@acme/app' AND (role & 1) = 0 ORDER BY line`).all())
+      .toEqual([{ symbol_id: foo, line: 3 }, { symbol_id: bar, line: 4 }, { symbol_id: foo, line: 7 }]);
+    expect(db.prepare('SELECT symbol_str FROM unresolved_refs ORDER BY line').all()).toEqual([
+      { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Foo#gone().' },
+      { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Foo#gone.typeLiteral1:x.' },
+    ]);
+  });
+
+  it("marks scip-typescript's counter-suffixed anonymous literal members as kind anonymous-member", () => {
+    writeScip('acme/mono', 'lib.scip', [{
+      path: 'src/a.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [1, 6, 9], symbol: `${LIB}src/\`a.ts\`/pms.`, roles: 1, enclosing: [1, 0, 1, 20] },
+        { range: [2, 2, 5], symbol: `${LIB}src/\`a.ts\`/npm0:`, roles: 1 }, // initializer not covered by pms's range
+        { range: [3, 2, 5], symbol: `${LIB}src/\`a.ts\`/Props#typeLiteral3:__html.`, roles: 1 },
+        { range: [4, 2, 5], symbol: `${LIB}src/\`a.ts\`/Props#`, roles: 1 },
+      ],
+    }]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    run();
+    expect(db.prepare("SELECT name, kind FROM symbols WHERE package_id = 'npm:@acme/lib' ORDER BY name").all()).toEqual([
+      { name: 'Props', kind: '' },
+      { name: '__html', kind: 'anonymous-member' },
+      { name: 'npm0', kind: 'anonymous-member' },
+      { name: 'pms', kind: '' },
+      { name: 'src/a.ts', kind: '' },
+    ]);
+  });
+
   it('resolves parents, adds owner -> member edges, and never makes a file a parent', () => {
     run();
     const foo = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#`);
@@ -524,6 +571,116 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(tableCounts(db)).toEqual(before);
     db.prepare("DELETE FROM packages WHERE package_id = 'npm:@acme/app'").run();
     expect(() => run()).toThrow(/not in the database; run discover first/);
+  });
+
+  it('keeps the owning package\'s index for a nested package file and recognises its package-relative module symbol', () => {
+    // The root index (run at '.') also contains apps/app/src/main.ts; scip-typescript names
+    // its symbols relative to the nearest package.json: `src/main.ts`, not the relativePath.
+    const APP_MAIN = `${APP}src/\`main.ts\`/`;
+    const rootCopy: DocSpec = {
+      path: 'apps/app/src/main.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: APP_MAIN, roles: 1 },
+        { range: [1, 9, 14], symbol: `${APP}src/\`main.ts\`/stale().`, roles: 1, enclosing: [1, 0, 1, 20] },
+      ],
+    };
+    const ownCopy: DocSpec = {
+      path: 'src/main.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: APP_MAIN, roles: 1 },
+        { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 4, 1] },
+      ],
+    };
+    const libDoc: DocSpec = { path: 'src/a.ts', occurrences: [{ range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 }] };
+    writeScip('acme/mono', 'lib.scip', [libDoc, rootCopy]);
+    writeScip('acme/mono', 'app.scip', [ownCopy]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    const appDocs = () => db.prepare(`SELECT d.file, d.is_entry, s.symbol_str FROM documents d JOIN symbols s ON s.symbol_id = d.module_symbol_id
+      WHERE d.package_id = 'npm:@acme/app'`).all();
+    const appSymbols = () => (db.prepare("SELECT name FROM symbols WHERE package_id = 'npm:@acme/app' ORDER BY name").all() as Array<{ name: string }>).map((r) => r.name);
+    const expected = [{ file: 'apps/app/src/main.ts', is_entry: 1, symbol_str: 'scip-typescript npm @acme/app . src/`main.ts`/' }];
+
+    // Both indexes: the owner's own index wins although the root index comes first.
+    let c = run();
+    expect(appDocs()).toEqual(expected);
+    expect(appSymbols()).toEqual(['apps/app/src/main.ts', 'main']);
+    expect(c.warnings).toBe(0);
+
+    // Only the root index has it (the app's own index failed): still one module symbol,
+    // the SCIP one, marked as the entry; no synthetic file symbol, no orphan.
+    indexJson('acme/mono', [
+      { packageId: 'npm:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
+      { packageId: 'npm:@acme/app', status: 'failed', diagnostics: ['error: boom'] },
+    ]);
+    c = run();
+    expect(appDocs()).toEqual(expected);
+    expect(appSymbols()).toEqual(['apps/app/src/main.ts', 'stale']);
+    expect(count(db, "SELECT count(*) AS n FROM symbols WHERE symbol_str LIKE 'sentei file %'")).toBe(0);
+    expect(c.warnings).toBe(0);
+
+    // The same package's index containing the file twice with different contents warns.
+    writeScip('acme/mono', 'app.scip', [ownCopy, { ...ownCopy, occurrences: ownCopy.occurrences.slice(0, 1) }, ownCopy]);
+    indexJson('acme/mono', [
+      { packageId: 'npm:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
+      { packageId: 'npm:@acme/app', scip: 'app.scip', exports: 'app.exports.json' },
+    ]);
+    c = run();
+    expect(appSymbols()).toEqual(['apps/app/src/main.ts', 'main']);
+    expect(c.warnings).toBe(1);
+    expect(logs.at(-2)).toMatch(/apps\/app\/src\/main\.ts \(npm:@acme\/app\) appears 3 times, with different contents, in the index of npm:@acme\/app/);
+  });
+
+  it('prefers an error, then a warn diagnostic as the flag reason', () => {
+    indexJson('acme/mono', [
+      { packageId: 'npm:@acme/lib', status: 'partial', scip: 'lib.scip', exports: 'lib.exports.json',
+        diagnostics: ['info: install skipped', 'warn: entry point not in program\nmore', 'warn: second'] },
+      { packageId: 'npm:@acme/app', status: 'failed', diagnostics: ['info: only info'] },
+    ], 'partial');
+    run();
+    expect(db.prepare('SELECT package_id, reason FROM package_flags ORDER BY package_id').all()).toEqual([
+      { package_id: 'npm:@acme/app', reason: 'info: only info' },
+      { package_id: 'npm:@acme/lib', reason: 'warn: entry point not in program' },
+    ]);
+  });
+
+  it('turns sidecar unindexedImports into targeted unindexed_consumer flags, keeping discover\'s untargeted ones', () => {
+    db.prepare("INSERT INTO package_flags (package_id, flag, reason) VALUES ('npm:@acme/app', 'unindexed_consumer', 'build.py')").run();
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:@acme/app'),
+      unindexedImports: [
+        { file: 'apps/app/eslint.config.mjs', module: '@acme/lib/eslint', targetPackage: '@acme/lib' },
+        { file: 'apps/app/eslint.config.mjs', module: 'left-pad', targetPackage: 'left-pad' },
+        { file: 'apps/app/vite.config.mjs', module: '@acme/app', targetPackage: '@acme/app' },
+      ],
+    });
+    const c = run();
+    const rows = () => db.prepare('SELECT package_id, flag, reason, file, target_package_id FROM package_flags ORDER BY target_package_id').all();
+    const expected = [
+      { package_id: 'npm:@acme/app', flag: 'unindexed_consumer', reason: 'build.py', file: null, target_package_id: null },
+      { package_id: 'npm:@acme/app', flag: 'unindexed_consumer', reason: 'unindexed file imports @acme/lib/eslint',
+        file: 'apps/app/eslint.config.mjs', target_package_id: 'npm:@acme/lib' },
+    ];
+    expect(rows()).toEqual(expected);
+    expect(c.warnings).toBe(2);
+    run();
+    expect(rows()).toEqual(expected);
+  });
+
+  it('adds module -> symbol edges for sidecar entrySymbols without exporting them, warning on unmatched ones', () => {
+    writeJson('acme/mono', 'lib.exports.json', {
+      ...sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
+      entrySymbols: [
+        { file: 'src/a.ts', line: 2, col: 2, name: 'bar' },
+        { file: 'src/a.ts', line: 40, col: 0, name: 'nope' },
+      ],
+    });
+    const c = run();
+    const mod = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/`);
+    const bar = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#bar().`);
+    expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", mod, bar)).toBe(1);
+    expect(db.prepare('SELECT is_exported FROM symbols WHERE symbol_id = ?').get(bar)).toEqual({ is_exported: 0 });
+    expect(c.unmatchedEntrySymbols).toBe(1);
+    expect(logs.some((l) => /warning: 1 sidecar entry symbol\(s\) match no SCIP definition: npm:@acme\/lib nope at src\/a\.ts:41:1/.test(l))).toBe(true);
   });
 
   it('leaves discover-owned rows and non-ingest flags alone, and is idempotent', () => {

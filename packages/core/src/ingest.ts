@@ -94,6 +94,20 @@ export interface ExportsSidecar {
     file: string; line: number; col: number; member: string;
     targetPackage: string; targetFile: string; targetLine: number; targetCol: number;
   }>;
+  /**
+   * JS/TS files of the package outside every tsconfig program (so not indexed) that
+   * import an org package, e.g. `eslint.config.mjs` importing `@acme/eslint-config`.
+   * `file` is repo-relative; `targetPackage` the bare npm name imported. Each becomes a
+   * targeted `unindexed_consumer` flag: it blocks verdicts of that package only. Optional.
+   */
+  unindexedImports?: Array<{ file: string; module: string; targetPackage: string }>;
+  /**
+   * Declarations the runtime invokes without any code reference (Dart `main()` in a
+   * `bin/` entry), at their name identifier (0-based, repo-relative file). Each gets an
+   * edge from its document's module symbol, so it is reachable from an entry document
+   * without being exported. Optional.
+   */
+  entrySymbols?: Array<{ file: string; line: number; col: number; name: string }>;
 }
 
 export interface IngestOptions {
@@ -117,11 +131,19 @@ export interface IngestCounts {
   namespaceMemberRefs: number;
   /** namespaceMemberRefs whose target matched no definition (warned). */
   unmatchedNamespaceMemberRefs: number;
+  /** Sidecar entrySymbols that matched no definition (warned). */
+  unmatchedEntrySymbols: number;
   warnings: number;
 }
 
-/** package_flags that ingest owns (and so deletes on every run). */
+/**
+ * package_flags that ingest owns (and so deletes on every run). `unindexed_consumer`
+ * is shared with discover: discover writes untargeted rows (files in languages we have
+ * no indexer for), ingest writes targeted rows (sidecar unindexedImports). Ingest
+ * deletes only the targeted ones, so discover's rows survive every ingest.
+ */
 const INGEST_FLAGS = ['opaque_consumer', 'index_failed', 'dynamic_access', 'namespace_dynamic'] as const;
+type IngestFlag = (typeof INGEST_FLAGS)[number] | 'unindexed_consumer';
 const SIDECAR_FLAGS: ReadonlySet<string> = new Set(['namespace_dynamic', 'dynamic_access']);
 
 /** Bare package name of a module specifier: `@scope/x/deep` -> `@scope/x`, `x/deep` -> `x`. */
@@ -148,6 +170,8 @@ interface PkgInfo {
 interface DocWork {
   repo: string;
   packageId: string;
+  /** The owning package's dir ('' for the repo root). */
+  ownerPath: string;
   /** Repo-relative POSIX. */
   file: string;
   doc: Document;
@@ -200,6 +224,40 @@ function startsAfter(a: Span, b: Span): boolean {
 
 type ParsedGlobal = { scheme: string; manager: string; name: string; descriptors: Descriptor[] };
 
+/**
+ * Whether a module symbol's descriptor path names document `w`. scip-typescript
+ * computes the path relative to the nearest package.json, which for a file of a
+ * nested workspace package seen through the root index is the path relative to the
+ * owning package dir, not the index's `relativePath`. Also accepted: the exact
+ * repo-relative path, and any path suffix at a segment boundary (a file under an
+ * ignored nested manifest, e.g. examples/x/package.json, is named relative to that
+ * manifest). Only definitions in `w` whose descriptors are all namespaces get here,
+ * so a suffix match cannot pick up a TS namespace declaration (those follow the file
+ * descriptors).
+ */
+function isModulePath(descPath: string, w: DocWork): boolean {
+  if (descPath === '') return false;
+  const ownerRel = w.ownerPath === '' ? w.file : w.file.slice(w.ownerPath.length + 1);
+  return descPath === ownerRel || descPath === w.file || w.file.endsWith(`/${descPath}`);
+}
+
+/**
+ * scip-typescript naming convention: members of anonymous object and type literals get
+ * a counter-suffixed meta descriptor, `<property name><N>:` for an object-literal
+ * property (always directly under the file: `src/\`a.ts\`/npm0:`) and
+ * `typeLiteral<N>:` for a type literal (`Props#style.typeLiteral3:__html.`). N is a
+ * per-file counter of the program that indexed the file, so it differs between
+ * programs, and these symbols are never independent declarations.
+ */
+function isAnonymousDescriptor(d: Descriptor): boolean {
+  return d.suffix === 'meta' && /\d$/.test(d.name);
+}
+
+/** The symbol is (a member of) an anonymous literal: some descriptor is counter-suffixed. */
+function isAnonymousMember(ds: readonly Descriptor[]): boolean {
+  return ds.some(isAnonymousDescriptor);
+}
+
 // ---------------------------------------------------------------------------
 // ingestOrg
 // ---------------------------------------------------------------------------
@@ -239,7 +297,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
 
   const counts: IngestCounts = {
     documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0,
-    namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, warnings: 0,
+    namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, unmatchedEntrySymbols: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -253,10 +311,11 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     db.exec('DELETE FROM unresolved_refs');
     db.exec('DELETE FROM documents');
     db.exec('DELETE FROM symbols');
-    db.exec(`DELETE FROM package_flags WHERE flag IN (${INGEST_FLAGS.map((f) => `'${f}'`).join(', ')})`);
+    db.exec(`DELETE FROM package_flags WHERE flag IN (${INGEST_FLAGS.map((f) => `'${f}'`).join(', ')})
+      OR (flag = 'unindexed_consumer' AND target_package_id IS NOT NULL)`);
 
     const st = {
-      flag: db.prepare('INSERT INTO package_flags (package_id, flag, reason, file) VALUES (?, ?, ?, ?)'),
+      flag: db.prepare('INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, ?, ?, ?, ?)'),
       repoStatus: db.prepare('UPDATE repos SET index_status = ?, indexed_at = ? WHERE repo = ?'),
       symbol: db.prepare('INSERT INTO symbols (symbol_str, package_id, file, line, col, kind, name) VALUES (?, ?, ?, ?, ?, ?, ?)'),
       parent: db.prepare('UPDATE symbols SET parent_symbol_id = ? WHERE symbol_id = ?'),
@@ -270,14 +329,18 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         VALUES (?, ?, ?, ?, ?, ?)`),
       exported: db.prepare('UPDATE symbols SET is_exported = 1 WHERE symbol_id = ?'),
     };
-    const addFlag = (packageId: string, flag: (typeof INGEST_FLAGS)[number], reason: string, file: string | null): void => {
-      st.flag.run(packageId, flag, reason, file);
+    const addFlag = (packageId: string, flag: IngestFlag, reason: string, file: string | null, target: string | null = null): void => {
+      st.flag.run(packageId, flag, reason, file, target);
       counts.flags += 1;
     };
 
     // ---- Load index.json / sidecars, map documents to packages ------------
-    const docs: DocWork[] = [];
-    const seenDocs = new Set<string>();
+    /**
+     * Every (owner package, file) seen, with each index that contains it, in load order.
+     * A root-package index of a workspace monorepo also contains the nested packages'
+     * files; the owner's own index is preferred (see pickDocs below).
+     */
+    const docCandidates = new Map<string, Array<{ w: DocWork; indexPackageId: string }>>();
     /** `${repo}\0${file}\0${line}\0${col}` of export-clause identifiers (sidecar sites). */
     const exportSites = new Set<string>();
     const sidecars: Array<{ packageId: string; repo: string; data: ExportsSidecar }> = [];
@@ -307,8 +370,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         const pkg = pkgs.get(ip.packageId);
         if (!pkg || pkg.repo !== r.repo) throw new Error(`sentei: ${indexFile}: unknown package ${ip.packageId} for repo ${r.repo}`);
         // Reason: the first `error:` diagnostic if any (diagnostics are prefixed
-        // info:/warn:/error:), else the first diagnostic; first line only.
-        const diag = ip.diagnostics.find((d) => d.startsWith('error:')) ?? ip.diagnostics[0];
+        // info:/warn:/error:), else the first `warn:`, else the first diagnostic; first
+        // line only. (An `info: install skipped` line is never the reason if anything
+        // worse was reported.)
+        const diag = ip.diagnostics.find((d) => d.startsWith('error:'))
+          ?? ip.diagnostics.find((d) => d.startsWith('warn:'))
+          ?? ip.diagnostics[0];
         const firstDiag = (diag ?? '').split('\n')[0] || null;
         if (ip.status === 'partial') addFlag(pkg.packageId, 'opaque_consumer', firstDiag ?? 'index partial', null);
         if (ip.status === 'failed') {
@@ -342,14 +409,46 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           const owner = repoPkgs.find((p) => p.path === '' || file === p.path || file.startsWith(`${p.path}/`));
           if (!owner) continue; // not under any org package of this repo
           const key = `${owner.packageId}\0${file}`;
-          if (seenDocs.has(key)) {
-            warn(`${file} (${owner.packageId}) appears in more than one index; first occurrence kept`);
-            continue;
-          }
-          seenDocs.add(key);
-          docs.push({ repo: r.repo, packageId: owner.packageId, file, doc, moduleSymbolId: 0, spans: [] });
+          let list = docCandidates.get(key);
+          if (!list) docCandidates.set(key, (list = []));
+          list.push({
+            w: { repo: r.repo, packageId: owner.packageId, ownerPath: owner.path, file, doc, moduleSymbolId: 0, spans: [] },
+            indexPackageId: ip.packageId,
+          });
         }
       }
+    }
+
+    // One document per (owner, file). Preference: the owning package's own index (its
+    // symbols and module symbol are computed relative to that package, like every
+    // other index's, but only the owner's index is guaranteed to cover the file with
+    // the owner's tsconfig); otherwise the index of the nearest enclosing package (the
+    // longest package path, in practice the root index of a workspace); ties keep the
+    // first in load order (discover repo order, index.json package order). A warning
+    // only when one package's index contains the same file twice.
+    const docs: DocWork[] = [];
+    const pathOf = (packageId: string): number => pkgs.get(packageId)!.path.length;
+    for (const list of docCandidates.values()) {
+      const owner = list[0]!.w.packageId;
+      const own = list.filter((c) => c.indexPackageId === owner);
+      let chosen = own[0];
+      if (!chosen) {
+        chosen = list[0]!;
+        for (const c of list) if (pathOf(c.indexPackageId) > pathOf(chosen.indexPackageId)) chosen = c;
+      }
+      const same = list.filter((c) => c.indexPackageId === chosen!.indexPackageId);
+      if (same.length > 1) {
+        // scip-typescript run over several tsconfig projects emits a shared file once per
+        // project; identical copies are harmless, differing ones mean lost information.
+        const sig = (d: Document): string => d.occurrences.map((o) => `${o.symbol}@${o.range.join(',')}/${o.symbolRoles}`).join('\n');
+        const first = sig(chosen.w.doc);
+        const differing = same.filter((c) => sig(c.w.doc) !== first).length;
+        if (differing > 0) {
+          warn(`${chosen.w.file} (${owner}) appears ${same.length} times, with different contents, in the index of `
+            + `${chosen.indexPackageId}; first occurrence kept`);
+        }
+      }
+      docs.push(chosen.w);
     }
 
     // ---- Pass 1: definitions ---------------------------------------------
@@ -411,8 +510,10 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         let row = symbols.get(norm);
         if (!row) {
           const isModule = p.descriptors.every((d) => d.suffix === 'namespace')
-            && p.descriptors.map((d) => d.name).join('/') === posix.normalize(w.doc.relativePath.replaceAll('\\', '/'));
-          const kind = KIND_NAMES.get(symbolKinds(w).get(o.symbol) ?? 0) ?? '';
+            && isModulePath(p.descriptors.map((d) => d.name).join('/'), w);
+          const kind = isAnonymousMember(p.descriptors)
+            ? 'anonymous-member'
+            : KIND_NAMES.get(symbolKinds(w).get(o.symbol) ?? 0) ?? '';
           const id = defineSymbol(w, norm, p, start.line, start.col, kind, isModule);
           row = symbols.get(norm)!;
           if (isModule && w.moduleSymbolId === 0) w.moduleSymbolId = id;
@@ -479,17 +580,36 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     };
 
     /**
-     * A reference to an undefined `<constructor>` method whose owner IS defined is a
-     * use of that owner (scip-dart: `Shown()` names `Shown#\`<constructor>\`().` even
-     * when the class declares no constructor). Only exactly `<constructor>`: any other
-     * missing member is real version skew and stays an unresolved_refs row.
+     * A reference to an undefined symbol is attributed to its nearest DEFINED descriptor
+     * ancestor when the missing part is one no index can be expected to define:
+     *   - an implicit constructor: `Owner#<constructor>().` (scip-dart names `Shown()` so
+     *     even when the class declares no constructor);
+     *   - anything inside an anonymous literal (isAnonymousDescriptor): the counter in
+     *     `typeLiteral3:` / `npm0:` depends on the program that indexed the file, so a
+     *     consumer's `Props.typeLiteral3:__html.` never matches the library's
+     *     `Props.typeLiteral5:__html.`.
+     * Precisely: with the ancestor keeping descriptors [0, k), the first dropped
+     * descriptor ds[k] must be anonymous, or be `<constructor>` followed by nothing or
+     * by an anonymous descriptor. Everything below an anonymous descriptor goes with
+     * it. Any other missing member (`Foo#gone().`, `Props.gone.typeLiteral1:x.`) is
+     * real version skew and stays an unresolved_refs row.
      */
-    const implicitConstructorOwner = (norm: string, p: ParsedGlobal, roles: number): SymRow | undefined => {
+    const undefinedRefOwner = (norm: string, p: ParsedGlobal, roles: number): SymRow | undefined => {
       if ((roles & DEFINITION) !== 0) return undefined;
-      const last = p.descriptors.at(-1)!;
-      if (p.descriptors.length < 2 || last.suffix !== 'method' || last.name !== '<constructor>') return undefined;
-      if (!norm.endsWith(last.text)) return undefined;
-      return symbols.get(norm.slice(0, norm.length - last.text.length));
+      const ds = p.descriptors;
+      const suffix = ds.map((d) => d.text).join('');
+      if (!norm.endsWith(suffix)) return undefined;
+      const head = norm.slice(0, norm.length - suffix.length);
+      const isCtor = (d: Descriptor | undefined): boolean => d?.suffix === 'method' && d.name === '<constructor>';
+      for (let k = ds.length - 1; k >= 1; k -= 1) {
+        const row = symbols.get(head + ds.slice(0, k).map((d) => d.text).join(''));
+        if (!row) continue;
+        const first = ds[k]!;
+        const next = ds[k + 1];
+        const ok = isAnonymousDescriptor(first) || (isCtor(first) && (next === undefined || isAnonymousDescriptor(next)));
+        return ok ? row : undefined;
+      }
+      return undefined;
     };
 
     for (const w of docs) {
@@ -499,7 +619,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         const start = occurrenceStart(o);
         if (!start) continue;
         const norm = normalizeSymbolVersion(o.symbol);
-        const row = symbols.get(norm) ?? implicitConstructorOwner(norm, p, o.symbolRoles);
+        const row = symbols.get(norm) ?? undefinedRefOwner(norm, p, o.symbolRoles);
         if (!row) {
           const target = symbolPackage(p);
           if (target !== undefined && target !== w.packageId) {
@@ -600,6 +720,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     };
 
     const unmatched: string[] = [];
+    const unmatchedEntry: string[] = [];
     const exportedIds = new Set<number>();
     const docByFile = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
     for (const { packageId, repo, data } of sidecars) {
@@ -619,6 +740,15 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           st.exported.run(id);
           exportedIds.add(id);
         }
+      }
+      for (const e of data.entrySymbols ?? []) {
+        const id = defPositions.get(`${repo}\0${e.file}\0${e.line}\0${e.col}`);
+        const w = docByFile.get(`${repo}\0${e.file}`);
+        if (id === undefined || !w) {
+          unmatchedEntry.push(`${packageId} ${e.name} at ${e.file}:${e.line + 1}:${e.col + 1}`);
+          continue;
+        }
+        edgeRun(st.edge, byId.get(w.moduleSymbolId)!, byId.get(id)!, 'scip');
       }
       for (const u of data.unresolved) {
         const reason = typeof u === 'string' ? u : (u.reason ?? JSON.stringify(u));
@@ -640,10 +770,25 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         st.unresolved.run(packageId, target, u.name, u.file, u.line ?? null, u.col ?? null);
         counts.unresolved += 1;
       }
+      // Unindexed files importing an org package: we cannot see what they use, so the
+      // target gets no verdict (blocked_packages); the consumer itself stays transparent.
+      for (const u of data.unindexedImports ?? []) {
+        const target = `npm:${barePackageName(u.module)}`;
+        if (!pkgs.has(target) || target === packageId) {
+          warn(`${packageId}: unindexed import of ${JSON.stringify(u.module)} at ${u.file}`
+            + ` does not name another org package, ignored`);
+          continue;
+        }
+        addFlag(packageId, 'unindexed_consumer', `unindexed file imports ${u.module}`, u.file, target);
+      }
     }
     counts.exported = exportedIds.size;
     counts.unmatchedExports = unmatched.length;
     if (unmatched.length > 0) warn(`${unmatched.length} sidecar export(s) match no SCIP definition: ${unmatched.join('; ')}`);
+    counts.unmatchedEntrySymbols = unmatchedEntry.length;
+    if (unmatchedEntry.length > 0) {
+      warn(`${unmatchedEntry.length} sidecar entry symbol(s) match no SCIP definition: ${unmatchedEntry.join('; ')}`);
+    }
 
     // ---- Overlays (sentei.json extraEdges) ---------------------------------
     const docModule = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w.moduleSymbolId]));

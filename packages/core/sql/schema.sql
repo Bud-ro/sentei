@@ -131,14 +131,20 @@ CREATE TABLE IF NOT EXISTS unresolved_refs (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS unresolved_refs_target ON unresolved_refs (target_package_id);
 
--- Uncertainty markers on a package; any row makes the package opaque (fail closed).
+-- Uncertainty markers on a package (fail closed). An untargeted row (target_package_id
+-- NULL) makes the package opaque and blocks every package it depends on. A targeted row
+-- says "package_id has code we cannot see that uses target_package_id" (e.g. an
+-- unindexed eslint.config.mjs importing an org config package): it blocks only the
+-- target, and does not make package_id itself opaque.
 CREATE TABLE IF NOT EXISTS package_flags (
-  package_id TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
-  flag       TEXT NOT NULL CHECK (flag IN (
-               'opaque_consumer', 'index_failed', 'dynamic_access',
-               'namespace_dynamic', 'unindexed_consumer')),
-  reason     TEXT,
-  file       TEXT
+  package_id        TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
+  flag              TEXT NOT NULL CHECK (flag IN (
+                      'opaque_consumer', 'index_failed', 'dynamic_access',
+                      'namespace_dynamic', 'unindexed_consumer')),
+  reason            TEXT,
+  file              TEXT,
+  target_package_id TEXT REFERENCES packages (package_id) ON DELETE CASCADE
+                    CHECK (target_package_id IS NOT package_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS package_flags_package ON package_flags (package_id);
 
@@ -199,16 +205,25 @@ WHERE p.visibility = 'private'
        AND coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'trustPrivateRegistry'), 0) = 1)
    OR coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'assumeClosedWorld'), 0) = 1;
 
--- Packages we cannot see into: any package_flags row at all.
+-- Packages we cannot see into: any untargeted package_flags row. A targeted flag is
+-- about the consumer's use of one other package, not about the consumer's own code.
 CREATE VIEW IF NOT EXISTS opaque_packages (package_id) AS
-SELECT DISTINCT package_id FROM package_flags;
+SELECT DISTINCT package_id FROM package_flags WHERE target_package_id IS NULL;
 
--- (P, C, flag) where C declares a manifest dependency on P and C is opaque: no verdict for P.
+-- (P, C, flag): no verdict for P because C may use P in ways we cannot see. Either C
+-- declares a manifest dependency on P and has an untargeted flag (or a flag targeted
+-- at P), or C has a flag targeted at P even without a declared dependency (a hoisted
+-- workspace dependency is still a use).
 CREATE VIEW IF NOT EXISTS blocked_packages (package_id, blocker_package_id, flag) AS
-SELECT DISTINCT d.resolved_package_id, d.consumer_package_id, f.flag
+SELECT d.resolved_package_id, d.consumer_package_id, f.flag
 FROM package_deps d
 JOIN package_flags f ON f.package_id = d.consumer_package_id
-WHERE d.resolved_package_id IS NOT NULL;
+WHERE d.resolved_package_id IS NOT NULL
+  AND (f.target_package_id IS NULL OR f.target_package_id = d.resolved_package_id)
+UNION
+SELECT target_package_id, package_id, flag
+FROM package_flags
+WHERE target_package_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Integrity triggers
