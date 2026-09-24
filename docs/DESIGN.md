@@ -448,3 +448,40 @@ adopted:
   `witness_mismatch:ignored:<org>/<repo>/<manifest path>:<file>:<line>`; the
   `ignored:` prefix cannot collide with a package id. Unparseable ignored
   manifests are scanned for every package (deps unknown → fail closed).
+
+### M3 — Dart indexer (as built)
+
+- `packages/indexers/scip-dart` is the vendored fork (upstream tag 1.7.0,
+  commit 8d017a2, Apache-2.0) with `PATCHES.md`; the adapter reports
+  `1.7.0+sentei.N` and N is the cache key, bumped whenever the fork or
+  `dart-surface` changes output. Tool `pubspec.lock` files are checked in so the
+  analyzer version is pinned (§6.6), unlike the first draft which ignored them.
+- `--private-symbols` is off by default in the fork (upstream behaviour
+  unchanged) and always passed by the adapter. Local functions stay `local`
+  even with the flag (descriptor collision with top-level names).
+- Org deps are source-linked with `pubspec_overrides.yaml`
+  (`dependency_overrides: {dep: {path: ...}}`); an original file is backed up
+  once under `.sentei-backup/`; `pubspec.yaml` is never touched. `dart pub get
+  --offline` when installs are off (fixtures have only path deps).
+- `dart-surface` emits the same sidecar shape as the TS adapter from
+  `LibraryElement.exportNamespace`; export-directive `show` names are sites;
+  `hide` names have no record and stay internal references (fail closed);
+  re-exports of other packages are not surface entries (consumers already
+  reference the declaring package). Unresolved relative imports also make the
+  package `partial` (internal references would otherwise vanish, fail-open to
+  `private_dead`).
+- **Entry symbols.** A Dart program's `main()` is invoked by the runtime and
+  referenced by nothing, so `bin/main.dart#main` came out `private_dead`. The
+  sidecar now carries `entrySymbols` (the indexer boundary knows what the
+  runtime calls) and ingest adds a file → symbol edge, reachable but never
+  exported. TypeScript emits an empty list.
+- Flutter packages (`flutter pub get`) are not handled specially yet.
+
+### Known remaining noise (from the fixed honojs DB)
+
+- 47 "document appears twice with different contents" warnings come from one
+  index (`hono.scip`) containing the same file twice, the second copy carrying
+  module augmentations declared in `*.test.ts`; the first copy is kept and
+  those references are lost. Pre-existing; revisit if a spot-check blames it.
+- Targeted `unindexed_consumer` flags with no manifest dependency still block
+  their target (a hoisted workspace dependency is still a use).
