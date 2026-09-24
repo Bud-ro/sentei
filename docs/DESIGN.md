@@ -262,3 +262,54 @@ Running record of decisions and deviations from `PLAN.md`. Newest milestone last
   partial clone, so blame may fetch old blobs on demand; untested at scale.
 - Caveat carried into the report wording: blame dates the last edit of the
   definition line, not the symbol's creation (the safe direction).
+
+### M2 — GitHub discovery
+
+- **Plain `fetch` instead of `@octokit/rest`** (§11 allows octokit): listing,
+  Link-header pagination and error handling are ~120 lines and add no
+  dependency. Pagination links to another host are refused so the token only
+  ever goes to the API host. Behind a proxy set `NODE_USE_ENV_PROXY=1`: Node's
+  `fetch` ignores `HTTPS_PROXY` by default (git does not).
+- **The token never enters argv, URLs or logs.** Clone auth goes through
+  `GIT_CONFIG_COUNT/KEY_0/VALUE_0` as an `http.<origin>/.extraheader`
+  (`basic x-access-token:<token>`, GitHub's documented form), scoped to the
+  clone URL's origin and never written to `.git/config`.
+- **Lockfile holds the full listing** (every non-archived repo, forks flagged);
+  include/exclude/fork filters apply at run time, so changing filters never
+  makes the lockfile stale. Rerunning from a lockfile makes zero API calls.
+- **Forks are skipped by default** (`--include-forks`): they are usually other
+  people's code and cause duplicate package names. Archived repos are dropped
+  per §6.1; empty repos (no default-branch commit) are skipped with a log line.
+- **Any clone failure aborts discover** (a missing consumer would make live code
+  look dead). `ensureClone` never deletes a directory.
+- **Real-org finding (honojs, 16 repos, 57 MB, ~5 s):** the §5.1 duplicate
+  `(manager, name)` error fires on templates (`starter:templates/*`), fixtures
+  (`agent-dx`), examples and a VS Code extension literally named `hono`. The
+  policy adopted: manifests under fixture/template/example-style directories are
+  not org packages (their files still belong to the enclosing package), the org
+  `sentei.json` can extend that list (`ignoreManifestDirs`) or ignore specific
+  manifests (`ignoreManifests` globs), and any remaining clash stays a hard error
+  whose message lists copy-pasteable `ignoreManifests` entries.
+
+### M5 — SARIF
+
+- One log per repo at `work/sarif/<owner>__<repo>.sarif` (supersedes §6.7's
+  `work/report.sarif` wording): Code Scanning uploads are per repo and commit.
+  Every repo gets a log, even an empty one, so a clean upload closes old alerts.
+- Locations are repo-relative under `%SRCROOT%`; the base URI is deliberately
+  left undefined (description only) because sentei does not know where the
+  consumer of the log checked the repo out, and `file:///` would be wrong.
+- `partialFingerprints["senteiSymbol/v1"]` = sha256 of `<package>#<symbol>#<file>`
+  (not the line), so moving code within a file keeps the alert identity;
+  duplicate keys get `#n` suffixes in sort order.
+- The vendored schema is the schemastore draft-07 copy (the OASIS copy is
+  draft-04, which ajv 8 cannot load); it is slightly looser on `region`, which
+  our output never relies on. `ajv` + `ajv-formats` are dev dependencies for
+  tests only; the runtime validates nothing.
+- Levels: `warning` for deletion, `note` for everything else. GitHub caps a run
+  at 25 000 results; an unjs-scale org with many `private_dead` rows may need
+  note-level rules dropped from the upload (not implemented).
+- **M5 acceptance (a real upload) needs the repo owner:** `gh api -X POST
+  repos/OWNER/REPO/code-scanning/sarifs` with the gzipped+base64 log,
+  `commit_sha` = `runs[0].properties.headSha`, `ref`, `tool_name=sentei`; the
+  token needs `security_events` (or `public_repo` for a public repo).
