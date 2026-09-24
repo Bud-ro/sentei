@@ -847,3 +847,29 @@ needs_review 9 → 41, skew 272 → 45.
   scan them as unindexed consumers); TS generated files (`@generated`,
   "automatically generated" headers) need the Dart generated-file treatment;
   scule runs out of heap at 8 GB; Nuxt apps need `nuxt prepare`.
+
+### Adapter round 3 (as built)
+
+- **Scoped unindexed imports.** `unindexedImports[].scope` is `test`, `docs`
+  or `script` (folder patterns only; tool configs at the package root stay
+  unscoped and keep flagging). Core routes scoped entries to `witness_files`
+  (name search only), never to package flags, so a `bench/` directory can no
+  longer block an entire package.
+- **Single-file components** (`.vue`, `.svelte`, `.astro`, `.marko`, `.mdx`)
+  are text-scanned as consumers of org packages, and their relative imports of
+  the package's own code are recorded with `relative: true` so those files'
+  declarations are kept alive through the self-witness.
+- **`generatedFiles`**: own files under tool-output folders (`.nuxt/`,
+  `.output/`, `.svelte-kit/`, …) or with a `@generated` / "automatically
+  generated" / "do not edit" comment in their first 20 lines. Core gives their
+  declarations no verdicts and skips them in self scans.
+- **scule**: not our bug. TypeScript 5.9's type printer never finishes on
+  scule's template-literal overloads; scip-typescript calls it only to build
+  hover documentation, which sentei never reads. On heap exhaustion the retry
+  preloads `scip-typescript-nodocs.cjs`, which replaces only the hover text
+  (symbols, occurrences and relationships unchanged, `warn:` recorded); scule
+  then indexes in under a second. Also found: an `exports` `"./*": "./*"`
+  mapping turned dotfiles and `LICENSE` into entry points (fixed in discover).
+- **Nuxt apps**: `nuxt prepare` runs once during prepare when installs are on
+  and `.nuxt/tsconfig.json` is missing; devtools-app went from failed to
+  partial (an unresolved `unhead/validate` remains).
