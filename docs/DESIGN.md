@@ -647,3 +647,46 @@ What the wrong rows taught, and the fixes adopted:
   with engine checks off; install stderr tails go into diagnostics; blame checks
   its cache before unshallowing. 297 sidecar exports matched no SCIP
   definition on unjs; cause under investigation.
+
+### M3 — Dart fixes as built (after Workiva)
+
+- **Fork patch 3 (`1.7.0+sentei.4`)**: every descriptor name that is not a plain
+  identifier is backticked (`Vec#\`==\`().`, `\`[]=\``, `\`<=\``); nameless
+  elements (unnamed extensions and their members, closures, type parameters and
+  named parameters of generic function types) and import prefixes become
+  `local N` symbols. Verified on w_module, built_redux and over_react: no
+  malformed symbols remain. Ingest additionally fails only the affected package
+  when an org symbol is still unparseable, and skips unparseable third-party
+  symbols (they were dropped anyway).
+- **Output slugs carry the manager** (`npm__acme__core`, `pub__acme_x`), so an
+  npm and a pub package in one directory no longer overwrite each other; the
+  cache re-indexes entries whose file names are not the current slug.
+- **Dart entry conventions in the sidecar** (`entrySymbols`): `main` in every
+  library outside `lib/` (bin, tool, benchmark, example, web, root scripts),
+  `build.yaml` `builder_factories` / `builder_factory` targets when their
+  `import:` is the package's own library, and dart_dev's
+  `tool/dart_dev/config.dart#config`. Core stores them in `entry_symbols`: they
+  seed reachability and never get a verdict.
+- **`dart pub get` conflicts with a source-linked HEAD** (an older pin on
+  analyzer, say) are retried once without the override for the named
+  dependency, restoring any user override, with a `warn:` naming the conflict.
+- **A `part` whose generated file is missing** (`uri_has_not_been_generated`,
+  `.over_react.g.dart` not committed) makes the package `partial`: the library
+  is incomplete and references inside the missing part are unknown.
+- **Manager-aware document ownership**: a document from a Dart index belongs to
+  the innermost pub package enclosing it, and vice versa for npm; only when no
+  same-manager package encloses it does the longest-prefix rule apply.
+- **Dev dependencies** (`package_deps.dev`, schema v7): a consumer's test files
+  count as consumers of a package it declares only as a dev dependency, in
+  analyze and in the witness. Test-support libraries (react_testing_library)
+  are no longer entirely "dead".
+- **Generated files** (`*.g.dart`, `*.pb*.dart`, `*.freezed.dart`,
+  `*.mocks.dart`, `generated/`, `*.generated.*`) get no verdicts and no
+  private_dead rows; references from them still count.
+- **Stage guards**: ingest requires packages, blame/analyze require symbols,
+  witness/report require the `analyzed_at` marker analyze writes, so a stage
+  run out of order fails loudly instead of printing an empty clean report.
+- **Version skew against a package whose index failed** is dropped from the
+  report with a warning (1781 such rows on Workiva).
+- Import prefixes emitted by older Dart indexes are classified `import-prefix`
+  at ingest and never reported (a stopgap; the fork no longer emits them).
