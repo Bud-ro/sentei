@@ -2,7 +2,8 @@
 // from their own dirs under packages/indexers/, never from a global activation:
 //   - packages/indexers/scip-dart: vendored scip-dart 1.7.0 (Workiva/scip-dart
 //     @ 8d017a25874efb8513617e85e508a573692cbb63) with the patches listed in its
-//     PATCHES.md (SDK floor 3.11; `--private-symbols`, which we always pass);
+//     PATCHES.md (SDK floor 3.11; `--private-symbols`, which we always pass;
+//     valid symbols for operators, nameless elements and import prefixes);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar.
 // Org dependencies are source-linked with a `pubspec_overrides.yaml`
@@ -13,6 +14,8 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TEST_GLOBS, matchGlob } from '@sentei/core';
+import { isExcludedConsumerFile } from './consumer-checks.ts';
 import { packageDir, packageSlug } from './scip-typescript.ts';
 import type { ExportsSidecar, Indexer, IndexerInput, IndexStatus, IndexerResult, SourcePosition } from './types.ts';
 import { worstStatus } from './types.ts';
@@ -28,9 +31,11 @@ const BACKUP_DIR = '.sentei-backup';
 /** First line of every pubspec_overrides.yaml we write (a file carrying it is ours, never backed up). */
 export const OVERRIDES_HEADER = '# Written by sentei: source links for org dependencies. Original (if any) in .sentei-backup/.';
 
-/** Output of dart-surface: the sidecar plus two adapter-only keys (stripped before writing). */
+/** Output of dart-surface: the sidecar plus three adapter-only keys (stripped before writing). */
 interface SurfaceOutput extends ExportsSidecar {
   unresolvedOrgModules: Array<SourcePosition & { module: string }>;
+  /** `part` directives whose file does not exist (an ungenerated `*.g.dart`): the library is incomplete. */
+  missingParts?: Array<SourcePosition & { uri: string }>;
   diagnostics: string[];
 }
 
@@ -38,7 +43,9 @@ export const scipDart: Indexer = {
   name: 'scip-dart',
   // Upstream version + our patch level. Bump the patch level whenever the
   // vendored fork or dart-surface changes output (it is the index cache key).
-  version: '1.7.0+sentei.3',
+  // sentei.4: fork patch 3 (valid symbols), manager-prefixed output names,
+  // Dart entry conventions (non-lib `main`, build.yaml factories, dart_dev config).
+  version: '1.7.0+sentei.4',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -55,12 +62,28 @@ export const scipDart: Indexer = {
     }
     const dir = realpathSync(pkgDirPath);
     // 1. Source-link org dependencies (before `pub get`, which reads the overrides).
-    writeOverrides(input, dir, diagnostics);
+    const links = writeOverrides(input, dir, diagnostics);
     // 2. Resolve. Offline when installs are disabled: path deps and anything
     //    already in the pub cache still resolve.
     const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
-    const proc = await exec('dart', args, dir);
+    let proc = await exec('dart', args, dir);
     log.push(`$ dart ${args.join(' ')}  (cwd ${dir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+    // 2b. An org dep's HEAD can require versions the consumer's own constraints
+    //     exclude (e.g. HEAD moved to analyzer 14, the consumer pins analyzer 5).
+    //     Retry once without the source link for the dep(s) pub names: the
+    //     consumer then resolves the released version (its references still carry
+    //     the org package's symbols, version-normalized at ingest).
+    if (proc.code !== 0 && links.size > 0) {
+      const conflicts = parseOverrideConflicts(`${proc.stdout}\n${proc.stderr}`, new Set(links.keys()));
+      if (conflicts.length > 0) {
+        for (const c of conflicts) {
+          diagnostics.push(`warn: ${c.dep} not source-linked: HEAD conflicts with ${c.pkg ?? pkg.name ?? pkg.packageId}'s constraint (${c.detail})`);
+        }
+        writeOverrides(input, dir, diagnostics, new Set(conflicts.map((c) => c.dep)));
+        proc = await exec('dart', args, dir);
+        log.push(`$ dart ${args.join(' ')}  (cwd ${dir}; retry without ${conflicts.map((c) => c.dep).join(', ')})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+      }
+    }
     if (proc.code !== 0) {
       status = 'partial';
       const why = firstLine(proc.stderr) ?? firstLine(proc.stdout) ?? '';
@@ -150,7 +173,13 @@ export const scipDart: Indexer = {
       diagnostics.push('error: export surface failed');
       return finish();
     }
-    const { unresolvedOrgModules, diagnostics: surfaceDiagnostics, ...rest } = out, sidecar = { ...rest, shorthandRefs: rest.shorthandRefs ?? [] };
+    const { unresolvedOrgModules, missingParts = [], diagnostics: surfaceDiagnostics, ...rest } = out;
+    const sidecar: ExportsSidecar = {
+      ...rest,
+      shorthandRefs: rest.shorthandRefs ?? [],
+      // A test's `main` is run by the test runner; test files never get verdicts.
+      entrySymbols: rest.entrySymbols.filter((e) => !TEST_GLOBS.some((g) => matchGlob(g, e.file))),
+    };
     writeFileSync(exportsFile, `${JSON.stringify(sidecar satisfies ExportsSidecar, null, 2)}\n`);
     for (const m of unresolvedOrgModules) {
       diagnostics.push(`error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`);
@@ -158,8 +187,21 @@ export const scipDart: Indexer = {
     for (const u of sidecar.unresolvedImports) {
       diagnostics.push(`warn: '${u.name}' is not exported by org module '${u.module}' at ${u.file}:${u.line + 1}:${u.col + 1}`);
     }
+    // A missing part (typically an ungenerated `*.g.dart`: build_runner was not
+    // run) leaves its library incomplete: references inside it are unknown.
+    // Test/docs files the policy does not count cannot hide a counted use.
+    let incomplete = 0;
+    for (const m of missingParts) {
+      const at = `${m.file}:${m.line + 1}:${m.col + 1}`;
+      if (isExcludedConsumerFile(m.file, input.policy)) {
+        diagnostics.push(`warn: missing part '${m.uri}' at ${at} (not generated?); ignored: a test/docs file that does not count as a consumer`);
+        continue;
+      }
+      incomplete++;
+      diagnostics.push(`error: missing generated part '${m.uri}' at ${at}: the library is incomplete, references inside the part are unknown (run build_runner before indexing)`);
+    }
     diagnostics.push(...surfaceDiagnostics);
-    if (unresolvedOrgModules.length > 0 || sidecar.unresolved.length > 0 || sidecar.missingEntryPoints.length > 0) {
+    if (unresolvedOrgModules.length > 0 || incomplete > 0 || sidecar.unresolved.length > 0 || sidecar.missingEntryPoints.length > 0) {
       status = worstStatus(status, 'partial');
     }
     return finish();
@@ -170,12 +212,20 @@ export const scipDart: Indexer = {
 
 /**
  * Points every org dependency at its checkout with a `dependency_overrides`
- * path entry in `<pkgDir>/pubspec_overrides.yaml`, merged into an existing
+ * path entry in `<pkgDir>/pubspec_overrides.yaml`, merged into the user's
  * file (other keys and overrides kept). An existing file we did not write is
  * copied to `.sentei-backup/pubspec_overrides.yaml` first (once, never
- * overwritten). `pubspec.yaml` is never touched.
+ * overwritten); when the file is already ours, the merge base is that backup
+ * (or nothing), so a link dropped with `exclude` gets the user's original
+ * entry (if any) back. `pubspec.yaml` is never touched. Returns the links
+ * written (pub name -> relative path).
  */
-export function writeOverrides(input: IndexerInput, pkgDir: string, diagnostics: string[]): void {
+export function writeOverrides(
+  input: IndexerInput,
+  pkgDir: string,
+  diagnostics: string[],
+  exclude: ReadonlySet<string> = new Set(),
+): Map<string, string> {
   const links = new Map<string, string>();
   for (const dep of input.pkg.deps) {
     if (dep.resolvedPackageId === null || dep.resolvedPackageId === undefined) continue;
@@ -192,29 +242,40 @@ export function writeOverrides(input: IndexerInput, pkgDir: string, diagnostics:
     }
     // The override key must be the target's pub name (what pub resolves).
     const name = target.pkg.name ?? dep.name;
+    if (exclude.has(name)) continue;
     links.set(name, path.relative(pkgDir, realpathSync(targetDir)).split(path.sep).join('/') || '.');
   }
-  if (links.size === 0) return;
 
   const file = path.join(pkgDir, OVERRIDES);
-  let doc: YamlMap = {};
-  let existingText: string | undefined;
-  if (existsSync(file)) {
-    existingText = readFileSync(file, 'utf8');
-    const ours = existingText.startsWith(OVERRIDES_HEADER);
-    if (!ours) {
-      const backup = path.join(pkgDir, BACKUP_DIR, OVERRIDES);
-      if (!existsSync(backup)) {
-        mkdirSync(path.dirname(backup), { recursive: true });
-        copyFileSync(file, backup);
-        diagnostics.push(`info: backed up existing ${OVERRIDES} to ${BACKUP_DIR}/${OVERRIDES}`);
-      } else {
-        diagnostics.push(`info: ${BACKUP_DIR}/${OVERRIDES} already exists; not overwritten`);
-      }
+  const backup = path.join(pkgDir, BACKUP_DIR, OVERRIDES);
+  const existingText = existsSync(file) ? readFileSync(file, 'utf8') : undefined;
+  const ours = existingText?.startsWith(OVERRIDES_HEADER) === true;
+  if (links.size === 0) {
+    // Nothing to link (any more): put the user's file back, or remove ours.
+    if (ours) {
+      if (existsSync(backup)) copyFileSync(backup, file);
+      else rmSync(file);
     }
-    const parsed = parseYamlBlock(existingText);
+    return links;
+  }
+
+  let doc: YamlMap = {};
+  if (existingText !== undefined && !ours) {
+    if (!existsSync(backup)) {
+      mkdirSync(path.dirname(backup), { recursive: true });
+      copyFileSync(file, backup);
+      diagnostics.push(`info: backed up existing ${OVERRIDES} to ${BACKUP_DIR}/${OVERRIDES}`);
+    } else {
+      diagnostics.push(`info: ${BACKUP_DIR}/${OVERRIDES} already exists; not overwritten`);
+    }
+  }
+  // The merge base is the user's file: the existing one when it is not ours,
+  // else its backup (absent: the user had none).
+  const baseText = existingText !== undefined && !ours ? existingText : existsSync(backup) ? readFileSync(backup, 'utf8') : undefined;
+  if (baseText !== undefined) {
+    const parsed = parseYamlBlock(baseText);
     if (parsed === undefined) {
-      diagnostics.push(`warn: existing ${OVERRIDES} is not a plain block map; replaced (original in ${BACKUP_DIR}/)`);
+      if (!ours) diagnostics.push(`warn: existing ${OVERRIDES} is not a plain block map; replaced (original in ${BACKUP_DIR}/)`);
     } else {
       doc = parsed;
     }
@@ -227,7 +288,7 @@ export function writeOverrides(input: IndexerInput, pkgDir: string, diagnostics:
   for (const [name, rel] of links) {
     const prev = overrides[name];
     const next: YamlMap = { path: yamlScalar(rel) };
-    if (prev !== undefined && !(typeof prev === 'object' && prev['path'] === next['path'])) {
+    if (!ours && prev !== undefined && !(typeof prev === 'object' && prev['path'] === next['path'])) {
       diagnostics.push(`info: replaced existing dependency_overrides entry for ${name}`);
     }
     overrides[name] = next;
@@ -235,6 +296,51 @@ export function writeOverrides(input: IndexerInput, pkgDir: string, diagnostics:
   const text = `${OVERRIDES_HEADER}\n${serializeYaml(doc, '')}`;
   if (text !== existingText) writeFileSync(file, text);
   diagnostics.push(`info: ${OVERRIDES}: ${[...links].map(([n, r]) => `${n} -> ${r}`).join(', ')}`);
+  return links;
+}
+
+/** One source link pub refused: `dep`'s checkout conflicts with a constraint of `pkg`. */
+export interface OverrideConflict {
+  /** The overridden (source-linked) dependency pub names. */
+  dep: string;
+  /** The package whose constraint excludes the checkout, when pub names it. */
+  pkg?: string;
+  /** Pub's sentence about it, without the leading `Because`. */
+  detail: string;
+}
+
+/**
+ * Reads a failed `dart pub get` for source links pub rejected. Pub names a
+ * path override `<dep> from path`, e.g.
+ *   Because every version of codemod from path depends on analyzer ^14.0.0 and
+ *   w_flux_codemod depends on analyzer ^5.13.0, codemod from path is forbidden.
+ *   So, because w_flux_codemod depends on codemod from path, version solving failed.
+ * Returns one conflict per overridden name that appears so, in `overridden`
+ * order; nothing unless version solving failed.
+ */
+export function parseOverrideConflicts(output: string, overridden: ReadonlySet<string>): OverrideConflict[] {
+  if (!/version solving failed/.test(output)) return [];
+  const text = output.replace(/\s+/g, ' ');
+  const sentences = text.split(/(?<=\.) (?=[A-Z])/).map((x) => x.trim());
+  const esc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const out: OverrideConflict[] = [];
+  for (const dep of overridden) {
+    const fromPath = new RegExp(`(?<![\\w-])${esc(dep)} from path\\b`);
+    const sentence = sentences.find((x) => fromPath.test(x));
+    if (sentence === undefined) continue;
+    // The consumer: "<pkg> depends on <dep> from path", else the other side of the "and".
+    // (pub writes a package as `name`, `name <version>` or `name <range>`.)
+    const ver = '(?: [<>=^0-9][^ ,]*(?: <[^ ,]+)?)?';
+    const direct = new RegExp(`\\b([a-z0-9_]+)${ver} depends on ${esc(dep)} from path`).exec(text);
+    const other = new RegExp(`\\band ([a-z0-9_]+)${ver} depends on`).exec(sentence);
+    const pkg = direct?.[1] ?? other?.[1];
+    const detail = sentence
+      .replace(/^(So, )?because /i, '')
+      .replace(new RegExp(`, ${esc(dep)} from path is forbidden\\.?$`), '')
+      .replace(/[.,]$/, '');
+    out.push({ dep, ...(pkg !== undefined ? { pkg } : {}), detail });
+  }
+  return out;
 }
 
 /** Scalars are kept as raw source text so re-serializing preserves their quoting. */

@@ -1,0 +1,8 @@
+# build_runner configuration: the factory is loaded by name from the import.
+builders:
+  acme_x:
+    import: "package:acme_x/builder.dart"
+    builder_factories: ["acmeBuilder"]
+    build_extensions: {".dart": [".acme.g.dart"]}
+    auto_apply: dependents
+    build_to: source

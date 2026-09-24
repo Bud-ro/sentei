@@ -100,7 +100,7 @@ afterAll(() => {
 
 describe('index stage on fixtures/org-small', () => {
   it('writes non-empty .scip files for both packages', () => {
-    for (const f of ['acme__lib-core/acme__core.scip', 'acme__app/acme__app.scip']) {
+    for (const f of ['acme__lib-core/npm__acme__core.scip', 'acme__app/npm__acme__app.scip']) {
       const p = path.join(work, 'index', f);
       expect(existsSync(p), f).toBe(true);
       expect(statSync(p).size, f).toBeGreaterThan(0);
@@ -116,8 +116,8 @@ describe('index stage on fixtures/org-small', () => {
         indexer: 'scip-typescript',
         indexerVersion: scipTypescript.version,
         status: 'ok',
-        scip: 'acme__core.scip',
-        exports: 'acme__core.exports.json',
+        scip: 'npm__acme__core.scip',
+        exports: 'npm__acme__core.exports.json',
       }),
     ]);
     const app = readJson<RepoIndex>(work, 'index/acme__app/index.json');
@@ -131,7 +131,7 @@ describe('index stage on fixtures/org-small', () => {
   });
 
   it('lists exactly the lib export surface with export sites in the entry file', () => {
-    const sidecar = readJson<ExportsSidecar>(work, 'index/acme__lib-core/acme__core.exports.json');
+    const sidecar = readJson<ExportsSidecar>(work, 'index/acme__lib-core/npm__acme__core.exports.json');
     expect(sidecar.packageId).toBe('npm:@acme/core');
     expect(sidecar.entryPoints).toEqual(['src/index.ts']);
     expect(sidecar.unresolved).toEqual([]);
@@ -277,7 +277,7 @@ describe('consumer checks and import sites', () => {
 
   const result = (repo: string, pkg = repo) => ({
     index: readJson<RepoIndex>(cwork, 'index', `acme__${repo}`, 'index.json'),
-    sidecar: readJson<ExportsSidecar>(cwork, 'index', `acme__${repo}`, `acme__${pkg}.exports.json`),
+    sidecar: readJson<ExportsSidecar>(cwork, 'index', `acme__${repo}`, `npm__acme__${pkg}.exports.json`),
   });
 
   it('an unresolved org module makes the package partial', () => {
@@ -411,7 +411,7 @@ describe('real-org fixes (honojs dogfood)', () => {
   }
   const result = (repo: string, pkg: string) => ({
     index: readJson<RepoIndex>(hwork, 'index', `acme__${repo}`, 'index.json'),
-    sidecar: readJson<ExportsSidecar>(hwork, 'index', `acme__${repo}`, `${pkg}.exports.json`),
+    sidecar: readJson<ExportsSidecar>(hwork, 'index', `acme__${repo}`, `npm__${pkg}.exports.json`),
   });
 
   beforeAll(async () => {
@@ -548,11 +548,11 @@ describe('real-org fixes (honojs dogfood)', () => {
     expect(sidecar.flags).toEqual([]);
 
     // The consumer's reference is the lib's own definition symbol string.
-    const libIndex = readScipIndex(path.join(hwork, 'index/acme__unbuilt/acme__unbuilt.scip'));
+    const libIndex = readScipIndex(path.join(hwork, 'index/acme__unbuilt/npm__acme__unbuilt.scip'));
     const defs = libIndex.documents.flatMap((d) => d.occurrences.filter((o) => (o.symbolRoles & 1) === 1).map((o) => o.symbol));
     const fooDef = defs.find((s) => s.endsWith('/Foo#'));
     expect(fooDef).toBe('scip-typescript npm @acme/unbuilt 2.0.0 src/`index.ts`/Foo#');
-    const consumerIndex = readScipIndex(path.join(hwork, 'index/acme__consumer/acme__consumer.scip'));
+    const consumerIndex = readScipIndex(path.join(hwork, 'index/acme__consumer/npm__acme__consumer.scip'));
     const main = consumerIndex.documents.find((d) => d.relativePath === 'src/main.ts')!;
     const refs = new Set(main.occurrences.map((o) => o.symbol));
     expect(refs.has(fooDef!)).toBe(true);
@@ -602,7 +602,8 @@ describe('real-org fixes (honojs dogfood)', () => {
         indexedFiles: new Set(),
         orgPackageNames: new Set(['@acme/built']),
         selfName: '@acme/consumer',
-        policy: undefined,
+        // examples/ is a docs dir (core DOCS_GLOBS); count docs here so the test isolates ignoredDirs.
+        policy: { countTestsAsConsumers: false, countDocsAsConsumers: true },
       }).map((u) => u.file);
     expect(scan([])).toContain('examples/demo/index.mjs');
     expect(scan([path.join(pkgDir, 'examples/demo')])).not.toContain('examples/demo/index.mjs');
@@ -803,6 +804,20 @@ describe('index cache', () => {
     expect(decide(indexJson('ok', true), { ...repo, headSha: 'sha2' }, true)).toEqual({ 'npm:a': 'none', 'pub:b': 'none' });
     expect(decide(path.join(root, 'missing.json'), repo, true)).toEqual({ 'npm:a': 'none', 'pub:b': 'none' });
   });
+
+  it('refuses a result written under an older output file name (slugs carry the manager)', () => {
+    const f = path.join(root, 'names.json');
+    for (const n of ['a.scip', 'a.exports.json', 'npm__a.scip', 'npm__a.exports.json']) writeFileSync(path.join(root, n), 'x');
+    const entry = (slug: string) => ({
+      packageId: 'npm:a', indexer: 'scip-typescript', indexerVersion: scipTypescript.version, status: 'ok', install: true,
+      scip: `${slug}.scip`, exports: `${slug}.exports.json`,
+    });
+    const write = (slug: string) => writeFileSync(f, JSON.stringify({ repo: 'acme/r', headSha: 'sha1', status: 'ok', install: true, packages: [entry(slug)] }));
+    write('a');
+    expect(decide(f, repo, true)['npm:a']).toBe('output file name changed (a.scip)');
+    write('npm__a');
+    expect(decide(f, repo, true)['npm:a']).toBe('reuse');
+  });
 });
 
 describe('per-package index cache (stage)', () => {
@@ -848,7 +863,7 @@ describe('per-package index cache (stage)', () => {
   it('re-runs only the package that cannot be reused and keeps the reused entry verbatim', async () => {
     const first = await run();
     expect(first.packages.map((p) => [p.packageId, p.status])).toEqual([['npm:@acme/a', 'ok'], ['npm:@acme/b', 'partial']]);
-    const aLog = path.join(pwork, 'index/acme__mono/acme__a.log');
+    const aLog = path.join(pwork, 'index/acme__mono/npm__acme__a.log');
     const aLogMtime = statSync(aLog).mtimeMs;
 
     const second = await run();

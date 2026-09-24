@@ -33,10 +33,16 @@ function scipTypescriptBin(): string {
   return path.join(path.dirname(pkgJson), bin['scip-typescript'] ?? 'dist/src/main.js');
 }
 
-/** Filesystem-safe name for a package's output files: `@acme/core` → `acme__core`. */
+/**
+ * Filesystem-safe name for a package's output files, prefixed with the
+ * manager so an npm and a pub package in the same dir (a `package.json` next
+ * to a `pubspec.yaml`, often with the same name) never share a file:
+ * `npm:@acme/core` → `npm__acme__core`, `pub:acme_x` → `pub__acme_x`.
+ */
 export function packageSlug(pkg: DiscoveredPackage): string {
   const base = pkg.name ?? (pkg.path === '.' ? 'root' : pkg.path);
-  return base.replace(/^@/, '').replace(/\//g, '__').replace(/[^A-Za-z0-9._-]/g, '_');
+  const clean = (s: string): string => s.replace(/^@/, '').replace(/\//g, '__').replace(/[^A-Za-z0-9._-]/g, '_');
+  return `${clean(pkg.manager)}__${clean(base)}`;
 }
 
 export function packageDir(repo: DiscoveredRepo, pkg: DiscoveredPackage): string {

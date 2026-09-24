@@ -1,12 +1,19 @@
 {
   "entryPoints": [
-    "bin/main.dart"
+    "bin/main.dart",
+    "bin/shapes.dart"
   ],
   "entrySymbols": [
     {
       "col": 5,
       "file": "bin/main.dart",
       "line": 9,
+      "name": "main"
+    },
+    {
+      "col": 5,
+      "file": "bin/shapes.dart",
+      "line": 4,
       "name": "main"
     }
   ],

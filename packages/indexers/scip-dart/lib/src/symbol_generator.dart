@@ -145,7 +145,23 @@ class SymbolGenerator {
       return _localSymbolFor(element);
     }
 
-    final descriptor = _getDescriptor(element);
+    // Import prefixes (`import 'x.dart' as p;`) are not declarations of the
+    // library: a global `<file>/p.` symbol would be an addressable, never
+    // exported "declaration" that nothing outside the file can reference.
+    if (element is PrefixElement) {
+      return _localSymbolFor(element);
+    }
+
+    final String? descriptor;
+    try {
+      descriptor = _getDescriptor(element);
+    } on _NamelessElement {
+      // The element (or an element its descriptor is built from) has no name:
+      // an unnamed extension and its members, a closure, a type parameter or
+      // named parameter of a generic function type. No global symbol can
+      // address it, so it is document-local.
+      return _localSymbolFor(element);
+    }
     if (descriptor == null) return null;
 
     // Symbol Form: '<scheme> ' ' <package> ' ' (<descriptor>)+ | 'local ' <local-id>'
@@ -244,34 +260,34 @@ class SymbolGenerator {
     if (element is InterfaceElement || // class, mixin, enum, extension type
         element is TypeAliasElement ||
         element is ExtensionElement) {
-      return '$namespace/${element.name}#';
+      return '$namespace/${_name(element.name)}#';
     }
 
     if (element is ConstructorElement) {
-      final className = element.enclosingElement.name;
+      final className = _name(element.enclosingElement.name);
       final constructorName = element.name != null && element.name != 'new'
-          ? element.name
+          ? _name(element.name)
           : '`<constructor>`';
       return '$namespace/$className#$constructorName().';
     }
 
     if (element is MethodElement) {
-      final className = element.enclosingElement?.name;
-      return '$namespace/$className#${element.name}().';
+      final className = _name(element.enclosingElement?.name);
+      return '$namespace/$className#${_name(element.name)}().';
     }
 
     if (element is TopLevelFunctionElement || element is LocalFunctionElement) {
-      return '$namespace/${element.name}().';
+      return '$namespace/${_name(element.name)}().';
     }
 
-    if (element is TopLevelVariableElement || element is PrefixElement) {
-      return '$namespace/${element.name}.';
+    if (element is TopLevelVariableElement) {
+      return '$namespace/${_name(element.name)}.';
     }
 
     if (element is TypeParameterElement) {
       final encEle = element.enclosingElement;
-      if (encEle == null) return '$namespace/[${element.name}]';
-      return '${_getDescriptor(encEle)}[${element.name}]';
+      if (encEle == null) return '$namespace/[${_name(element.name)}]';
+      return '${_enclosingDescriptor(encEle)}[${_name(element.name)}]';
     }
 
     // only generate symbols for named parameters, all others are 'local x'
@@ -287,12 +303,12 @@ class SymbolGenerator {
       // is not indexable, so do not generate a symbol for it
       if (encEle is GenericFunctionTypeElement) return null;
 
-      return '${_getDescriptor(encEle)}(${element.name})';
+      return '${_enclosingDescriptor(encEle)}(${_name(element.name)})';
     }
 
     if (element is PropertyAccessorElement) {
       final parent = element.enclosingElement;
-      final parentName = parent is LibraryElement ? null : parent.name;
+      final parentName = parent is LibraryElement ? null : _name(parent.name);
 
       var prefix = '';
       if (element is GetterElement) {
@@ -304,13 +320,13 @@ class SymbolGenerator {
       return [
         '$namespace/',
         if (parentName != null) '$parentName#',
-        '`$prefix${element.variable.name}`.',
+        '${_escaped('$prefix${_name(element.variable.name, escape: false)}')}.',
       ].join();
     }
 
     if (element is FieldElement) {
       final encEle = element.enclosingElement;
-      return '${_getDescriptor(encEle)}${element.name}.';
+      return '${_enclosingDescriptor(encEle)}${_name(element.name)}.';
     }
 
     display(
@@ -322,6 +338,29 @@ class SymbolGenerator {
     );
     return null;
   }
+
+  /// The descriptor of an enclosing element. No descriptor (a generic function
+  /// type, a positional function-typed parameter, ...) means the nested
+  /// element cannot be addressed globally either: it becomes local.
+  String _enclosingDescriptor(Element encEle) {
+    final descriptor = _getDescriptor(encEle);
+    if (descriptor == null) throw const _NamelessElement();
+    return descriptor;
+  }
+
+  /// A descriptor name per the SCIP grammar: a simple identifier as is,
+  /// anything else (operators `==`, `[]=`, `<=`, `~/`, ...) backtick-escaped.
+  /// A missing or empty name has no global symbol ([_NamelessElement]).
+  String _name(String? name, {bool escape = true}) {
+    if (name == null || name.isEmpty) throw const _NamelessElement();
+    return escape ? _escaped(name) : name;
+  }
+
+  static final _simpleIdentifier = RegExp(r'^[A-Za-z0-9_+\-$]+$');
+
+  String _escaped(String name) => _simpleIdentifier.hasMatch(name)
+      ? name
+      : '`${name.replaceAll('`', '``')}`';
 
   String _localSymbolFor(Element ele) {
     _localElementRegistry.putIfAbsent(
@@ -352,4 +391,11 @@ class SymbolGenerator {
       );
     }
   }
+}
+
+/// Thrown by [SymbolGenerator._getDescriptor] when a descriptor would need
+/// the name of an element that has none; [SymbolGenerator.symbolFor] then
+/// emits a `local N` symbol instead of a `null`-containing global one.
+class _NamelessElement implements Exception {
+  const _NamelessElement();
 }

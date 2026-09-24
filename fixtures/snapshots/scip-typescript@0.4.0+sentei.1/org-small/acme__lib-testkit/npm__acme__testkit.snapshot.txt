@@ -1,0 +1,21 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/index.ts
+  // Package entry point for @acme/testkit: a test-support library. Its only consumer,
+//^ definition scip-typescript npm @acme/testkit . src/`index.ts`/ enclosing [4:0-12:0]
+  // @acme/consumer, declares it in devDependencies and uses it only from a test file.
+
+  // Expected: alive, no finding (used from app-consumer/src/widgets.test.ts; test uses count because the dependency is dev-only).
+  export function renderHelper(name: string): string {
+//                ^^^^^^^^^^^^ definition scip-typescript npm @acme/testkit . src/`index.ts`/renderHelper(). enclosing [4:0-6:1]
+//                             ^^^^ definition scip-typescript npm @acme/testkit . src/`index.ts`/renderHelper().(name)
+    return `<${name} />`;
+//             ^^^^ reference scip-typescript npm @acme/testkit . src/`index.ts`/renderHelper().(name)
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (a dev dependency does not make every export alive).
+  export function unusedKitHelper(): string {
+//                ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/testkit . src/`index.ts`/unusedKitHelper(). enclosing [9:0-11:1]
+    return 'unused';
+  }

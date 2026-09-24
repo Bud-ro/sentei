@@ -39,3 +39,37 @@
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^^ reference scip-dart pub acme_pub . lib/`acme_pub.dart`/pubUsed().
   }
+
+## bin/shapes.dart
+  // Second program of acme_app: consumer of acme_x's lib/syntax.dart.
+//^ definition scip-dart pub acme_app . bin/`shapes.dart`/
+  import 'package:acme_x/syntax.dart';
+
+  // Expected: alive, no finding (bin/ entry point).
+  void main() {
+//     ^^^^ definition scip-dart pub acme_app . bin/`shapes.dart`/main(). enclosing [4:0-11:1]
+    const a = Vec(1);
+//        ^ definition local 0 enclosing [5:8-5:18]
+//            ^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#`<constructor>`().
+    print(a == const Vec(1)); // operator ==
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^ reference local 0
+//                   ^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#`<constructor>`().
+    print(a[0]); // operator []
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^ reference local 0
+    // A closure with a named parameter: local symbols.
+    final Mapper id = <T>(T value, {int? times}) => value;
+//        ^^^^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Mapper#
+//               ^^ definition local 1 enclosing [9:15-9:55]
+//                     ^ definition local 2 enclosing [9:21-9:22]
+//                        ^ reference local 2
+//                          ^^^^^ definition local 3 enclosing [9:24-9:31]
+//                                  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                                       ^^^^^ definition local 4 enclosing [9:34-9:44]
+//                                                  ^^^^^ reference local 3
+    print(labelOf(id));
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/labelOf().
+//                ^^ reference local 1
+  }

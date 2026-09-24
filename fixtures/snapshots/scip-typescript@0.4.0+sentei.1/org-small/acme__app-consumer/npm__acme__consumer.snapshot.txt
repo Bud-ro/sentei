@@ -91,11 +91,17 @@
 //                                         ^^^^^ reference scip-typescript npm @acme/widgets . src/`widget.tsx`/WidgetOptions#label.
 
 ## src/widgets.test.ts
-  // Test file (matches **/*.test.*): its references do not count as consumer refs.
-//^ definition scip-typescript npm @acme/consumer . src/`widgets.test.ts`/ enclosing [1:0-4:0]
+  // Test file (matches **/*.test.*): its references do not count as consumer refs,
+//^ definition scip-typescript npm @acme/consumer . src/`widgets.test.ts`/ enclosing [2:0-7:0]
+  // except into @acme/testkit, which this package declares only in devDependencies.
   import { testOnlyFn } from '@acme/widgets';
 //         ^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`misc.ts`/testOnlyFn().
 //                           ^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`index.ts`/
+  import { renderHelper } from '@acme/testkit';
+//         ^^^^^^^^^^^^ reference scip-typescript npm @acme/testkit . src/`index.ts`/renderHelper().
+//                             ^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/testkit . src/`index.ts`/
 
   testOnlyFn();
 //^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`misc.ts`/testOnlyFn().
+  renderHelper('Widget');
+//^^^^^^^^^^^^ reference scip-typescript npm @acme/testkit . src/`index.ts`/renderHelper().

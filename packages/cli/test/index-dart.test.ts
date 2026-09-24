@@ -5,9 +5,9 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { readScipIndex } from '@sentei/core/scip';
+import { parseDescriptors, parseScipSymbol, readScipIndex } from '@sentei/core/scip';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { OVERRIDES_HEADER, parseYamlBlock, writeOverrides } from '../src/indexers/scip-dart.ts';
+import { OVERRIDES_HEADER, parseOverrideConflicts, parseYamlBlock, scipDart, writeOverrides } from '../src/indexers/scip-dart.ts';
 import type { DiscoverFile, DiscoveredPackage, DiscoveredRepo, ExportsSidecar, IndexerInput, OrgPackage } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -43,6 +43,9 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
   beforeAll(async () => {
     tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-index-dart-')));
     cpSync(path.join(FIXTURE, 'repos'), path.join(tmp, 'repos'), NO_PUB_STATE);
+    // A test's main is run by the test runner: never an entry symbol.
+    mkdirSync(path.join(tmp, 'repos/dart-lib-x/test'), { recursive: true });
+    writeFileSync(path.join(tmp, 'repos/dart-lib-x/test/x_test.dart'), "import 'package:acme_x/acme_x.dart';\n\nvoid main() => print(usedFn());\n");
     // A consumer whose org import does not resolve (partial) and that shows a
     // name acme_x does not export (version skew, status unchanged).
     const bad = path.join(tmp, 'repos', 'dart-bad');
@@ -65,10 +68,10 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     const discover: DiscoverFile = {
       org: 'acme',
       repos: [
-        repoOf(tmp, 'dart-app', pubPackage('acme_app', ['bin/main.dart'], [orgDep('acme_pub', '^1.0.0'), orgDep('acme_x', 'path:../dart-lib-x')])),
+        repoOf(tmp, 'dart-app', pubPackage('acme_app', ['bin/main.dart', 'bin/shapes.dart'], [orgDep('acme_pub', '^1.0.0'), orgDep('acme_x', 'path:../dart-lib-x')])),
         repoOf(tmp, 'dart-bad', pubPackage('acme_bad', ['bin/main.dart'], [orgDep('acme_x', '^1.0.0')])),
         repoOf(tmp, 'dart-lib-pub', pubPackage('acme_pub', ['lib/acme_pub.dart'])),
-        repoOf(tmp, 'dart-lib-x', pubPackage('acme_x', ['lib/acme_x.dart'])),
+        repoOf(tmp, 'dart-lib-x', pubPackage('acme_x', ['lib/acme_x.dart', 'lib/builder.dart', 'lib/syntax.dart'])),
       ],
     };
     writeFileSync(path.join(work, 'discover.json'), JSON.stringify(discover, null, 2));
@@ -81,11 +84,11 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
   });
 
   const ix = (repo: string) => readJson<RepoIndex>(work, 'index', `acme__${repo}`, 'index.json');
-  const sidecar = (repo: string, pkg: string) => readJson<ExportsSidecar>(work, 'index', `acme__${repo}`, `${pkg}.exports.json`);
+  const sidecar = (repo: string, pkg: string) => readJson<ExportsSidecar>(work, 'index', `acme__${repo}`, `pub__${pkg}.exports.json`);
 
   it('writes a non-empty .scip file per fixture package, all ok', () => {
     for (const [repo, pkg] of [['dart-app', 'acme_app'], ['dart-lib-pub', 'acme_pub'], ['dart-lib-x', 'acme_x']]) {
-      const scip = path.join(work, 'index', `acme__${repo}`, `${pkg}.scip`);
+      const scip = path.join(work, 'index', `acme__${repo}`, `pub__${pkg}.scip`);
       expect(existsSync(scip), scip).toBe(true);
       expect(statSync(scip).size, scip).toBeGreaterThan(0);
       const r = ix(repo!);
@@ -93,12 +96,12 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.3',
+        indexerVersion: '1.7.0+sentei.4',
         status: 'ok',
-        scip: `${pkg}.scip`,
-        exports: `${pkg}.exports.json`,
+        scip: `pub__${pkg}.scip`,
+        exports: `pub__${pkg}.exports.json`,
       });
-      expect(existsSync(path.join(work, 'index', `acme__${repo}`, `${pkg}.log`))).toBe(true);
+      expect(existsSync(path.join(work, 'index', `acme__${repo}`, `pub__${pkg}.log`))).toBe(true);
     }
   });
 
@@ -122,14 +125,13 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     const s = sidecar('dart-lib-x', 'acme_x');
     expect(s).toMatchObject({
       packageId: 'pub:acme_x',
-      entryPoints: ['lib/acme_x.dart'],
+      entryPoints: ['lib/acme_x.dart', 'lib/builder.dart', 'lib/syntax.dart'],
       missingEntryPoints: [],
       unresolved: [],
       unresolvedImports: [],
       flags: [],
       namespaceMemberRefs: [],
       unindexedImports: [],
-      entrySymbols: [],
     });
     const rows = s.exports.map((e) => [e.exportedAs, e.name, e.file, e.line, e.col]);
     expect(rows).toEqual([
@@ -142,8 +144,12 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       ['shownOnly', 'shownOnly', 'lib/src/impl.dart', 10, 4],
       ['unusedFn', 'unusedFn', 'lib/acme_x.dart', 15, 4],
       ['usedFn', 'usedFn', 'lib/acme_x.dart', 12, 4],
+      ['acmeBuilder', 'acmeBuilder', 'lib/builder.dart', 5, 7],
+      ['Mapper', 'Mapper', 'lib/syntax.dart', 36, 8],
+      ['Vec', 'Vec', 'lib/syntax.dart', 9, 6],
+      ['labelOf', 'labelOf', 'lib/syntax.dart', 39, 7],
     ]);
-    for (const e of s.exports) expect(e.entry).toBe('lib/acme_x.dart');
+    for (const e of s.exports) expect(e.entry).toBe(e.file.startsWith('lib/src/') ? 'lib/acme_x.dart' : e.file);
     // `export 'src/shown.dart' show Shown;` (line 7): the shown name is a site, not a use.
     const shown = s.exports.find((e) => e.name === 'Shown')!;
     expect(shown.sites).toEqual([{ file: 'lib/acme_x.dart', line: 6, col: 'export \'src/shown.dart\' show '.length }]);
@@ -152,24 +158,68 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
 
   it('bin entries are listed, export nothing, and record their main as an entry symbol', () => {
     const s = sidecar('dart-app', 'acme_app');
-    expect(s.entryPoints).toEqual(['bin/main.dart']);
+    expect(s.entryPoints).toEqual(['bin/main.dart', 'bin/shapes.dart']);
     expect(s.exports).toEqual([]);
     expect(s.unresolvedImports).toEqual([]);
     // `void main() {` on line 10: the runtime calls it, nothing references it.
-    expect(s.entrySymbols).toEqual([{ name: 'main', file: 'bin/main.dart', line: 9, col: 5 }]);
-    expect(sidecar('dart-lib-x', 'acme_x').entrySymbols).toEqual([]); // a lib entry without main
+    expect(s.entrySymbols).toEqual([
+      { name: 'main', file: 'bin/main.dart', line: 9, col: 5 },
+      { name: 'main', file: 'bin/shapes.dart', line: 4, col: 5 },
+    ]);
     expect(sidecar('dart-bad', 'acme_bad').entrySymbols).toEqual([{ name: 'main', file: 'bin/main.dart', line: 2, col: 5 }]);
   });
 
+  it('records Dart entry conventions: main outside lib/ (not tests), build.yaml builder factories, dart_dev config', () => {
+    // Positions are the declarations' names, as SCIP defines them (ingest matches on them).
+    expect(sidecar('dart-lib-x', 'acme_x').entrySymbols).toEqual([
+      { name: 'main', file: 'benchmark/bench.dart', line: 5, col: 5 }, // runnable script, not a discover entry
+      { name: 'acmeBuilder', file: 'lib/builder.dart', line: 5, col: 7 }, // build.yaml builder_factories
+      { name: 'config', file: 'tool/dart_dev/config.dart', line: 5, col: 6 }, // dart_dev convention
+    ]); // test/x_test.dart's main is not one
+    const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));
+    const defs = new Set(
+      lib.documents.flatMap((d) => d.occurrences.filter((o) => (o.symbolRoles & 1) === 1).map((o) => `${d.relativePath}:${o.range[0]}:${o.range[1]} ${o.symbol}`)),
+    );
+    expect(defs).toContain('benchmark/bench.dart:5:5 scip-dart pub acme_x 1.0.0 benchmark/`bench.dart`/main().');
+    expect(defs).toContain('lib/builder.dart:5:7 scip-dart pub acme_x 1.0.0 lib/`builder.dart`/acmeBuilder().');
+    expect(defs).toContain('tool/dart_dev/config.dart:5:6 scip-dart pub acme_x 1.0.0 tool/dart_dev/`config.dart`/config.');
+  });
+
+  it('emits only valid SCIP symbols: operators backticked, nameless elements and import prefixes local (fork patch 3)', () => {
+    const symbolsOf = (file: string) => {
+      const idx = readScipIndex(path.join(work, 'index', file));
+      return idx.documents.flatMap((d) => d.occurrences.map((o) => ({ file: d.relativePath, def: (o.symbolRoles & 1) === 1, symbol: o.symbol, line: o.range[0]! })));
+    };
+    const all = [...symbolsOf('acme__dart-lib-x/pub__acme_x.scip'), ...symbolsOf('acme__dart-app/pub__acme_app.scip')];
+    for (const { symbol } of all) {
+      expect(symbol).not.toMatch(/\bnull\b/);
+      const p = parseScipSymbol(symbol);
+      if (p.local) continue;
+      const ds = parseDescriptors(p.descriptors); // throws on a malformed symbol
+      for (const d of ds) expect(d.name, symbol).not.toBe('');
+    }
+    const syntax = all.filter((o) => o.file === 'lib/syntax.dart');
+    const defsAt = (line: number) => syntax.filter((o) => o.def && o.line === line).map((o) => o.symbol);
+    const X = 'scip-dart pub acme_x 1.0.0 lib/`syntax.dart`/';
+    expect(defsAt(17)).toEqual([`${X}Vec#\`==\`().`, 'local 1']); // operator == (and its parameter)
+    expect(defsAt(24)).toEqual([`${X}Vec#\`[]\`().`, 'local 2']); // operator []
+    expect(defsAt(6)).toEqual(['local 0']); // import prefix `p`: not a declaration
+    expect(defsAt(29)).toEqual(['local 3']); // unnamed extension
+    expect(defsAt(30)).toEqual(['local 4']); // its getter
+    expect(defsAt(36)).toEqual([`${X}Mapper#`, 'local 5']); // typedef; T of the generic function type
+    // Every operator anywhere is backticked.
+    for (const { symbol } of all) expect(symbol).not.toMatch(/#(==|\[\]=?|<=?|>=?|[%*\/~^|&])\(\)\./);
+  });
+
   it('gives private declarations global symbols (patched scip-dart), consumer refs carry the lib symbols', () => {
-    const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/acme_x.scip'));
+    const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));
     const entry = lib.documents.find((d) => d.relativePath === 'lib/acme_x.dart')!;
     const island = 'scip-dart pub acme_x 1.0.0 lib/`acme_x.dart`/_islandA().';
     expect(entry.symbols.map((s) => s.symbol)).toContain(island);
     expect(entry.occurrences.some((o) => o.symbol === island && (o.symbolRoles & 1) === 1)).toBe(true);
     expect(entry.occurrences.some((o) => o.symbol === island && (o.symbolRoles & 1) === 0)).toBe(true); // from _islandB
 
-    const app = readScipIndex(path.join(work, 'index/acme__dart-app/acme_app.scip'));
+    const app = readScipIndex(path.join(work, 'index/acme__dart-app/pub__acme_app.scip'));
     const refs = new Set(app.documents.flatMap((d) => d.occurrences.map((o) => o.symbol)));
     expect(refs).toContain('scip-dart pub acme_x 1.0.0 lib/`acme_x.dart`/usedFn().');
     expect(refs).toContain('scip-dart pub acme_x 1.0.0 lib/src/`part_a.dart`/partUsed().');
@@ -242,6 +292,26 @@ describe('pubspec_overrides.yaml writer', () => {
     expect(readFileSync(file, 'utf8')).toBe(merged);
     expect(readFileSync(path.join(dir, '.sentei-backup/pubspec_overrides.yaml'), 'utf8')).toBe(original);
     expect(d2).toEqual(['info: pubspec_overrides.yaml: acme_lib -> ../lib']);
+
+    // Excluding the link (pub rejected it) gives the user's entry back.
+    const links = writeOverrides(inp, dir, [], new Set(['acme_lib']));
+    expect(links.size).toBe(0);
+    expect(readFileSync(file, 'utf8')).toBe(original);
+    // And linking again works from the backup.
+    writeOverrides(inp, dir, []);
+    expect(readFileSync(file, 'utf8')).toBe(merged);
+  });
+
+  it('an excluded link leaves the other links and removes a file only we wrote', () => {
+    const inp = input();
+    const dir = inp.repo.localPath;
+    const file = path.join(dir, 'pubspec_overrides.yaml');
+    rmSync(file, { force: true });
+    rmSync(path.join(dir, '.sentei-backup'), { recursive: true, force: true });
+    writeOverrides(inp, dir, []);
+    expect(readFileSync(file, 'utf8')).toBe(`${OVERRIDES_HEADER}\ndependency_overrides:\n  acme_lib:\n    path: ../lib\n`);
+    writeOverrides(inp, dir, [], new Set(['acme_lib']));
+    expect(existsSync(file)).toBe(false);
   });
 
   it('writes nothing for a package without org deps', () => {
@@ -258,4 +328,160 @@ describe('pubspec_overrides.yaml writer', () => {
     expect(parseYamlBlock('a: |\n  text\n')).toBeUndefined();
     expect(parseYamlBlock('a:\n  b: "x # y"  # c\n')).toEqual({ a: { b: '"x # y"' } });
   });
+});
+
+describe('pub get conflict with a source link', () => {
+  // Real `dart pub get` output from the first Workiva run (Dart 3.11.3).
+  const W_FLUX_CODEMOD = [
+    'Resolving dependencies...',
+    'Because every version of codemod from path depends on analyzer ^14.0.0 and w_flux_codemod depends on analyzer ^5.13.0, codemod from path is forbidden.',
+    'So, because w_flux_codemod depends on codemod from path, version solving failed.',
+    '',
+    '',
+    'You can try the following suggestion to make the pubspec resolve:',
+    '* Consider downgrading your constraint on analyzer: dart pub add analyzer:^14.0.0',
+    '',
+  ].join('\n');
+  const OVER_REACT_PLUGIN = [
+    'Resolving dependencies...',
+    'Because every version of over_react from path depends on analyzer >=10.0.0 <15.0.0 and over_react_analyzer_plugin depends on',
+    '  analyzer >=5.11.0 <7.0.0, over_react from path is forbidden.',
+    'So, because over_react_analyzer_plugin depends on over_react from path, version solving failed.',
+  ].join('\n');
+
+  it('names the overridden dep, the constraining package and pub\'s reason', () => {
+    expect(parseOverrideConflicts(W_FLUX_CODEMOD, new Set(['codemod', 'workiva_analysis_options']))).toEqual([
+      {
+        dep: 'codemod',
+        pkg: 'w_flux_codemod',
+        detail: 'every version of codemod from path depends on analyzer ^14.0.0 and w_flux_codemod depends on analyzer ^5.13.0',
+      },
+    ]);
+    expect(parseOverrideConflicts(OVER_REACT_PLUGIN, new Set(['dart_dev', 'dependency_validator', 'over_react', 'workiva_analysis_options']))).toEqual([
+      {
+        dep: 'over_react',
+        pkg: 'over_react_analyzer_plugin',
+        detail: 'every version of over_react from path depends on analyzer >=10.0.0 <15.0.0 and over_react_analyzer_plugin depends on analyzer >=5.11.0 <7.0.0',
+      },
+    ]);
+  });
+
+  it('finds nothing when no overridden dep is named, or when solving did not fail', () => {
+    expect(parseOverrideConflicts(W_FLUX_CODEMOD, new Set(['workiva_analysis_options']))).toEqual([]);
+    expect(parseOverrideConflicts('Because codemod requires SDK version ^3.13.0, version solving failed.', new Set(['codemod']))).toEqual([]);
+    expect(parseOverrideConflicts('Could not find package codemod from path at ../x', new Set(['codemod']))).toEqual([]);
+    // `codemod` must not match inside `w_flux_codemod from path`.
+    expect(parseOverrideConflicts('Because w_flux_codemod from path is broken, version solving failed.', new Set(['codemod']))).toEqual([]);
+  });
+});
+
+describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-dart-tmp-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  function write(files: Record<string, string>): void {
+    for (const [f, body] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+      writeFileSync(path.join(root, f), body);
+    }
+  }
+  const pubspec = (name: string, version: string, deps = ''): string =>
+    `name: ${name}\nversion: ${version}\npublish_to: none\nenvironment:\n  sdk: ^3.0.0\n${deps ? `dependencies:\n${deps}` : ''}`;
+  function inputFor(repos: DiscoveredRepo[], repo: DiscoveredRepo): IndexerInput {
+    const byId = new Map<string, OrgPackage>(repos.flatMap((r) => r.packages.map((p) => [p.packageId, { repo: r, pkg: p }] as const)));
+    return { repo, pkg: repo.packages[0]!, lookup: (id) => byId.get(id), orgPackages: [...byId.values()], options: { install: false, maxOldSpaceMb: 0 } };
+  }
+
+  it('an npm and a pub package in the same dir write distinct output files', async () => {
+    write({
+      'dual/package.json': JSON.stringify({ name: 'dual', version: '1.0.0', type: 'module', types: 'src/index.ts' }),
+      'dual/tsconfig.json': JSON.stringify({ compilerOptions: { strict: true, module: 'esnext', moduleResolution: 'bundler', noEmit: true, types: [] }, include: ['src'] }),
+      'dual/src/index.ts': 'export function fromTs(): number { return 1; }\n',
+      'dual/pubspec.yaml': pubspec('dual', '1.0.0'),
+      'dual/lib/dual.dart': 'int fromDart() => 1;\n',
+    });
+    const work = path.join(root, 'work-dual');
+    mkdirSync(work);
+    const repo: DiscoveredRepo = {
+      repo: 'acme/dual', localPath: path.join(root, 'dual'), headSha: null,
+      packages: [
+        { packageId: 'npm:dual', path: '.', manager: 'npm', name: 'dual', entryPoints: ['src/index.ts'], deps: [] },
+        { packageId: 'pub:dual', path: '.', manager: 'pub', name: 'dual', entryPoints: ['lib/dual.dart'], deps: [] },
+      ],
+    };
+    writeFileSync(path.join(work, 'discover.json'), JSON.stringify({ org: 'acme', repos: [repo] } satisfies DiscoverFile));
+    await index({ work, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+    const r = readJson<RepoIndex>(work, 'index/acme__dual/index.json');
+    expect(r.packages.map((p) => [p.packageId, p.status, p.scip, p.exports])).toEqual([
+      ['npm:dual', 'ok', 'npm__dual.scip', 'npm__dual.exports.json'],
+      ['pub:dual', 'ok', 'pub__dual.scip', 'pub__dual.exports.json'],
+    ]);
+    const docs = (f: string) => readScipIndex(path.join(work, 'index/acme__dual', f)).documents.map((d) => d.relativePath).sort();
+    expect(docs('npm__dual.scip')).toEqual(['src/index.ts']);
+    expect(docs('pub__dual.scip')).toEqual(['lib/dual.dart']);
+    expect(readJson<ExportsSidecar>(work, 'index/acme__dual/npm__dual.exports.json').packageId).toBe('npm:dual');
+    expect(readJson<ExportsSidecar>(work, 'index/acme__dual/pub__dual.exports.json').packageId).toBe('pub:dual');
+  }, 300_000);
+
+  it('a missing generated part makes the package partial; one in a test file only warns', async () => {
+    write({
+      'gen/pubspec.yaml': pubspec('acme_gen', '1.0.0'),
+      'gen/lib/acme_gen.dart': "part 'acme_gen.g.dart';\n\nint used() => _\$generated();\n",
+      'gen/test/gen_test.dart': "import 'package:acme_gen/acme_gen.dart';\n\npart 'gen_test.g.dart';\n\nvoid main() => print(used());\n",
+      'gentest/pubspec.yaml': pubspec('acme_gentest', '1.0.0'),
+      'gentest/lib/acme_gentest.dart': 'int used() => 1;\n',
+      'gentest/test/gen_test.dart': "part 'gen_test.over_react.g.dart';\n\nvoid main() {}\n",
+    });
+    const repos = ['gen', 'gentest'].map((d) => repoOf(root, d, pubPackage(`acme_${d}`, [`lib/acme_${d}.dart`])));
+    for (const r of repos) r.localPath = path.join(root, r.repo.split('/')[1]!);
+    const out = path.join(root, 'out-gen');
+    mkdirSync(out);
+    const gen = await scipDart.run(inputFor(repos, repos[0]!), out);
+    expect(gen.status).toBe('partial');
+    expect(gen.diagnostics).toContain(
+      "error: missing generated part 'acme_gen.g.dart' at lib/acme_gen.dart:1:6: the library is incomplete, references inside the part are unknown (run build_runner before indexing)",
+    );
+    expect(gen.diagnostics.some((d) => d.startsWith("warn: missing part 'gen_test.g.dart' at test/gen_test.dart:3:6"))).toBe(true);
+    // The missing parts are not also counted as plain analyzer errors (those never change status).
+    expect(gen.diagnostics.some((d) => /uri_has_not_been_generated/.test(d))).toBe(false);
+
+    const gentest = await scipDart.run(inputFor(repos, repos[1]!), out);
+    expect(gentest.status, gentest.diagnostics.join('\n')).toBe('ok');
+    expect(gentest.diagnostics.some((d) => d.startsWith("warn: missing part 'gen_test.over_react.g.dart' at test/gen_test.dart:1:6"))).toBe(true);
+  }, 300_000);
+
+  it('retries pub get without a source link whose HEAD conflicts with the consumer, restoring the user override', async () => {
+    // acme_lib HEAD depends on `shared` from hosted; the consumer pins `shared` by
+    // path. The user's own override points acme_lib at an older copy with no deps.
+    write({
+      'shared1/pubspec.yaml': pubspec('shared', '1.0.0'),
+      'shared1/lib/shared.dart': 'int s() => 1;\n',
+      'lib/pubspec.yaml': pubspec('acme_lib', '2.0.0', '  shared: ^2.0.0\n'),
+      'lib/lib/acme_lib.dart': 'int libFn() => 2;\n',
+      'lib_old/pubspec.yaml': pubspec('acme_lib', '1.0.0'),
+      'lib_old/lib/acme_lib.dart': 'int libFn() => 1;\n',
+      'app/pubspec.yaml': pubspec('acme_app', '1.0.0', '  acme_lib: ^1.0.0\n  shared:\n    path: ../shared1\n'),
+      'app/bin/main.dart': "import 'package:acme_lib/acme_lib.dart';\n\nvoid main() => print(libFn());\n",
+      // The user's own overrides file: backed up, replaced by our link, restored on the retry.
+      'app/pubspec_overrides.yaml': 'dependency_overrides:\n  acme_lib:\n    path: ../lib_old\n',
+    });
+    const lib = repoOf(root, 'lib', pubPackage('acme_lib', ['lib/acme_lib.dart'], [{ name: 'shared', manager: 'pub', constraint: '^2.0.0', resolvedPackageId: null }]));
+    const app = repoOf(root, 'app', pubPackage('acme_app', ['bin/main.dart'], [orgDep('acme_lib', '^1.0.0')]));
+    for (const r of [lib, app]) r.localPath = path.join(root, r.repo.split('/')[1]!);
+    const prep = await scipDart.prepare!(inputFor([lib, app], app));
+    expect(prep.diagnostics).toContain(
+      "warn: acme_lib not source-linked: HEAD conflicts with acme_app's constraint " +
+        '(every version of acme_lib from path depends on shared from hosted and acme_app depends on shared from path)',
+    );
+    expect(prep.diagnostics).toContain('info: replaced existing dependency_overrides entry for acme_lib');
+    expect(prep.status, prep.diagnostics.join('\n')).toBe('ok');
+    expect(prep.log.filter((l) => l.startsWith('$ dart pub get'))).toHaveLength(2);
+    // Nothing left to link: the user's file is back as it was.
+    expect(readFileSync(path.join(root, 'app/pubspec_overrides.yaml'), 'utf8')).toBe('dependency_overrides:\n  acme_lib:\n    path: ../lib_old\n');
+    const config = readFileSync(path.join(root, 'app/.dart_tool/package_config.json'), 'utf8');
+    expect(config).toMatch(/"rootUri": "\.\.\/\.\.\/lib_old\/?"/);
+  }, 300_000);
 });

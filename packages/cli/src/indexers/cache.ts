@@ -1,6 +1,7 @@
 // Index cache check (PLAN.md §6.2: indexes are cacheable by head_sha), per package.
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { packageSlug } from './scip-typescript.ts';
 import type { DiscoveredPackage, DiscoveredRepo, Indexer, IndexStatus } from './types.ts';
 
 /**
@@ -52,7 +53,9 @@ export type CacheDecision =
  *     bugs — so they are always retried; an unowned package is always `failed`
  *     and only a changed owner can change it, which the owner check catches);
  *   - it was installed when this run installs;
- *   - its `.scip` and sidecar files still exist.
+ *   - its `.scip` and sidecar files still exist under today's names
+ *     (`packageSlug`; older runs named them without the manager prefix, and an
+ *     npm and a pub package in one dir could overwrite each other's files).
  * Keyed by packageId; every package of the repo has a decision.
  */
 export function isCached(
@@ -85,6 +88,9 @@ export function isCached(
       }
       if (p.indexer !== null && options.install && (p.install ?? prev.install) !== true) {
         return { reuse: false, reason: 'previous run did not install dependencies' };
+      }
+      if (p.indexer !== null && typeof p.scip === 'string' && p.scip !== `${packageSlug(pkg)}.scip`) {
+        return { reuse: false, reason: `output file name changed (${p.scip})` };
       }
       for (const f of [p.scip, p.exports]) {
         if (typeof f === 'string' && !existsSync(path.resolve(dir, f))) return { reuse: false, reason: `${f} missing` };

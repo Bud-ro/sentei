@@ -9,9 +9,9 @@ per symbol, `expected-findings.json` (closed world, as checked in) and
 
 | Repo | Package | Visibility | Role |
 | --- | --- | --- | --- |
-| `dart-lib-x` | `acme_x` | private (`publish_to: none`) | lib: entry `lib/acme_x.dart` with `export`, `export ... show`, `part` |
+| `dart-lib-x` | `acme_x` | private (`publish_to: none`) | lib: entry `lib/acme_x.dart` with `export`, `export ... show`, `part`; entries `lib/syntax.dart`, `lib/builder.dart` |
 | `dart-lib-pub` | `acme_pub` | **published-public** (no `publish_to`) | lib with one unused export |
-| `dart-app` | `acme_app` | private (`publish_to: none`) | consumer: `path:` dep on `acme_x`, hosted `^1.0.0` dep on `acme_pub` |
+| `dart-app` | `acme_app` | private (`publish_to: none`) | consumer (`bin/main.dart`, `bin/shapes.dart`): `path:` dep on `acme_x`, hosted `^1.0.0` dep on `acme_pub` |
 
 No `pubspec.lock` / `.dart_tool` is checked in. To build or index, copy the repos
 somewhere else and run `dart pub get` in each package. `dart-app` depends on
@@ -49,3 +49,15 @@ through `3.doubled`, so the witness cannot hide a missing reference to it.
 Also covered, beyond the checklist: a class used only through its implicit default
 constructor (`Shown()`), and a hosted constraint on an org package (`acme_pub`)
 that must be source-linked.
+
+### Symbol shapes and Dart entry conventions (first Workiva run)
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| `operator ==`, `operator []` (SCIP names must be backticked: `` Vec#`==`(). ``) | `dart-lib-x/lib/syntax.dart` `Vec`, used by `dart-app/bin/shapes.dart` | no finding (`Vec` is used; members live with it) |
+| Unnamed extension (`extension on String`) | `lib/syntax.dart`, used by `labelOf` | no finding: it and its getter are `local` symbols |
+| Generic function typedef with a type parameter and a named parameter | `lib/syntax.dart` `typedef Mapper = T Function<T>(T value, {int? times})`; a closure with a named parameter in `bin/shapes.dart` | `Mapper` alive (named by acme_app); `T`, `times` and the closure are `local` |
+| Import prefix (`import 'src/shown.dart' as p;`) | `lib/syntax.dart` | no finding: the prefix is a `local` symbol, not a declaration |
+| build.yaml `builder_factories` | `dart-lib-x/build.yaml` → `lib/builder.dart` `acmeBuilder` | no finding: exported but called by build_runner by name (sidecar `entrySymbols`) |
+| dart_dev's `config` | `dart-lib-x/tool/dart_dev/config.dart` | no finding (sidecar `entrySymbols`) |
+| `main` of a script outside `lib/` that is not a discover entry | `dart-lib-x/benchmark/bench.dart` (`main`, and `work` reached from it) | no finding (sidecar `entrySymbols`) |

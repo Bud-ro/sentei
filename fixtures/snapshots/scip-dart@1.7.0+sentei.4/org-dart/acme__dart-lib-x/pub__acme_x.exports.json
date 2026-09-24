@@ -1,8 +1,29 @@
 {
   "entryPoints": [
-    "lib/acme_x.dart"
+    "lib/acme_x.dart",
+    "lib/builder.dart",
+    "lib/syntax.dart"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "benchmark/bench.dart",
+      "line": 5,
+      "name": "main"
+    },
+    {
+      "col": 6,
+      "file": "tool/dart_dev/config.dart",
+      "line": 5,
+      "name": "config"
+    },
+    {
+      "col": 7,
+      "file": "lib/builder.dart",
+      "line": 5,
+      "name": "acmeBuilder"
+    }
+  ],
   "exports": [
     {
       "col": 10,
@@ -90,6 +111,42 @@
           "line": 6
         }
       ]
+    },
+    {
+      "col": 6,
+      "entry": "lib/syntax.dart",
+      "exportedAs": "Vec",
+      "file": "lib/syntax.dart",
+      "line": 9,
+      "name": "Vec",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "lib/builder.dart",
+      "exportedAs": "acmeBuilder",
+      "file": "lib/builder.dart",
+      "line": 5,
+      "name": "acmeBuilder",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "lib/syntax.dart",
+      "exportedAs": "labelOf",
+      "file": "lib/syntax.dart",
+      "line": 39,
+      "name": "labelOf",
+      "sites": []
+    },
+    {
+      "col": 8,
+      "entry": "lib/syntax.dart",
+      "exportedAs": "Mapper",
+      "file": "lib/syntax.dart",
+      "line": 36,
+      "name": "Mapper",
+      "sites": []
     }
   ],
   "flags": [],

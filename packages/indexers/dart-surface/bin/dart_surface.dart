@@ -4,11 +4,15 @@
 // (packages/cli/src/indexers/scip-dart.ts) runs this next to scip-dart and
 // writes its output as `<slug>.exports.json`. Output (stdout, JSON) is the
 // sidecar shape of packages/cli/src/indexers/types.ts `ExportsSidecar` (incl.
-// `entrySymbols`: top-level `main` of bin/** and lib/*.dart entries), plus two
-// adapter-only keys the adapter strips before writing the sidecar:
+// `entrySymbols`, see [Surface.entrySymbols]), plus three adapter-only keys the
+// adapter strips before writing the sidecar:
 //   - `unresolvedOrgModules`: org (or own relative) import/export URIs that do
 //     not resolve; references through them vanish silently → status partial;
-//   - `diagnostics`: `warn:` lines (analyzer errors; never change status).
+//   - `missingParts`: `part` directives whose file does not exist (typically a
+//     `*.g.dart` build_runner output that was never generated): the library is
+//     incomplete and references inside the part are unknown → status partial
+//     (the adapter skips test/docs files the policy does not count);
+//   - `diagnostics`: `warn:`/`info:` lines (other analyzer errors; never change status).
 //
 // Positions: 0-based line, 0-based UTF-16 column; files repo-relative POSIX.
 import 'dart:convert';
@@ -22,6 +26,7 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/diagnostic/diagnostic.dart';
 import 'package:args/args.dart';
 import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart';
 
 /// Cap on analyzer errors copied into `diagnostics` (the count is always reported).
 const maxReportedDiagnostics = 20;
@@ -105,6 +110,30 @@ class Surface {
   final unresolved = <String>{};
   final unresolvedImports = <Map<String, Object>>[];
   final unresolvedOrgModules = <Map<String, Object>>[];
+  final missingParts = <Map<String, Object>>[];
+
+  /// Declarations the runtime or a tool invokes by convention, with no
+  /// reference in code (the sidecar's `entrySymbols`), keyed by position:
+  ///   - `main` of a `lib/*.dart` entry (Flutter's lib/main.dart);
+  ///   - `main` of every library outside `lib/` (bin/, tool/, benchmark/,
+  ///     example/, web/, root scripts, ...): these are run directly
+  ///     (`dart run`, `dart <file>`). Test files are dropped by the adapter;
+  ///   - build.yaml builder factories (see [_buildYamlFactories]);
+  ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
+  final entrySymbols = <String, Map<String, Object>>{};
+
+  /// The package's pub name (`pub:acme_x` → `acme_x`).
+  String get packageName => packageId.startsWith('pub:') ? packageId.substring(4) : packageId;
+
+  void addEntrySymbol(Element element, String why) {
+    final decl = declarationOf(element);
+    if (decl == null) return;
+    final fragment = decl.firstFragment;
+    final file = fragment.libraryFragment!.source.fullName;
+    if (!isOwnFile(file)) return;
+    final pos = position(fragment.libraryFragment!, fragment.nameOffset!);
+    entrySymbols.putIfAbsent(pos.key, () => {'name': decl.name ?? why, ...pos.toJson()});
+  }
 
   late final AnalysisContext context;
 
@@ -136,7 +165,6 @@ class Surface {
     final entryPoints = <String>[];
     final missingEntryPoints = <String>[];
     final records = <ExportRecord>[];
-    final entrySymbols = <Map<String, Object>>[];
 
     for (final entry in entries) {
       final abs = p.normalize(p.join(repoRoot, p.joinAll(p.posix.split(entry))));
@@ -161,22 +189,17 @@ class Surface {
         diagnostics.add('info: entry $entry is not a library (${lib.runtimeType}); it exports nothing');
         continue;
       }
-      // The runtime calls `main` of a program entry (bin/**, or lib/main.dart in
-      // Flutter); nothing in code references it.
-      if (isBin || isLibTop) {
-        for (final fn in lib.element.topLevelFunctions) {
-          final fragment = fn.firstFragment;
-          if (fn.name != 'main' || fragment.nameOffset == null) continue;
-          if (!isOwnFile(fragment.libraryFragment.source.fullName)) continue;
-          entrySymbols.add({'name': 'main', ...position(fragment.libraryFragment, fragment.nameOffset!).toJson()});
-        }
-      }
+      // The runtime calls `main` of lib/main.dart (Flutter); nothing in code
+      // references it. (bin/** is covered by the scan of files outside lib/.)
+      if (isLibTop) _addMain(lib.element);
       // bin/ entries are programs: they export nothing (their files are still seeds).
       if (isBin) continue;
       records.addAll(await _exportsOf(entry, lib.element));
     }
 
     await _checkOwnFiles();
+    await _buildYamlFactories();
+    await _dartDevConfig();
 
     if (missingEntryPoints.isNotEmpty) {
       diagnostics.add('warn: entry point(s) not found, export surface unknown: ${missingEntryPoints.join(', ')}');
@@ -203,8 +226,9 @@ class Surface {
       'flags': <Object>[],
       'namespaceMemberRefs': <Object>[],
       'unindexedImports': <Object>[],
-      'entrySymbols': entrySymbols,
+      'entrySymbols': entrySymbols.values.toList()..sort(_byPosition),
       'unresolvedOrgModules': unresolvedOrgModules,
+      'missingParts': missingParts,
       'diagnostics': diagnostics,
     };
   }
@@ -325,8 +349,27 @@ class Surface {
     for (final file in files) {
       final unitResult = await session.getUnitElement(file);
       final parsed = session.getParsedUnit(file);
+      final errors = await session.getErrors(file);
+      final errorList = errors is ErrorsResult ? errors.diagnostics : const <Diagnostic>[];
+      final missingPartOffsets = <int>{};
       if (unitResult is UnitElementResult && parsed is ParsedUnitResult) {
         final fragment = unitResult.fragment;
+        // A program outside lib/ (the library's defining file, not a part).
+        final relToPkg = p.posix.joinAll(p.split(p.relative(file, from: packageRoot)));
+        if (!relToPkg.startsWith('lib/') && fragment.element.firstFragment.source.fullName == file) {
+          _addMain(fragment.element);
+        }
+        // A part whose file does not exist: the library is incomplete.
+        for (final d in parsed.unit.directives.whereType<PartDirective>()) {
+          final missing = errorList.any((e) =>
+              e.offset == d.uri.offset && _missingUriCodes.contains(e.diagnosticCode.lowerCaseName));
+          if (!missing) continue;
+          missingPartOffsets.add(d.uri.offset);
+          missingParts.add({
+            'uri': d.uri.stringValue ?? d.uri.toSource(),
+            ...positionIn(file, parsed.unit, d.uri.offset).toJson(),
+          });
+        }
         final imports = {
           for (final d in parsed.unit.directives.whereType<ImportDirective>()) d.importKeyword.offset: d,
         };
@@ -341,10 +384,10 @@ class Surface {
           _checkDirective(file, parsed.unit, exp.uri, exp.exportedLibrary, exports[exp.exportKeywordOffset]);
         }
       }
-      final errors = await session.getErrors(file);
       if (errors is ErrorsResult) {
         for (final d in errors.diagnostics) {
           if (d.severity != Severity.error) continue;
+          if (missingPartOffsets.contains(d.offset)) continue; // reported as a missing part
           errorCount++;
           if (reported.length < maxReportedDiagnostics) {
             final loc = errors.lineInfo.getLocation(d.offset);
@@ -358,6 +401,91 @@ class Surface {
       diagnostics.add('warn: $errorCount Dart analyzer error diagnostic(s) in the package (status unaffected)');
       diagnostics.addAll(reported);
     }
+  }
+
+  static int _byPosition(Map<String, Object> a, Map<String, Object> b) {
+    final c = (a['file'] as String).compareTo(b['file'] as String);
+    if (c != 0) return c;
+    final l = (a['line'] as int) - (b['line'] as int);
+    return l != 0 ? l : (a['col'] as int) - (b['col'] as int);
+  }
+
+  /// Analyzer codes for a directive URI whose file does not exist.
+  static const _missingUriCodes = {'uri_has_not_been_generated', 'uri_does_not_exist'};
+
+  /// Top-level `main` declared in [library] (in one of its own files).
+  void _addMain(LibraryElement library) {
+    for (final fn in library.topLevelFunctions) {
+      if (fn.name == 'main') addEntrySymbol(fn, 'main');
+    }
+  }
+
+  /// build_runner loads builders by name: for each `builders.<b>` (and
+  /// `post_process_builders.<b>`) in the package's build.yaml, the
+  /// `builder_factories` (`builder_factory`) are top-level functions of the
+  /// `import:` library. Nothing in code references them.
+  Future<void> _buildYamlFactories() async {
+    final file = File(p.join(packageRoot, 'build.yaml'));
+    if (!file.existsSync()) return;
+    Object? doc;
+    try {
+      doc = loadYaml(file.readAsStringSync());
+    } on Exception catch (e) {
+      diagnostics.add('warn: build.yaml does not parse, builder factories unknown: ${e.toString().split('\n').first}');
+      return;
+    }
+    if (doc is! Map) return;
+    for (final section in ['builders', 'post_process_builders']) {
+      final builders = doc[section];
+      if (builders is! Map) continue;
+      for (final MapEntry(key: name, value: b) in builders.entries) {
+        if (b is! Map) continue;
+        final import = b['import'];
+        final factories = <String>[
+          if (b['builder_factories'] is List) ...(b['builder_factories'] as List).whereType<String>(),
+          if (b['builder_factory'] is String) b['builder_factory'] as String,
+        ];
+        if (import is! String || factories.isEmpty) continue;
+        final uri = Uri.tryParse(import);
+        if (uri == null || uri.scheme != 'package' || uri.pathSegments.isEmpty || uri.pathSegments.first != packageName) {
+          diagnostics.add('info: build.yaml $section.$name imports $import (not this package); its factories are not ours');
+          continue;
+        }
+        final lib = await context.currentSession.getLibraryByUri(import);
+        if (lib is! LibraryElementResult) {
+          diagnostics.add('warn: build.yaml $section.$name: $import does not resolve; builder factories ${factories.join(', ')} unknown');
+          continue;
+        }
+        for (final f in factories) {
+          final element = lib.element.exportNamespace.get2(f) ?? _topLevel(lib.element, f);
+          if (element == null) {
+            diagnostics.add('warn: build.yaml $section.$name: $f is not declared in $import');
+            continue;
+          }
+          addEntrySymbol(element, f);
+        }
+      }
+    }
+  }
+
+  /// A top-level function or variable named [name] declared in [library].
+  Element? _topLevel(LibraryElement library, String name) {
+    for (final e in [...library.topLevelFunctions, ...library.topLevelVariables]) {
+      if (e.name == name) return e;
+    }
+    return null;
+  }
+
+  /// dart_dev (Workiva's task runner) reads the top-level `config` of
+  /// tool/dart_dev/config.dart: `dart run dart_dev` generates a run script that
+  /// imports that library and passes `config` to the runner.
+  Future<void> _dartDevConfig() async {
+    final file = p.join(packageRoot, 'tool', 'dart_dev', 'config.dart');
+    if (!File(file).existsSync() || !isOwnFile(file)) return;
+    final unit = await context.currentSession.getUnitElement(file);
+    if (unit is! UnitElementResult) return;
+    final element = _topLevel(unit.fragment.element, 'config');
+    if (element != null) addEntrySymbol(element, 'config');
   }
 
   void _checkDirective(

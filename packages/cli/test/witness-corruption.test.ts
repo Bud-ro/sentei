@@ -45,7 +45,7 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
       await index(ctx, { install: false });
 
       // Corrupt: drop every usedFn occurrence from app's src/main.ts, keep the rest.
-      const scipPath = path.join(work, 'index', 'acme__app', 'acme__app.scip');
+      const scipPath = path.join(work, 'index', 'acme__app', 'npm__acme__app.scip');
       const idx = readScipIndex(scipPath);
       const doc = idx.documents.find((d) => d.relativePath === 'src/main.ts');
       expect(doc).toBeDefined();

@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.3` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; the fork itself is unchanged): bump the `+sentei.N` patch level whenever this directory changes.
+`1.7.0+sentei.4` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -107,6 +107,186 @@ declaring file, so two libraries' `_helper` never collide.
        return _localSymbolFor(element);
      }
  
+```
+
+## 3. Valid symbols always (`lib/src/symbol_generator.dart`)
+
+Upstream interpolates element names into descriptors verbatim, so on the first
+Workiva run (30 repos) it emitted symbols the SCIP grammar rejects, and one bad
+symbol aborted ingest for the whole org:
+
+- **Operator methods** unescaped: `ActionsClass#==().`, `CssValue#<=().`,
+  `MapViewMixin#[]().` (~150 symbols in 10 packages; `[]` even parses as an
+  empty name). The grammar's `<simple-identifier>` is `[A-Za-z0-9_+\-$]+`, so
+  any other name must be an `<escaped-identifier>`: every name now goes through
+  `_name`, which backtick-quotes it (doubling backticks) unless it is simple.
+  `+`, `-` and `unary-` are simple and stay bare; `<get>x`/`<set>x` keep
+  upstream's backticks (byte-identical for ordinary names).
+- **Elements with no name** became the string `null`: unnamed extensions
+  (`…/null#`) and their members (`…/null#capitalize().`, which also collided
+  across extensions of one file), closures with named parameters
+  (`…/null().(indent)`), and type parameters or named parameters whose
+  enclosing element has no descriptor at all (`null[TValue]` for a generic
+  function type's type parameter, `null(tags)`). An unnamed extension's
+  top-level-looking getter even lost its owner (`…/\`<get>x\`.`, colliding with
+  a real top-level getter). A missing or empty name, or an enclosing element
+  without a descriptor, now throws `_NamelessElement` and `symbolFor` returns a
+  `local N` symbol: nothing outside the document can name such an element
+  (an unnamed extension is not importable), so a local is exact, and it is
+  never a verdict subject.
+- **Import prefixes** (`import 'x.dart' as $0;`) were global term symbols
+  (`<file>/$0.`), defined by the directive and never exported, so the
+  private-dead closure reported every prefix (130 rows in the Workiva run).
+  A prefix is not a declaration of the library: it is now a `local N` symbol.
+
+Upstreamable: all three are grammar/semantics bugs independent of sentei.
+The diff is against the file with patch 2 applied.
+
+```diff
+--- a/lib/src/symbol_generator.dart
++++ b/lib/src/symbol_generator.dart
+@@ -145,7 +145,23 @@
+       return _localSymbolFor(element);
+     }
+ 
+-    final descriptor = _getDescriptor(element);
++    // Import prefixes (`import 'x.dart' as p;`) are not declarations of the
++    // library: a global `<file>/p.` symbol would be an addressable, never
++    // exported "declaration" that nothing outside the file can reference.
++    if (element is PrefixElement) {
++      return _localSymbolFor(element);
++    }
++
++    final String? descriptor;
++    try {
++      descriptor = _getDescriptor(element);
++    } on _NamelessElement {
++      // The element (or an element its descriptor is built from) has no name:
++      // an unnamed extension and its members, a closure, a type parameter or
++      // named parameter of a generic function type. No global symbol can
++      // address it, so it is document-local.
++      return _localSymbolFor(element);
++    }
+     if (descriptor == null) return null;
+ 
+     // Symbol Form: '<scheme> ' ' <package> ' ' (<descriptor>)+ | 'local ' <local-id>'
+@@ -244,34 +260,34 @@
+     if (element is InterfaceElement || // class, mixin, enum, extension type
+         element is TypeAliasElement ||
+         element is ExtensionElement) {
+-      return '$namespace/${element.name}#';
++      return '$namespace/${_name(element.name)}#';
+     }
+ 
+     if (element is ConstructorElement) {
+-      final className = element.enclosingElement.name;
++      final className = _name(element.enclosingElement.name);
+       final constructorName = element.name != null && element.name != 'new'
+-          ? element.name
++          ? _name(element.name)
+           : '`<constructor>`';
+       return '$namespace/$className#$constructorName().';
+     }
+ 
+     if (element is MethodElement) {
+-      final className = element.enclosingElement?.name;
+-      return '$namespace/$className#${element.name}().';
++      final className = _name(element.enclosingElement?.name);
++      return '$namespace/$className#${_name(element.name)}().';
+     }
+ 
+     if (element is TopLevelFunctionElement || element is LocalFunctionElement) {
+-      return '$namespace/${element.name}().';
++      return '$namespace/${_name(element.name)}().';
+     }
+ 
+-    if (element is TopLevelVariableElement || element is PrefixElement) {
+-      return '$namespace/${element.name}.';
++    if (element is TopLevelVariableElement) {
++      return '$namespace/${_name(element.name)}.';
+     }
+ 
+     if (element is TypeParameterElement) {
+       final encEle = element.enclosingElement;
+-      if (encEle == null) return '$namespace/[${element.name}]';
+-      return '${_getDescriptor(encEle)}[${element.name}]';
++      if (encEle == null) return '$namespace/[${_name(element.name)}]';
++      return '${_enclosingDescriptor(encEle)}[${_name(element.name)}]';
+     }
+ 
+     // only generate symbols for named parameters, all others are 'local x'
+@@ -287,12 +303,12 @@
+       // is not indexable, so do not generate a symbol for it
+       if (encEle is GenericFunctionTypeElement) return null;
+ 
+-      return '${_getDescriptor(encEle)}(${element.name})';
++      return '${_enclosingDescriptor(encEle)}(${_name(element.name)})';
+     }
+ 
+     if (element is PropertyAccessorElement) {
+       final parent = element.enclosingElement;
+-      final parentName = parent is LibraryElement ? null : parent.name;
++      final parentName = parent is LibraryElement ? null : _name(parent.name);
+ 
+       var prefix = '';
+       if (element is GetterElement) {
+@@ -304,13 +320,13 @@
+       return [
+         '$namespace/',
+         if (parentName != null) '$parentName#',
+-        '`$prefix${element.variable.name}`.',
++        '${_escaped('$prefix${_name(element.variable.name, escape: false)}')}.',
+       ].join();
+     }
+ 
+     if (element is FieldElement) {
+       final encEle = element.enclosingElement;
+-      return '${_getDescriptor(encEle)}${element.name}.';
++      return '${_enclosingDescriptor(encEle)}${_name(element.name)}.';
+     }
+ 
+     display(
+@@ -323,6 +339,29 @@
+     return null;
+   }
+ 
++  /// The descriptor of an enclosing element. No descriptor (a generic function
++  /// type, a positional function-typed parameter, ...) means the nested
++  /// element cannot be addressed globally either: it becomes local.
++  String _enclosingDescriptor(Element encEle) {
++    final descriptor = _getDescriptor(encEle);
++    if (descriptor == null) throw const _NamelessElement();
++    return descriptor;
++  }
++
++  /// A descriptor name per the SCIP grammar: a simple identifier as is,
++  /// anything else (operators `==`, `[]=`, `<=`, `~/`, ...) backtick-escaped.
++  /// A missing or empty name has no global symbol ([_NamelessElement]).
++  String _name(String? name, {bool escape = true}) {
++    if (name == null || name.isEmpty) throw const _NamelessElement();
++    return escape ? _escaped(name) : name;
++  }
++
++  static final _simpleIdentifier = RegExp(r'^[A-Za-z0-9_+\-$]+$');
++
++  String _escaped(String name) => _simpleIdentifier.hasMatch(name)
++      ? name
++      : '`${name.replaceAll('`', '``')}`';
++
+   String _localSymbolFor(Element ele) {
+     _localElementRegistry.putIfAbsent(
+       ele,
+@@ -353,3 +392,10 @@
+     }
+   }
+ }
++
++/// Thrown by [SymbolGenerator._getDescriptor] when a descriptor would need
++/// the name of an element that has none; [SymbolGenerator.symbolFor] then
++/// emits a `local N` symbol instead of a `null`-containing global one.
++class _NamelessElement implements Exception {
++  const _NamelessElement();
++}
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)
