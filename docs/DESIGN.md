@@ -690,3 +690,50 @@ What the wrong rows taught, and the fixes adopted:
   report with a warning (1781 such rows on Workiva).
 - Import prefixes emitted by older Dart indexes are classified `import-prefix`
   at ingest and never reported (a stopgap; the fork no longer emits them).
+
+### unjs-driven fixes as built
+
+- **Sidecar `namespaceSpreadRefs`**: any value use of a namespace import whose
+  module lives in an org checkout (own package included) other than
+  `X.member`/`X['lit']` is recorded with its target module; ingest keeps that
+  module's declarations reachable. Org-package namespace imports still raise
+  the targeted `namespace_dynamic` flag as well.
+- **Export surface runs out of process** (`surface-worker.ts`, one child per
+  package with the configured heap), so the orchestrator's memory stays flat;
+  scip-typescript and the worker retry once with double heap on exhaustion.
+- **Unmatched sidecar exports explained**: scip-typescript 0.4.0 defines
+  destructured exports (`export const { a, b } = obj`) as locals, treats
+  expando assignments (`fetch.Promise = …`) as extra declarations, and emits
+  nothing for JSDoc typedefs or JSON modules; such records are dropped with a
+  count. Exports declared in files outside every tsconfig root (hand-written
+  `lib/*.d.mts`, playground files reached only by import) flag the package
+  partial: those files are invisible to SCIP.
+- **Installs**: version from `devEngines.packageManager` when `packageManager`
+  is absent; `npm exec` runs from an empty prefix with engine checks off (npm
+  11 enforces `devEngines.runtime` at its prefix, and `--force` would leak into
+  pnpm); stderr tails in diagnostics. pnpm 11 may download a Node runtime for
+  `devEngines.runtime` (`onFail: download`), so `nodejs.org` must be reachable.
+- **Witness**: the package is its own consumer for own files that import it by
+  name (`witness_mismatch:self:`), and any own non-test file holding the
+  candidate's name as a whole string literal or in an import-clause shape
+  downgrades it (`self-string`). Self hits ignore comments and the defining
+  line. Very short names (`id`, `type`) will produce noise; fail closed.
+- **Entry points**: dist→src tries `src/x/index.ts` and sources next to built
+  output; a code-looking leaf that resolves to nothing becomes an untargeted
+  `opaque_consumer` flag written by discover (reason prefixed `discover: `,
+  which ingest preserves). On unjs this made `@unhead/angular`, `unhead`,
+  `unpdf` and `md4x` opaque: their entries are produced by builds we do not
+  run, which is the honest answer.
+- **Skew that is a use**: a sidecar unresolved import whose name the target
+  exports at HEAD becomes a reference (100 on unjs).
+- **Dead islands**: `verdicts` is now computed after `reachable_after`; an
+  unexport candidate not reachable once candidates stop seeding becomes
+  `needs_review` + `dead_island` + `witness_pending`. Script directories,
+  counted test/docs files and overlay sources seed reachability.
+- **Discover**: private duplicate manifests are auto-ignored (still witness
+  scanned); template repos are skipped; `fixtures/org-dup` is non-private so
+  it still shows the hard error.
+- Indicative rerun on the old unjs index: deletion 106 → 104, unexport 584 →
+  534, private_dead 216 → 151, needs_review 9 → 48; every previously wrong row
+  is caught or fixed. Known noise: capnp-es generated files carry
+  `displayName: "X"` strings that self-string matches.
