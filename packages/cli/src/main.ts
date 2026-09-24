@@ -1,0 +1,102 @@
+#!/usr/bin/env node
+// sentei CLI: parses arguments and dispatches to a stage. No logic lives here.
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { parseArgs } from 'node:util';
+import { openDb } from '@sentei/core/db';
+import type { Stage, StageContext } from './context.ts';
+import { analyze } from './stages/analyze.ts';
+import { blame } from './stages/blame.ts';
+import { discover } from './stages/discover.ts';
+import { index } from './stages/index.ts';
+import { ingest } from './stages/ingest.ts';
+import { report } from './stages/report.ts';
+import { witness } from './stages/witness.ts';
+
+/** Pipeline order; `run` executes these in sequence. */
+const STAGES: ReadonlyArray<readonly [string, Stage]> = [
+  ['discover', discover],
+  ['index', index],
+  ['ingest', ingest],
+  ['blame', blame],
+  ['analyze', analyze],
+  ['witness', witness],
+  ['report', report],
+];
+
+const USAGE = `Usage: sentei <command> [options]
+
+Commands:
+  discover   List org repos and record packages + manifest deps
+  index      Run SCIP indexers per package
+  ingest     Load .scip files into the database
+  blame      Record first-seen dates for exported symbols
+  analyze    Compute reachability and verdicts
+  witness    Text-search check for deletion candidates
+  report     Write report.json / SARIF and print a summary
+  run        Run all stages in order
+
+Options:
+  --work <dir>   Work directory (default: ./work)
+  --db <file>    Database file (default: <work>/sentei.db)
+  -h, --help     Show this help
+`;
+
+export async function main(argv: readonly string[]): Promise<number> {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: [...argv],
+      allowPositionals: true,
+      options: {
+        work: { type: 'string', default: './work' },
+        db: { type: 'string' },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+    });
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n\n${USAGE}`);
+    return 2;
+  }
+  const { values, positionals } = parsed;
+  const command = positionals[0];
+
+  if (values.help || command === undefined || command === 'help') {
+    process.stdout.write(USAGE);
+    return command === undefined && !values.help ? 2 : 0;
+  }
+  if (positionals.length > 1) {
+    process.stderr.write(`unexpected arguments: ${positionals.slice(1).join(' ')}\n\n${USAGE}`);
+    return 2;
+  }
+
+  const selected = command === 'run' ? STAGES : STAGES.filter(([name]) => name === command);
+  if (selected.length === 0) {
+    process.stderr.write(`unknown command: ${command}\n\n${USAGE}`);
+    return 2;
+  }
+
+  const work = values.work;
+  const dbPath = values.db ?? join(work, 'sentei.db');
+  mkdirSync(work, { recursive: true });
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = openDb(dbPath);
+  try {
+    const ctx: StageContext = { work, dbPath, db, log: (line) => process.stdout.write(`${line}\n`) };
+    for (const [, stage] of selected) {
+      await stage(ctx);
+    }
+  } finally {
+    db.close();
+  }
+  return 0;
+}
+
+if (import.meta.main) {
+  // A closed pipe (e.g. `sentei run | head`) is not an error worth a stack trace.
+  process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') process.exit(0);
+    throw err;
+  });
+  process.exitCode = await main(process.argv.slice(2));
+}
