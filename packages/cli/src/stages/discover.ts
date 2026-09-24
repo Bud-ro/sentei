@@ -32,6 +32,10 @@ export async function discover(ctx: StageContext): Promise<void> {
   } else {
     model = discoverLocal({ orgDir: ctx.orgDir!, log });
   }
+  for (const [key, value] of Object.entries(ctx.policyOverrides ?? {})) {
+    log(`policy override ${key}=${JSON.stringify(value)} (was ${JSON.stringify(model.policy[key as keyof typeof model.policy])})`);
+  }
+  model.policy = { ...model.policy, ...ctx.policyOverrides };
   writeDiscoverToDb(ctx.db, model, (m) => log(`warning: ${m}`));
   const out = join(ctx.work, 'discover.json');
   writeFileSync(out, `${JSON.stringify(model, null, 2)}\n`);

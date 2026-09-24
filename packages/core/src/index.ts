@@ -1,4 +1,6 @@
 export { openDb, schemaSql, SCHEMA_VERSION } from './db.ts';
+export { DEFAULT_POLICY, isPolicyKey, setPolicyValue } from './config.ts';
+export type { Policy } from './config.ts';
 export { discoverLocal, discoverRepos, writeDiscoverToDb } from './discover.ts';
 export type { DiscoverDep, DiscoverModel, DiscoverPackage, DiscoverRepo, DiscoverRepoInput, DiscoverReposOptions, DiscoverSource } from './discover.ts';
 export { runWitness } from './witness.ts';

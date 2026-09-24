@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { Policy } from '@sentei/core';
 
 /** Shared inputs every stage receives from the dispatcher. */
 export interface StageContext {
@@ -14,6 +15,8 @@ export interface StageContext {
   org?: string;
   /** GitHub discover options (only read when `org` is set). */
   github?: GithubDiscoverOptions;
+  /** `--policy key=value` (validated): applied by `discover` on top of the org sentei.json. */
+  policyOverrides?: Partial<Policy>;
   /** Where stages print progress. */
   log: (line: string) => void;
 }

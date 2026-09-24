@@ -106,6 +106,26 @@ function keepArray(file: string, v: unknown): string[] {
   return keep;
 }
 
+export function isPolicyKey(key: string): key is keyof Policy {
+  return Object.hasOwn(DEFAULT_POLICY, key);
+}
+
+/**
+ * Validate `value` for policy `key` and store it; throws `sentei: <where>: ...` on a
+ * wrong type. Shared by the org sentei.json reader and the CLI's `--policy key=value`.
+ */
+export function setPolicyValue(policy: Policy, key: keyof Policy, value: unknown, where: string): void {
+  if (key === 'minAgeDays') {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+      throw new Error(`sentei: ${where}: "minAgeDays" must be a non-negative integer`);
+    }
+    policy.minAgeDays = value;
+    return;
+  }
+  if (typeof value !== 'boolean') throw new Error(`sentei: ${where}: "${key}" must be a boolean`);
+  policy[key] = value;
+}
+
 /**
  * Read `<orgDir>/sentei.json` (optional): policy, org-wide keep, and manifest
  * exclusions (`ignoreManifestDirs`, `ignoreManifests`; see OrgConfig).
@@ -120,17 +140,11 @@ export function readOrgConfig(orgDir: string): OrgConfig {
   for (const [key, value] of Object.entries(json)) {
     switch (key) {
       case 'minAgeDays':
-        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-          throw new Error(`sentei: ${file}: "minAgeDays" must be a non-negative integer`);
-        }
-        policy.minAgeDays = value;
-        break;
       case 'trustPrivateRegistry':
       case 'assumeClosedWorld':
       case 'countTestsAsConsumers':
       case 'countDocsAsConsumers':
-        if (typeof value !== 'boolean') throw new Error(`sentei: ${file}: "${key}" must be a boolean`);
-        policy[key] = value;
+        setPolicyValue(policy, key, value, file);
         break;
       case 'keep':
         cfg.keep = keepArray(file, value);

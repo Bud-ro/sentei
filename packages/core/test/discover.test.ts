@@ -380,3 +380,18 @@ describe('discoverRepos', () => {
     ]);
   });
 });
+
+describe('setPolicyValue / isPolicyKey (shared by org sentei.json and --policy)', () => {
+  it('validates and stores policy values', async () => {
+    const { DEFAULT_POLICY, isPolicyKey, setPolicyValue } = await import('../src/config.ts');
+    const p = { ...DEFAULT_POLICY };
+    setPolicyValue(p, 'minAgeDays', 0, 'x');
+    setPolicyValue(p, 'assumeClosedWorld', true, 'x');
+    expect(p).toMatchObject({ minAgeDays: 0, assumeClosedWorld: true });
+    expect(() => setPolicyValue(p, 'minAgeDays', 1.5, 'where')).toThrow('sentei: where: "minAgeDays" must be a non-negative integer');
+    expect(() => setPolicyValue(p, 'countTestsAsConsumers', 'true', 'where')).toThrow('"countTestsAsConsumers" must be a boolean');
+    expect(isPolicyKey('trustPrivateRegistry')).toBe(true);
+    expect(isPolicyKey('keep')).toBe(false);
+    expect(isPolicyKey('toString')).toBe(false);
+  });
+});
