@@ -1,0 +1,6 @@
+name: acme_pub
+description: "Published-public Dart library (no publish_to); visibility differs from acme_x."
+version: 1.0.0
+
+environment:
+  sdk: ^3.0.0

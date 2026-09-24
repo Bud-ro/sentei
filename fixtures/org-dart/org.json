@@ -1,0 +1,8 @@
+{
+  "org": "acme",
+  "repos": [
+    { "name": "dart-app", "default_branch": "main" },
+    { "name": "dart-lib-pub", "default_branch": "main" },
+    { "name": "dart-lib-x", "default_branch": "main" }
+  ]
+}

@@ -1,0 +1,7 @@
+name: acme_x
+description: "Org-private Dart library (PLAN.md §8 Dart cases)."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0

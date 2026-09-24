@@ -1,0 +1,12 @@
+name: acme_app
+description: "Org-private Dart app consuming acme_x (path dependency) and acme_pub (hosted constraint)."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  acme_x:
+    path: ../dart-lib-x
+  acme_pub: ^1.0.0
