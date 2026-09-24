@@ -8,6 +8,8 @@ export interface StageContext {
   dbPath: string;
   /** Open database with the schema applied. */
   db: DatabaseSync;
+  /** `--org-dir`: local org directory (org.json + repos/<name>/) for `discover`. */
+  orgDir?: string;
   /** Where stages print progress. */
   log: (line: string) => void;
 }
