@@ -737,3 +737,37 @@ What the wrong rows taught, and the fixes adopted:
   534, private_dead 216 → 151, needs_review 9 → 48; every previously wrong row
   is caught or fixed. Known noise: capnp-es generated files carry
   `displayName: "X"` strings that self-string matches.
+
+### honojs verification rerun (HEAD bf4a486)
+
+72 ok / 4 partial (hono itself: pnpm 12 store-lock error inside the sandbox;
+three example/starter packages: unresolved `hono`). Index 230 s with installs,
+analyze 29 s (was <1 s: the dead-island views re-ran the recursive CTEs;
+reachability is now materialized), witness 212 checked / 18 mismatched.
+Verdicts: deletion 93 → 194 (113 of them `dead_island`: exports used only by
+other candidates, correct under closed world but they double the delete list,
+so the summary now separates ISLAND from DELETE), unexport 242 → 108,
+private_dead 460 → 282, needs_review 0 → 18, blocked ~400.
+
+- All three previously wrong deletion candidates are now `needs_review` with
+  real witness hits; agent-dx `grade` and honox `mocks/**` are fixed; the
+  cloudflare-pages private helpers stayed `private_dead` because witness
+  downgrades did not reach the `unlocked_by` cascade (fixed: the cascade is
+  recomputed from `findings` after the witness).
+- Spot check of 8 new deletion candidates: 1 right, 6 public-API-only, 1
+  wrong (`hono-vite-jsx#AppType`: the Vite client entry `src/client.tsx` is
+  referenced only from `index.html`/`vite.config.ts`, now added as entry
+  points).
+- Of 18 needs_review rows, 7 witness hits were real and 11 noise: external
+  module specifiers equal to a symbol name, `c.set('sentry', …)` keys, class
+  `name` fields, default titles, a deprecation message, `describe()` strings in
+  a `*.test-d.ts` file. Fixes: specifiers never count, a bare name literal
+  counts only in files that also build import text, codegen hits are limited to
+  names inside the literal, more test/script globs.
+- private_dead noise: `mocks.ts`, `test-utils.ts`, `script/`, config files,
+  and ambient module augmentations (`declare module 'hono' { interface
+  ContextVariableMap }`, `declare global`), which are contributions consumed
+  elsewhere; the adapter now lists ambient declarations as entry symbols.
+- hono self-flagged `opaque_consumer` 153 times for `require` conditions
+  pointing at `dist/cjs/*`: an exports entry is now unresolved only when none of
+  its conditions resolves.
