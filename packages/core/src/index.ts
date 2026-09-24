@@ -7,3 +7,5 @@ export { buildReport, formatSummary } from './report.ts';
 export type { Report, ReportBlocker, ReportFinding, ReportPackage, ReportRepo, ReportVersionSkew } from './report.ts';
 export { analyzeOrg, analyzeSql } from './analyze.ts';
 export type { AnalyzeCounts, AnalyzeOptions } from './analyze.ts';
+export { runBlame, parseBlamePorcelain } from './blame.ts';
+export type { BlameCache, BlameCounts, BlameDiscoverInput, BlameLine, RunBlameOptions } from './blame.ts';
