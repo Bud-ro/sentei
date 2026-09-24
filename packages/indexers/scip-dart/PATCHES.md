@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.1`: bump the `+sentei.N` patch level whenever this directory changes.
+`1.7.0+sentei.2` (sentei.2: dart-surface gained `entrySymbols`; the fork itself is unchanged): bump the `+sentei.N` patch level whenever this directory changes.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,

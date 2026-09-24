@@ -1,5 +1,6 @@
 // M1 acceptance test (PLAN.md §10): the whole pipeline on a temp copy of
 // fixtures/org-small must reproduce expected-findings*.json EXACTLY.
+import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -149,4 +150,36 @@ describe('discover on fixtures/org-dup', () => {
       expect(err!.message).toMatch(/acme\/two|\btwo\b/);
     });
   });
+});
+
+// M3 acceptance (PLAN.md §10): the same pipeline on fixtures/org-dart (scip-dart).
+const HAS_DART = spawnSync('dart', ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0;
+if (!HAS_DART) console.warn('[pipeline.test] SKIPPING M3 acceptance: `dart` is not on PATH');
+
+function expectedDart(file: string): ExpectedRow[] {
+  return sortRows(JSON.parse(readFileSync(path.join(FIXTURES, 'org-dart', file), 'utf8')) as ExpectedRow[]);
+}
+
+describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
+  it.skipIf(!ANALYZE_READY || !HAS_DART)('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
+    const org = copyFixture('org-dart');
+    const { rows, report: r } = await runPipeline(org);
+    expect(r.policy.assumeClosedWorld).toBe(true);
+    expect(r.repos.map((x) => [x.repo, x.index_status]).sort()).toEqual([
+      ['acme/dart-app', 'ok'],
+      ['acme/dart-lib-pub', 'ok'],
+      ['acme/dart-lib-x', 'ok'],
+    ]);
+    expect(rows).toEqual(expectedDart('expected-findings.json'));
+  }, 600_000);
+
+  it.skipIf(!ANALYZE_READY || !HAS_DART)('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
+    const org = copyFixture('org-dart');
+    const cfgPath = path.join(org, 'sentei.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(cfgPath, JSON.stringify({ ...cfg, assumeClosedWorld: false }, null, 2));
+    const { rows, report: r } = await runPipeline(org);
+    expect(r.policy.assumeClosedWorld).toBe(false);
+    expect(rows).toEqual(expectedDart('expected-findings.open-world.json'));
+  }, 600_000);
 });

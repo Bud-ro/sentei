@@ -128,6 +128,8 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       unresolvedImports: [],
       flags: [],
       namespaceMemberRefs: [],
+      unindexedImports: [],
+      entrySymbols: [],
     });
     const rows = s.exports.map((e) => [e.exportedAs, e.name, e.file, e.line, e.col]);
     expect(rows).toEqual([
@@ -148,11 +150,15 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     for (const e of s.exports.filter((x) => x.name !== 'Shown')) expect(e.sites).toEqual([]);
   });
 
-  it('bin entries are listed and export nothing', () => {
+  it('bin entries are listed, export nothing, and record their main as an entry symbol', () => {
     const s = sidecar('dart-app', 'acme_app');
     expect(s.entryPoints).toEqual(['bin/main.dart']);
     expect(s.exports).toEqual([]);
     expect(s.unresolvedImports).toEqual([]);
+    // `void main() {` on line 10: the runtime calls it, nothing references it.
+    expect(s.entrySymbols).toEqual([{ name: 'main', file: 'bin/main.dart', line: 9, col: 5 }]);
+    expect(sidecar('dart-lib-x', 'acme_x').entrySymbols).toEqual([]); // a lib entry without main
+    expect(sidecar('dart-bad', 'acme_bad').entrySymbols).toEqual([{ name: 'main', file: 'bin/main.dart', line: 2, col: 5 }]);
   });
 
   it('gives private declarations global symbols (patched scip-dart), consumer refs carry the lib symbols', () => {

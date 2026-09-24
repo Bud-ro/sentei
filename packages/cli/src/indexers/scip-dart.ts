@@ -38,7 +38,7 @@ export const scipDart: Indexer = {
   name: 'scip-dart',
   // Upstream version + our patch level. Bump the patch level whenever the
   // vendored fork or dart-surface changes output (it is the index cache key).
-  version: '1.7.0+sentei.1',
+  version: '1.7.0+sentei.2',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
