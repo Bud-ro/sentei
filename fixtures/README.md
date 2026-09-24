@@ -73,7 +73,7 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | `keep` list suppresses a finding | `sentei.json` keep `npm:@acme/widgets#keptFn` (`lib-widgets/src/misc.ts`) | no row |
 | Non-indexed-language consumer → `unindexed_consumer` | `tool-py/scripts/build.py` (flag set by discover; `.sh`/YAML/JSON/Markdown do not count) → `@acme/y#yUnused` | blocked, `blocked_by ["npm:@acme/broken:index_failed", "npm:@acme/tool-py:unindexed_consumer"]` |
 | Witness: corrupted `.scip` drops a ref → `needs_review` / `witness_mismatch` | — | TODO (needs checked-in `.scip` snapshots) |
-| Dart items | — | TODO (Dart milestone) |
+| Dart items | `fixtures/org-dart` (see [`org-dart/README.md`](org-dart/README.md) for the §8 Dart checklist) | `org-dart/expected-findings*.json` |
 
 Consumer files that import `@acme/widgets` deliberately never mention the names
 of its would-be deletion candidates (including the word `default`) outside of

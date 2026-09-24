@@ -1,0 +1,17 @@
+name: dart_surface
+description: >-
+  Export-surface sidecar for sentei's Dart indexer: the export namespace of each
+  package entry library, export-directive sites, and consumer-side resolution checks.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.11.0 <4.0.0"
+
+executables:
+  dart_surface:
+
+dependencies:
+  analyzer: ^14.4.0
+  args: ^2.4.0
+  path: ^1.8.3

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { StageContext } from '../context.ts';
+import { scipDart } from '../indexers/scip-dart.ts';
 import { scipTypescript } from '../indexers/scip-typescript.ts';
 import type {
   DiscoverFile,
@@ -15,7 +16,7 @@ import type {
 import { worstStatus } from '../indexers/types.ts';
 
 /** Registered indexers; the first one that detects a package owns it. */
-export const INDEXERS: readonly Indexer[] = [scipTypescript];
+export const INDEXERS: readonly Indexer[] = [scipTypescript, scipDart];
 
 export interface IndexOptions extends IndexerOptions {
   /** Re-index repos even when the cached index.json matches. */

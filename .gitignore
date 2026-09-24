@@ -3,3 +3,6 @@ work/
 dist/
 *.tsbuildinfo
 .DS_Store
+# Dart
+.dart_tool/
+pubspec_overrides.yaml
