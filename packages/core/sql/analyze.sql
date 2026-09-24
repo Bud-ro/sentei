@@ -35,12 +35,13 @@ DROP VIEW IF EXISTS reach_edges;
 DROP VIEW IF EXISTS kept_symbols;
 DROP VIEW IF EXISTS symbol_age_ok;
 DROP VIEW IF EXISTS internal_refs;
-DROP VIEW IF EXISTS symbol_ancestors;
-DROP VIEW IF EXISTS symbol_owners;
 DROP VIEW IF EXISTS test_only_refs;
 DROP VIEW IF EXISTS external_refs;
 DROP VIEW IF EXISTS overlay_refs;
 DROP VIEW IF EXISTS external_ref_occurrences;
+DROP VIEW IF EXISTS owner_ref_occurrences;
+DROP VIEW IF EXISTS symbol_ancestors;
+DROP VIEW IF EXISTS symbol_owners;
 DROP VIEW IF EXISTS doc_files;
 DROP VIEW IF EXISTS test_files;
 DROP VIEW IF EXISTS ref_occurrences;
@@ -95,46 +96,6 @@ SELECT package_id, file
 FROM documents
 WHERE ('/' || file) GLOB '*/docs/*';
 
--- Cross-package uses, tagged with whether the using file is a test / docs file.
-CREATE VIEW external_ref_occurrences AS
-SELECT r.symbol_id, r.package_id AS consumer_package_id, r.file, r.line, r.col,
-       t.file IS NOT NULL AS in_test,
-       d.file IS NOT NULL AS in_docs
-FROM ref_occurrences r
-LEFT JOIN test_files t ON t.package_id = r.package_id AND t.file = r.file
-LEFT JOIN doc_files d ON d.package_id = r.package_id AND d.file = r.file
-WHERE r.is_external = 1;
-
--- sentei.json extraEdges (PLAN.md §7): an explicit "this file uses that symbol".
--- They count as references (cross-package -> external, same package -> internal) so
--- an overlay keeps its target alive, never the other way round.
-CREATE VIEW overlay_refs (symbol_id, from_package_id, is_external) AS
-SELECT to_symbol_id, from_package_id, from_package_id <> to_package_id
-FROM edges
-WHERE source = 'overlay';
-
--- Counted cross-package references per consumer package. Test files count only with
--- countTestsAsConsumers, docs files only with countDocsAsConsumers.
-CREATE VIEW external_refs (symbol_id, consumer_package_id, n) AS
-SELECT symbol_id, consumer_package_id, count(*)
-FROM (
-  SELECT e.symbol_id, e.consumer_package_id
-  FROM external_ref_occurrences e, analysis_params p
-  WHERE (NOT e.in_test OR p.count_tests) AND (NOT e.in_docs OR p.count_docs)
-  UNION ALL
-  SELECT symbol_id, from_package_id FROM overlay_refs WHERE is_external
-)
-GROUP BY symbol_id, consumer_package_id;
-
--- Symbols with cross-package uses, all of them in (excluded) test files: the report
--- can say "delete the tests too" (reason only_test_refs).
-CREATE VIEW test_only_refs (symbol_id) AS
-SELECT e.symbol_id
-FROM external_ref_occurrences e, analysis_params p
-WHERE e.in_test AND NOT p.count_tests
-EXCEPT
-SELECT symbol_id FROM external_refs;
-
 -- Structural owner of a symbol: its descriptor parent (Foo#bar(). -> Foo#), or the
 -- declaration whose body contains its definition (e.g. an object-literal property
 -- scip-typescript names `tag0:` inside function Widget). File pseudo-symbols are not
@@ -163,13 +124,79 @@ WITH RECURSIVE anc (symbol_id, ancestor_id) AS (
 )
 SELECT symbol_id, ancestor_id FROM anc;
 
--- Same-package uses, excluding self-references: a use enclosed by the symbol itself
--- or by anything nested in it (a recursive function used nowhere else has none).
+-- Uses of a symbol with the uses of its members folded in: an occurrence of S also
+-- counts for every ancestor A of S (symbol_ancestors), at the same position, from the
+-- same enclosing symbol. A member cannot be used without its owner existing (Dart
+-- `3.doubled` names only IntTimes#`<get>doubled`., TS `o.label` only
+-- WidgetOptions#label.), so an owner whose members are used is not unused. Fail
+-- closed: this only ever adds references. `member_symbol_id` is the symbol the
+-- occurrence actually names (= symbol_id for a direct use). An owner may count the
+-- same source position several times (once per used member): consumers check
+-- existence, and `n` is a count of occurrences, not of distinct positions.
+CREATE VIEW owner_ref_occurrences AS
+SELECT symbol_id, symbol_id AS member_symbol_id, package_id, file, line, col, enclosing_symbol_id, is_external
+FROM ref_occurrences
+UNION ALL
+SELECT a.ancestor_id, r.symbol_id, r.package_id, r.file, r.line, r.col, r.enclosing_symbol_id, r.is_external
+FROM ref_occurrences r
+JOIN symbol_ancestors a ON a.symbol_id = r.symbol_id;
+
+-- Cross-package uses (members count for their owners), tagged with whether the using
+-- file is a test / docs file.
+CREATE VIEW external_ref_occurrences AS
+SELECT r.symbol_id, r.member_symbol_id, r.package_id AS consumer_package_id, r.file, r.line, r.col,
+       t.file IS NOT NULL AS in_test,
+       d.file IS NOT NULL AS in_docs
+FROM owner_ref_occurrences r
+LEFT JOIN test_files t ON t.package_id = r.package_id AND t.file = r.file
+LEFT JOIN doc_files d ON d.package_id = r.package_id AND d.file = r.file
+WHERE r.is_external = 1;
+
+-- sentei.json extraEdges (PLAN.md §7): an explicit "this file uses that symbol".
+-- They count as references (cross-package -> external, same package -> internal) so
+-- an overlay keeps its target alive, never the other way round. Like any use, an
+-- overlay onto a member also counts for the member's ancestors.
+CREATE VIEW overlay_refs (symbol_id, from_package_id, is_external) AS
+SELECT to_symbol_id, from_package_id, from_package_id <> to_package_id
+FROM edges
+WHERE source = 'overlay'
+UNION ALL
+SELECT a.ancestor_id, e.from_package_id, e.from_package_id <> e.to_package_id
+FROM edges e
+JOIN symbol_ancestors a ON a.symbol_id = e.to_symbol_id
+WHERE e.source = 'overlay';
+
+-- Counted cross-package references per consumer package. Test files count only with
+-- countTestsAsConsumers, docs files only with countDocsAsConsumers.
+CREATE VIEW external_refs (symbol_id, consumer_package_id, n) AS
+SELECT symbol_id, consumer_package_id, count(*)
+FROM (
+  SELECT e.symbol_id, e.consumer_package_id
+  FROM external_ref_occurrences e, analysis_params p
+  WHERE (NOT e.in_test OR p.count_tests) AND (NOT e.in_docs OR p.count_docs)
+  UNION ALL
+  SELECT symbol_id, from_package_id FROM overlay_refs WHERE is_external
+)
+GROUP BY symbol_id, consumer_package_id;
+
+-- Symbols with cross-package uses, all of them in (excluded) test files: the report
+-- can say "delete the tests too" (reason only_test_refs).
+CREATE VIEW test_only_refs (symbol_id) AS
+SELECT e.symbol_id
+FROM external_ref_occurrences e, analysis_params p
+WHERE e.in_test AND NOT p.count_tests
+EXCEPT
+SELECT symbol_id FROM external_refs;
+
+-- Same-package uses (members count for their owners), excluding self-references: a
+-- use enclosed by the symbol itself or by anything nested in it (a recursive function
+-- used nowhere else has none; a method using its own class, or a sibling member, is
+-- not a use of the class).
 CREATE VIEW internal_refs (symbol_id, n) AS
 SELECT symbol_id, count(*)
 FROM (
   SELECT r.symbol_id
-  FROM ref_occurrences r
+  FROM owner_ref_occurrences r
   LEFT JOIN symbol_ancestors a
     ON a.symbol_id = r.enclosing_symbol_id AND a.ancestor_id = r.symbol_id
   WHERE r.is_external = 0

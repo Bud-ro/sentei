@@ -289,6 +289,33 @@ describe('ingestOrg (synthetic SCIP)', () => {
     ]);
   });
 
+  it('records a reference to an undefined `<constructor>` against its defined owner, not as unresolved', () => {
+    // scip-dart names an implicit constructor call `Shown()` as Shown#`<constructor>`().,
+    // a symbol no index defines. Any other missing member stays version skew.
+    writeScip('acme/mono', 'app.scip', [{
+      path: 'src/main.ts',
+      occurrences: [
+        { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 6, 1] },
+        { range: [3, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#\`<constructor>\`().` },
+        { range: [4, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Foo#gone().` },
+        { range: [5, 2, 5], symbol: `${LIB_OLD}src/\`a.ts\`/Nope#\`<constructor>\`().` }, // owner undefined too
+      ],
+    }]);
+    run();
+    const foo = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#`);
+    const main = id(`scip-typescript npm @acme/app . src/\`main.ts\`/main().`);
+    expect(db.prepare(`SELECT symbol_id, file, line, col, role, enclosing_symbol_id, is_external FROM occurrences
+      WHERE package_id = 'npm:@acme/app' AND (role & 1) = 0`).all()).toEqual([
+      { symbol_id: foo, file: 'apps/app/src/main.ts', line: 3, col: 2, role: 0, enclosing_symbol_id: main, is_external: 1 },
+    ]);
+    expect(count(db, "SELECT count(*) AS n FROM symbols WHERE name = '<constructor>'")).toBe(0);
+    expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", main, foo)).toBe(1);
+    expect((db.prepare('SELECT symbol_str, line FROM unresolved_refs ORDER BY line').all() as Array<{ symbol_str: string; line: number }>)).toEqual([
+      { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Foo#gone().', line: 4 },
+      { symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/Nope#`<constructor>`().', line: 5 },
+    ]);
+  });
+
   it('resolves parents, adds owner -> member edges, and never makes a file a parent', () => {
     run();
     const foo = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#`);

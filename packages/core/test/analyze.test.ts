@@ -156,6 +156,63 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([f('rec', 'unexport_candidate', ['internal_refs_only'])]);
   });
 
+  it('counts an external use of a member as a use of its owner', () => {
+    const cls = sym(lib, 'src/fns.ts', 'Cls', { exported: true });
+    const method = sym(lib, 'src/fns.ts', 'method', { parent: cls });
+    use(appMain, method, 'src/main.ts'); // Cls#method() only, never Cls#
+    // Dart extension: `3.doubled` names IntTimes#`<get>doubled`. and never IntTimes#.
+    const ext = sym(lib, 'src/fns.ts', 'IntTimes', { exported: true });
+    const getter = sym(lib, 'src/fns.ts', '<get>doubled', { parent: ext });
+    use(appMain, getter, 'src/main.ts');
+    // Two levels deep: an owner's owner counts too.
+    const outer = sym(lib, 'src/fns.ts', 'Outer', { exported: true });
+    const inner = sym(lib, 'src/fns.ts', 'Inner', { parent: outer });
+    const deep = sym(lib, 'src/fns.ts', 'deep', { parent: inner });
+    use(appMain, deep, 'src/main.ts');
+    analyze();
+    expect(findings()).toEqual([]);
+    const refs = db.prepare('SELECT symbol_id, consumer_package_id, n FROM external_refs WHERE symbol_id IN (?, ?, ?) ORDER BY symbol_id').all(cls, ext, outer);
+    expect(refs).toEqual([
+      { symbol_id: cls, consumer_package_id: app, n: 1 },
+      { symbol_id: ext, consumer_package_id: app, n: 1 },
+      { symbol_id: outer, consumer_package_id: app, n: 1 },
+    ]);
+    expect(db.prepare('SELECT symbol_id, member_symbol_id FROM external_ref_occurrences WHERE symbol_id = ?').all(cls))
+      .toEqual([{ symbol_id: cls, member_symbol_id: method }]);
+  });
+
+  it('does not count a member used by its own owner (or a sibling) as a use of the owner', () => {
+    const cls = sym(lib, 'src/fns.ts', 'Cls', { exported: true });
+    const a = sym(lib, 'src/fns.ts', 'a', { parent: cls });
+    const b = sym(lib, 'src/fns.ts', 'b', { parent: cls });
+    use(a, cls, 'src/fns.ts'); // a method naming its own class
+    use(a, b, 'src/fns.ts'); // a sibling member
+    use(cls, b, 'src/fns.ts'); // the class body itself
+    analyze();
+    expect(db.prepare('SELECT count(*) AS n FROM internal_refs WHERE symbol_id = ?').get(cls)).toEqual({ n: 0 });
+    expect(findings()).toEqual([f('Cls', 'needs_review', DELETE)]);
+
+    // A same-package use of a member from outside the class is an internal ref of the class.
+    const other = aliveExport('other');
+    use(other, b, 'src/fns.ts');
+    analyze();
+    expect(findings()).toEqual([f('Cls', 'unexport_candidate', ['internal_refs_only'])]);
+  });
+
+  it('propagates only_test_refs from a member used only in a consumer test file to its owner', () => {
+    const testMod = doc(app, 'src/lib.test.ts');
+    const cls = sym(lib, 'src/fns.ts', 'Cls', { exported: true });
+    const method = sym(lib, 'src/fns.ts', 'method', { parent: cls });
+    use(testMod, method, 'src/lib.test.ts');
+    analyze();
+    expect(findings()).toEqual([f('Cls', 'needs_review', ['only_test_refs', 'witness_pending'])]);
+    expect(db.prepare('SELECT symbol_id FROM test_only_refs ORDER BY symbol_id').all()).toEqual([{ symbol_id: cls }, { symbol_id: method }]);
+
+    setPolicy('countTestsAsConsumers', true);
+    analyze();
+    expect(findings()).toEqual([]);
+  });
+
   it('does not count export-clause identifiers as references', () => {
     const s = sym(lib, 'src/fns.ts', 'reexported', { exported: true });
     occ(s, lib, 'src/index.ts', libIndex, { exportSite: true });

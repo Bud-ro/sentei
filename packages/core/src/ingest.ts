@@ -478,6 +478,20 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       return enclosing?.symbolId ?? w.moduleSymbolId;
     };
 
+    /**
+     * A reference to an undefined `<constructor>` method whose owner IS defined is a
+     * use of that owner (scip-dart: `Shown()` names `Shown#\`<constructor>\`().` even
+     * when the class declares no constructor). Only exactly `<constructor>`: any other
+     * missing member is real version skew and stays an unresolved_refs row.
+     */
+    const implicitConstructorOwner = (norm: string, p: ParsedGlobal, roles: number): SymRow | undefined => {
+      if ((roles & DEFINITION) !== 0) return undefined;
+      const last = p.descriptors.at(-1)!;
+      if (p.descriptors.length < 2 || last.suffix !== 'method' || last.name !== '<constructor>') return undefined;
+      if (!norm.endsWith(last.text)) return undefined;
+      return symbols.get(norm.slice(0, norm.length - last.text.length));
+    };
+
     for (const w of docs) {
       for (const o of w.doc.occurrences) {
         const p = parse(o.symbol);
@@ -485,7 +499,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         const start = occurrenceStart(o);
         if (!start) continue;
         const norm = normalizeSymbolVersion(o.symbol);
-        const row = symbols.get(norm);
+        const row = symbols.get(norm) ?? implicitConstructorOwner(norm, p, o.symbolRoles);
         if (!row) {
           const target = symbolPackage(p);
           if (target !== undefined && target !== w.packageId) {
