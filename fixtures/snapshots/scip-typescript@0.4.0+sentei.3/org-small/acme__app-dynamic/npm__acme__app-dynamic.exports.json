@@ -41,6 +41,7 @@
       "reason": "require() with a non-literal specifier: '@acme/' + pkgName"
     }
   ],
+  "generatedFiles": [],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [

@@ -17,10 +17,11 @@
 // (`namespaceMemberRefs`) and shorthand properties (`shorthandRefs`); and
 // value uses of any namespace import of org code, relative ones included
 // (`namespaceSpreadRefs`: `{..._pkg}` reads members nobody can list).
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { DOCS_GLOBS, TEST_GLOBS, matchGlob } from '@sentei/core';
+import * as core from '@sentei/core';
+import { DOCS_GLOBS, SCRIPT_GLOBS, TEST_GLOBS, matchGlob } from '@sentei/core';
 import type {
   ConsumerFlag,
   ConsumerPolicy,
@@ -419,11 +420,22 @@ export function isExcludedConsumerFile(file: string, policy: Partial<ConsumerPol
 }
 
 // ---------------------------------------------------------------------------
-// Unindexed files (config files outside every tsconfig)
+// Unindexed files (config files, scripts, tests and components outside every
+// tsconfig) and generated files
 // ---------------------------------------------------------------------------
 
 /** Code files that can import an npm package. */
 const CODE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+/**
+ * Single-file components and MDX: TypeScript cannot load them, so they are
+ * never in an indexed program (scip-typescript sees no `.vue` file even when a
+ * tsconfig includes it). Their whole text is scanned.
+ */
+const SFC_FILE = /\.(?:vue|svelte|astro|marko|mdx)$/;
+
+/** Resolution order for a relative import from an SFC (TypeScript-style, `.js` → `.ts` included). */
+const RELATIVE_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx', '.mjs', '.cjs'];
 
 /**
  * Directories never walked for unindexed files: dependencies, VCS and build /
@@ -435,8 +447,14 @@ const UNINDEXED_SKIP_DIRS = new Set([
 ]);
 
 /**
+ * Tool-output directories that can still be part of a TypeScript program (Nuxt's
+ * `.nuxt/tsconfig.json` includes `.nuxt/*.d.ts`): every own file under one is generated.
+ */
+const GENERATED_DIRS = new Set(['.nuxt', '.output', '.svelte-kit', '.next', '.astro', '.vercel', '.wrangler']);
+
+/**
  * Module specifiers in a text scan (comments are not stripped: a commented-out
- * import errs toward blocking). Group 1 is the specifier.
+ * import errs toward blocking). Group 1 (or 2) is the specifier.
  */
 const SPECIFIER_RES: readonly RegExp[] = [
   // import x from 's' / import { a } from 's' / import type ... from 's' / import 's'
@@ -447,7 +465,28 @@ const SPECIFIER_RES: readonly RegExp[] = [
   /\b(?:require(?:\.resolve)?|import)\s*\(\s*(?:['"]([^'"\n]+)['"]|`([^`$\n]+)`)/g,
 ];
 
-export interface UnindexedScanInput {
+/**
+ * Script dirs of core SCRIPT_GLOBS (the `**\/<dir>/**` shapes: playground/,
+ * bench/, scripts/, ...). The file shapes (`*.config.*`, `*.workspace.*`) are left
+ * out on purpose: a tool config importing an org package (an ESLint config
+ * package) is a real consumer, so it stays unscoped and keeps blocking its target.
+ */
+const SCRIPT_DIR_GLOBS = SCRIPT_GLOBS.filter((g) => g.endsWith('/**'));
+
+/**
+ * The `scope` of an unindexed file: `test` (core TEST_GLOBS), else `docs`
+ * (DOCS_GLOBS), else `script` (the directory shapes of SCRIPT_GLOBS), else
+ * undefined. Core routes scoped entries to the witness (`witness_files`), never
+ * to flags, whatever the consumer policy says.
+ */
+export function unindexedScope(file: string): UnindexedImport['scope'] {
+  if (TEST_GLOBS.some((g) => matchGlob(g, file))) return 'test';
+  if (DOCS_GLOBS.some((g) => matchGlob(g, file))) return 'docs';
+  if (SCRIPT_DIR_GLOBS.some((g) => matchGlob(g, file))) return 'script';
+  return undefined;
+}
+
+export interface PackageWalkInput {
   repoRoot: string;
   pkgDir: string;
   /** Absolute dirs of other packages nested inside `pkgDir` (not walked). */
@@ -458,25 +497,15 @@ export interface UnindexedScanInput {
    * org package; the witness covers it.
    */
   ignoredDirs?: readonly string[];
-  /** Absolute paths of every file some indexed program has as a root file. */
-  indexedFiles: ReadonlySet<string>;
-  orgPackageNames: ReadonlySet<string>;
-  /** This package's own npm name (self-imports are not consumers). */
-  selfName: string | null;
-  policy: Partial<ConsumerPolicy> | undefined;
 }
 
 /**
- * Text-scans code files in the package that no indexed program covers (e.g.
- * `eslint.config.mjs` outside every tsconfig) for imports of org packages. Such
- * a file consumes the org package invisibly to SCIP, so each hit is recorded
- * (ingest turns it into a targeted `unindexed_consumer` flag on that package).
- * Never a source of edges (PLAN.md §12).
+ * Absolute paths of the package's own code and SFC files, outside
+ * UNINDEXED_SKIP_DIRS, nested packages and ignored manifests (sorted walk order).
  */
-export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport[] {
-  const out: UnindexedImport[] = [];
-  const seen = new Set<string>();
-  const nested = [...input.nestedPackageDirs, ...(input.ignoredDirs ?? [])].map((d) => path.resolve(d));
+export function walkPackageFiles(input: PackageWalkInput): string[] {
+  const out: string[] = [];
+  const skip = [...input.nestedPackageDirs, ...(input.ignoredDirs ?? [])].map((d) => path.resolve(d));
   const walk = (dir: string): void => {
     let entries;
     try {
@@ -484,35 +513,202 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
     } catch {
       return;
     }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of entries) {
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (UNINDEXED_SKIP_DIRS.has(e.name) || nested.includes(abs)) continue;
+        if (UNINDEXED_SKIP_DIRS.has(e.name) || skip.includes(abs)) continue;
         walk(abs);
-      } else if (e.isFile() && CODE_FILE.test(e.name) && !input.indexedFiles.has(abs)) {
-        const file = path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
-        if (isExcludedConsumerFile(file, input.policy)) continue;
-        let text: string;
-        try {
-          text = readFileSync(abs, 'utf8');
-        } catch {
-          continue;
-        }
-        for (const re of SPECIFIER_RES) {
-          for (const m of text.matchAll(re)) {
-            const module = m[1] ?? m[2];
-            if (module === undefined) continue;
-            const target = barePackageName(module);
-            if (target === undefined || target === input.selfName || !input.orgPackageNames.has(target)) continue;
-            const key = `${file}\0${module}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push({ file, module, targetPackage: target });
-          }
-        }
+      } else if (e.isFile() && (CODE_FILE.test(e.name) || SFC_FILE.test(e.name))) {
+        out.push(abs);
       }
     }
   };
   walk(path.resolve(input.pkgDir));
-  return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.module < b.module ? -1 : a.module > b.module ? 1 : 0));
+  return out;
+}
+
+export interface UnindexedScanInput extends PackageWalkInput {
+  /** Absolute paths of every file some indexed program has as a root file. */
+  indexedFiles: ReadonlySet<string>;
+  orgPackageNames: ReadonlySet<string>;
+  /** This package's own npm name (self-imports are not consumers; relative SFC imports target it). */
+  selfName: string | null;
+  /** Files already walked (`walkPackageFiles`); walked here when absent. */
+  files?: readonly string[];
+}
+
+/**
+ * Text-scans files in the package that no indexed program covers for imports
+ * SCIP cannot see (never a source of edges, PLAN.md §12):
+ *  - code files outside every tsconfig (`eslint.config.mjs`, `scripts/*.mjs`,
+ *    `test/*.mjs`) and SFC files (`.vue`, `.svelte`, `.astro`, `.marko`, `.mdx`):
+ *    each import of another org package by name is recorded with the specifier
+ *    as `module` (ingest: a targeted `unindexed_consumer` flag, or a witness file
+ *    when `scope` is set);
+ *  - SFC files only: each relative import of one of the package's own code files
+ *    (`import { x } from '../samples/components.ts'` in `pages/playground.vue`) is
+ *    recorded with `relative: true`, `module` = the resolved file (repo-relative
+ *    POSIX) and `targetPackage` = this package, so core can keep that file's
+ *    declarations alive. Imports of other SFCs, assets and aliases (`~/`, `@/`)
+ *    are not resolved.
+ * Every entry carries the file's `scope` (see `unindexedScope`) when it has one.
+ */
+export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport[] {
+  const out: UnindexedImport[] = [];
+  const seen = new Set<string>();
+  const pkgDir = path.resolve(input.pkgDir);
+  const nested = input.nestedPackageDirs.map((d) => path.resolve(d));
+  const toRepoRel = (abs: string): string => path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
+  const isOwnCode = (abs: string): boolean =>
+    isInside(abs, pkgDir) && !abs.split(path.sep).includes('node_modules') && !nested.some((d) => isInside(abs, d));
+  const push = (u: UnindexedImport): void => {
+    const key = `${u.file}\0${u.module}\0${u.relative === true ? 'r' : ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(u);
+  };
+  for (const abs of input.files ?? walkPackageFiles(input)) {
+    const sfc = SFC_FILE.test(abs);
+    if (!sfc && (!CODE_FILE.test(abs) || input.indexedFiles.has(abs))) continue;
+    const file = toRepoRel(abs);
+    const scope = unindexedScope(file);
+    let text: string;
+    try {
+      text = readFileSync(abs, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const re of SPECIFIER_RES) {
+      for (const m of text.matchAll(re)) {
+        const module = m[1] ?? m[2];
+        if (module === undefined) continue;
+        const target = barePackageName(module);
+        if (target !== undefined) {
+          if (target === input.selfName || !input.orgPackageNames.has(target)) continue;
+          push({ file, module, targetPackage: target, ...(scope !== undefined ? { scope } : {}) });
+        } else if (sfc && input.selfName !== null && (module.startsWith('./') || module.startsWith('../'))) {
+          const resolved = resolveRelative(path.dirname(abs), module);
+          if (resolved === undefined || !isOwnCode(resolved)) continue;
+          push({
+            file,
+            module: toRepoRel(resolved),
+            targetPackage: input.selfName,
+            relative: true,
+            ...(scope !== undefined ? { scope } : {}),
+          });
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => cmp(a.file, b.file) || cmp(a.module, b.module));
+}
+
+/** An own code file a relative specifier names (exact, `.js` → `.ts`, added extension, `/index.*`), or undefined. */
+function resolveRelative(fromDir: string, spec: string): string | undefined {
+  const base = path.resolve(fromDir, spec.replace(/[?#].*$/, ''));
+  const candidates = [base];
+  const js = /\.([cm]?)js(x?)$/.exec(base);
+  if (js !== null) candidates.push(`${base.slice(0, -js[0].length)}.${js[1]}ts${js[2]}`);
+  for (const ext of RELATIVE_EXTS) candidates.push(base + ext);
+  for (const ext of RELATIVE_EXTS) candidates.push(path.join(base, `index${ext}`));
+  for (const c of candidates) {
+    if (!CODE_FILE.test(c)) continue;
+    try {
+      if (statSync(c).isFile()) return realpathOr(c);
+    } catch {
+      // try the next candidate
+    }
+  }
+  return undefined;
+}
+
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+function isInside(abs: string, dir: string): boolean {
+  return abs === dir || abs.startsWith(dir + path.sep);
+}
+
+function cmp(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Core GENERATED_GLOBS. Read through the namespace because `@sentei/core`'s index
+ * does not export it yet (packages/core/src/globs.ts has it); without the export
+ * only the header and tool-dir rules apply here (core's `generated_files` view
+ * applies the globs itself). Replace with a named import once it is exported.
+ */
+const GENERATED_GLOBS: readonly string[] = ((core as Record<string, unknown>)['GENERATED_GLOBS'] as readonly string[] | undefined) ?? [];
+
+/** Header phrases that mark a generated file (first 20 lines, comments only). */
+const GENERATED_HEADER = /@generated|automatically generated|auto-generated|do not edit/i;
+const HEADER_LINES = 20;
+/** Bytes read for the header check (20 lines of any sane generated file). */
+const HEADER_BYTES = 16 * 1024;
+
+/**
+ * True when a file is generated: its repo-relative path matches core
+ * GENERATED_GLOBS or lies under a tool-output dir (`.nuxt/`, ...), or a comment
+ * in its first 20 lines says so (`@generated`, "automatically generated",
+ * "auto-generated", "do not edit"). Only comment text counts: a generator's
+ * source holding the header as a string literal (capnp-es
+ * `SOURCE_COMMENT = \`// This file has been automatically generated...\``) is
+ * hand-written code. `head` is the file's start (read when absent).
+ */
+export function isGeneratedFile(abs: string, repoRel: string, head?: string): boolean {
+  if (GENERATED_GLOBS.some((g) => matchGlob(g, repoRel))) return true;
+  if (repoRel.split('/').some((seg) => GENERATED_DIRS.has(seg))) return true;
+  const text = head ?? readHead(abs);
+  return text !== undefined && headerComments(text).some((c) => GENERATED_HEADER.test(c));
+}
+
+function readHead(abs: string): string | undefined {
+  let fd: number | undefined;
+  try {
+    fd = openSync(abs, 'r');
+    const buf = Buffer.alloc(HEADER_BYTES);
+    const n = readSync(fd, buf, 0, HEADER_BYTES, 0);
+    return buf.subarray(0, n).toString('utf8');
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** Comment texts within the first HEADER_LINES lines (`//`, `#`, `/* *\/`, `<!-- -->`, `{/* *\/}` in MDX). */
+function headerComments(text: string): string[] {
+  const out: string[] = [];
+  let close: string | undefined; // the terminator of the open block comment
+  for (const raw of text.split(/\r?\n/, HEADER_LINES)) {
+    let line = raw;
+    while (line.length > 0) {
+      if (close !== undefined) {
+        const end = line.indexOf(close);
+        out.push(end < 0 ? line : line.slice(0, end));
+        if (end < 0) break;
+        line = line.slice(end + close.length);
+        close = undefined;
+        continue;
+      }
+      const t = line.trimStart();
+      if (t.startsWith('//') || t.startsWith('#')) {
+        out.push(t);
+        break;
+      }
+      // A block comment counts only where it starts the (rest of the) line.
+      const open = /^(?:\{?\/\*|<!--)/.exec(t);
+      if (open === null) break;
+      close = open[0] === '<!--' ? '-->' : '*/';
+      line = t.slice(open[0].length);
+    }
+  }
+  return out;
 }

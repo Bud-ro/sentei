@@ -11,7 +11,9 @@ import {
   barePackageName,
   checkConsumerFiles,
   isExcludedConsumerFile,
+  isGeneratedFile,
   scanUnindexedImports,
+  walkPackageFiles,
   type ConsumerCheckResult,
   type OrgPackageDir,
 } from './consumer-checks.ts';
@@ -73,6 +75,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         shorthandRefs: [],
         namespaceSpreadRefs: [],
         unindexedImports: [],
+        generatedFiles: [],
         entrySymbols: [],
       },
       diagnostics,
@@ -283,19 +286,41 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     for (const d of [...compilerErrors].slice(0, MAX_REPORTED_DIAGNOSTICS)) diagnostics.push(`warn: ${d}`);
   }
 
-  // Code files no program indexes (scip-typescript indexes exactly each config's root files).
-  const unindexedImports = scanUnindexedImports({
+  // Code files no program indexes (scip-typescript indexes exactly each config's
+  // root files) and SFC files (never indexed).
+  const walked = walkPackageFiles({
     repoRoot: input.repoRoot,
     pkgDir: input.pkgDir,
     nestedPackageDirs: input.nestedPackageDirs,
     ...(input.ignoredDirs !== undefined ? { ignoredDirs: input.ignoredDirs } : {}),
+  });
+  const unindexedImports = scanUnindexedImports({
+    repoRoot: input.repoRoot,
+    pkgDir: input.pkgDir,
+    nestedPackageDirs: input.nestedPackageDirs,
     indexedFiles,
     orgPackageNames: input.orgPackageNames,
     selfName: input.packageName ?? null,
-    policy: input.policy,
+    files: walked,
   });
   for (const u of unindexedImports) {
-    diagnostics.push(`warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})`);
+    const scoped = u.scope !== undefined ? ` (${u.scope} file: witness only)` : '';
+    diagnostics.push(
+      u.relative === true
+        ? `info: ${u.file} is not indexed and imports own file ${u.module}${scoped}`
+        : `warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})${scoped}`,
+    );
+  }
+
+  // Generated own files: every walked file plus every own file of the programs
+  // (a program may hold files the walk skips, e.g. Nuxt's `.nuxt/*.d.ts`).
+  const generatedFiles = [...new Set([...walked, ...checked].map((abs) => path.resolve(abs)))]
+    .map((abs) => [abs, toRepoRel(abs)] as const)
+    .filter(([abs, rel]) => isGeneratedFile(abs, rel))
+    .map(([, rel]) => rel)
+    .sort(cmp);
+  if (generatedFiles.length > 0) {
+    diagnostics.push(`info: ${generatedFiles.length} generated file(s) (header or path): ${generatedFiles.slice(0, 5).join(', ')}${generatedFiles.length > 5 ? ', ...' : ''}`);
   }
 
   if (skipped.bindings > 0) {
@@ -343,6 +368,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       shorthandRefs: consumer.shorthandRefs,
       namespaceSpreadRefs: consumer.namespaceSpreadRefs,
       unindexedImports,
+      generatedFiles,
       entrySymbols,
     },
     diagnostics,

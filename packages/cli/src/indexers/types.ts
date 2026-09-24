@@ -187,13 +187,32 @@ export interface ExportsSidecar {
    */
   namespaceSpreadRefs: NamespaceSpreadRef[];
   /**
-   * Imports of org packages found by a text scan of code files in the package
-   * that no indexed program covers (config files such as `eslint.config.mjs`
-   * outside every tsconfig). Each is a consumer SCIP cannot see; ingest turns
-   * it into a targeted `unindexed_consumer` flag blocking `targetPackage` only.
-   * Test/docs files are skipped unless the policy counts them.
+   * Imports found by a text scan of files in the package that no indexed
+   * program covers: code files outside every tsconfig (`eslint.config.mjs`,
+   * `scripts/*.mjs`, `test/*.mjs`) and single-file components / MDX (`.vue`,
+   * `.svelte`, `.astro`, `.marko`, `.mdx`, never indexed by scip-typescript).
+   * Each is a consumer SCIP cannot see. Two kinds:
+   *  - an org package imported by name (`module` = the specifier): unscoped,
+   *    ingest turns it into a targeted `unindexed_consumer` flag blocking
+   *    `targetPackage` only; scoped (`scope` set), a `witness_files` row;
+   *  - SFC files only, `relative: true`: a relative import of one of this
+   *    package's own code files (`module` = that file, repo-relative POSIX;
+   *    `targetPackage` = this package), whose declarations it uses.
+   * Test/docs/script files are recorded with their `scope` whatever the
+   * consumer policy says (core routes scoped entries to the witness).
+   * Always `[]` for Dart.
    */
   unindexedImports: UnindexedImport[];
+  /**
+   * Own files (repo-relative POSIX, sorted) that are generated: the path matches
+   * core GENERATED_GLOBS or lies under a tool-output dir (`.nuxt/`, `.svelte-kit/`,
+   * ...), or a comment in the first 20 lines says `@generated`, "automatically
+   * generated", "auto-generated" or "do not edit". Covers every own code / SFC
+   * file (walked like `unindexedImports`) and every own file of the indexed
+   * programs. Core excludes their declarations from verdicts / private_dead and
+   * from self-witness scans. Absent for Dart (core's GENERATED_GLOBS cover it).
+   */
+  generatedFiles?: string[];
   /**
    * Declarations the runtime or a tool invokes by convention, with no reference
    * in code. Dart (dart-surface): top-level `main` of a `lib/*.dart` entry and
@@ -216,10 +235,22 @@ export interface ExportsSidecar {
 export interface UnindexedImport {
   /** Repo-relative POSIX path of the unindexed file. */
   file: string;
-  /** Module specifier as written. */
+  /**
+   * Module specifier as written; with `relative`, the imported own file instead
+   * (the relative specifier resolved, repo-relative POSIX).
+   */
   module: string;
-  /** npm name of the org package it imports. */
+  /** npm name of the org package it imports (this package's own name with `relative`). */
   targetPackage: string;
+  /**
+   * Set when `file` is test (core TEST_GLOBS), else docs (DOCS_GLOBS), else
+   * script code (the directory shapes of SCRIPT_GLOBS: playground/, bench/,
+   * scripts/, ...; tool configs `*.config.*` stay unscoped). Core routes scoped
+   * entries to the witness, never to flags.
+   */
+  scope?: 'script' | 'docs' | 'test';
+  /** An SFC's relative import of this package's own code file (see `module`). */
+  relative?: true;
 }
 
 export interface NamespaceMemberRef extends SourcePosition {

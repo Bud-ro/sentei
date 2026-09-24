@@ -1,0 +1,66 @@
+{
+  "entryPoints": [
+    "src/client.ts",
+    "src/impl.node.ts",
+    "src/impl.ts",
+    "src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/impl.node.ts",
+      "exportedAs": "digest",
+      "file": "src/impl.node.ts",
+      "line": 3,
+      "name": "digest",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/impl.ts",
+      "exportedAs": "digest",
+      "file": "src/impl.ts",
+      "line": 3,
+      "name": "digest",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "dropped",
+      "file": "src/index.ts",
+      "line": 27,
+      "name": "dropped",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "initParams",
+      "file": "src/index.ts",
+      "line": 12,
+      "name": "initParams",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "viewer",
+      "file": "src/index.ts",
+      "line": 6,
+      "name": "viewer",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:@acme/cascade",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

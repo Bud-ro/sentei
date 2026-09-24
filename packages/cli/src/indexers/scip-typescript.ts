@@ -145,7 +145,9 @@ export const scipTypescript: Indexer = {
   // +sentei.2: namespaceSpreadRefs; exports SCIP cannot define are not recorded
   //   (destructuring, JSDoc typedefs, expandos, JSON) or are `unresolved`
   //   (declared outside every tsconfig's files).
-  version: '0.4.0+sentei.2',
+  // +sentei.3: unindexedImports `scope`, SFC scan (`relative` own imports),
+  //   generatedFiles; heap retry without hover signatures; nuxt prepare.
+  version: '0.4.0+sentei.3',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
@@ -164,6 +166,8 @@ export const scipTypescript: Indexer = {
     if (options.install) {
       const installed = await install(realpathSync(repo.localPath), dir, diagnostics, log, exec, options.workDir);
       if (!installed) status = 'partial';
+      // 1b. Nuxt apps: their tsconfig extends the generated `.nuxt/tsconfig.json`.
+      else await nuxtPrepare(dir, diagnostics, log, exec, options.workDir);
     } else {
       diagnostics.push('info: install skipped (--no-install)');
     }
@@ -210,6 +214,7 @@ export const scipTypescript: Indexer = {
         shorthandRefs: [],
         namespaceSpreadRefs: [],
         unindexedImports: [],
+        generatedFiles: [],
         entrySymbols: [],
       };
       writeFileSync(exportsFile, `${JSON.stringify(empty, null, 2)}\n`);
@@ -230,6 +235,7 @@ export const scipTypescript: Indexer = {
       log,
       diagnostics,
       beforeRetry: () => rmSync(scipFile, { force: true }),
+      retry: SCIP_NODOCS_RETRY,
     });
     if (proc.code !== 0) {
       status = 'failed';
@@ -320,7 +326,10 @@ export function emptyScipIndex(projectRoot: string): Uint8Array {
   return Uint8Array.from(len(1, metadata));
 }
 
-/** Runs a subprocess; injectable so tests never spawn a package manager. `input` is written to its stdin. */
+/**
+ * Runs a subprocess; injectable so tests never spawn a package manager. `input`
+ * is written to its stdin; after `timeoutMs` the child is killed (SIGTERM).
+ */
 export type Runner = (
   cmd: string,
   args: string[],
@@ -328,7 +337,19 @@ export type Runner = (
   env: NodeJS.ProcessEnv,
   shell?: boolean,
   input?: string,
+  timeoutMs?: number,
 ) => Promise<ExecResult>;
+
+/**
+ * The scip-typescript heap retry also preloads scip-typescript-nodocs.cjs: hover
+ * signatures are not printed (TypeScript's type printer never finishes on some
+ * recursive template-literal types, e.g. unjs/scule; sentei reads no SCIP
+ * documentation).
+ */
+const SCIP_NODOCS_RETRY = {
+  nodeArgs: ['--require', fileURLToPath(new URL('./scip-typescript-nodocs.cjs', import.meta.url))],
+  note: 'and without hover signatures (SCIP documentation only; symbols and occurrences are unchanged)',
+};
 
 /** Absolute path of the export-surface worker script. */
 const SURFACE_WORKER = fileURLToPath(new URL('./surface-worker.ts', import.meta.url));
@@ -351,6 +372,8 @@ export interface RunNodeOptions {
   diagnostics: string[];
   /** Runs before the retry (e.g. removes a partial output file). */
   beforeRetry?: () => void;
+  /** Extra node options for the retry only (before the script), and why (appended to the `warn:`). */
+  retry?: { nodeArgs: string[]; note: string };
   run?: Runner;
 }
 
@@ -362,8 +385,9 @@ export interface RunNodeOptions {
 export async function runNode(o: RunNodeOptions): Promise<ExecResult> {
   const run = o.run ?? exec;
   let heap = o.maxOldSpaceMb;
+  let extra: string[] = [];
   const once = async (): Promise<ExecResult> => {
-    const args = [`--max-old-space-size=${heap}`, ...o.args];
+    const args = [`--max-old-space-size=${heap}`, ...extra, ...o.args];
     const proc = await run(process.execPath, args, o.cwd, process.env, false, o.input);
     o.log.push(`$ node ${args.join(' ')}  (cwd ${o.cwd})`, '--- stdout', truncateLog(proc.stdout), '--- stderr', proc.stderr);
     return proc;
@@ -371,9 +395,11 @@ export async function runNode(o: RunNodeOptions): Promise<ExecResult> {
   let proc = await once();
   if (proc.code !== 0 && isHeapExhausted(proc)) {
     o.diagnostics.push(
-      `warn: ${o.what} ran out of heap at --max-old-space-size=${heap} (${describeExit(proc)}); retrying once with ${heap * 2}`,
+      `warn: ${o.what} ran out of heap at --max-old-space-size=${heap} (${describeExit(proc)}); retrying once with ${heap * 2}` +
+        (o.retry !== undefined ? ` ${o.retry.note}` : ''),
     );
     heap *= 2;
+    extra = o.retry?.nodeArgs ?? [];
     o.beforeRetry?.();
     proc = await once();
   }
@@ -562,6 +588,54 @@ export async function install(
     if (d === repoRoot || path.dirname(d) === d) break;
   }
   diagnostics.push('info: no lockfile; install skipped');
+  return true;
+}
+
+/** Timeout of `nuxt prepare` (it may download nuxt through npm exec and runs module setup). */
+export const NUXT_PREPARE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Runs `npm exec --yes -- nuxt prepare` in a package that has `nuxt` in
+ * `dependencies` or `devDependencies` and no `.nuxt/tsconfig.json`: a Nuxt app's
+ * tsconfig extends (or references) the generated `.nuxt/tsconfig*.json`, and
+ * without it scip-typescript cannot read the config (TS5083). Hermetic env, 10
+ * minute timeout, npm exec from the package dir so the installed nuxt is used.
+ * Returns true when it ran and succeeded; on failure a `warn:` names the reason
+ * and the package keeps whatever status indexing gives it (scip-typescript then
+ * fails on the missing config, as before).
+ */
+export async function nuxtPrepare(
+  pkgDir: string,
+  diagnostics: string[],
+  log: string[],
+  run: Runner = exec,
+  workDir: string = path.join(tmpdir(), 'sentei-pm'),
+): Promise<boolean> {
+  let json: { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> };
+  try {
+    json = JSON.parse(readFileSync(path.join(pkgDir, 'package.json'), 'utf8')) as typeof json;
+  } catch {
+    return false;
+  }
+  if (json.dependencies?.['nuxt'] === undefined && json.devDependencies?.['nuxt'] === undefined) return false;
+  if (existsSync(path.join(pkgDir, '.nuxt', 'tsconfig.json'))) return false;
+  const { env, keys } = hermeticEnv(workDir);
+  for (const k of ['XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'PNPM_HOME', 'YARN_GLOBAL_FOLDER', 'COREPACK_HOME']) {
+    mkdirSync(env[k]!, { recursive: true });
+  }
+  log.push(`# nuxt prepare env (hermetic, under ${path.resolve(workDir, '.pm')}): ${keys.join(', ')}`);
+  const args = ['exec', '--yes', '--', 'nuxt', 'prepare'];
+  const proc = await run('npm', args, pkgDir, env, process.platform === 'win32', undefined, NUXT_PREPARE_TIMEOUT_MS);
+  log.push(`$ npm ${args.join(' ')}  (cwd ${pkgDir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+  if (proc.errno !== undefined || proc.code !== 0) {
+    const timedOut = proc.errno === undefined && proc.signal === 'SIGTERM' ? ` (timeout ${NUXT_PREPARE_TIMEOUT_MS / 60000} min)` : '';
+    diagnostics.push(
+      `warn: nuxt app without .nuxt/tsconfig.json; npm ${args.join(' ')} ${describeExit(proc)}${timedOut}` +
+        `${proc.errno === undefined ? stderrTail(proc) : ''}`,
+    );
+    return false;
+  }
+  diagnostics.push(`info: nuxt app without .nuxt/tsconfig.json; ran npm ${args.join(' ')}`);
   return true;
 }
 
@@ -878,9 +952,23 @@ export interface ExecResult {
   errorMessage?: string;
 }
 
-function exec(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, shell = false, input?: string): Promise<ExecResult> {
+function exec(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  shell = false,
+  input?: string,
+  timeoutMs?: number,
+): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env, shell, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, {
+      cwd,
+      env,
+      shell,
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
+    });
     if (input !== undefined) {
       child.stdin!.on('error', () => {}); // EPIPE when the child exits early; its exit status tells the story
       child.stdin!.end(input);

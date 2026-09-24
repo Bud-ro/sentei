@@ -1,0 +1,92 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/client.ts
+  // Vite client entry (index.html <script src="/src/client.ts">): imported by no code.
+//^ definition scip-typescript npm @acme/cascade . src/`client.ts`/ enclosing [3:0-8:0]
+
+  // Expected: alive, no finding (called at the top level of a client entry).
+  function boot(): void {
+//         ^^^^ definition scip-typescript npm @acme/cascade . src/`client.ts`/boot(). enclosing [3:0-5:1]
+    document.title = 'cascade';
+//  ^^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/document.
+//           ^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Document#title.
+  }
+
+  boot();
+//^^^^ reference scip-typescript npm @acme/cascade . src/`client.ts`/boot().
+
+## src/impl.node.ts
+  // `#impl` node arm: loaded by Node's `node` condition, never picked by the type checker.
+//^ definition scip-typescript npm @acme/cascade . src/`impl.node.ts`/ enclosing [3:0-6:0]
+
+  // Expected: alive, no finding (exported by a runtime entry: an `imports` map arm).
+  export function digest(s: string): string {
+//                ^^^^^^ definition scip-typescript npm @acme/cascade . src/`impl.node.ts`/digest(). enclosing [3:0-5:1]
+//                       ^ definition scip-typescript npm @acme/cascade . src/`impl.node.ts`/digest().(s)
+    return `node:${s}`;
+//                 ^ reference scip-typescript npm @acme/cascade . src/`impl.node.ts`/digest().(s)
+  }
+
+## src/impl.ts
+  // `#impl` default arm (the one TypeScript resolves under moduleResolution bundler).
+//^ definition scip-typescript npm @acme/cascade . src/`impl.ts`/ enclosing [3:0-6:0]
+
+  // Expected: alive, no finding (exported by a runtime entry: an `imports` map arm).
+  export function digest(s: string): string {
+//                ^^^^^^ definition scip-typescript npm @acme/cascade . src/`impl.ts`/digest(). enclosing [3:0-5:1]
+//                       ^ definition scip-typescript npm @acme/cascade . src/`impl.ts`/digest().(s)
+    return `d:${s}`;
+//              ^ reference scip-typescript npm @acme/cascade . src/`impl.ts`/digest().(s)
+  }
+
+## src/index.ts
+  // Package entry point for @acme/cascade (exports "." → import: src/index.ts; the
+//^ definition scip-typescript npm @acme/cascade . src/`index.ts`/ enclosing [2:0-35:0]
+  // require condition points at unbuilt dist/cjs, which is fine: one condition resolves).
+  import { digest } from '#impl';
+//         ^^^^^^ reference scip-typescript npm @acme/cascade . src/`impl.ts`/digest().
+//                       ^^^^^^^ reference scip-typescript npm @acme/cascade . src/`impl.ts`/
+
+  // Expected: needs_review, reasons ["no_refs", "witness_mismatch:self:bin/viewer.mjs:3", "witness_mismatch:self:bin/viewer.mjs:4"]
+  // (no indexed use; bin/viewer.mjs, outside the tsconfig program, imports it by name).
+  export function viewer(): string {
+//                ^^^^^^ definition scip-typescript npm @acme/cascade . src/`index.ts`/viewer(). enclosing [6:0-8:1]
+    return initParams() + helperC() + digest('v');
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/cascade . src/`index.ts`/initParams().
+//                        ^^^^^^^ reference scip-typescript npm @acme/cascade . src/`index.ts`/helperC().
+//                                    ^^^^^^ reference scip-typescript npm @acme/cascade . src/`impl.ts`/digest().
+  }
+
+  // Expected: unexport_candidate, reasons ["internal_refs_only"]. Its only user is viewer,
+  // so analyze calls it a dead island; the witness keeps viewer, so it reverts.
+  export function initParams(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/cascade . src/`index.ts`/initParams(). enclosing [12:0-14:1]
+    return helperA();
+//         ^^^^^^^ reference scip-typescript npm @acme/cascade . src/`index.ts`/helperA().
+  }
+
+  // Expected: alive, no finding (reached from initParams / viewer, which stay).
+  function helperA(): string {
+//         ^^^^^^^ definition scip-typescript npm @acme/cascade . src/`index.ts`/helperA(). enclosing [17:0-19:1]
+    return 'a';
+  }
+
+  // Expected: alive, no finding (reached from viewer; not unlocked once viewer is downgraded).
+  function helperC(): string {
+//         ^^^^^^^ definition scip-typescript npm @acme/cascade . src/`index.ts`/helperC(). enclosing [22:0-24:1]
+    return 'c';
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"].
+  export function dropped(): string {
+//                ^^^^^^^ definition scip-typescript npm @acme/cascade . src/`index.ts`/dropped(). enclosing [27:0-29:1]
+    return helperB();
+//         ^^^^^^^ reference scip-typescript npm @acme/cascade . src/`index.ts`/helperB().
+  }
+
+  // Expected: private_dead, reasons ["unlocked_by:dropped"].
+  function helperB(): string {
+//         ^^^^^^^ definition scip-typescript npm @acme/cascade . src/`index.ts`/helperB(). enclosing [32:0-34:1]
+    return 'b';
+  }
