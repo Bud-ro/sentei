@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { create, toBinary } from '@bufbuild/protobuf';
@@ -210,7 +211,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
   const id = (str: string): number => (db.prepare('SELECT symbol_id AS n FROM symbols WHERE symbol_str = ?').get(str) as { n: number } | undefined)?.n ?? -1;
 
   beforeEach(() => {
-    root = mkdtempSync(join(process.env['TMPDIR'] ?? '.', 'sentei-ingest-syn-'));
+    root = mkdtempSync(join(tmpdir(), 'sentei-ingest-syn-'));
     workDir = join(root, 'work');
     logs = [];
     db = openDb(':memory:');

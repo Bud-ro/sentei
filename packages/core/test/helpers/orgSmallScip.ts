@@ -4,6 +4,7 @@
 // sidecars, index.json files and the discover model, and seeds repos/packages rows.
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
@@ -53,7 +54,7 @@ function locate(repoDir: string, file: string, re: RegExp, nth = 0): Pos {
 }
 
 export function buildOrgSmallInputs(scipTs: string): OrgSmallInputs {
-  const root = mkdtempSync(join(process.env['TMPDIR'] ?? '.', 'sentei-ingest-'));
+  const root = mkdtempSync(join(tmpdir(), 'sentei-ingest-'));
   const repos = join(root, 'repos');
   const workDir = join(root, 'work');
   // node_modules is skipped: the index stage may have left links in the fixture checkout.
