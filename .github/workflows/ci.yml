@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: typecheck + test (Node 26, Dart 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # Dart is needed for the Dart indexer tests (vendored scip-dart fork + dart-surface).
+      # Pinned to the version the snapshots were generated with; see docs/DESIGN.md.
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.11.3
+
+      - run: npm ci
+
+      - name: Warm the vendored Dart tools
+        run: |
+          dart pub get --directory packages/indexers/scip-dart
+          dart pub get --directory packages/indexers/dart-surface
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - name: Snapshot drift
+        if: failure()
+        run: echo "If the snapshots test failed, run 'npm run snapshots:update' locally and review the diff (PLAN.md §6.6)."

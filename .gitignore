@@ -6,3 +6,6 @@ dist/
 # Dart
 .dart_tool/
 pubspec_overrides.yaml
+
+# Claude Code session files
+.claude/
