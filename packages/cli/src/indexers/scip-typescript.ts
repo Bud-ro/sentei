@@ -494,8 +494,8 @@ export function stderrTail(
 
 /**
  * The environment of every install subprocess: all global, state and cache
- * writes of the package managers go under `<workDir>/.pm/` (the sandbox and a
- * shared dev box forbid writing under `$HOME`; pnpm 10+ also takes a store lock
+ * writes of the package managers go under `<workDir>/.pm/` (sandboxed or shared
+ * machines may forbid writing under `$HOME`; pnpm 10+ also takes a store lock
  * there). npm's own cache (`npm_config_cache`) is inherited unchanged. Returns
  * the env and the keys it set (logged, never the values).
  */

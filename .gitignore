@@ -7,5 +7,9 @@ dist/
 .dart_tool/
 pubspec_overrides.yaml
 
+# sentei scratch when --work / clones point inside the tree
+.pm/
+.sentei-backup/
+
 # Claude Code session files
 .claude/

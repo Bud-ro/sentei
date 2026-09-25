@@ -1,3 +1,9 @@
+> **Vendored and modified copy.** This directory is a fork of
+> [Workiva/scip-dart](https://github.com/Workiva/scip-dart) 1.7.0, Copyright 2023
+> Workiva Inc., licensed under the Apache License 2.0 (see `LICENSE`). It has been
+> modified for sentei; every change is listed in `PATCHES.md`, and each modified
+> file carries a notice at the top. The upstream README follows unchanged.
+
 # scip-dart
 
 Implementation of a [scip](https://github.com/sourcegraph/scip) indexer for [dart](https://github.com/dart-lang)

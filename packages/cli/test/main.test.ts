@@ -160,10 +160,10 @@ describe('stage errors', () => {
 
   it('never prints a token', () => {
     const env = { GITHUB_TOKEN: 'sekrit-token-value' };
-    const err = new Error('clone failed: sekrit-token-value / ghp_abcdefghijklmnopqrstuvwxyz0123 / https://x-access-token:abc123@github.com');
+    const err = new Error('clone failed: sekrit-token-value / ghp_FAKE0FAKE0FAKE0FAKE / https://x-access-token:abc123@github.com');
     const text = formatError('discover', err, true, env);
     expect(text).not.toContain('sekrit-token-value');
-    expect(text).not.toContain('ghp_abcdef');
+    expect(text).not.toContain('ghp_FAKE');
     expect(text).not.toContain('abc123');
     expect(redactSecrets('Authorization: Bearer xyz.789', {})).toBe('Authorization: Bearer ***');
   });

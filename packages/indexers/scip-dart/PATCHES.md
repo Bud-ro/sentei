@@ -7,10 +7,16 @@ sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
-`analysis_options.yaml`, `CHANGELOG.md`, `pubspec.lock` (pub resolves the same
-versions as upstream's lock from the constraints; see the adapter).
+`analysis_options.yaml`, `CHANGELOG.md`, and upstream's `pubspec.lock`. The
+`pubspec.lock` here is sentei's own, resolved for the trimmed dependency set and
+checked in so the analyzer version is pinned (docs/DESIGN.md, M3).
 
 Diffs are against the upstream commit, paths relative to this directory.
+Each modified file (`pubspec.yaml`, `bin/scip_dart.dart`, `lib/src/flags.dart`,
+`lib/src/symbol_generator.dart`, `lib/src/scip_visitor.dart`) also starts with a
+one-line "Modified by sentei" notice (Apache-2.0 §4(b)) plus, in the Dart files,
+a blank line after it; the diffs below leave that header out, so their new-side
+line numbers are offset by it.
 
 ## 1. SDK floor 3.11 (`pubspec.yaml`)
 

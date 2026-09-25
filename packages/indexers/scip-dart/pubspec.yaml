@@ -1,3 +1,4 @@
+# Modified by sentei (see PATCHES.md); original: Workiva/scip-dart 1.7.0, Apache-2.0.
 name: scip_dart
 version: 1.7.0
 description: generates scip bindings for dart files

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { create, toBinary } from '@bufbuild/protobuf';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { normalizeSymbolVersion, parseDescriptors, parseScipSymbol, readScipIndex, SymbolRole } from '../src/scip/read.ts';
 import { IndexSchema } from '../src/scip/scip_pb.ts';
@@ -86,7 +87,7 @@ describe('parseDescriptors', () => {
 
 describe('readScipIndex', () => {
   it('round-trips an Index through the generated bindings', () => {
-    const dir = mkdtempSync(join(process.env['TMPDIR'] ?? '.', 'sentei-scip-'));
+    const dir = mkdtempSync(join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-scip-'));
     try {
       const idx = create(IndexSchema, {
         metadata: { projectRoot: 'file:///x', toolInfo: { name: 't', version: '1' } },

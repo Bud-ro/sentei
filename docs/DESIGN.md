@@ -892,7 +892,10 @@ needs_review 9 → 41, skew 272 → 45.
   literal counts only in a file that also builds import text; codegen hits
   name only the symbols inside the literal; the self consumer scans only own
   files that are not indexed documents and not generated, in the package's own
-  language, ignoring directive lines and the defining line.
+  language, ignoring directive lines and the defining line. (Refined later, see
+  "Witness rules, final form": a `witness_files` self row, i.e. an own TypeScript
+  file importing the package by name that SCIP could not resolve, is scanned even
+  when it is an indexed document.)
 - **Runtime entry points** (`ManifestPackage.runtimeEntryPoints`): package.json
   `imports` arms and Vite/HTML client entries are not export surface (that
   would make the arm TypeScript picks an unexport candidate and the other a

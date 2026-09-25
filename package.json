@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Org-wide dead export detection",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bud-ro/sentei.git"
+  },
   "workspaces": [
     "packages/*"
   ],

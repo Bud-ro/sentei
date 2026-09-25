@@ -1,3 +1,5 @@
+// Modified by sentei (see PATCHES.md); original: Workiva/scip-dart 1.7.0, Apache-2.0.
+
 import 'dart:io';
 
 import 'package:args/args.dart';

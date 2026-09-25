@@ -19,13 +19,6 @@ import { sarifSchemaErrors } from '../../core/test/helpers/sarif.ts';
 const FIXTURES = path.resolve(import.meta.dirname, '../../../fixtures');
 const NO_NODE_MODULES = { recursive: true, filter: (src: string) => path.basename(src) !== 'node_modules' };
 
-/** Until the analyze stage exists the pipeline produces no findings; skip loudly instead of failing. */
-const ANALYZE_READY = existsSync(path.resolve(import.meta.dirname, '../../core/src/analyze.ts'))
-  || process.env.SENTEI_PIPELINE_FORCE === '1';
-if (!ANALYZE_READY) {
-  console.warn('[pipeline.test] SKIPPING M1 acceptance: packages/core/src/analyze.ts does not exist yet (analyze stage is a no-op)');
-}
-
 interface ExpectedRow {
   package_id: string;
   symbol: string;
@@ -108,7 +101,7 @@ function expected(file: string): ExpectedRow[] {
 }
 
 describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
-  it.skipIf(!ANALYZE_READY)('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
+  it('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
     const org = copyFixture('org-small');
     const { rows, report: r, lines, work } = await runPipeline(org);
     expect(r.policy.assumeClosedWorld).toBe(true);
@@ -127,7 +120,7 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
       && x.locations[0]!.physicalLocation.artifactLocation.uri === 'src/fns.ts')).toBe(true);
   }, 180_000);
 
-  it.skipIf(!ANALYZE_READY)('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
+  it('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
     const org = copyFixture('org-small');
     const cfgPath = path.join(org, 'sentei.json');
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
@@ -161,7 +154,7 @@ function expectedDart(file: string): ExpectedRow[] {
 }
 
 describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
-  it.skipIf(!ANALYZE_READY || !HAS_DART)('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
+  it.skipIf(!HAS_DART)('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
     const org = copyFixture('org-dart');
     const { rows, report: r } = await runPipeline(org);
     expect(r.policy.assumeClosedWorld).toBe(true);
@@ -173,7 +166,7 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
     expect(rows).toEqual(expectedDart('expected-findings.json'));
   }, 600_000);
 
-  it.skipIf(!ANALYZE_READY || !HAS_DART)('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
+  it.skipIf(!HAS_DART)('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
     const org = copyFixture('org-dart');
     const cfgPath = path.join(org, 'sentei.json');
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;

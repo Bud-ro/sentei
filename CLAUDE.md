@@ -3,15 +3,16 @@
 Read `PLAN.md` fully before touching anything. Decisions marked DECIDED are settled.
 `docs/DESIGN.md` records what was learned and any deviations.
 
-## Environment (this dev box)
+## Environment
 
-- **Node 26 is required** (`node:sqlite`). The system `node` is v18. Every shell
-  command must first do:
-  `export PATH="$HOME/.nvm/versions/node/v26.10.0/bin:$PATH" npm_config_cache="$HOME/.cache/npm"`
-  (the default npm cache dir is read-only in the sandbox)
-  Shell state does not persist between commands.
-- Dart SDK 3.11.3 is on PATH. `gh` is authenticated. Network egress is sandboxed;
-  declare hosts you need (registry.npmjs.org, pub.dev, github.com, api.github.com).
+- **Node ≥ 26 is required** (`node:sqlite`, native type stripping); the version is
+  pinned in `.nvmrc`. If the system `node` is older, run `nvm use` (or put a Node 26
+  `bin/` first on `PATH`) before any `npm`/`node` command.
+- If the default npm cache directory is not writable (some sandboxes), point
+  `npm_config_cache` at a writable directory.
+- Dart SDK ≥ 3.11 on `PATH` for the Dart indexer tests (CI uses 3.11.3; they are
+  skipped without `dart`). `gh` (or `GITHUB_TOKEN`) only for `discover --org`.
+- Network hosts used: registry.npmjs.org, pub.dev, github.com, api.github.com.
 - Temp files go in `$TMPDIR`, never `/tmp`.
 
 ## Conventions

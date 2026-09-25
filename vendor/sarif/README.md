@@ -21,3 +21,12 @@ every log's `$schema`.
 
 Used only by tests (`packages/core/test/helpers/sarif.ts`, default `ajv` build =
 draft-07, plus `ajv-formats`). The runtime never validates.
+
+## License
+
+The file is distributed by [SchemaStore](https://github.com/SchemaStore/schemastore),
+whose repository is licensed under the Apache License 2.0
+(<https://github.com/SchemaStore/schemastore/blob/master/LICENSE>). The schema
+itself originates from the OASIS SARIF Technical Committee
+([oasis-tcs/sarif-spec](https://github.com/oasis-tcs/sarif-spec)), whose content is
+governed by the OASIS IPR Policy (RF on RAND mode). It is unmodified here.

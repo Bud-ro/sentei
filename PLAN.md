@@ -567,6 +567,5 @@ Answers from Budro to the OPEN items, recorded here so the plan is self-containe
 2. **`bin/` and example apps:** keep the plan default — entry points of their own
    package.
 3. **`minAgeDays`:** 180.
-4. **Toolchain on this box:** Node 26 via nvm (`~/.nvm/versions/node/v26.10.0`),
-   Dart SDK 3.11.3, git 2.43, `gh` authenticated as Bud-ro. M6 (a week of nightly
-   runs) is out of scope for the autonomous run.
+4. **Toolchain:** Node 26, Dart 3.11.3, git, gh authenticated. M6 (a week of
+   nightly runs) is out of scope for the autonomous run.

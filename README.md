@@ -17,14 +17,32 @@ search of every declared consumer (the *witness*) must find no mention of the
 symbol. Structural rules are schema constraints and triggers; policy is SQL views
 you can query.
 
+## Status
+
+Pre-release and under active development: the CLI, the config keys, the database
+schema and the report format can still change without notice. It has been
+dogfooded on three public orgs (unjs and honojs for TypeScript, Workiva for Dart;
+lockfiles in `fixtures/orgs/`). Findings rest on a closed-world assumption (the org
+is the whole universe of consumers), so treat them as candidates to review, not
+instructions. sentei only reports: it never edits, deletes or pushes code and never
+opens pull requests.
+
 ## Requirements
 
-- Node ≥ 26 (`node:sqlite`, native TypeScript type stripping)
+- Node ≥ 26 (`node:sqlite`, native TypeScript type stripping); `.nvmrc` pins it
 - git
 - Dart SDK ≥ 3.11 for Dart repos
-- A GitHub token for listing repos: `GITHUB_TOKEN`, else `GH_TOKEN`, else
-  `gh auth token`. Rerunning from an existing lockfile makes no API calls (public
-  repos clone without a token).
+- A GitHub token for listing repos with `--org`: `GITHUB_TOKEN`, else `GH_TOKEN`,
+  else `gh auth token`. Rerunning from an existing lockfile makes no API calls
+  (public repos clone without a token). `--org-dir` needs no token.
+- Behind a proxy, `NODE_USE_ENV_PROXY=1` (Node's `fetch` ignores `HTTPS_PROXY` by
+  default; git does not).
+- Repos using pnpm, yarn or bun are installed with their own lockfile
+  (`--frozen-lockfile` / `--immutable`, scripts off). A missing pnpm or yarn is run
+  through `npm exec` at the version the repo's `packageManager` (or
+  `devEngines.packageManager`) names; a missing bun skips the install with a
+  warning. pnpm, yarn and corepack state and caches go under `<work>/.pm/`, not
+  `$HOME` (npm keeps its usual cache). `--no-install` skips installs altogether.
 
 ## Quick start
 
@@ -44,7 +62,7 @@ $S run --org unjs --lockfile fixtures/orgs/unjs.lock.json
 
 `--org-dir <dir>` replaces `--org` for a local org directory (`org.json` +
 `repos/<name>/`, see `fixtures/org-small`). Useful options: `--work <dir>`
-(default `./work`), `--include/--exclude <glob>` (repo names), `--include-forks`,
+(default `./work`), `--db <file>` (default `<work>/sentei.db`), `--include/--exclude <glob>` (repo names), `--include-forks`,
 `--update-lockfile`, `--config-dir <dir>` (where the org `sentei.json` lives;
 default the cwd if it has one), `--max-old-space-mb <n>`, `--quiet`, `--verbose`.
 `--policy key=value` (repeatable, JSON values) overrides one org policy key for
@@ -55,16 +73,15 @@ Each stage prints `[stage] done in 1.2s`; `run` ends with a total. Exit codes: 0
 success, 1 a stage failed (`sentei <stage>: <message>` on stderr; `--verbose` adds
 the stack), 2 usage error.
 
-Behind a proxy set `NODE_USE_ENV_PROXY=1`: Node's `fetch` ignores `HTTPS_PROXY`
-by default (git does not).
-
 ## Work directory
 
 ```
 work/
   discover.json            org model: repos, packages, deps, policy, overlays
   repos/<name>/            shallow clones (--org; --clones-dir to move)
-  index/<owner>__<repo>/   index.json, <pkg>.scip, <pkg>.exports.json sidecars
+  index/<owner>__<repo>/   index.json; per package <pkg>.scip, <pkg>.exports.json
+                           (sidecar) and <pkg>.log (indexer and install output)
+  .pm/                     package-manager caches and state for installs
   sentei.db                SQLite: schema + analysis views (first-class debug artifact)
   blame/<owner>__<repo>.json  blame cache, trusted only for the same head sha
   report.json              full findings, reasons, blockers, warnings, version skew
@@ -112,7 +129,10 @@ overrides are rejected.
 
 Reasons: `no_refs`, `internal_refs_only`, `only_test_refs` (delete the tests
 too), `open_world`, `witness_pending` (analyze output before `witness` runs),
-`witness_mismatch:<consumer>:<file>:<line>` (1-based), `already_unreachable`
+`witness_mismatch:<consumer>:<file>:<line>` (1-based; `<consumer>` is a package
+id, `self`, `self-string` or `ignored:<repo>/<manifest>`, and `<file>:<line>` can be
+`checkout missing`), `dead_island` (exports used only by other candidates, so they
+go together: a would-be unexport that becomes a deletion), `already_unreachable`
 (an existing private island), `unlocked_by:<symbol>` (dead once that candidate
 goes). `blocked_by` entries are `<package>:<flag>`, with flags
 `opaque_consumer`, `index_failed`, `dynamic_access`, `namespace_dynamic`,
@@ -123,10 +143,13 @@ HEAD) is reported separately, never as a finding.
 
 The report stage prints: the policy line; a `!!` warning banner (assumeClosedWorld,
 `minAgeDays` 0, repos whose index was partial or failed); a per-package table
-(visibility, closed/open world, opaque, counts per verdict, blockers); **top
+(visibility, closed/open world, opaque, counts per verdict, blockers). In that table
+`deletion_candidate` is split in two columns: DELETE (no counted use) and ISLAND
+(reason `dead_island`: used only by other candidates, delete them together);
+`report.json` keeps the single `deletion_candidate` verdict with the reason. Then **top
 blockers**, the opaque packages preventing the most verdicts, the "fix that
-repo's tsconfig first" list (all of them are in `report.json`); and the version
-skew count. `blame` dates the last edit of the definition line, not its creation,
+repo's tsconfig first" list (the top 10; all of them are in `report.json`); and
+the version skew count. `blame` dates the last edit of the definition line, not its creation,
 which errs toward younger (the safe direction).
 
 ### `assumeClosedWorld`
@@ -168,6 +191,27 @@ gh api -X POST repos/OWNER/REPO/code-scanning/sarifs \
 ```
 
 GitHub caps a run at 25 000 results.
+
+## Contributing / running the tests
+
+```sh
+nvm use                    # Node 26 from .nvmrc, if the system node is older
+npm ci
+npm run typecheck          # tsc over every workspace
+npm test                   # vitest, about a minute
+npm run snapshots:update   # regenerate fixtures/snapshots after an indexer change
+```
+
+The Dart tests (the vendored scip-dart fork, dart-surface, `fixtures/org-dart`)
+need a Dart SDK ≥ 3.11 on `PATH` and are skipped without one; the checked-in
+snapshots were generated with Dart 3.11.3. Tests need no GitHub token and make no
+GitHub API calls (clone tests use local `file://` repos, the API is faked), but
+`dart pub get` for the vendored tools needs pub.dev once. CI
+(`.github/workflows/ci.yml`) runs the same `npm ci`, `npm run typecheck` and
+`npm test` on Node 26 with Dart 3.11.3. When the snapshot test fails, run
+`npm run snapshots:update` and review `git diff fixtures/snapshots`. See `CLAUDE.md`
+for code conventions (policy lives in SQL, fail closed, one logical change per
+commit).
 
 ## More
 
