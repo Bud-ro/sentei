@@ -1,0 +1,65 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## main.js
+  const { app, BrowserWindow } = require('electron');
+//^ definition scip-typescript npm @acme/dual-electron . `main.js`/ enclosing [0:0-6:0]
+//        ^^^ definition local 1
+//             ^^^^^^^^^^^^^ definition local 2
+
+  app.on('ready', () => {
+//^^^ reference local 1
+    const win = new BrowserWindow({ webPreferences: { nodeIntegration: true } });
+//        ^^^ definition local 5
+//                  ^^^^^^^^^^^^^ reference local 2
+//                                  ^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-electron . `main.js`/webPreferences0:
+//                                                    ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-electron . `main.js`/nodeIntegration0:
+    win.loadFile('index.html');
+//  ^^^ reference local 5
+  });
+
+## renderer.js
+  // Loaded by the inline <script> of index.html.
+//^ definition scip-typescript npm @acme/dual-electron . `renderer.js`/ enclosing [1:0-6:0]
+  function rendererBanner() {
+//         ^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-electron . `renderer.js`/rendererBanner(). enclosing [1:0-3:1]
+    return 'renderer';
+  }
+
+  rendererBanner();
+//^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-electron . `renderer.js`/rendererBanner().
+
+## src/index.js
+  import { formatTitle } from './title.js';
+//^ definition scip-typescript npm @acme/dual-electron . src/`index.js`/ enclosing [0:0-3:0]
+//         ^^^^^^^^^^^ reference scip-typescript npm @acme/dual-electron . src/`title.js`/formatTitle().
+//                            ^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-electron . src/`title.js`/
+
+  document.title = formatTitle();
+//^^^^^^^^ reference local 3
+//^^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/document.
+//         ^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Document#title.
+//                 ^^^^^^^^^^^ reference scip-typescript npm @acme/dual-electron . src/`title.js`/formatTitle().
+
+## src/title.js
+  // Reached only through webpack's default entry src/index.js (kept alive).
+//^ definition scip-typescript npm @acme/dual-electron . src/`title.js`/ enclosing [1:0-8:0]
+  export function formatTitle() {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-electron . src/`title.js`/formatTitle(). enclosing [1:0-3:1]
+    return 'electron';
+  }
+
+  export function electronUnused() {
+//                ^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-electron . src/`title.js`/electronUnused(). enclosing [5:0-7:1]
+    return 2;
+  }
+
+## webpack.config.js
+  // No `entry`: webpack defaults to ./src/index.js and writes dist/main.js.
+//^ definition scip-typescript npm @acme/dual-electron . `webpack.config.js`/ enclosing [1:0-4:0]
+  module.exports = {
+//^^^^^^ reference local 1
+//       ^^^^^^^ reference local 1
+    target: 'electron-renderer',
+//  ^^^^^^ definition scip-typescript npm @acme/dual-electron . `webpack.config.js`/target0:
+  };

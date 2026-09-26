@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_IGNORE_MANIFEST_DIRS, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
+  DEFAULT_IGNORE_MANIFEST_DIRS, electronHtmlRefs, inlineScriptRefs, webpackEntries, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
   dockerfileTargets, runnerTargets, sourceForBuildOutput, stripJsonc, tsconfigOutDirs, urlReferencedFiles,
 } from '../src/manifests.ts';
 
@@ -588,8 +588,53 @@ describe('npm manifests', () => {
     expect(p!.entryPoints).toEqual([
       'app/pages/p.ts', 'app/src/a.ts', 'app/src/admin.ts', 'app/src/entry-server.ts', 'app/src/main.tsx', 'app/src/root.ts', 'app/src/worker.ts',
     ]);
-    expect(logs.some((l) => l.startsWith('app/package.json: client entry points from index.html / vite.config: app/pages/p.ts'))).toBe(true);
+    expect(logs.some((l) => l.startsWith('app/package.json: client entry points from HTML / vite / rollup / webpack config: app/pages/p.ts'))).toBe(true);
     expect(p!.runtimeEntryPoints).toEqual(p!.entryPoints);
+  });
+
+  it('webpack entries, inline <script> bodies and Electron loadFile HTML are runtime entries (flame-engine ignite)', () => {
+    // ignite: webpack.config.js without `entry` (default ./src/index.js → dist/main.js),
+    // index.html loads the build through an inline require, main.js opens it with loadFile.
+    pkgJson('ignite/package.json', { name: 'ignite', main: 'main.js', devDependencies: { webpack: '^4' } });
+    write('ignite/webpack.config.js', 'module.exports = { target: "electron-renderer", module: { rules: [{ test: /\\.js$/ }] } };');
+    write('ignite/index.html', "<html><body><script>\n  require('./renderer.js')\n  require('./dist/main.js');\n</script></body></html>");
+    write('ignite/main.js', 'mainWindow.loadFile("index.html")');
+    for (const f of ['src/index.js', 'src/helper.js', 'renderer.js']) write(`ignite/${f}`);
+    // Explicit entries: string, array, object with a descriptor; an expression is ignored.
+    pkgJson('wp/package.json', { name: 'wp', private: true });
+    write('wp/webpack.prod.config.js', [
+      "module.exports = [{ entry: { app: './src/app.js', admin: ['./src/admin.ts', './src/polyfill.js'],",
+      "  worker: { import: './src/worker.js', dependOn: 'app' }, dyn: getEntry() } },",
+      "  { entry: './src/other.js' }];",
+    ].join('\n'));
+    write('wp/rollup.config.mjs', "export default { input: 'src/rolled.ts' };");
+    write('wp/public/app.html', '<script type="module">import { boot } from "../src/inline.ts"; import("./lazy.js");</script>');
+    write('wp/electron/main.ts', 'win.loadURL(`file://${__dirname}/../public/app.html`); win.loadURL(`file://${__dirname}/win.html`)');
+    write('wp/electron/win.html', '<script src="./dist/app.js"></script><script src="https://x.y/z.js"></script>');
+    for (const f of ['src/app.js', 'src/admin.ts', 'src/polyfill.js', 'src/worker.js', 'src/other.js', 'src/rolled.ts', 'src/index.js', 'src/inline.ts', 'public/lazy.js']) write(`wp/${f}`);
+    const pkgs = readRepoManifests(root, warn);
+    const ignite = pkgs.find((p) => p.name === 'ignite')!;
+    expect(ignite.runtimeEntryPoints).toEqual(['ignite/renderer.js', 'ignite/src/index.js']);
+    expect(ignite.entryPoints).toEqual(['ignite/main.js', 'ignite/renderer.js', 'ignite/src/index.js']);
+    const wp = pkgs.find((p) => p.name === 'wp')!;
+    // src/index.js is not added (the configs name their entries); public/app.html is
+    // opened through `${__dirname}/../public/app.html`, so its inline import / import()
+    // count; win.html's `./dist/app.js` maps to the webpack entry `app`.
+    expect(wp.runtimeEntryPoints).toEqual([
+      'wp/public/lazy.js', 'wp/src/admin.ts', 'wp/src/app.js', 'wp/src/inline.ts', 'wp/src/other.js', 'wp/src/polyfill.js', 'wp/src/rolled.ts',
+      'wp/src/worker.js',
+    ]);
+  });
+
+  it('inline script and Electron HTML scanners read only literal local paths', () => {
+    expect(inlineScriptRefs("require('./a.js'); require('fs'); import x from '/b.ts'; import './c'; import('https://x/y.js'); import(`./d${n}.js`)"))
+      .toEqual(['./a.js', '/b.ts', './c']);
+    expect(electronHtmlRefs("w.loadFile('./ui/index.html'); w.loadURL('file://' + __dirname + '/b.html'); w.loadURL('https://x.y/c.html'); w.loadFile(page)"))
+      .toEqual(['ui/index.html', 'b.html']);
+    expect(electronHtmlRefs('no windows here')).toEqual([]);
+    expect(webpackEntries("entry: path.resolve(__dirname, 'src/main.ts'), output: { filename: 'x.js' }"))
+      .toEqual([{ name: 'main', path: 'src/main.ts' }]);
+    expect(webpackEntries('entry: getEntries()')).toEqual([]);
   });
 
   it('package.json imports: every condition target that resolves to local code is an entry point (ocache #crypto)', () => {

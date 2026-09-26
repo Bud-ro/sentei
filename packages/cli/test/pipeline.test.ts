@@ -122,6 +122,10 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     // Fix round 4: dual-server's bundled-worker.ts is named only by `new URL('./bundled-worker.ts',
     // import.meta.url)` in server.ts; a runtime entry, so its top-level call keeps handleJob alive.
     expect(rows.filter((x) => x.symbol === 'handleJob')).toEqual([]);
+    // Fix round 6: webpack entries. dual-webpack's `entry: './src/app.js'` and dual-electron's
+    // default ./src/index.js (loaded as dist/main.js by an inline require in the index.html
+    // that main.js opens with loadFile) keep their helpers alive; only the unused ones are dead.
+    expect(rows.filter((x) => ['renderPage', 'formatTitle', 'rendererBanner'].includes(x.symbol))).toEqual([]);
 
     // Fix round 3. @acme/dual-script's runtime entries outside its tsconfig program
     // (a `node scripts/serve.mjs` start script, next.config.mjs, a CommonJS bin) are
@@ -137,6 +141,11 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
         { file: 'packages/dual-script/next.config.mjs', is_entry: 1 },
         { file: 'packages/dual-script/bin/cli.cjs', is_entry: 1 },
       ]));
+      const entries = (id: string): unknown => JSON.parse((ctx.db.prepare('SELECT entry_points FROM packages WHERE package_id = ?').get(id) as { entry_points: string }).entry_points);
+      expect(entries('npm:acme/lib-dual:@acme/dual-webpack')).toEqual(['packages/dual-webpack/src/app.js']);
+      expect(entries('npm:acme/lib-dual:@acme/dual-electron')).toEqual([
+        'packages/dual-electron/main.js', 'packages/dual-electron/renderer.js', 'packages/dual-electron/src/index.js',
+      ]);
       expect(ctx.db.prepare(`SELECT package_id, name, visibility, is_library FROM packages WHERE repo = 'acme/lib-dual' AND name LIKE '\\_unnamed/%' ESCAPE '\\'`).all())
         .toEqual([
           { package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo', name: '_unnamed/unnamed-demo', visibility: 'private', is_library: 0 },

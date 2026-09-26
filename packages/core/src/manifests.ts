@@ -498,7 +498,7 @@ export function readNpmPackage(
   const { unresolved } = resolved;
   const clientAll = clientEntryPoints(repoRoot, dir, files);
   const client = clientAll.filter((f) => !resolved.entryPoints.includes(f));
-  if (client.length > 0) log(`${manifest}: client entry points from index.html / vite.config: ${client.join(', ')}`);
+  if (client.length > 0) log(`${manifest}: client entry points from HTML / vite / rollup / webpack config: ${client.join(', ')}`);
   const deps = npmDeps(json, manifest, warn);
   const scripts = isObject(json['scripts'])
     ? Object.values(json['scripts']).filter((v): v is string => typeof v === 'string') : [];
@@ -766,14 +766,28 @@ export function resolveNpmEntryPoints(
 }
 
 /**
- * Browser entry points a bundler (Vite) loads with no import from code: every
- * `<script … src="…">` of an HTML file at the package root (`index.html`, other
- * `*.html`), and every string value after `input:` in a package-root `vite.config.*`
- * (`input: 'x'`, `input: { a: 'x', b: 'y' }`, `input: ['x']`, also inside
- * `resolve(__dirname, 'x')`); an `input` that is itself an HTML file of the package
- * contributes its scripts (resolved relative to that file; a leading `/` means the
- * package root, as in Vite). Only targets that resolve to a local code file are kept
- * (repo-relative, sorted). Dumb text scanning on purpose: it only ever adds entries.
+ * Browser / bundler entry points loaded with no import from code:
+ * - every `<script … src="…">` of an HTML file at the package root (`index.html`, other
+ *   `*.html`) or of an HTML file the code opens in an Electron window
+ *   (`loadFile('x.html')`, `loadURL(`file://${__dirname}/x.html`)`, electronHtmlRefs), and
+ *   the modules an INLINE `<script>` body loads (`require('./x')`, `import('./x')`,
+ *   `import … from './x'`, inlineScriptRefs: flame-engine ignite's
+ *   `<script>require('./dist/main.js')</script>`);
+ * - every string value after `input:` in a package-root `vite.config.*` / `rollup.config.*`
+ *   (`input: 'x'`, `input: { a: 'x', b: 'y' }`, `input: ['x']`, also inside
+ *   `resolve(__dirname, 'x')`); an `input` that is itself an HTML file of the package
+ *   contributes its scripts (resolved relative to that file; a leading `/` means the
+ *   package root, as in Vite);
+ * - webpack (webpackEntries): the `entry:` literals of a package-root
+ *   `webpack.config.*` / `webpack.<x>.config.*` (string, array, object values,
+ *   `{ import: … }` descriptors), or webpack's default `./src/index.{js,ts,jsx,tsx}` when
+ *   a config has no readable entry. A script path that resolves to no file and is named
+ *   `<name>.js` is mapped to the webpack entry `<name>` (webpack's default
+ *   `output.filename` is `[name].js` and a string / array entry is named `main`), so
+ *   `./dist/main.js` reaches `src/index.js`.
+ * Only targets that resolve to a local code file are kept (repo-relative, sorted); build
+ * output goes through the tsconfig outDir / dist→src mapping like a declared entry. Dumb
+ * text scanning on purpose: it only ever adds entries.
  */
 export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: readonly string[]): string[] {
   const pkgFiles = packageFiles(dir, repoFiles);
@@ -786,44 +800,61 @@ export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: read
       return '';
     }
   };
-  /** Resolve `target` (from a file in package dir `base`) to a package file; null if not local code. */
+  const layout: SourceLayout = { files: fileSet, outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) };
+  const isUrl = (target: string): boolean => /^[a-z][\w+.-]*:|^\/\//i.test(target);
+  /** Resolve `target` (from a file in package dir `base`) to a package file; null if not local. */
   const resolveLocal = (target: string, base: string): string | null => {
-    if (/^[a-z][\w+.-]*:|^\/\//i.test(target)) return null; // URL
+    if (isUrl(target)) return null;
     const clean = target.split(/[?#]/)[0]!;
     const n = normalizeRel(clean.startsWith('/') ? clean.slice(1) : base === '' ? clean : `${base}/${clean}`);
     if (n === null || n === '') return null;
-    return fileSet.has(n) ? n : resolveEntry(n, { files: fileSet, outDirs: [] });
+    return fileSet.has(n) ? n : resolveEntry(n, layout);
   };
+  // webpack: entries by chunk name (a string / array entry is `main`).
+  const webpack = new Map<string, string[]>();
+  for (const cfg of pkgFiles.filter((f) => /^webpack(?:\.[\w-]+)*\.config\.[cm]?[jt]s$/.test(f))) {
+    const found: Array<[string, string]> = [];
+    for (const { name, path: target } of webpackEntries(read(cfg))) {
+      const r = resolveLocal(target, '');
+      if (r !== null && CODE_EXT.test(r)) found.push([name, r]);
+    }
+    if (found.length === 0) {
+      const def = ['src/index.js', 'src/index.ts', 'src/index.jsx', 'src/index.tsx'].find((f) => fileSet.has(f));
+      if (def !== undefined) found.push(['main', def]);
+    }
+    for (const [name, r] of found) {
+      out.add(r);
+      webpack.set(name, [...(webpack.get(name) ?? []), r]);
+    }
+  }
+  /** A script target: the file (or its source), else the webpack entry its `[name].js` names. */
+  const addScript = (target: string, base: string): void => {
+    const r = resolveLocal(target, base);
+    if (r !== null) {
+      if (CODE_EXT.test(r)) out.add(r);
+      return;
+    }
+    if (isUrl(target)) return;
+    const stem = /(?:^|\/)([^/]+)\.[cm]?js$/.exec(target.split(/[?#]/)[0]!)?.[1];
+    for (const w of (stem === undefined ? undefined : webpack.get(stem)) ?? []) out.add(w);
+  };
+  const scanned = new Set<string>();
   const scripts = (html: string): void => {
+    if (scanned.has(html)) return;
+    scanned.add(html);
     const base = posix.dirname(html) === '.' ? '' : posix.dirname(html);
-    const re = /<script\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
     const text = read(html);
-    for (let m = re.exec(text); m; m = re.exec(text)) {
-      const r = resolveLocal(m[1]!, base);
-      if (r !== null && CODE_EXT.test(r)) out.add(r);
+    for (const m of text.matchAll(/<script\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi)) addScript(m[1]!, base);
+    // Inline bodies (a `<script>` without `src`).
+    for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+      if (!/\bsrc\s*=/i.test(m[1]!)) for (const t of inlineScriptRefs(m[2]!)) addScript(t, base);
     }
   };
   for (const f of pkgFiles) if (!f.includes('/') && f.endsWith('.html')) scripts(f);
-  for (const cfg of pkgFiles.filter((f) => /^vite\.config\.[cm]?[jt]s$/.test(f))) {
+  for (const cfg of pkgFiles.filter((f) => /^(?:vite|rollup)\.config\.[cm]?[jt]s$/.test(f))) {
     const text = read(cfg);
-    const inputRe = /\binput\s*:\s*/g;
-    for (let m = inputRe.exec(text); m; m = inputRe.exec(text)) {
-      const at = m.index + m[0].length;
-      let end = at;
-      const open = text[at];
-      if (open === '{' || open === '[') {
-        const close = open === '{' ? '}' : ']';
-        let depth = 0;
-        for (end = at; end < text.length; end += 1) {
-          if (text[end] === open) depth += 1;
-          else if (text[end] === close && --depth === 0) break;
-        }
-      } else {
-        end = text.slice(at).search(/[,\n}]/);
-        end = end === -1 ? text.length : at + end;
-      }
-      for (const lit of text.slice(at, end + 1).matchAll(/(['"`])([^'"`\n]+)\1/g)) {
-        const target = lit[2]!;
+    for (const m of text.matchAll(/\binput\s*:\s*/g)) {
+      for (const target of literalsOfValue(text, m.index + m[0].length)) {
         const r = resolveLocal(target, '');
         if (r === null) continue;
         if (r.endsWith('.html')) scripts(r);
@@ -831,7 +862,120 @@ export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: read
       }
     }
   }
+  // Electron: HTML files a window loads by path, relative to the app root (loadFile) or
+  // to the calling file (a `file://` URL built on __dirname); each one that exists.
+  for (const f of pkgFiles) {
+    if (!CODE_EXT.test(f) || f.split('/').some((s) => s === 'node_modules' || s.startsWith('.'))) continue;
+    const fromDir = posix.dirname(f) === '.' ? '' : posix.dirname(f);
+    for (const rel of electronHtmlRefs(read(f))) {
+      for (const base of ['', fromDir]) {
+        const n = normalizeRel(base === '' ? rel : `${base}/${rel}`);
+        if (n !== null && fileSet.has(n)) scripts(n);
+      }
+    }
+  }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/**
+ * The string literals of the JS value starting at `at` (after `key:`): up to the matching
+ * bracket for an object / array, else to the next `,` / newline / `}`.
+ */
+function literalsOfValue(text: string, at: number): string[] {
+  let end = at;
+  const open = text[at];
+  if (open === '{' || open === '[') {
+    const close = open === '{' ? '}' : ']';
+    let depth = 0;
+    for (end = at; end < text.length; end += 1) {
+      if (text[end] === open) depth += 1;
+      else if (text[end] === close && --depth === 0) break;
+    }
+  } else {
+    // A scalar, possibly a call (`resolve(__dirname, 'x')`): to the first `,` / newline /
+    // `}` outside parentheses.
+    let parens = 0;
+    for (end = at; end < text.length; end += 1) {
+      const c = text[end]!;
+      if (c === '(') parens += 1;
+      else if (c === ')') parens -= 1;
+      else if (parens <= 0 && (c === ',' || c === '\n' || c === '}')) break;
+    }
+  }
+  return [...text.slice(at, end + 1).matchAll(/(['"`])([^'"`\n]+)\1/g)].map((l) => l[2]!);
+}
+
+/**
+ * The `entry:` values of a webpack config, as written: a string or array entry is named
+ * `main` (webpack's default chunk name); an object entry names each value by its key
+ * (a `{ import: './x', dependOn: … }` descriptor contributes its literals too; the caller
+ * keeps only those that resolve to code). Only path-looking literals (`./x`, `../x`,
+ * `src/x.js`); expressions yield nothing.
+ */
+export function webpackEntries(text: string): Array<{ name: string; path: string }> {
+  const out: Array<{ name: string; path: string }> = [];
+  const looksLocal = (s: string): boolean => /^\.{1,2}\//.test(s) || (s.includes('/') && CODE_EXT.test(s) && !s.startsWith('@'));
+  for (const m of text.matchAll(/\bentry\s*:\s*/g)) {
+    const at = m.index + m[0].length;
+    if (text[at] !== '{') {
+      for (const lit of literalsOfValue(text, at)) if (looksLocal(lit)) out.push({ name: 'main', path: lit });
+      continue;
+    }
+    // Object entry: `name: 'x'`, `'name': ['x', 'y']`, `name: { import: 'x' }`.
+    let depth = 0;
+    let end = at;
+    for (; end < text.length; end += 1) {
+      if (text[end] === '{') depth += 1;
+      else if (text[end] === '}' && --depth === 0) break;
+    }
+    const body = text.slice(at + 1, end);
+    const keyRe = /(?:^|[,{\s])(?:(['"])([^'"\n]+)\1|([A-Za-z_$][\w$-]*))\s*:\s*/g;
+    let d = 0;
+    let last = 0;
+    for (const k of body.matchAll(keyRe)) {
+      for (; last < k.index; last += 1) {
+        if (body[last] === '{' || body[last] === '[') d += 1;
+        else if (body[last] === '}' || body[last] === ']') d -= 1;
+      }
+      if (d !== 0) continue; // a key inside a descriptor (`import:`, `dependOn:`)
+      const name = k[2] ?? k[3]!;
+      for (const lit of literalsOfValue(body, k.index + k[0].length)) if (looksLocal(lit)) out.push({ name, path: lit });
+    }
+  }
+  return out;
+}
+
+/**
+ * Module paths an inline `<script>` body loads: `require('…')`, `import('…')`,
+ * `import … from '…'` / `import '…'`, relative or root-absolute only (a bare specifier is
+ * a dependency, not a file of the package).
+ */
+export function inlineScriptRefs(body: string): string[] {
+  const out: string[] = [];
+  const re = /\b(?:require|import)\s*\(\s*(['"`])([^'"`$\n]+)\1\s*\)|\bimport\s+(?:[\w$*{}\s,]+\s+from\s+)?(['"])([^'"\n]+)\3/g;
+  for (const m of body.matchAll(re)) {
+    const p = m[2] ?? m[4]!;
+    if (/^\.{1,2}\/|^\/(?!\/)/.test(p)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * HTML files an Electron main process opens by path, as written: the `.html` literal of
+ * `loadFile('…')`, and the path after `file://`, `${__dirname}` or `__dirname + '` in
+ * `loadURL(…)` (`loadURL(`file://${__dirname}/app/index.html`)` → `app/index.html`).
+ */
+export function electronHtmlRefs(text: string): string[] {
+  if (!/\bload(?:File|URL)\s*\(/.test(text)) return [];
+  const out: string[] = [];
+  for (const m of text.matchAll(/\bloadFile\s*\(\s*(['"`])([^'"`$\n]+\.html?)\1/g)) out.push(m[2]!.replace(/^\.\//, ''));
+  for (const m of text.matchAll(/\bloadURL\s*\(([^)\n]*)\)/g)) {
+    const arg = m[1]!;
+    if (!/file:|__dirname/.test(arg)) continue;
+    const tail = /(?:file:\/\/|\}|['"`])\/?((?:[\w.-]+\/)*[\w.-]+\.html?)\b/.exec(arg);
+    if (tail) out.push(tail[1]!.replace(/^\.\//, ''));
+  }
+  return out;
 }
 
 /**

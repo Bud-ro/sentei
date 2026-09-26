@@ -1,0 +1,18 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-webpack/src/app.js"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-webpack",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

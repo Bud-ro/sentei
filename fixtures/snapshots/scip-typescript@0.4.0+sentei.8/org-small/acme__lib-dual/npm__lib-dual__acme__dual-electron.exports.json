@@ -1,0 +1,20 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-electron/main.js",
+    "packages/dual-electron/renderer.js",
+    "packages/dual-electron/src/index.js"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-electron",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

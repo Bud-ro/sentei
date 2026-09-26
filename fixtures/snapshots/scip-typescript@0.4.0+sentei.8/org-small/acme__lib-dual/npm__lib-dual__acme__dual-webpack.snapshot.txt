@@ -1,0 +1,42 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/app.js
+  import { renderPage } from './render.js';
+//^ definition scip-typescript npm @acme/dual-webpack . src/`app.js`/ enclosing [0:0-3:0]
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/dual-webpack . src/`render.js`/renderPage().
+//                           ^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-webpack . src/`render.js`/
+
+  renderPage(document.getElementById('app'));
+//^^^^^^^^^^ reference scip-typescript npm @acme/dual-webpack . src/`render.js`/renderPage().
+//           ^^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/document.
+//                    ^^^^^^^^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Document#getElementById().
+
+## src/render.js
+  // Reached only through the webpack entry src/app.js (kept alive).
+//^ definition scip-typescript npm @acme/dual-webpack . src/`render.js`/ enclosing [1:0-9:0]
+  export function renderPage(el) {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual-webpack . src/`render.js`/renderPage(). enclosing [1:0-3:1]
+//                           ^^ definition scip-typescript npm @acme/dual-webpack . src/`render.js`/renderPage().(el)
+    el.textContent = 'hello';
+//  ^^ reference scip-typescript npm @acme/dual-webpack . src/`render.js`/renderPage().(el)
+  }
+
+  // Nothing uses this: private_dead once the entry is known.
+  export function webpackUnused() {
+//                ^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-webpack . src/`render.js`/webpackUnused(). enclosing [6:0-8:1]
+    return 1;
+  }
+
+## webpack.config.js
+  // webpack builds dist/main.js from the entry below; nothing imports src/app.js.
+//^ definition scip-typescript npm @acme/dual-webpack . `webpack.config.js`/ enclosing [1:0-5:0]
+  module.exports = {
+//^^^^^^ reference local 1
+//       ^^^^^^^ reference local 1
+    entry: './src/app.js',
+//  ^^^^^ definition scip-typescript npm @acme/dual-webpack . `webpack.config.js`/entry0:
+    output: { filename: '[name].js' },
+//  ^^^^^^ definition scip-typescript npm @acme/dual-webpack . `webpack.config.js`/output0:
+//            ^^^^^^^^ definition scip-typescript npm @acme/dual-webpack . `webpack.config.js`/filename0:
+  };

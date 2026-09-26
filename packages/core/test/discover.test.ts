@@ -37,10 +37,12 @@ describe('discoverLocal on fixtures/org-small', () => {
     const model = discoverLocal({ orgDir: FIXTURE, log: (l) => logs.push(l), now: 1_700_000_000 });
     expect(logs).toEqual([
       'acme/app-worker: package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): functions/api/hello.ts, src/worker.ts',
-      'acme/lib-cascade: package.json: client entry points from index.html / vite.config: src/client.ts',
+      'acme/lib-cascade: package.json: client entry points from HTML / vite / rollup / webpack config: src/client.ts',
+      'acme/lib-dual: packages/dual-electron/package.json: client entry points from HTML / vite / rollup / webpack config: packages/dual-electron/renderer.js, packages/dual-electron/src/index.js',
       'acme/lib-dual: packages/dual-script/package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/dual-script/next.config.mjs, packages/dual-script/scripts/serve.mjs',
       'acme/lib-dual: packages/dual-server/package.json: 3 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/dual-server/src/bundled-worker.ts, packages/dual-server/src/server.ts, packages/dual-server/src/worker.ts',
       'acme/lib-dual: packages/dual-web/package.json: 4 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/dual-web/next.config.ts, packages/dual-web/src/app/page.tsx, packages/dual-web/src/instrumentation.ts, packages/dual-web/src/middleware.ts',
+      'acme/lib-dual: packages/dual-webpack/package.json: client entry points from HTML / vite / rollup / webpack config: packages/dual-webpack/src/app.js',
       'acme/lib-dual: unnamed-demo/package.json: no "name"; indexed as the consumer-only package _unnamed/unnamed-demo (private, no export surface)',
       'acme/lib-dual: unnamed-demo-2/package.json: no "name"; indexed as the consumer-only package _unnamed/unnamed-demo-2 (private, no export surface)',
       'acme/tool-py: npm:acme/tool-py:@acme/tool-py flagged unindexed_consumer (1 .py file(s), e.g. scripts/build.py)',
@@ -70,6 +72,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       // main/module/types under two tsconfig outDirs (dist/main, dist/module), both rootDir src
       { package_id: 'npm:acme/lib-dual:@acme/dual', repo: 'acme/lib-dual', path: 'packages/dual', manager: 'npm', name: '@acme/dual', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual/src/index.ts"]' },
       { package_id: 'npm:acme/lib-dual:@acme/dual-app', repo: 'acme/lib-dual', path: 'packages/dual-app', manager: 'npm', name: '@acme/dual-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-app/src/main.ts"]' },
+      // Electron + webpack (fix round 6): main.js, the inline require of index.html (renderer.js; dist/main.js → webpack's default entry src/index.js)
+      { package_id: 'npm:acme/lib-dual:@acme/dual-electron', repo: 'acme/lib-dual', path: 'packages/dual-electron', manager: 'npm', name: '@acme/dual-electron', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-electron/main.js","packages/dual-electron/renderer.js","packages/dual-electron/src/index.js"]' },
       { package_id: 'npm:acme/lib-dual:@acme/dual-legacy', repo: 'acme/lib-dual', path: 'packages/dual-legacy', manager: 'npm', name: '@acme/dual-legacy', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual-legacy/src/index.ts"]' },
       // exports + runtime entries outside its tsconfig program: `npm start` = node scripts/serve.mjs, Next.js next.config.mjs (the bin is runtime-only)
       { package_id: 'npm:acme/lib-dual:@acme/dual-script', repo: 'acme/lib-dual', path: 'packages/dual-script', manager: 'npm', name: '@acme/dual-script', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual-script/next.config.mjs","packages/dual-script/scripts/serve.mjs","packages/dual-script/src/index.ts"]' },
@@ -77,6 +81,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:acme/lib-dual:@acme/dual-server', repo: 'acme/lib-dual', path: 'packages/dual-server', manager: 'npm', name: '@acme/dual-server', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-server/src/bundled-worker.ts","packages/dual-server/src/server.ts","packages/dual-server/src/worker.ts"]' },
       // Next.js (src/app): src/middleware.ts, src/instrumentation.ts and next.config.ts load by name; the root middleware.ts does not
       { package_id: 'npm:acme/lib-dual:@acme/dual-web', repo: 'acme/lib-dual', path: 'packages/dual-web', manager: 'npm', name: '@acme/dual-web', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-web/next.config.ts","packages/dual-web/src/app/page.tsx","packages/dual-web/src/instrumentation.ts","packages/dual-web/src/middleware.ts"]' },
+      // webpack.config.js `entry: './src/app.js'` (fix round 6)
+      { package_id: 'npm:acme/lib-dual:@acme/dual-webpack', repo: 'acme/lib-dual', path: 'packages/dual-webpack', manager: 'npm', name: '@acme/dual-webpack', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-webpack/src/app.js"]' },
       // package.json without "name" but with a dependency: a consumer-only package under a synthetic name
       { package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo', repo: 'acme/lib-dual', path: 'unnamed-demo', manager: 'npm', name: '_unnamed/unnamed-demo', version: null, visibility: 'private', is_library: 0, entry_points: '[]' },
       { package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo-2', repo: 'acme/lib-dual', path: 'unnamed-demo-2', manager: 'npm', name: '_unnamed/unnamed-demo-2', version: null, visibility: 'private', is_library: 0, entry_points: '[]' },
@@ -737,7 +743,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 24 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 26 }]);
   });
 });
 

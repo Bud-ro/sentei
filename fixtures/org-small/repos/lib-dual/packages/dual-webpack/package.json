@@ -1,0 +1,6 @@
+{
+  "name": "@acme/dual-webpack",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "build": "webpack --mode production" }
+}
