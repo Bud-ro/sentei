@@ -13,6 +13,7 @@ import {
   BUILD_RUNNER_TIMEOUT_MS,
   buildRunner,
   DART_SURFACE_DIR,
+  dartPartUris,
   flutterReason,
   missingGeneratedParts,
   OVERRIDES_HEADER,
@@ -630,15 +631,57 @@ describe('build_runner for missing generated parts', () => {
     'web/demo.dart': "part 'demo.over_react.g.dart';\n",
     // A codemod's test input: a string, not a directive (over_react_codemod).
     'test/codemod_test.dart': "const input = '''\npart '$name.over_react.g.dart';\n''';\n",
+    // Rule docs: a `part` line in a raw multi-line string, a doc comment and a
+    // block comment (over_react_analyzer_plugin's create_ref_usage.dart): not directives.
+    'lib/src/rule.dart': [
+      '/// Example:',
+      "/// part 'doc.over_react.g.dart';",
+      "/* part 'block.g.dart'; /* nested */ part 'still_block.g.dart'; */",
+      "const details = r'''",
+      '```',
+      "part 'create_ref_usage.over_react.g.dart';",
+      '```',
+      "''';",
+      '',
+    ].join('\n'),
+    // build_runner's `build_to: cache` output (over_react): the analyzer resolves
+    // `part 'cached.over_react.g.dart';` to .dart_tool/build/generated/gen/lib/src/.
+    'lib/src/cached.dart': "part 'cached.over_react.g.dart';\n",
+    '.dart_tool/build/generated/gen/lib/src/cached.over_react.g.dart': "part of 'cached.dart';\n",
   };
 
-  it('lists own missing *.g.dart / *.freezed.dart parts only', () => {
+  it('lists own missing *.g.dart / *.freezed.dart parts only: not in comments or strings, not under .dart_tool/build/generated/', () => {
     const dir = pkg('list', withRunner, lib);
     expect(missingGeneratedParts(dir)).toEqual([
       "lib/model.dart: 'model.freezed.dart'",
       "lib/model.dart: 'model.g.dart'",
       "web/demo.dart: 'demo.over_react.g.dart'",
     ]);
+  });
+
+  it('a pub workspace member\'s generated parts may sit under the workspace root\'s .dart_tool/', () => {
+    const dir = pkg('ws/packages/member', 'name: member\nresolution: workspace\n', { 'lib/a.dart': "part 'a.g.dart';\n" });
+    const wsRoot = path.join(root, 'ws');
+    expect(missingGeneratedParts(dir, wsRoot)).toEqual(["lib/a.dart: 'a.g.dart'"]);
+    mkdirSync(path.join(wsRoot, '.dart_tool/build/generated/member/lib'), { recursive: true });
+    writeFileSync(path.join(wsRoot, '.dart_tool/build/generated/member/lib/a.g.dart'), "part of 'a.dart';\n");
+    expect(missingGeneratedParts(dir, wsRoot)).toEqual([]);
+    expect(missingGeneratedParts(dir)).toEqual(["lib/a.dart: 'a.g.dart'"]);
+  });
+
+  it('dartPartUris: top-level part directives only', () => {
+    expect(dartPartUris([
+      "library x; import 'a.dart' show b; part 'one.g.dart'; part \"two.dart\";",
+      "part of 'lib.dart';",
+      "@deprecated part 'meta.g.dart';",
+      "var s = 'x ${f('}')} part ' + r'\\' + \"part 'raw.g.dart';\";",
+      "var t = \"\"\"\npart 'triple.g.dart';\n\"\"\";",
+      "part '$interp.g.dart';",
+      "part 'esc\\'.g.dart';",
+      "class A { void m() { part 'inner.g.dart'; } }",
+      "// part 'line.g.dart';",
+      "part 'last.g.dart';",
+    ].join('\n'))).toEqual(['one.g.dart', 'two.dart', 'meta.g.dart', 'last.g.dart']);
   });
 
   it('records nothing when no generated part is missing', async () => {
@@ -651,7 +694,7 @@ describe('build_runner for missing generated parts', () => {
   });
 
   it('skips a package that does not depend on build_runner', async () => {
-    const dir = pkg('nodep', 'name: nodep\n', lib);
+    const dir = pkg('nodep', 'name: gen\n', lib);
     const diagnostics: string[] = [];
     expect(await buildRunner(dir, diagnostics, [], 'dart', async () => { throw new Error('must not run'); })).toBe('skipped');
     expect(diagnostics).toEqual([
@@ -678,16 +721,47 @@ describe('build_runner for missing generated parts', () => {
     expect(log.join('\n')).toContain('[INFO] Succeeded after 1.2s');
   });
 
-  it('reports a failing or timed-out build_runner as failed', async () => {
+  it('reports a failing or timed-out build_runner that leaves parts missing as failed', async () => {
     const dir = pkg('fails', withRunner, lib);
     const failed: string[] = [];
     expect(await buildRunner(dir, failed, [], 'dart', async () => ({ code: 78, signal: null, stdout: '', stderr: 'Could not find package "build_runner".\n' }))).toBe('failed');
     expect(failed).toEqual([
-      "warn: build_runner: failed (3 generated part(s) missing, e.g. lib/model.dart: 'model.freezed.dart'; exited with 78: Could not find package \"build_runner\".)",
+      "warn: build_runner: failed (3 generated part(s) missing, e.g. lib/model.dart: 'model.freezed.dart'; 3 still missing; exited with 78: Could not find package \"build_runner\".)",
     ]);
     const slow: string[] = [];
     expect(await buildRunner(dir, slow, [], 'dart', async () => ({ code: null, signal: 'SIGTERM', stdout: '', stderr: '', timedOut: true }), 1000)).toBe('failed');
-    expect(slow[0]).toMatch(/; timed out after 1 s\)$/);
+    expect(slow[0]).toMatch(/; 3 still missing; timed out after 1 s\)$/);
+  });
+
+  it('a non-zero exit that wrote every part under .dart_tool/build/generated/ ran with errors (over_react_test)', async () => {
+    const dir = pkg('cache', withRunner, lib);
+    const diagnostics: string[] = [];
+    const outcome = await buildRunner(dir, diagnostics, [], 'dart', async () => {
+      // `build_to: cache` builders write next to nothing in the source tree.
+      const gen = path.join(dir, '.dart_tool/build/generated/gen');
+      for (const f of ['lib/model.g.dart', 'lib/model.freezed.dart', 'web/demo.over_react.g.dart']) {
+        mkdirSync(path.dirname(path.join(gen, f)), { recursive: true });
+        writeFileSync(path.join(gen, f), 'part of x;\n');
+      }
+      return { code: 1, signal: null, stdout: '[SEVERE] build_web_compilers:ddc on test/x_unsound_test.dart: failed\n', stderr: '' };
+    });
+    expect(outcome).toBe('ran-with-errors');
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatch(/^info: build_runner: ran with errors \(3 generated part\(s\) missing, e\.g\. lib\/model\.dart: 'model\.freezed\.dart'; 0 still missing; exited with 1: \[SEVERE\] build_web_compilers:ddc on test\/x_unsound_test\.dart: failed; [\d.]+ s\)$/);
+    // Next time nothing is missing: build_runner does not run again.
+    expect(await buildRunner(dir, [], [], 'dart', async () => { throw new Error('must not run'); })).toBeUndefined();
+  });
+
+  it('counts parts written under .dart_tool/build/generated/ as present after a successful run (over_react: 108 were "still missing")', async () => {
+    const dir = pkg('cache-ok', withRunner, lib);
+    const diagnostics: string[] = [];
+    expect(await buildRunner(dir, diagnostics, [], 'dart', async () => {
+      const gen = path.join(dir, '.dart_tool/build/generated/gen/lib');
+      mkdirSync(gen, { recursive: true });
+      writeFileSync(path.join(gen, 'model.g.dart'), 'part of x;\n');
+      return { code: 0, signal: null, stdout: '', stderr: '' };
+    })).toBe('ran');
+    expect(diagnostics[0]).toMatch(/; 2 still missing; [\d.]+ s\)$/);
   });
 });
 

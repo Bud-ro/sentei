@@ -560,7 +560,7 @@ async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<
   for (const p of ws.packages) {
     const d = realpathSync(packageDir(repo, p));
     const own = { diagnostics: [] as string[], log: [] as string[] };
-    await buildRunner(d, own.diagnostics, own.log, dart);
+    await buildRunner(d, own.diagnostics, own.log, dart, exec, BUILD_RUNNER_TIMEOUT_MS, ws.root);
     perPackage.set(d, own);
   }
   return { shared: { status: 'ok', diagnostics, log }, perPackage };
@@ -774,10 +774,20 @@ export const BUILD_RUNNER_TIMEOUT_MS = 10 * 60_000;
 /**
  * `part '<uri>';` directives of the package's own Dart files (nested packages,
  * dot dirs, build/ and node_modules/ skipped) whose relative URI names a
- * generated part (see [GENERATED_PART]) that does not exist, as
- * `<file relative to dir>: '<uri>'`, sorted.
+ * generated part (see [GENERATED_PART]) that exists neither next to the file
+ * nor where build_runner's `build_to: cache` builders (over_react) write it,
+ * `.dart_tool/build/generated/<package name>/<path in the package>`, under the
+ * package or under `workspaceRoot` (a pub workspace's generated dir is at its
+ * root): the analyzer resolves the part from there (analyzer
+ * `PackageConfigWorkspace.findFile`). As `<file relative to dir>: '<uri>'`,
+ * sorted. Directives come from [dartPartUris], so a `part '…';` line in a
+ * comment or a string is not one.
  */
-export function missingGeneratedParts(dir: string): string[] {
+export function missingGeneratedParts(dir: string, workspaceRoot?: string): string[] {
+  const name = pubspecName(dir);
+  const generatedDirs = name === undefined
+    ? []
+    : [...new Set([dir, workspaceRoot ?? dir])].map((root) => path.join(root, '.dart_tool', 'build', 'generated', name));
   const out: string[] = [];
   const walk = (d: string): void => {
     let entries;
@@ -798,19 +808,136 @@ export function missingGeneratedParts(dir: string): string[] {
         } catch {
           continue;
         }
-        for (const m of text.matchAll(/^[ \t]*part[ \t]+(['"])([^'"\n]+)\1[ \t]*;/gm)) {
-          const uri = m[2]!;
-          // `$` only in a string that looks like a directive (a codemod's test input).
-          if (uri.includes(':') || uri.includes('$') || !GENERATED_PART.test(uri)) continue;
-          if (!existsSync(path.resolve(path.dirname(p), ...uri.split('/')))) {
-            out.push(`${path.relative(dir, p).split(path.sep).join('/')}: '${uri}'`);
-          }
+        for (const uri of dartPartUris(text)) {
+          if (uri.includes(':') || !GENERATED_PART.test(uri)) continue;
+          const target = path.resolve(path.dirname(p), ...uri.split('/'));
+          if (existsSync(target)) continue;
+          const rel = path.relative(dir, target);
+          if (!rel.startsWith('..') && !path.isAbsolute(rel) && generatedDirs.some((g) => existsSync(path.join(g, rel)))) continue;
+          out.push(`${path.relative(dir, p).split(path.sep).join('/')}: '${uri}'`);
         }
       }
     }
   };
   walk(dir);
   return out.sort();
+}
+
+/** The `name:` of `<dir>/pubspec.yaml`, or undefined. */
+function pubspecName(dir: string): string | undefined {
+  try {
+    return /^name[ \t]*:[ \t]*["']?([A-Za-z_][A-Za-z0-9_]*)/m.exec(readFileSync(path.join(dir, 'pubspec.yaml'), 'utf8'))?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+const isDartIdentChar = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0-9_$]/.test(c);
+
+/**
+ * The URIs of the top-level `part '<uri>';` directives of a Dart source, in
+ * order. A small lexer skips comments (`//`, `///`, nested block comments) and
+ * string literals (single, double, triple-quoted, raw, `${…}` interpolation
+ * included), so a `part '…';` line inside a doc comment or a multi-line string
+ * is not a directive: over_react_analyzer_plugin's rule docs (a raw
+ * triple-quoted `_details` string with a `part 'create_ref_usage.over_react.g.dart';`
+ * line: 34 false "missing" parts on Workiva), a codemod's test input
+ * (`part '$name.g.dart';` inside a string). A URI with interpolation or escapes is not
+ * a directive's; `part of` is not a part. Parsing with the analyzer would need
+ * a Dart process before build_runner; this is exact for directives.
+ */
+export function dartPartUris(text: string): string[] {
+  type Tok = { kind: 'word' | 'string' | 'semi'; value: string; simple: boolean; depth: number };
+  const toks: Tok[] = [];
+  const n = text.length;
+  let i = 0;
+  const readString = (): { value: string; simple: boolean } => {
+    let raw = false;
+    if (text[i] === 'r' || text[i] === 'R') {
+      raw = true;
+      i++;
+    }
+    const q = text[i]!;
+    const close = text.startsWith(q.repeat(3), i) ? q.repeat(3) : q;
+    i += close.length;
+    let value = '';
+    let simple = true;
+    while (i < n) {
+      if (text.startsWith(close, i)) {
+        i += close.length;
+        return { value, simple };
+      }
+      const c = text[i]!;
+      if (close.length === 1 && c === '\n') return { value, simple: false }; // unterminated
+      if (!raw && c === '\\') {
+        simple = false;
+        i += 2;
+        continue;
+      }
+      if (!raw && c === '$') {
+        simple = false;
+        i++;
+        if (text[i] === '{') {
+          i++;
+          lex(true);
+        }
+        continue;
+      }
+      value += c;
+      i++;
+    }
+    return { value, simple: false };
+  };
+  // Code until the end (or, in an interpolation, until its closing brace).
+  const lex = (interpolation: boolean): void => {
+    let depth = 0;
+    while (i < n) {
+      const c = text[i]!;
+      if (c === '/' && text[i + 1] === '/') {
+        const eol = text.indexOf('\n', i);
+        i = eol < 0 ? n : eol;
+      } else if (c === '/' && text[i + 1] === '*') {
+        let level = 0;
+        while (i < n) {
+          if (text.startsWith('/*', i)) {
+            level++;
+            i += 2;
+          } else if (text.startsWith('*/', i)) {
+            level--;
+            i += 2;
+            if (level === 0) break;
+          } else {
+            i++;
+          }
+        }
+      } else if (c === '"' || c === "'" || ((c === 'r' || c === 'R') && (text[i + 1] === '"' || text[i + 1] === "'"))) {
+        const str = readString();
+        if (!interpolation) toks.push({ kind: 'string', value: str.value, simple: str.simple, depth });
+      } else if (isDartIdentChar(c)) {
+        let j = i + 1;
+        while (j < n && isDartIdentChar(text[j])) j++;
+        if (!interpolation) toks.push({ kind: 'word', value: text.slice(i, j), simple: true, depth });
+        i = j;
+      } else {
+        if (c === '{') depth++;
+        else if (c === '}') {
+          if (interpolation && depth === 0) {
+            i++;
+            return;
+          }
+          depth--;
+        } else if (c === ';' && !interpolation) toks.push({ kind: 'semi', value: ';', simple: true, depth });
+        i++;
+      }
+    }
+  };
+  lex(false);
+  const out: string[] = [];
+  for (let k = 0; k + 2 < toks.length; k++) {
+    const [a, b, c] = [toks[k]!, toks[k + 1]!, toks[k + 2]!];
+    if (a.kind === 'word' && a.value === 'part' && a.depth === 0 && b.kind === 'string' && b.simple && c.kind === 'semi') out.push(b.value);
+  }
+  return out;
 }
 
 /**
@@ -820,9 +947,17 @@ export function missingGeneratedParts(dir: string): string[] {
  * When [missingGeneratedParts] finds any and the pubspec depends on
  * build_runner, runs `dart run build_runner build --delete-conflicting-outputs`
  * in `dir` (after pub get), time-boxed to [BUILD_RUNNER_TIMEOUT_MS], output to
- * the package log. Records one `build_runner: ran|skipped|failed` diagnostic
- * and returns that outcome; undefined (nothing recorded) when no generated
- * part is missing. `dart` is the Flutter SDK's for a Flutter package.
+ * the package log, then counts again what is still missing (next to the
+ * source or under `.dart_tool/build/generated/`, see [missingGeneratedParts]).
+ * Records one `build_runner:` diagnostic and returns the outcome:
+ * - `ran`: exit 0 (`ran (N missing; M still missing; …)`);
+ * - `ran-with-errors`: non-zero exit but every part now exists (over_react_test:
+ *   exit 1 from a pre-2.12 test's DDC build, all 13 parts written);
+ * - `failed`: non-zero exit or timeout with parts still missing;
+ * - `skipped`: build_runner is not a dependency;
+ * undefined (nothing recorded) when no generated part is missing. `dart` is
+ * the Flutter SDK's for a Flutter package; `workspaceRoot` the pub workspace
+ * root of a member.
  */
 export async function buildRunner(
   dir: string,
@@ -831,8 +966,9 @@ export async function buildRunner(
   dart = 'dart',
   run: (cmd: string, args: string[], cwd: string, timeoutMs?: number) => Promise<ExecResult> = exec,
   timeoutMs = BUILD_RUNNER_TIMEOUT_MS,
-): Promise<'ran' | 'skipped' | 'failed' | undefined> {
-  const missing = missingGeneratedParts(dir);
+  workspaceRoot?: string,
+): Promise<'ran' | 'ran-with-errors' | 'skipped' | 'failed' | undefined> {
+  const missing = missingGeneratedParts(dir, workspaceRoot);
   if (missing.length === 0) return undefined;
   const some = `${missing.length} generated part(s) missing, e.g. ${missing[0]}`;
   let pubspec = '';
@@ -850,16 +986,21 @@ export async function buildRunner(
   const proc = await run(dart, args, dir, timeoutMs);
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   log.push(`$ ${dart} ${args.join(' ')}  (cwd ${dir}; ${secs} s)`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
-  if (proc.timedOut === true || proc.code !== 0) {
-    const why = proc.timedOut === true
-      ? `timed out after ${Math.round(timeoutMs / 1000)} s`
-      : `exited with ${proc.code ?? proc.signal}${firstLine(proc.stderr) ?? firstLine(proc.stdout) ? `: ${firstLine(proc.stderr) ?? firstLine(proc.stdout)}` : ''}`;
-    diagnostics.push(`warn: build_runner: failed (${some}; ${why})`);
-    return 'failed';
+  const still = missingGeneratedParts(dir, workspaceRoot).length;
+  if (proc.timedOut !== true && proc.code === 0) {
+    diagnostics.push(`info: build_runner: ran (${some}; ${still} still missing; ${secs} s)`);
+    return 'ran';
   }
-  const still = missingGeneratedParts(dir).length;
-  diagnostics.push(`info: build_runner: ran (${some}; ${still} still missing; ${secs} s)`);
-  return 'ran';
+  const first = firstLine(proc.stderr) ?? firstLine(proc.stdout);
+  const why = proc.timedOut === true
+    ? `timed out after ${Math.round(timeoutMs / 1000)} s`
+    : `exited with ${proc.code ?? proc.signal}${first ? `: ${first}` : ''}`;
+  if (still === 0) {
+    diagnostics.push(`info: build_runner: ran with errors (${some}; 0 still missing; ${why}; ${secs} s)`);
+    return 'ran-with-errors';
+  }
+  diagnostics.push(`warn: build_runner: failed (${some}; ${still} still missing; ${why})`);
+  return 'failed';
 }
 
 // ---- pubspec_overrides.yaml ------------------------------------------------
