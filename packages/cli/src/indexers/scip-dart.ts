@@ -180,15 +180,26 @@ export const scipDart: Indexer = {
     const prepared = input.prepared ?? (await this.prepare!(input));
     const diagnostics: string[] = [...prepared.diagnostics];
     let status: IndexStatus = prepared.status;
-    /** Why a part made the package partial, when nothing had before: a `cause:` line for ingest's flag reason. */
-    let cause: string | undefined;
+    /**
+     * The diagnostic that last made the status worse, repeated as a `cause:`
+     * line for ingest's flag reason and the index progress line (both read the
+     * last one), as the TypeScript adapter does. Without it the progress line of
+     * a partial package led with its first `warn:` (`test not source-linked…`)
+     * instead of the unresolved import that made it partial. A status inherited
+     * from prepare (pub get failed) starts with prepare's first error.
+     */
+    let cause: string | undefined = prepared.status !== 'ok' ? prepared.diagnostics.find((d) => d.startsWith('error:')) : undefined;
+    const worsen = (to: IndexStatus, why: string): void => {
+      if (worstStatus(status, to) !== status) cause = why;
+      status = worstStatus(status, to);
+    };
     const slug = packageSlug(pkg);
     const scipFile = path.join(outDir, `${slug}.scip`);
     const exportsFile = path.join(outDir, `${slug}.exports.json`);
     const logFile = path.join(outDir, `${slug}.log`);
     const log: string[] = [...prepared.log];
     const finish = (): IndexerResult => {
-      if (cause !== undefined && status === 'partial') diagnostics.push(`cause: ${cause}`);
+      if (cause !== undefined && status !== 'ok') diagnostics.push(`cause: ${cause}`);
       log.push('--- diagnostics', ...diagnostics);
       writeFileSync(logFile, `${log.join('\n')}\n`);
       return { status, diagnostics, scipFile, exportsFile };
@@ -205,7 +216,7 @@ export const scipDart: Indexer = {
     const tools = await ensureTools(options.install);
     log.push(...tools.log);
     if (tools.error !== undefined) {
-      status = 'failed';
+      worsen('failed', `error: ${tools.error}`);
       diagnostics.push(`error: ${tools.error}`);
       return finish();
     }
@@ -237,9 +248,10 @@ export const scipDart: Indexer = {
       log.push(`$ dart ${scipArgs.join(' ')}  (cwd ${SCIP_DART_DIR})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
     }
     if (proc.code !== 0) {
-      status = 'failed';
       const why = firstLine(proc.stderr);
-      diagnostics.push(`error: scip-dart exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
+      const diag = `error: scip-dart exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`;
+      worsen('failed', diag);
+      diagnostics.push(diag);
     } else {
       // Fork patch 10: files the analyzer excludes are indexed anyway; one
       // that does not resolve leaves its references unknown (fail closed).
@@ -250,8 +262,9 @@ export const scipDart: Indexer = {
         );
       }
       if (files.unresolved.length > 0) {
-        status = worstStatus(status, 'partial');
-        diagnostics.push(`error: scip-dart could not resolve ${files.unresolved.length} file(s); references in them are unknown: ${listSome(files.unresolved)}`);
+        const why = `error: scip-dart could not resolve ${files.unresolved.length} file(s); references in them are unknown: ${listSome(files.unresolved)}`;
+        worsen('partial', why);
+        diagnostics.push(why);
       }
       // Fork patch 13: parts the analyzer resolved from build_runner's
       // `.dart_tool/build/generated/` are documents of the package, at their
@@ -264,8 +277,7 @@ export const scipDart: Indexer = {
       }
       if (files.unindexedParts.length > 0) {
         const why = `error: ${files.unindexedParts.length} part(s) of the package's libraries lie outside the package and were not indexed; references in them are unknown: ${listSome(files.unindexedParts)}`;
-        if (status === 'ok') cause ??= why;
-        status = worstStatus(status, 'partial');
+        worsen('partial', why);
         diagnostics.push(why);
       }
       // Fork patch 11: a file reached by a relative import that no package of
@@ -281,7 +293,7 @@ export const scipDart: Indexer = {
     /** Package-relative POSIX paths of the index's documents. */
     let documents: string[] = [];
     if (!existsSync(scipFile) || statSync(scipFile).size === 0) {
-      status = 'failed';
+      worsen('failed', `error: ${path.basename(scipFile)} missing or empty`);
       diagnostics.push(`error: ${path.basename(scipFile)} missing or empty`);
     } else {
       try {
@@ -296,8 +308,9 @@ export const scipDart: Indexer = {
       if (libFiles > 0) {
         const libDocs = documents.filter((d) => d.startsWith('lib/')).length;
         if (libDocs === 0) {
-          status = 'failed';
-          diagnostics.push(`error: scip-dart indexed none of the ${libFiles} Dart file(s) under lib/ (the analyzer did not cover lib/); the index is incomplete`);
+          const why = `error: scip-dart indexed none of the ${libFiles} Dart file(s) under lib/ (the analyzer did not cover lib/); the index is incomplete`;
+          worsen('failed', why);
+          diagnostics.push(why);
         }
       }
     }
@@ -342,7 +355,7 @@ export const scipDart: Indexer = {
       }
     }
     if (out === undefined) {
-      status = 'failed';
+      worsen('failed', diagnostics.findLast((d) => d.startsWith('error:')) ?? 'error: export surface failed');
       diagnostics.push('error: export surface failed');
       return finish();
     }
@@ -376,11 +389,14 @@ export const scipDart: Indexer = {
     };
     writeFileSync(exportsFile, `${JSON.stringify(sidecar satisfies ExportsSidecar, null, 2)}\n`);
     if (unresolvedOwnUris > 0) {
-      status = worstStatus(status, 'partial');
-      diagnostics.push(`error: package unresolvable (pub get failed): ${unresolvedOwnUris} own package: import/export URI(s) do not resolve`);
+      const why = `error: package unresolvable (pub get failed): ${unresolvedOwnUris} own package: import/export URI(s) do not resolve`;
+      worsen('partial', why);
+      diagnostics.push(why);
     }
     for (const m of unresolvedOrgModules) {
-      diagnostics.push(`error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`);
+      const why = `error: unresolved org module '${m.module}' at ${m.file}:${m.line + 1}:${m.col + 1}`;
+      worsen('partial', why);
+      diagnostics.push(why);
     }
     for (const u of sidecar.unresolvedImports) {
       diagnostics.push(`warn: '${u.name}' is not exported by org module '${u.module}' at ${u.file}:${u.line + 1}:${u.col + 1}`);
@@ -390,7 +406,6 @@ export const scipDart: Indexer = {
     // That matters for the package's library code (lib/, bin/): its surface and
     // its uses of other packages. Missing parts elsewhere (web/ demos, example/,
     // test/, tool/) and in test/docs files the policy does not count only warn.
-    let incomplete = 0;
     for (const m of missingParts) {
       const at = `${m.file}:${m.line + 1}:${m.col + 1}`;
       if (isExcludedConsumerFile(m.file, input.policy, { manager: 'pub', path: pkg.path })) {
@@ -402,14 +417,18 @@ export const scipDart: Indexer = {
         diagnostics.push(`warn: missing part '${m.uri}' at ${at} (not generated?); outside lib/ and bin/, references inside it are unknown`);
         continue;
       }
-      incomplete++;
       const why = `error: missing generated part '${m.uri}' at ${at}: the library is incomplete, references inside the part are unknown (run build_runner before indexing)`;
-      if (status === 'ok' && unresolvedOrgModules.length === 0) cause ??= why;
+      worsen('partial', why);
       diagnostics.push(why);
     }
     diagnostics.push(...surfaceDiagnostics);
-    if (unresolvedOrgModules.length > 0 || incomplete > 0 || sidecar.unresolved.length > 0 || sidecar.missingEntryPoints.length > 0) {
-      status = worstStatus(status, 'partial');
+    // dart-surface's own lines for these (`warn: unresolved export directives: …`,
+    // `warn: entry point(s) not found …`) are the cause.
+    if (sidecar.unresolved.length > 0) {
+      worsen('partial', surfaceDiagnostics.find((d) => d.startsWith('warn: unresolved export directives')) ?? `error: ${sidecar.unresolved.length} unresolved export directive(s)`);
+    }
+    if (sidecar.missingEntryPoints.length > 0) {
+      worsen('partial', surfaceDiagnostics.find((d) => d.startsWith('warn: entry point(s) not found')) ?? `error: entry point(s) not found: ${sidecar.missingEntryPoints.join(', ')}`);
     }
     return finish();
   },

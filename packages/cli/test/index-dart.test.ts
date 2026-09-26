@@ -348,6 +348,11 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     const r = ix('dart-bad');
     expect(r.status).toBe('partial');
     expect(r.packages[0]!.diagnostics).toContain("error: unresolved org module 'package:acme_x/nope.dart' at bin/main.dart:2:8");
+    // The cause (round 7): the unresolved import, not the first warning; the progress line leads with it.
+    expect(r.packages[0]!.diagnostics.filter((d) => d.startsWith('cause: '))).toEqual([
+      "cause: error: unresolved org module 'package:acme_x/nope.dart' at bin/main.dart:2:8",
+    ]);
+    expect(lines.some((l) => l.includes("pub:acme_bad: partial") && l.endsWith("— error: unresolved org module 'package:acme_x/nope.dart' at bin/main.dart:2:8"))).toBe(true);
     expect(r.packages[0]!.diagnostics).toContain(
       "warn: 'removedFn' is not exported by org module 'package:acme_x/acme_x.dart' at bin/main.dart:1:50",
     );
@@ -888,9 +893,8 @@ describe('Flutter package detection', () => {
       mkdirSync(out);
       const r = await scipDart.run(input(app, [app]), out);
       expect(r.status).toBe('partial');
-      expect(r.diagnostics).toEqual([
-        'error: Flutter package (depends on flutter) but `flutter` is not on PATH: not resolved; install the Flutter SDK to index it',
-      ]);
+      const why = 'error: Flutter package (depends on flutter) but `flutter` is not on PATH: not resolved; install the Flutter SDK to index it';
+      expect(r.diagnostics).toEqual([why, `cause: ${why}`]);
       expect(existsSync(r.scipFile)).toBe(false);
       expect(existsSync(r.exportsFile)).toBe(false);
       expect(existsSync(path.join(app.repo.localPath, '.dart_tool'))).toBe(false); // no pub get ran
@@ -1663,6 +1667,9 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     const r = await scipDart.run(inputFor(repos, inner), out);
     expect(r.status, r.diagnostics.join('\n')).toBe('partial');
     expect(r.diagnostics.some((d) => /^error: dart pub get --offline exited with 65/.test(d))).toBe(true);
+    // The status came from prepare (pub get): its error is the cause.
+    expect(r.diagnostics.filter((d) => d.startsWith('cause: '))).toHaveLength(1);
+    expect(r.diagnostics.find((d) => d.startsWith('cause: '))).toMatch(/^cause: error: dart pub get --offline exited with 65/);
     expect(r.diagnostics.filter((d) => d.startsWith('error: package unresolvable'))).toEqual([
       'error: package unresolvable (pub get failed): 2 own package: import/export URI(s) do not resolve',
     ]);
