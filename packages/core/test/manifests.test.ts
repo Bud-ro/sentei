@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_IGNORE_MANIFEST_DIRS, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
-  dockerfileTargets, runnerTargets, sourceForBuildOutput, stripJsonc, tsconfigOutDirs,
+  dockerfileTargets, runnerTargets, sourceForBuildOutput, stripJsonc, tsconfigOutDirs, urlReferencedFiles,
 } from '../src/manifests.ts';
 
 let root: string;
@@ -669,6 +669,33 @@ describe('npm manifests', () => {
     expect(logs.some((l) => l.startsWith('site/package.json: 3 runtime entry point(s) by convention'))).toBe(true);
     // No "no entry points resolved" warning when a convention supplies them.
     expect(warnings.filter((w) => w.includes('no entry points'))).toEqual([]);
+  });
+
+  it('urlReferencedFiles: new URL(rel, import.meta.url) and join(__dirname, …) name code files (fix round 4)', () => {
+    expect(urlReferencedFiles('const e = fileURLToPath(new URL("./serve.main.ts", import.meta.url));')).toEqual(['./serve.main.ts']);
+    expect(urlReferencedFiles("new Worker(new URL( '../workers/w.js' ,import.meta.url), { type: 'module' })")).toEqual(['../workers/w.js']);
+    expect(urlReferencedFiles("spawn('node', [path.join(__dirname, 'bin', 'child.mjs')]); resolve(import.meta.dirname, './x.ts')"))
+      .toEqual(['./bin/child.mjs', './x.ts']);
+    // Not code, not relative, computed, or not relative to the file: nothing.
+    expect(urlReferencedFiles([
+      "new URL('./data.json', import.meta.url)", "new URL('https://x.dev/a.js', import.meta.url)",
+      'new URL(`./${name}.ts`, import.meta.url)', "new URL('./a.ts', base)", "join(__dirname, name, 'x.js')", "join(root, 'x.js')",
+    ].join('\n'))).toEqual([]);
+  });
+
+  it('a file named by new URL / __dirname in the package source is a runtime entry point if it exists', () => {
+    pkgJson('cli/package.json', { name: 'cli', exports: './src/index.ts' });
+    write('cli/src/index.ts', "export const x = 1;\n");
+    write('cli/src/functions/bundler.ts', 'const entry = fileURLToPath(new URL("./serve.main.ts", import.meta.url));\n'
+      + "const gone = new URL('./missing.ts', import.meta.url);\nconst w = join(__dirname, '../../dist/worker.js');\n");
+    write('cli/src/functions/serve.main.ts', 'serve();\n');
+    write('cli/src/worker.ts');
+    // A test naming a file does not make it an entry (tests are not runtime sources).
+    write('cli/src/functions/bundler.test.ts', "new URL('./only-test.ts', import.meta.url)\n");
+    write('cli/src/functions/only-test.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.runtimeEntryPoints).toEqual(['cli/src/functions/serve.main.ts', 'cli/src/worker.ts']);
+    expect(p!.entryPoints).toEqual(['cli/src/functions/serve.main.ts', 'cli/src/index.ts', 'cli/src/worker.ts']);
   });
 
   it('runnerTargets: the file after node / tsx / ts-node / bun / nodemon, flags and their values skipped', () => {

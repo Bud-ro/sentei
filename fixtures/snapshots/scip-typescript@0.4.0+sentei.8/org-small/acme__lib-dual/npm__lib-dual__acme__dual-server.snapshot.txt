@@ -1,6 +1,24 @@
 # sentei scip snapshot: scip-typescript 0.4.0
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
+## src/bundled-worker.ts
+  // Named only by `new URL('./bundled-worker.ts', import.meta.url)` in server.ts (the
+//^ definition scip-typescript npm @acme/dual-server . src/`bundled-worker.ts`/ enclosing [6:0-11:0]
+  // supabase CLI hands serve.main.ts to esbuild that way, and Deno runs it verbatim):
+  // nothing imports it, so it is a runtime entry point by that reference alone.
+
+  // Expected: alive, no finding (not exported; called from the entry file top level).
+  // Without the new URL convention: private_dead already_unreachable.
+  function handleJob(): string {
+//         ^^^^^^^^^ definition scip-typescript npm @acme/dual-server . src/`bundled-worker.ts`/handleJob(). enclosing [6:0-8:1]
+    return 'job';
+  }
+
+  console.log(handleJob());
+//^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//        ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//            ^^^^^^^^^ reference scip-typescript npm @acme/dual-server . src/`bundled-worker.ts`/handleJob().
+
 ## src/routes.ts
   // Helpers of the server entry.
 //^ definition scip-typescript npm @acme/dual-server . src/`routes.ts`/ enclosing [3:0-11:0]
@@ -21,7 +39,7 @@
 
 ## src/server.ts
   // Started by `npm start` (`node dist/server.js`), the supabase postgres-meta layout: no
-//^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/ enclosing [2:0-15:0]
+//^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/ enclosing [2:0-17:0]
   // main / exports, the runtime entry is build output that tsconfig outDir dist maps back here.
   import { routeFor } from './routes';
 //         ^^^^^^^^ reference scip-typescript npm @acme/dual-server . src/`routes.ts`/routeFor().
@@ -29,16 +47,24 @@
 
   // Expected: alive, no finding (not exported; called from the entry file top level).
   function start(): void {
-//         ^^^^^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/start(). enclosing [5:0-7:1]
+//         ^^^^^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/start(). enclosing [5:0-9:1]
     console.log(routeFor('/'));
 //  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
 //          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
 //              ^^^^^^^^ reference scip-typescript npm @acme/dual-server . src/`routes.ts`/routeFor().
+    // A bundler / worker input named relative to this file (bundled-worker.ts).
+    console.log(new URL('./bundled-worker.ts', import.meta.url).href);
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//                  ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/URL#
+//                  ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/URL.
+//                                                         ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/ImportMeta#url.
+//                                                              ^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/URL#href.
   }
 
   // Expected: private_dead already_unreachable (the package has runtime entries, so it is eligible).
   function neverCalled(): number {
-//         ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/neverCalled(). enclosing [10:0-12:1]
+//         ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/neverCalled(). enclosing [12:0-14:1]
     return 2;
   }
 

@@ -1,6 +1,7 @@
 {
   "deepImportExports": [],
   "entryPoints": [
+    "packages/dual-server/src/bundled-worker.ts",
     "packages/dual-server/src/server.ts",
     "packages/dual-server/src/worker.ts"
   ],

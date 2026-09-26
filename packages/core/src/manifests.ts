@@ -994,7 +994,46 @@ export function conventionEntryPoints(
     if (r !== null && ok(r)) out.add(r);
   }
   if (deps.has('next')) for (const f of nextConventionFiles(fileSet)) if (ok(f)) out.add(f);
+  // Files the package's own code names by a path relative to itself, to hand to a
+  // bundler, a worker or a subprocess (urlReferencedFiles).
+  for (const f of pkgFiles) {
+    if (!ok(f)) continue;
+    for (const rel of urlReferencedFiles(read(f))) {
+      const n = normalizeRel(posix.join(posix.dirname(f), rel));
+      const r = n === null || n === '' ? null : resolveEntry(n, layout);
+      if (r !== null && r !== f && ok(r)) out.add(r);
+    }
+  }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/** Quick filter before the regexes of urlReferencedFiles. */
+const URL_REF_HINT = /import\.meta\.(?:url|dirname)|__dirname/;
+/** `new URL('<rel>', import.meta.url)` (also inside `fileURLToPath(…)`). */
+const NEW_URL_REF = /\bnew\s+URL\(\s*(['"`])(\.{1,2}\/[^'"`$\n]+)\1\s*,\s*import\.meta\.url\s*\)/g;
+/** `path.join|resolve(__dirname | import.meta.dirname, '<seg>', …)`: every argument after the dir a string literal. */
+const DIRNAME_JOIN_REF = /\b(?:join|resolve)\(\s*(?:__dirname|import\.meta\.dirname)\s*((?:,\s*(['"])[^'"$\n]+\2\s*)+)\)/g;
+
+/**
+ * Code-looking paths a source file names relative to its own location: the first
+ * argument of `new URL('./x.ts', import.meta.url)` (supabase's CLI hands
+ * `serve.main.ts` to esbuild that way, and Deno runs it verbatim: 45 + 7 false
+ * private_dead rows), and the joined string arguments of `path.join(__dirname, 'x.js')`
+ * / `resolve(import.meta.dirname, 'workers', 'x.mjs')`. Relative to the file's dir, as
+ * written (the caller resolves them like a declared entry: extension probing, build
+ * output to source, and keeps only existing code files). Text scanning: it only ever
+ * adds runtime entries (reachability), never removes anything.
+ */
+export function urlReferencedFiles(text: string): string[] {
+  if (!URL_REF_HINT.test(text)) return [];
+  const out: string[] = [];
+  for (const m of text.matchAll(NEW_URL_REF)) if (CODE_EXT.test(m[2]!)) out.push(m[2]!);
+  for (const m of text.matchAll(DIRNAME_JOIN_REF)) {
+    const segs = [...m[1]!.matchAll(/(['"])([^'"$\n]+)\1/g)].map((x) => x[2]!);
+    const rel = posix.join(...segs);
+    if (CODE_EXT.test(rel)) out.push(rel.startsWith('.') ? rel : `./${rel}`);
+  }
+  return out;
 }
 
 /** Commands that run the file named by their first positional argument. */

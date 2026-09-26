@@ -119,6 +119,9 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(r.policy).not.toHaveProperty('assumeClosedWorld');
     expect(r.warnings.some((w) => w.includes('assumeClosedWorld'))).toBe(false);
     expect(rows).toEqual(expected('expected-findings.json'));
+    // Fix round 4: dual-server's bundled-worker.ts is named only by `new URL('./bundled-worker.ts',
+    // import.meta.url)` in server.ts; a runtime entry, so its top-level call keeps handleJob alive.
+    expect(rows.filter((x) => x.symbol === 'handleJob')).toEqual([]);
 
     // Fix round 3. @acme/dual-script's runtime entries outside its tsconfig program
     // (a `node scripts/serve.mjs` start script, next.config.mjs, a CommonJS bin) are
