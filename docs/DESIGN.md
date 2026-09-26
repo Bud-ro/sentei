@@ -1153,3 +1153,63 @@ REST limits observed: 5000 core requests/hour authenticated, 30 searches/minute.
 Chosen runs: dart-lang, flame-engine and Workiva (full Dart set) for Dart;
 supabase for the mix; flutter/flutter + flutter/packages and serverpod as
 stretch targets.
+
+### Phase 2 — decision 3 as built (views)
+
+One base verdict per exported symbol. Its only input about the world is
+`private_packages` (schema view: `private`, or `published-private` with
+`trustPrivateRegistry`: nobody outside the org can depend on it). Same
+evidence either way (references, test-only uses, dev deps, age, keep,
+blockers, dead islands, witness): private → `deletion_candidate` /
+`unexport_candidate`; published → `deprecation_candidate` with reasons
+`no_refs` / `only_test_refs` / `dead_island` (a would-be deletion) or
+`internal_refs_only` (a would-be unexport). The witness now runs for published
+would-be deletions too and a hit makes them `needs_review`; trigger
+`findings_candidate_requires_witness` enforces it, and the keep and
+opaque-consumer triggers cover deprecations. A deprecation is a candidate (it
+stops seeding reachability), so dead islands and the private-dead cascade
+behave in published packages as they did under `assumeClosedWorld`. The age
+rule gates every verdict now (M1's "closed-world only" is superseded: a young
+published export is not worth deprecating, and `org_dead` must equal the old
+closed-world deletions). `open_world` is gone; `assumeClosedWorld` rows are
+dropped on insert and rejected in config. Schema v11.
+
+The report computes views over `findings`: `delete`, `deprecate`, `org_dead`
+(the deprecate rows plus the private helpers only they unlock, under the
+assertion "the org is the only consumer of these packages"), `unexport` (plus
+`published`: internal-only deprecations), `private_dead` (minus those helpers),
+`needs_review`, `blocked`, `version_skew`. `report --view` limits stdout and
+SARIF; SARIF defaults to everything but `org_dead`, whose rule `sentei/org-dead`
+(warning) emits only when selected, with the assertion in
+`run.properties.assertions` and every result message. Rules are named per
+view; fingerprints unchanged. No option needs a re-index: policy needs
+discover then analyze, witness and report; views need only report.
+
+### Phase 2 — decisions 4 and 5 as built (repo selection, cloning)
+
+- **Selection is pure** (`repo-select.ts`), first match wins: `--include` >
+  `--exclude` > `repos.include` > `repos.exclude`; empty or disabled repos;
+  archived, forks, templates; `maxSizeMb` (default 500, API `size` = full
+  history, an upper bound); `minPushed`; language in `repos.languages`
+  (default TypeScript/JavaScript/Dart) or a root `package.json`/`pubspec.yaml`
+  probe, run only for repos no other rule excluded. An include forces a repo
+  past every rule (this replaces include-as-whitelist; `--exclude '*'
+  --include x` narrows).
+- **Lockfile v2** (default `<work>/<org>.lock.json`) records every listed repo
+  with its facts, probe result, pinned sha (selected repos only), decision and
+  reasons, and any clone error; the header holds the merged settings. A
+  settings change re-decides from recorded facts and keeps the pins. Legacy
+  lockfiles still work with the glob/fork/template rules only.
+- **API cost** ≈ 1 request per 100 repos + 1 per selected repo + 1–2 per probed
+  repo; at most 8 in flight sharing one pause: `remaining: 0` sleeps until the
+  reset; secondary limits (429, or 403 with `retry-after` or the secondary-limit
+  message) wait `retry-after` or 60/120/240 s then fail.
+- **Clones** run in parallel (default 8) with `--depth=1 --single-branch
+  --no-tags` and `GIT_LFS_SKIP_SMUDGE=1`, with progress and a ten-slowest list;
+  a failure is recorded per repo and the rest continue (exit 1 at the end
+  unless `--allow-clone-failures`).
+- **Measured through the sandbox proxy**: a typical shallow clone is ~0.6 s,
+  nearly all latency; all 84 unjs repos take 58.6 s at concurrency 1 and 8.8 s
+  at 8. An hour for 100 clones therefore points at huge HEAD trees or LFS in
+  hardware repos (now excluded by size/language, LFS skipped) or at blame's
+  unshallow and index installs, not at shallow cloning.
