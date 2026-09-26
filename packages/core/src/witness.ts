@@ -20,6 +20,11 @@
 //     them nowhere else) are scanned the same way: a hit turns unexport_candidate /
 //     deprecation_candidate [internal_refs_only] into needs_review with the same
 //     witness_mismatch reasons; no hit leaves the verdict as it was.
+//   - every unexport, of any package, is also re-checked against code the index never
+//     saw (unexportHits): ignored manifests that depend on P (steps 1-2, reason ending
+//     ` (used by ignored manifest <manifest>)`), and the docs / example files of P and
+//     of its consumers, whatever countDocsAsConsumers says (reason ending ` (used in a
+//     docs/example file)`). A hit makes it needs_review, never alive.
 // In each C:
 //   1. files that import/require/re-export P (per-language regex, whole file);
 //   2. in those files, any NAME of S as a whole identifier: S's declared name plus every
@@ -566,7 +571,8 @@ interface Hit {
   line: number;
   /**
    * What the reason adds in parentheses: `member <name>` (an extension member's name hit,
-   * not S's own). Absent: a plain hit.
+   * not S's own), `used by ignored manifest <manifest>` / `used in a docs/example file`
+   * (unexport re-check). Absent: a plain hit.
    */
   notes?: string[];
 }
@@ -740,17 +746,29 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   };
 
   /**
+   * A docs / example file of the consumer (DOCS_GLOBS, never pub `lib/`), not a test file
+   * unless `withTests` or countTestsAsConsumers: the unexport re-check's docs step, which
+   * reads them whatever countDocsAsConsumers says.
+   */
+  const isDocsFile = (relFile: string, loc: ConsumerLoc, withTests: boolean): boolean => {
+    if (inSurfaceDir(relFile, loc.manager, loc.pkgPath)) return false;
+    const f = loc.globBase === '.' ? relFile : relFile.slice(loc.globBase.length + 1);
+    return DOCS_GLOBS.some((g) => matchGlob(g, f)) && (countTests || withTests || !TEST_GLOBS.some((g) => matchGlob(g, f)));
+  };
+
+  /**
    * Candidate code files of a consumer (repo-relative), or null if its checkout is
    * missing. The repo's files come from discover's listFiles (git ls-files in a
    * checkout, so ignored build output is skipped but a real package named `build` is
    * not), restricted to the consumer's dir minus org packages nested under it.
    * `withTests`: keep test files even when countTestsAsConsumers is off (dev-only dep).
+   * `docsOnly`: only its docs / example files (isDocsFile).
    */
   const repoFileCache = new Map<string, string[]>();
   const fileCache = new Map<string, string[] | null>();
   const under = (file: string, dir: string): boolean => dir === '.' || file.startsWith(`${dir}/`);
-  const consumerFiles = (consumer: string, withTests = false): string[] | null => {
-    const cacheKey = `${consumer}\0${withTests ? 1 : 0}`;
+  const consumerFiles = (consumer: string, withTests = false, docsOnly = false): string[] | null => {
+    const cacheKey = `${consumer}\0${withTests ? 1 : 0}\0${docsOnly ? 1 : 0}`;
     if (fileCache.has(cacheKey)) return fileCache.get(cacheKey)!;
     const loc = locs.get(consumer);
     let files: string[] | null = null;
@@ -762,7 +780,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         const nested = [...loc.nestedPaths].filter((q) => q !== loc.pkgPath && q !== '.' && under(q, loc.pkgPath));
         files = all
           .filter((f) => under(f, loc.pkgPath) && !nested.some((q) => under(f, q)))
-          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f, loc, withTests))
+          .filter((f) => CODE_EXTS.has(extname(f)) && (docsOnly ? isDocsFile(f, loc, withTests) : !excluded(f, loc, withTests)))
           .sort(cmp);
       }
     }
@@ -809,12 +827,12 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return t;
   };
 
-  /** Files of C mentioning P (keyed C\0P\0withTests\0code). */
+  /** Files of C mentioning P (keyed C\0P\0withTests\0code\0docsOnly: `files` is consumerFiles(C, withTests, docsOnly)). */
   const mentionCache = new Map<string, string[]>();
   const mentioning = (
-    consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string, withTests: boolean, read = readText,
+    consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string, withTests: boolean, read = readText, docsOnly = false,
   ): string[] => {
-    const key = `${consumer}\0${manager}:${pkgName}\0${withTests ? 1 : 0}\0${read === readCode ? 1 : 0}`;
+    const key = `${consumer}\0${manager}:${pkgName}\0${withTests ? 1 : 0}\0${read === readCode ? 1 : 0}\0${docsOnly ? 1 : 0}`;
     let out = mentionCache.get(key);
     if (!out) {
       const res = mentionRegexes(manager, pkgName);
@@ -956,8 +974,10 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
    * `package:P/src/…` and the indexer already saw it), and ignores directive lines
    * (SELF_DIRECTIVE_LINE_RES: `export '…' show S`, `part`, a re-export `export … from`).
    */
-  const findHits = (row: PendingRow, plan: SearchPlan, consumer: string, withTests = false, label = consumer): Hit[] => {
-    let files = consumerFiles(consumer, withTests);
+  const findHits = (
+    row: PendingRow, plan: SearchPlan, consumer: string, withTests = false, label = consumer, docsOnly = false,
+  ): Hit[] => {
+    let files = consumerFiles(consumer, withTests, docsOnly);
     if (files === null) return [{ consumer: label, file: null, line: 0 }];
     const self = label === 'self';
     if (self) {
@@ -967,7 +987,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     const read = self ? readCode : readText;
     const indexed = self ? null : indexedFiles(consumer);
     const hits: Hit[] = [];
-    for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests, read)) {
+    for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests, read, docsOnly)) {
       // Comments never count (a commented-out import or use is not code).
       const text = self ? readCode(consumer, f) : readNoComments(consumer, f);
       // Named hits only in a file importing P through a specifier that reaches S.
@@ -1327,8 +1347,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
    * internal uses are real), but "only used inside its package" is exactly what a
    * cross-manager use contradicts (Workiva react_testing_library's `rtl`, the default
    * export of its JS bundle, read by Dart as `@JS('rtl.render')`). Only crossHits run.
+   * Also every unexport of any package, for code the index never saw that uses S
+   * (unexportHits): an ignored manifest depending on P (oxygen's `example/` app naming
+   * `Query`, `System`), or a docs / example file of P or of a consumer of P.
    */
-  const unexports = crossConsumers.size === 0 ? [] : (db
+  const unexports = (db
     .prepare(
       `SELECT f.symbol_id, f.verdict, f.reasons, f.blocked_by, s.name, s.kind, s.file, s.line, s.package_id,
               p.manager, p.name AS pkg_name,
@@ -1343,7 +1366,44 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
                   AND NOT EXISTS (SELECT 1 FROM json_each(f.reasons) WHERE value = 'dead_island')))
        ORDER BY f.symbol_id`,
     )
-    .all() as unknown as Array<PendingRow & { verdict: string }>).filter((r) => crossConsumers.has(r.package_id));
+    .all() as unknown as Array<PendingRow & { verdict: string }>);
+
+  /** repo-relative manifest path of an ignored-manifest consumer key (`ignored:<repo>/<manifest>`). */
+  const ignoredManifestOf = new Map<string, string>();
+  /** Ignored-manifest dirs per checkout (repoDir): their files are the ignored step's, not a docs hit too. */
+  const ignoredDirsOf = new Map<string, string[]>();
+  for (const r of discover.repos) {
+    for (const m of r.ignoredManifests ?? []) ignoredManifestOf.set(`ignored:${r.repo}/${m.manifest}`, m.manifest);
+    ignoredDirsOf.set(r.localPath, (r.ignoredManifests ?? []).map((m) => m.path));
+  }
+
+  /**
+   * The unexport re-check (header): crossHits for a package with other-manager partners;
+   * for every package, the ignored manifests that depend on P (or whose deps are
+   * unknown), scanned like in the pending step (import of P, names and extension
+   * members), each hit noted `used by ignored manifest <manifest>`; and the docs /
+   * example files (DOCS_GLOBS, whatever countDocsAsConsumers says) of every consumer
+   * of P and of P itself (the `self` rules: files the index did not see that import P
+   * by name), noted `used in a docs/example file`. S stays an unexport when nothing
+   * hits; a hit only moves it to needs_review (fail closed), never to "alive".
+   */
+  const unexportHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
+    const withNote = (hs: Hit[], note: string): Hit[] => hs.map((h) => ({ ...h, notes: [...(h.notes ?? []), note] }));
+    const ignored = [...new Set([...(ignoredConsumers.get(row.package_id) ?? []), ...ignoredAnyPackage])].sort(cmp);
+    const withTests = row.test_support === 1;
+    const docsHits = (c: string, tests: boolean, label: string): Hit[] => {
+      const dirs = ignoredDirsOf.get(locs.get(c)?.repoDir ?? '') ?? [];
+      return withNote(findHits(row, plan, c, tests, label, true), 'used in a docs/example file')
+        .filter((h) => h.file === null || !dirs.some((d) => under(h.file!, d)));
+    };
+    return [
+      ...(crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c)),
+      ...ignored.flatMap((c) => withNote(findHits(row, plan, c, withTests), `used by ignored manifest ${ignoredManifestOf.get(c) ?? c}`)),
+      ...(consumersOf.all(row.package_id) as Array<{ c: string; dev: number }>).flatMap(({ c, dev }) => docsHits(c, withTests || dev === 1, c)),
+      ...docsHits(row.package_id, withTests, 'self')
+        .filter((h) => !(h.file === row.file && row.line !== null && h.line === row.line + 1)),
+    ];
+  };
 
   /** One hit per position (the self steps share a key: a codegen template naming S is both a `self` and a `self-string` hit; the first is kept), sorted. */
   const dedupeHits = (all: Hit[]): Hit[] => {
@@ -1404,7 +1464,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     let unexportsDowngraded = 0;
     for (const row of unexports) {
       const plan = planFor(row);
-      const hits = dedupeHits((crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c)));
+      const hits = dedupeHits(unexportHits(row, plan));
       if (hits.length === 0) continue; // the unexport stands
       const reasons = hits.slice(0, MAX_HITS).map(reasonOf);
       delVerdict.run(row.symbol_id, row.verdict);
@@ -1412,10 +1472,10 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       counts.checked += 1;
       counts.mismatched += 1;
       unexportsDowngraded += 1;
-      log(`[witness] mismatch (cross-manager) ${row.package_id}#${row.name} (${row.file}): ${reasons.join(', ')}${hits.length > MAX_HITS ? ` (+${hits.length - MAX_HITS} more)` : ''}`);
+      log(`[witness] mismatch (unexport) ${row.package_id}#${row.name} (${row.file}): ${reasons.join(', ')}${hits.length > MAX_HITS ? ` (+${hits.length - MAX_HITS} more)` : ''}`);
     }
     if (unexports.length > 0) {
-      log(`[witness] cross-manager: ${unexports.length} unexport(s) checked, ${unexportsDowngraded} downgraded to needs_review`);
+      log(`[witness] unexports: ${unexports.length} checked, ${unexportsDowngraded} downgraded to needs_review`);
     }
     // Propagate the outcomes (header): current views, dead islands, private_dead cascade.
     db.exec(analyzeSql());

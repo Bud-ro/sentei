@@ -6,5 +6,5 @@ void main() {
   // A local named like AcmeTiny's member `sq` (too short to be searched).
   final sq = 4;
   print('logo'.loadAcme());
-  print(sq);
+  print(inExample() + sq);
 }

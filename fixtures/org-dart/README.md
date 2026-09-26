@@ -135,15 +135,19 @@ flame, tiled.dart, gamepads and forge2d, and supabase-flutter.
 | Conditional import (fire_atlas storage, flame_3d backends) | `acme_core/lib/src/storage.dart`: `import 'storage_stub.dart' if (dart.library.io) 'storage_io.dart' if (dart.library.js_interop) 'storage_web.dart';` | every `storageName` alive: the index sees the default only; the sidecar's `conditionalImports` lets ingest lend its uses to the io/web variants |
 | One scip-dart run for the workspace | all three packages | each gets its own `.scip`, equal to a run on it alone (fork patch 6) |
 
-### Witness: extension members (Phase 2 fix round 3)
+### Witness: extension members; ignored-manifest uses (Phase 2 fix round 3)
 
 `dart-lib-x/example/` has its own `pubspec.yaml` (`acme_x_example`, `path: ..` on
 `acme_x`): an ignored manifest (`example/` is in `ignoreManifestDirs`), never
 indexed, read only by the text witness (`example/bin/demo.dart`). For a Dart
 extension the witness also searches its public members' names: an extension is used
-through its members on a receiver, and its own name is rarely written.
+through its members on a receiver, and its own name is rarely written. Unexports
+are re-checked against ignored manifests that depend on the package and against
+docs / example files: a use there makes them needs_review with a note.
 
 | Case | Where | Expected |
 | --- | --- | --- |
 | Extension used only through a member, by the ignored example | `acme_x.dart` `AcmeLoader` (`'logo'.loadAcme()` in `demo.dart`) | needs_review `["no_refs", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:8 (member loadAcme)"]` |
 | Extension whose only member is shorter than 3 characters (negative) | `AcmeTiny` (`sq`; `demo.dart` has a local `sq`) | deletion_candidate `["no_refs"]`: short names and Object members are not searched |
+| Unexport named by the ignored example | `acme_x.dart` `inExample` (used inside acme_x by `_privateFn`; `inExample()` in `demo.dart`) | needs_review `["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest example/pubspec.yaml)"]`, not unexport_candidate |
+| Unexport nothing outside the index names (negative) | `lib/src/wire_test.dart` `wireTick` | unexport_candidate `["internal_refs_only"]` (unchanged) |

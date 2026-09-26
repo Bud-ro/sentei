@@ -165,6 +165,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       ['docOnly', 'docOnly', 'lib/acme_x.dart', 37, 4],
       ['implUnused', 'implUnused', 'lib/src/impl.dart', 6, 4],
       ['implUsed', 'implUsed', 'lib/src/impl.dart', 3, 4],
+      ['inExample', 'inExample', 'lib/acme_x.dart', 58, 4],
       ['partUnused', 'partUnused', 'lib/src/part_a.dart', 8, 4],
       ['partUsed', 'partUsed', 'lib/src/part_a.dart', 5, 4],
       ['shownOnly', 'shownOnly', 'lib/src/impl.dart', 10, 4],

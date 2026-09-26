@@ -87,6 +87,15 @@
     {
       "col": 4,
       "entry": "lib/acme_x.dart",
+      "exportedAs": "inExample",
+      "file": "lib/acme_x.dart",
+      "line": 58,
+      "name": "inExample",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
       "exportedAs": "partUnused",
       "file": "lib/src/part_a.dart",
       "line": 8,

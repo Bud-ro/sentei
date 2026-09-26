@@ -356,7 +356,7 @@ the result is a [view](#views) over the same findings.
 | `deprecation_candidate` | published package, same evidence (the witness ran too); or, with reason `internal_refs_only`, an export used only inside its published package |
 | `unexport_candidate` | private package, only used inside its own package: drop the `export` |
 | `private_dead` | not exported, unreachable from the package's entry points (now, or once the candidates it names are gone) |
-| `needs_review` | would be a candidate but the witness found a textual mention |
+| `needs_review` | would be a candidate (or an unexport) but the witness found a textual mention |
 | `blocked` | would have had a verdict, but an opaque package prevents it (`blocked_by`) |
 
 Reasons: `no_refs`, `internal_refs_only`, `only_test_refs` (delete the tests
@@ -366,7 +366,9 @@ too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
 `witness_mismatch:<consumer>:<file>:<line>` (1-based; `<consumer>` is a package
 id, `self`, `self-string` or `ignored:<repo>/<manifest>`, and `<file>:<line>` can be
 `checkout missing`; a hit on a member name of a Dart extension, which is used
-through its members, ends ` (member <name>)`), `dead_island` (exports used only by other candidates, so they
+through its members, ends ` (member <name>)`; an unexport re-checked against code
+the index never saw ends ` (used by ignored manifest <manifest>)` or ` (used in a
+docs/example file)`), `dead_island` (exports used only by other candidates, so they
 go together: a would-be unexport that becomes a deletion, or a deprecation in a
 published package), `already_unreachable` (an existing private island),
 `unlocked_by:<symbol>` (dead once that candidate goes). `blocked_by` entries are

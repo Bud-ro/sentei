@@ -2569,3 +2569,53 @@ Fixture: org-dart `dart-lib-x/example/` (an ignored manifest, `acme_x_example`),
 `AcmeLoader` → needs_review `(member loadAcme)`; `AcmeTiny` (only member `sq`, a
 local `sq` in the example) stays a deletion.
 
+**Unexports used by ignored manifests and docs / example files** (witness.ts
+`unexportHits`). oxygen `Query` / `System` / `ValueComponent` were needs_review in
+the first flame run (the witness found them in `oxygen/example`, an ignored
+manifest) and became UNEXPORT (published, `internal_refs_only`) once the index
+saw their uses across `part` files: analyze never sends an unexport to the
+witness, so the report lost the signal that an example app uses the symbol, and
+unexporting it would break that app. Round 1's cross-manager re-check of
+unexports (`unexport_candidate`, `deprecation_candidate [internal_refs_only]`
+without `dead_island`) now runs for every package, not only mixed repos, and
+also scans:
+- each ignored manifest that depends on P (or whose deps are unknown), exactly as
+  the pending step does (import of P, names, extension members, same test/docs
+  rules inside the ignored dir); the reason ends ` (used by ignored manifest
+  <manifest>)` (repo-relative manifest; the `ignored:<repo>/<manifest>` consumer
+  label is unchanged);
+- the docs / example files (DOCS_GLOBS, whatever `countDocsAsConsumers` says;
+  never pub `lib/`; test files only under the usual test rules) of every consumer
+  of P, and of P itself under the `self` rules (only files the index did not see,
+  importing P by name); the reason ends ` (used in a docs/example file)`. A file
+  inside an ignored manifest's dir is left to the ignored step (one reason, not
+  two: an `example/` app under P's dir is both).
+A consumer's other files are not re-read: the index saw them, and an unexport's
+evidence is the index's. A hit only moves the row to `needs_review` (base
+reasons kept, the `witness_mismatch` reasons appended), never to "alive"; the
+dead-island reconciliation and the private_dead cascade are recomputed as
+before. The log line is now `[witness] unexports: N checked, M downgraded`.
+**Deviation from the brief:** the ignored manifests come from discover.json
+(`repos[].ignoredManifests`: every manifest discover skipped, with its deps),
+not the `ignored_manifests` table, which records only the ones a config
+`ignoreManifests` glob matched (dog-flame2's table is empty: every flame
+example is skipped by the default `ignoreManifestDirs`). The pending step
+already read the same list. The note is carried in the reason string (the
+report and SARIF print reasons verbatim), so report.ts needed no change; the
+pending step's `ignored:` reasons are unchanged (their consumer label already
+says it), so only an unexport's reasons carry the `used by …` note.
+dog-flame2 (analyze + witness on a copy of the DB, with the extension-member
+change): 241 unexports checked, 14 become needs_review: oxygen `Component`,
+`ValueComponent`, `Entity`, `Has`, `Query`, `System`, `World` (all through
+`oxygen/example`), flame_3d `Object3D`, `FlameGame3D`, `ColorTexture`,
+`Aabb3Extension`, flame_behaviors `CollisionBehavior`,
+`PropagatingCollisionBehavior`, flame_forge2d `ContactCallbacks` (their packages'
+`example/` apps); no docs-file hit (flame's docs apps are org packages). Base
+findings: deprecation_candidate 248 → 230, needs_review 58 → 76, private_dead
+28 → 26 (two helpers no longer unlocked). `Aabb3Extension` is the accepted
+over-inclusive case: its members `setFrom` / `setZero` match vector_math's own
+`Vector3.setFrom` / `setZero` in the unindexed example (no SCIP there to tell
+them apart), so it is reviewed although the example may not use the extension.
+Fixture: org-dart `acme_x` `inExample` (used by `_privateFn`, named by the
+ignored example) → needs_review with the note; `wireTick` stays an unexport.
+

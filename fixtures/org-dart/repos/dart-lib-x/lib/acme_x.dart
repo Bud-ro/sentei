@@ -16,7 +16,7 @@ int usedFn() => _privateFn() + 1;
 int unusedFn() => 0;
 
 // Expected: alive, no finding (private, never exported; reachable via usedFn).
-int _privateFn() => 1;
+int _privateFn() => inExample();
 
 // Expected: private_dead, reasons ["already_unreachable"] (island with _islandB, reached by nothing).
 // ignore: unused_element
@@ -52,3 +52,8 @@ extension AcmeTiny on int {
   // Expected: no finding (member of an extension).
   int get sq => this * this;
 }
+
+// Expected: needs_review, reasons ["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest example/pubspec.yaml)"].
+// Used inside acme_x only (by _privateFn), so an unexport by the index; the example
+// app (an ignored manifest, never indexed) names it, which the witness reports.
+int inExample() => 1;

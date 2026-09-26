@@ -1231,7 +1231,7 @@ describe('runWitness: same-repo packages of the other manager', () => {
       { pkg: NPM, name: 'helper', file: 'js_src/src/index.ts', verdict: 'unexport_candidate', reasons: ['internal_refs_only'] },
     ]);
     expect(witness(org)).toEqual({ checked: 0, passed: 0, mismatched: 0 });
-    expect(org.log).toContain('[witness] cross-manager: 1 unexport(s) checked, 0 downgraded to needs_review');
+    expect(org.log).toContain('[witness] unexports: 1 checked, 0 downgraded to needs_review');
     expect(findings(org, org.ids['helper']!)).toEqual([{ verdict: 'unexport_candidate', reasons: ['internal_refs_only'] }]);
   });
 
@@ -1335,5 +1335,84 @@ describe('runWitness: extension members (Phase 2 fix round 3)', () => {
       `witness_mismatch:${C}:pkg/lib/plain.dart:2 (member loadSvg)`,
       `witness_mismatch:${C}:pkg/lib/plain.dart:3 (member loadSvg)`,
     ]);
+  });
+});
+
+describe('runWitness: unexports used by ignored manifests and docs files (Phase 2 fix round 3)', () => {
+  function unexport(org: Org, name: string, verdict = 'unexport_candidate', reasons = ['internal_refs_only']): void {
+    org.db.prepare('DELETE FROM findings WHERE symbol_id = ?').run(org.ids[name]!);
+    org.db.prepare("INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, ?, ?, '[]')").run(org.ids[name]!, verdict, JSON.stringify(reasons));
+  }
+  const findingsOf = (org: Org, name: string): Array<{ verdict: string; reasons: string[] }> => findings(org, org.ids[name]!);
+
+  it('an ignored manifest depending on P that names an unexport moves it to needs_review with a note; others stay', () => {
+    const org = buildOrg({ visibility: 'published-public', symbols: [{ name: 'Query' }, { name: 'System' }, { name: 'Internal' }] });
+    // Published: the unexport is spelled deprecation_candidate [internal_refs_only].
+    unexport(org, 'Query', 'deprecation_candidate');
+    unexport(org, 'System', 'deprecation_candidate', ['internal_refs_only', 'only_test_refs']);
+    unexport(org, 'Internal', 'deprecation_candidate');
+    const lib = org.discover.repos.find((r) => r.repo === 'acme/lib')!;
+    write(lib.localPath, 'example/src/main.ts', "import * as oxygen from '@acme/lib';\nnew oxygen.Query(); new oxygen.System();\n");
+    // An ignored manifest that does not depend on P (and not a docs dir): not scanned.
+    write(lib.localPath, 'other/src/main.ts', "import * as oxygen from '@acme/lib';\noxygen.Internal;\n");
+    lib.ignoredManifests = [
+      { path: 'example', manifest: 'example/package.json', deps: [{ resolvedPackageId: 'npm:acme/lib:@acme/lib' }] },
+      { path: 'other', manifest: 'other/package.json', deps: [] },
+    ];
+    const counts = witness(org);
+    const note = 'witness_mismatch:ignored:acme/lib/example/package.json:example/src/main.ts:2 (used by ignored manifest example/package.json)';
+    expect(findingsOf(org, 'Query')).toEqual([{ verdict: 'needs_review', reasons: ['internal_refs_only', note] }]);
+    expect(findingsOf(org, 'System')).toEqual([{ verdict: 'needs_review', reasons: ['internal_refs_only', 'only_test_refs', note] }]);
+    expect(findingsOf(org, 'Internal')).toEqual([{ verdict: 'deprecation_candidate', reasons: ['internal_refs_only'] }]);
+    expect(counts).toEqual({ checked: 2, passed: 0, mismatched: 2 });
+    expect(org.log).toContain('[witness] unexports: 3 checked, 2 downgraded to needs_review');
+  });
+
+  it('docs/example files of consumers and of P name an unexport whatever countDocsAsConsumers says; other files are not re-read', () => {
+    const org = buildOrg({
+      // pendingFn stays witness_pending: its scan of C's files runs first (the docs scan must not reuse it).
+      symbols: [{ name: 'pendingFn' }, { name: 'shownInDocs' }, { name: 'usedInCode' }, { name: 'ownExample' }],
+      files: {
+        'docs/usage.ts': "import * as lib from '@acme/lib';\nlib.shownInDocs();\n",
+        // A regular consumer file: the index saw it (the unexport's own evidence).
+        'src/app.ts': "import { usedInCode } from '@acme/lib';\nusedInCode();\n",
+        // A test file in a docs dir: skipped under countTestsAsConsumers = false.
+        'docs/usage.test.ts': "import { usedInCode } from '@acme/lib';\nusedInCode();\n",
+      },
+      // P's own example file importing P by name, outside the index.
+      libFiles: { 'examples/basic.ts': "import * as lib from '@acme/lib';\nlib.ownExample();\n" },
+    });
+    for (const n of ['shownInDocs', 'usedInCode', 'ownExample']) unexport(org, n);
+    witness(org);
+    expect(findingsOf(org, 'shownInDocs')).toEqual([{
+      verdict: 'needs_review',
+      reasons: ['internal_refs_only', 'witness_mismatch:npm:acme/app:@acme/app:pkg/docs/usage.ts:2 (used in a docs/example file)'],
+    }]);
+    expect(findingsOf(org, 'usedInCode')).toEqual([{ verdict: 'unexport_candidate', reasons: ['internal_refs_only'] }]);
+    expectPass(org, org.ids['pendingFn']!);
+    expect(findingsOf(org, 'ownExample')).toEqual([{
+      verdict: 'needs_review',
+      reasons: ['internal_refs_only', 'witness_mismatch:self:examples/basic.ts:2 (used in a docs/example file)'],
+    }]);
+  });
+
+  it('an extension unexport used through a member in an ignored example carries both notes (reported once)', () => {
+    const org = buildOrg({ manager: 'pub', symbols: [{ name: 'SvgLoader', file: 'lib/svg.dart' }] });
+    unexport(org, 'SvgLoader');
+    org.db.prepare("UPDATE symbols SET kind = 'extension' WHERE symbol_id = ?").run(org.ids['SvgLoader']!);
+    org.db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name, kind, parent_symbol_id) VALUES ('m', 'pub:acme/lib:lib_pub', 'lib/svg.dart', 'loadSvg', 'method', ?)")
+      .run(org.ids['SvgLoader']!);
+    const lib = org.discover.repos.find((r) => r.repo === 'acme/lib')!;
+    // Inside P's dir and under example/: the ignored-manifest step reports it, P's docs step does not repeat it.
+    write(lib.localPath, 'example/lib/main.dart', "import 'package:lib_pub/svg.dart';\nfinal s = game.loadSvg('a');\n");
+    lib.ignoredManifests = [{ path: 'example', manifest: 'example/pubspec.yaml', deps: [{ resolvedPackageId: 'pub:acme/lib:lib_pub' }] }];
+    witness(org);
+    expect(findingsOf(org, 'SvgLoader')).toEqual([{
+      verdict: 'needs_review',
+      reasons: [
+        'internal_refs_only',
+        'witness_mismatch:ignored:acme/lib/example/pubspec.yaml:example/lib/main.dart:2 (member loadSvg; used by ignored manifest example/pubspec.yaml)',
+      ],
+    }]);
   });
 });
