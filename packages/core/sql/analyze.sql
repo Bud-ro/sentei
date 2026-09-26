@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS mat_base_verdicts (
 DROP VIEW IF EXISTS unresolved_ref_classes;
 DROP VIEW IF EXISTS verdicts;
 DROP VIEW IF EXISTS unexport_dropped;
+DROP VIEW IF EXISTS signature_pinned;
+DROP VIEW IF EXISTS signature_refs;
 DROP VIEW IF EXISTS unexport_exempt_packages;
 DROP VIEW IF EXISTS private_dead;
 DROP VIEW IF EXISTS private_dead_unlocked;
@@ -722,12 +724,97 @@ EXCEPT SELECT target_package_id FROM witness_files
 EXCEPT SELECT target_package_id FROM unresolved_refs
 EXCEPT SELECT to_package_id FROM edges WHERE from_package_id <> to_package_id;
 
--- Internal-only exports that get no unexport row: every one of a private app
--- (unexport_exempt_packages). `verdicts` drops their unexport /
+-- (S, T): the internal-only export S (base reason internal_refs_only) is named in the
+-- SIGNATURE of a declaration E of its own package whose exported declaration is T (E
+-- itself, or an exported ancestor of E: `GamepadController.state`'s type,
+-- `atlasFromAssets`'s return type), T <> S, E not S and not nested in S (S's own
+-- members name S), E not a private member (`_x`, `#x`).
+-- The index has no signature range: SCIP's enclosing range covers the whole declaration,
+-- body included. "Signature" is approximated from positions:
+-- - E is a type declaration (class, interface, type alias, enum, mixin, extension …, by
+--   kind or by its SCIP type descriptor `#`): a reference whose innermost enclosing
+--   declaration is E itself is in its header (extends / implements / with / on / type
+--   parameters; members have their own symbols);
+-- - E is a field / variable / property: a reference on E's definition line (its type,
+--   or the initializer its type is inferred from: `final state = GamepadState();`);
+-- - E is anything else (function, method, getter, constructor): a reference on E's
+--   definition line BEFORE E's name (Dart's return type: `Future<TexturePackerAtlas>
+--   atlasFromAssets(`), never after it, where a one-line body (`int now() => wireTick();`)
+--   cannot be told from a parameter type; in an npm package (scip-typescript leaves
+--   `kind` empty and writes every annotation after the name) a TYPE S (`#` descriptor)
+--   on E's definition line anywhere: a type there is an annotation (`export function
+--   f(): Report {`, `export const config: Config =`), whereas a body line may call.
+-- Missed (the symbol stays an unexport candidate, as before): Dart parameter types,
+-- non-type TS signature names (a `typeof x`), and any signature line after the first.
+-- Over-read (no unexport row): a same-line initializer that does not decide the type, a
+-- TS class instantiated in a one-line body.
+CREATE VIEW signature_refs (symbol_id, api_symbol_id) AS
+WITH internal_only (symbol_id) AS MATERIALIZED (
+  SELECT symbol_id FROM mat_base_verdicts v
+  WHERE EXISTS (SELECT 1 FROM json_each(v.reasons) j WHERE j.value = 'internal_refs_only')
+),
+anc (symbol_id, ancestor_id) AS MATERIALIZED (
+  SELECT symbol_id, ancestor_id FROM symbol_ancestors
+),
+api (decl_id, api_id) AS MATERIALIZED (
+  SELECT symbol_id, symbol_id FROM symbols WHERE is_exported = 1
+  UNION
+  SELECT a.symbol_id, a.ancestor_id
+  FROM anc a JOIN symbols t ON t.symbol_id = a.ancestor_id
+  WHERE t.is_exported = 1
+)
+SELECT DISTINCT r.symbol_id, api.api_id
+FROM ref_occurrences r
+JOIN internal_only i ON i.symbol_id = r.symbol_id
+JOIN symbols s ON s.symbol_id = r.symbol_id
+JOIN symbols e ON e.symbol_id = r.enclosing_symbol_id
+JOIN api ON api.decl_id = e.symbol_id
+LEFT JOIN anc x ON x.symbol_id = e.symbol_id AND x.ancestor_id = s.symbol_id
+WHERE r.is_external = 0
+  AND e.package_id = s.package_id
+  AND api.api_id <> s.symbol_id
+  AND e.symbol_id <> s.symbol_id
+  AND x.symbol_id IS NULL
+  AND substr(e.name, 1, 1) NOT IN ('_', '#')
+  AND (e.kind IN ('class', 'interface', 'typealias', 'type', 'enum', 'mixin', 'extension', 'struct', 'trait', 'protocol')
+       OR e.symbol_str LIKE '%#'
+       OR (r.file = e.file AND r.line = e.line
+           AND (e.kind IN ('field', 'variable', 'property', 'constant', 'staticfield', 'staticproperty', 'staticvariable')
+                OR r.col < e.col
+                OR (s.symbol_str LIKE '%#'
+                    AND s.package_id IN (SELECT package_id FROM packages WHERE manager = 'npm')))));
+
+-- Internal-only exports (base reason internal_refs_only: an unexport_candidate, its
+-- published form deprecation_candidate, or such a row `blocked`) that are named in the
+-- signature of public API (signature_refs): an exported symbol of the same package that
+-- is not itself an internal-only export (it has external references, is kept, is a
+-- runtime entry, is a would-be deletion, is too young …), or, transitively, one pinned
+-- the same way. Unexporting them would leave a public API whose types consumers cannot
+-- name (gamepads_platform_interface GamepadState, the type of the public
+-- GamepadController.state). Reads mat_base_verdicts (filled by analyze.ts before
+-- `verdicts`, kept in the DB for the witness stage).
+CREATE VIEW signature_pinned (symbol_id) AS
+WITH RECURSIVE refs (symbol_id, api_symbol_id) AS MATERIALIZED (
+  SELECT symbol_id, api_symbol_id FROM signature_refs
+),
+pinned (symbol_id) AS (
+  SELECT symbol_id FROM refs
+  WHERE api_symbol_id NOT IN (
+      SELECT symbol_id FROM mat_base_verdicts v
+      WHERE EXISTS (SELECT 1 FROM json_each(v.reasons) j WHERE j.value = 'internal_refs_only'))
+  UNION
+  SELECT r.symbol_id FROM refs r JOIN pinned p ON p.symbol_id = r.api_symbol_id
+)
+SELECT symbol_id FROM pinned;
+
+-- Internal-only exports that get no unexport row: signature_pinned, and every one of a
+-- private app (unexport_exempt_packages). `verdicts` drops their unexport /
 -- deprecation [internal_refs_only] / blocked rows unless they are a dead island;
 -- analyze.ts reconcileDeadIslands deletes (instead of reverting to an unexport) a dead
 -- island of theirs that the witness made reachable again.
 CREATE VIEW unexport_dropped (symbol_id) AS
+SELECT symbol_id FROM signature_pinned
+UNION
 SELECT v.symbol_id
 FROM mat_base_verdicts v
 JOIN symbols s ON s.symbol_id = v.symbol_id
@@ -745,8 +832,9 @@ WHERE s.package_id IN (SELECT package_id FROM unexport_exempt_packages)
 -- other would-be deletion. candidate_symbols is the same set either way, so the
 -- private_dead cascade (unlocked_by) already agrees. Reads mat_base_verdicts and
 -- mat_reachable_after, which analyze.ts fills after staging the base verdicts in
--- `findings` (same candidate set). An internal-only export in unexport_dropped (of a
--- private app) that is not a dead island gets no row: it is alive. Staged, it was a candidate (so its own helpers were judged without it as a
+-- `findings` (same candidate set). An internal-only export in unexport_dropped (named in
+-- a public signature, or of a private app) that is not a dead island gets no row: it is
+-- alive. Staged, it was a candidate (so its own helpers were judged without it as a
 -- seed); reconcileDeadIslands, run right after, reverts what that made an island.
 CREATE VIEW verdicts (symbol_id, verdict, reasons, blocked_by) AS
 SELECT v.symbol_id,

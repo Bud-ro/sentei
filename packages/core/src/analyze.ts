@@ -119,8 +119,8 @@ export function reconcileDeadIslands(db: DatabaseSync): number {
       const kept = reasons.filter((x) => x !== 'dead_island' && (!candidate || x !== 'witness_pending'));
       const unexport = r.priv === 1 ? 'unexport_candidate' : 'deprecation_candidate';
       del.run(r.symbol_id, r.verdict);
-      // An unexport the policy drops (analyze.sql unexport_dropped: of a private app)
-      // is simply alive: no row.
+      // An unexport the policy drops (analyze.sql unexport_dropped: named in a public
+      // signature, or of a private app) is simply alive: no row.
       if (candidate && r.dropped === 1) continue;
       ins.run(r.symbol_id, candidate ? unexport : r.verdict, JSON.stringify(kept), r.blocked_by);
     }

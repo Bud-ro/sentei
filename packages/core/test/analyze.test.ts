@@ -1141,6 +1141,85 @@ describe('analyzeOrg on hand-built rows', () => {
     return (db.prepare("SELECT symbol_id AS id FROM symbols WHERE name = 'toolUnused'").get() as { id: number }).id;
   }
 
+  /** `from` uses `to` at (line, col) of `file`. */
+  function useAt(from: number, to: number, file: string, line: number, col: number): void {
+    run(`INSERT INTO occurrences (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site)
+      VALUES (?, ?, ?, ?, ?, ?, 8, ?, 0)`, to, symPkg.get(from)!, symPkg.get(to)!, file, line, col, from);
+    edge(from, to);
+  }
+
+  /** Move a declaration's definition to (line, col) and set its kind. */
+  function at(id: number, line: number, col: number, kind = 'function'): number {
+    run('UPDATE symbols SET line = ?, col = ?, kind = ? WHERE symbol_id = ?', line, col, kind, id);
+    return id;
+  }
+
+  it('an internal-only export named in the signature of live public API is not an unexport candidate', () => {
+    // gamepads_platform_interface: `final state = GamepadState();` in the public class
+    // GamepadController; flame_texturepacker: `Future<TexturePackerAtlas> atlasFromAssets(`.
+    const controller = at(aliveExport('GamepadController'), 30, 6, 'class');
+    const state = at(sym(lib, 'src/fns.ts', 'state', { parent: controller }), 35, 8, 'field');
+    const gamepadState = at(sym(lib, 'src/fns.ts', 'GamepadState', { exported: true }), 50, 6, 'class');
+    useAt(state, gamepadState, 'src/fns.ts', 35, 16);
+    const atlasFromAssets = at(aliveExport('atlasFromAssets'), 10, 29);
+    const atlas = at(sym(lib, 'src/fns.ts', 'TexturePackerAtlas', { exported: true }), 60, 6, 'class');
+    useAt(atlasFromAssets, atlas, 'src/fns.ts', 10, 9);
+    // In the body (a later line) or after the name on the same line (`=> helper()`): not a signature.
+    const bodyOnly = at(sym(lib, 'src/fns.ts', 'BodyOnly', { exported: true }), 70, 6, 'class');
+    useAt(atlasFromAssets, bodyOnly, 'src/fns.ts', 12, 4);
+    const arrowHelper = at(sym(lib, 'src/fns.ts', 'arrowHelper', { exported: true }), 80, 4);
+    useAt(atlasFromAssets, arrowHelper, 'src/fns.ts', 10, 60);
+    // Transitive: a type in the header (`extends`) of a pinned class is pinned too.
+    const base = at(sym(lib, 'src/fns.ts', 'AtlasBase', { exported: true }), 90, 6, 'class');
+    useAt(atlas, base, 'src/fns.ts', 60, 40);
+    // Negative: a type used only in a PRIVATE function, even on its signature line.
+    const priv = at(sym(lib, 'src/fns.ts', '_build'), 100, 10);
+    const privType = at(sym(lib, 'src/fns.ts', 'PrivateBodyType', { exported: true }), 110, 6, 'class');
+    useAt(priv, privType, 'src/fns.ts', 100, 2);
+    use(controller, priv, 'src/fns.ts');
+    // Negative: in the signature of an export that is itself only used internally.
+    const internalApi = at(sym(lib, 'src/fns.ts', 'internalApi', { exported: true }), 120, 20);
+    const hidden = at(sym(lib, 'src/fns.ts', 'HiddenType', { exported: true }), 130, 6, 'class');
+    useAt(internalApi, hidden, 'src/fns.ts', 120, 2);
+    use(atlasFromAssets, internalApi, 'src/fns.ts');
+    // Negative: its own member naming it (a static factory returning it) is not other API.
+    const self = at(sym(lib, 'src/fns.ts', 'SelfNamed', { exported: true }), 140, 6, 'class');
+    const load = at(sym(lib, 'src/fns.ts', 'load', { parent: self }), 141, 30);
+    useAt(load, self, 'src/fns.ts', 141, 9);
+    use(atlasFromAssets, load, 'src/fns.ts');
+    analyze();
+    expect(findings().filter((r) => r.verdict !== 'private_dead')).toEqual([
+      f('BodyOnly', 'unexport_candidate', ['internal_refs_only']),
+      f('HiddenType', 'unexport_candidate', ['internal_refs_only']),
+      f('PrivateBodyType', 'unexport_candidate', ['internal_refs_only']),
+      f('SelfNamed', 'unexport_candidate', ['internal_refs_only']),
+      f('arrowHelper', 'unexport_candidate', ['internal_refs_only']),
+      f('internalApi', 'unexport_candidate', ['internal_refs_only']),
+    ]);
+    expect((db.prepare('SELECT s.name FROM signature_pinned p JOIN symbols s USING (symbol_id) ORDER BY 1').all() as Array<{ name: string }>)
+      .map((r) => r.name)).toEqual(['AtlasBase', 'GamepadState', 'TexturePackerAtlas']);
+  });
+
+  it('a type named only by the signature of a would-be deletion stays a dead island; pinned once the witness keeps its user', () => {
+    // flame_texturepacker: the extension TexturepackerLoader (atlasFromAssets) had no
+    // indexed use; the witness found it in example apps. TexturePackerAtlas, named only
+    // in its signature, was an island, then reverted to an unexport.
+    aliveExport('live');
+    const loader = at(sym(lib, 'src/fns.ts', 'TexturepackerLoader', { exported: true }), 5, 10, 'extension');
+    const fromAssets = at(sym(lib, 'src/fns.ts', 'atlasFromAssets', { parent: loader }), 10, 29, 'method');
+    const atlas = at(sym(lib, 'src/fns.ts', 'TexturePackerAtlas', { exported: true }), 60, 6, 'class');
+    useAt(fromAssets, atlas, 'src/fns.ts', 10, 9);
+    analyze();
+    expect(findings()).toEqual([
+      f('TexturePackerAtlas', 'needs_review', ['internal_refs_only', 'dead_island', 'witness_pending']),
+      f('TexturepackerLoader', 'needs_review', DELETE),
+    ]);
+    downgradeAndPropagate('TexturepackerLoader');
+    expect(findings()).toEqual([
+      f('TexturepackerLoader', 'needs_review', ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']),
+    ]);
+  });
+
   it('counts overlay edges as references', () => {
     const s = sym(lib, 'src/fns.ts', 'viaOverlay', { exported: true });
     edge(appMain, s, 'overlay');

@@ -3,7 +3,7 @@
 
 ## src/index.ts
   // Package entry point for @acme/dual. package.json points at build output only
-//^ definition scip-typescript npm @acme/dual . src/`index.ts`/ enclosing [5:0-18:0]
+//^ definition scip-typescript npm @acme/dual . src/`index.ts`/ enclosing [5:0-41:0]
   // (main dist/main/index.js, module/types under dist/module/), which exists in no
   // checkout; the two tsconfig outDirs map both back to src/.
 
@@ -23,6 +23,43 @@
   export function dualUnused(): string {
 //                ^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/dualUnused(). enclosing [15:0-17:1]
     return 'unused';
+  }
+
+  // Fix round 6 (signature types). Expected: alive, no finding. Used only inside this
+  // package, but it is the return type of the public dualReport (used by dual-app):
+  // unexporting it would leave a public API whose type consumers cannot name.
+  export interface DualReport {
+//                 ^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/DualReport# enclosing [22:0-24:1]
+    ok: boolean;
+//  ^^ definition scip-typescript npm @acme/dual . src/`index.ts`/DualReport#ok.
+  }
+
+  // Expected: unexport_candidate, reasons ["internal_refs_only"]: used only in the body of
+  // a private function, so it can lose its export.
+  export interface DualScratch {
+//                 ^^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/DualScratch# enclosing [28:0-30:1]
+    n: number;
+//  ^ definition scip-typescript npm @acme/dual . src/`index.ts`/DualScratch#n.
+  }
+
+  function scratch(): number {
+//         ^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/scratch(). enclosing [32:0-35:1]
+    const s: DualScratch = { n: 1 };
+//        ^ definition local 2
+//           ^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/DualScratch#
+//                           ^ reference scip-typescript npm @acme/dual . src/`index.ts`/DualScratch#n.
+    return s.n;
+//         ^ reference local 2
+//           ^ reference scip-typescript npm @acme/dual . src/`index.ts`/DualScratch#n.
+  }
+
+  // Expected: alive, no finding (imported by @acme/dual-app).
+  export function dualReport(): DualReport {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/dualReport(). enclosing [38:0-40:1]
+//                              ^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/DualReport#
+    return { ok: scratch() > 0 };
+//           ^^ reference scip-typescript npm @acme/dual . src/`index.ts`/DualReport#ok.
+//               ^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/scratch().
   }
 
 ## src/lib/types.ts

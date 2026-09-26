@@ -8,6 +8,15 @@
     {
       "col": 16,
       "entry": "packages/dual/src/index.ts",
+      "exportedAs": "dualReport",
+      "file": "packages/dual/src/index.ts",
+      "line": 38,
+      "name": "dualReport",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual/src/index.ts",
       "exportedAs": "dualUnused",
       "file": "packages/dual/src/index.ts",
       "line": 15,
@@ -30,6 +39,24 @@
       "file": "packages/dual/src/index.ts",
       "line": 10,
       "name": "dualUsedByUnnamed",
+      "sites": []
+    },
+    {
+      "col": 17,
+      "entry": "packages/dual/src/index.ts",
+      "exportedAs": "DualReport",
+      "file": "packages/dual/src/index.ts",
+      "line": 22,
+      "name": "DualReport",
+      "sites": []
+    },
+    {
+      "col": 17,
+      "entry": "packages/dual/src/index.ts",
+      "exportedAs": "DualScratch",
+      "file": "packages/dual/src/index.ts",
+      "line": 28,
+      "name": "DualScratch",
       "sites": []
     }
   ],

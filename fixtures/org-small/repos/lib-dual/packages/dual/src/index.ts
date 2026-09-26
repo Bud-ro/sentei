@@ -16,3 +16,26 @@ export function dualUsedByUnnamed(): string {
 export function dualUnused(): string {
   return 'unused';
 }
+
+// Fix round 6 (signature types). Expected: alive, no finding. Used only inside this
+// package, but it is the return type of the public dualReport (used by dual-app):
+// unexporting it would leave a public API whose type consumers cannot name.
+export interface DualReport {
+  ok: boolean;
+}
+
+// Expected: unexport_candidate, reasons ["internal_refs_only"]: used only in the body of
+// a private function, so it can lose its export.
+export interface DualScratch {
+  n: number;
+}
+
+function scratch(): number {
+  const s: DualScratch = { n: 1 };
+  return s.n;
+}
+
+// Expected: alive, no finding (imported by @acme/dual-app).
+export function dualReport(): DualReport {
+  return { ok: scratch() > 0 };
+}

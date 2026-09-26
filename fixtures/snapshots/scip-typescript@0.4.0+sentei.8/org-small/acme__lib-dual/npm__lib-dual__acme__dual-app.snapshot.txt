@@ -5,9 +5,10 @@
   // Entry point of @acme/dual-app, consumer of @acme/dual in the same repo (as
 //^ definition scip-typescript npm @acme/dual-app . src/`main.ts`/ enclosing [2:0-15:0]
   // supabase-js consumes auth-js).
-  import { dualUsed } from '@acme/dual';
-//         ^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsed().
-//                         ^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/
+  import { dualReport, dualUsed } from '@acme/dual';
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualReport().
+//                     ^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsed().
+//                                     ^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/
   // A deep build-output import (supabase auth-helpers imports
   // '@supabase/supabase-js/dist/module/lib/types'): linked to src/lib/types.ts.
   import type { GenericSchema } from '@acme/dual/dist/module/lib/types';
@@ -24,17 +25,18 @@
 //                      ^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/GenericSchema#
 //                                     ^^^^ definition scip-typescript npm @acme/dual-app . src/`main.ts`/main().(gone)
 //                                            ^^^^ reference local 0
-    console.log(dualUsed(), Object.keys(schema.Tables), gone);
+    console.log(dualUsed(), dualReport(), Object.keys(schema.Tables), gone);
 //  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
 //          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
 //              ^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsed().
-//                          ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object#
-//                          ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object.
-//                                 ^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.core.d.ts`/ObjectConstructor#keys().
-//                                 ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/ObjectConstructor#keys().
-//                                      ^^^^^^ reference scip-typescript npm @acme/dual-app . src/`main.ts`/main().(schema)
-//                                             ^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/GenericSchema#Tables.
-//                                                      ^^^^ reference scip-typescript npm @acme/dual-app . src/`main.ts`/main().(gone)
+//                          ^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualReport().
+//                                        ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object#
+//                                        ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object.
+//                                               ^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.core.d.ts`/ObjectConstructor#keys().
+//                                               ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/ObjectConstructor#keys().
+//                                                    ^^^^^^ reference scip-typescript npm @acme/dual-app . src/`main.ts`/main().(schema)
+//                                                           ^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/GenericSchema#Tables.
+//                                                                    ^^^^ reference scip-typescript npm @acme/dual-app . src/`main.ts`/main().(gone)
   }
 
   main({ Tables: {} });
