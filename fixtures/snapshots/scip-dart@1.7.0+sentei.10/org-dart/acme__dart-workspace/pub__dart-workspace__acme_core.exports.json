@@ -2,6 +2,17 @@
   "conditionalImports": [
     {
       "alternatives": [
+        "packages/acme_core/lib/src/platform_io.dart",
+        "packages/acme_core/lib/src/platform_web.dart"
+      ],
+      "col": 7,
+      "directive": "export",
+      "file": "packages/acme_core/lib/platform.dart",
+      "line": 3,
+      "target": "packages/acme_core/lib/src/platform_stub.dart"
+    },
+    {
+      "alternatives": [
         "packages/acme_core/lib/src/storage_io.dart",
         "packages/acme_core/lib/src/storage_web.dart"
       ],
@@ -15,7 +26,8 @@
   "entryPoints": [
     "packages/acme_core/lib/_parts/engine.dart",
     "packages/acme_core/lib/_parts/helper.dart",
-    "packages/acme_core/lib/acme_core.dart"
+    "packages/acme_core/lib/acme_core.dart",
+    "packages/acme_core/lib/platform.dart"
   ],
   "entrySymbols": [],
   "exports": [
@@ -62,6 +74,15 @@
       "file": "packages/acme_core/lib/src/storage.dart",
       "line": 9,
       "name": "storageLabel",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/acme_core/lib/platform.dart",
+      "exportedAs": "platformName",
+      "file": "packages/acme_core/lib/src/platform_stub.dart",
+      "line": 3,
+      "name": "platformName",
       "sites": []
     }
   ],

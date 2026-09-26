@@ -293,5 +293,9 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
     // acme_core's conditional import: the index resolves `storageName` to the default
     // storage_stub.dart only; the sidecar's conditionalImports keeps the io/web variants alive.
     expect(rows.filter((x) => x.symbol === 'storageName')).toEqual([]);
+    // Fix round 4: acme_core's conditional EXPORT (lib/platform.dart): the io/web twins of
+    // platformName take the stub's export surface, so they and _ioDetail are alive (they
+    // were private_dead already_unreachable).
+    expect(rows.filter((x) => x.symbol === 'platformName' || x.symbol === '_ioDetail')).toEqual([]);
   }, 600_000);
 });

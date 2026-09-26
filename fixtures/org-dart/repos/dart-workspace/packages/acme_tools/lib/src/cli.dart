@@ -1,4 +1,5 @@
 import 'package:acme_core/acme_core.dart';
+import 'package:acme_core/platform.dart';
 import 'package:acme_x/acme_x.dart' show usedFn;
 
 // Expected: alive, no finding: run through bin/acme_tools.dart's
@@ -10,6 +11,7 @@ void main() {
   print(Engine().run());
   print(_banner(usedFn()));
   print(storageLabel());
+  print(platformName());
 }
 
 // Expected: alive, no finding (reached from main).

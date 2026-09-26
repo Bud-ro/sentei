@@ -104,11 +104,11 @@ describe('ingestOrg: sidecar conditionalImports', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  function run(conditionalImports?: ExportsSidecar['conditionalImports']): IngestCounts {
+  function run(conditionalImports?: ExportsSidecar['conditionalImports'], exports: ExportsSidecar['exports'] = []): IngestCounts {
     const sidecar: ExportsSidecar = {
       packageId: PKG, entryPoints: ['lib/fa.dart'], unresolved: [],
       // `start` is a runtime entry (a seed that never gets a verdict itself).
-      exports: [], entrySymbols: [{ file: 'lib/fa.dart', line: 1, col: 5, name: 'start' }],
+      exports, entrySymbols: [{ file: 'lib/fa.dart', line: 1, col: 5, name: 'start' }],
       ...(conditionalImports !== undefined ? { conditionalImports } : {}),
     };
     writeFileSync(join(workDir, 'index', repoSlug('acme/fa'), 'fa.exports.json'), JSON.stringify(sidecar));
@@ -156,6 +156,43 @@ describe('ingestOrg: sidecar conditionalImports', () => {
       { from: 'start', to: '_extPrivate' },
       { from: 'start', to: 'extThing' },
     ]);
+  });
+
+  describe('conditional exports (directive: export, fix round 4)', () => {
+    // lib/fa.dart: `export 'src/unsupported.dart' if (dart.library.io) 'src/desktop.dart'
+    // if (dart.library.js_interop) 'src/web.dart';` — the sidecar lists the default's
+    // createPlatform as exported from lib/fa.dart.
+    const EXPORTS: ExportsSidecar['exports'] = [
+      { entry: 'lib/fa.dart', exportedAs: 'createPlatform', name: 'createPlatform', file: 'lib/src/unsupported.dart', line: 0, col: 5, sites: [] },
+    ];
+    const directive = (d: 'import' | 'export' | undefined): NonNullable<ExportsSidecar['conditionalImports']> => [{
+      file: 'lib/fa.dart', line: 0, col: 0, target: 'lib/src/unsupported.dart',
+      alternatives: ['lib/src/desktop.dart', 'lib/src/web.dart'], ...(d !== undefined ? { directive: d } : {}),
+    }];
+    const exported = (): unknown[] => db.prepare(`SELECT s.file, s.name, x.entry_file, x.exported_as FROM symbols s
+      JOIN symbol_exports x USING (symbol_id) WHERE s.is_exported = 1 ORDER BY s.file`).all();
+
+    it("the twins take the default's export surface", () => {
+      const c = run(directive('export'), EXPORTS);
+      expect(exported()).toEqual(['lib/src/desktop.dart', 'lib/src/unsupported.dart', 'lib/src/web.dart'].map((file) =>
+        ({ file, name: 'createPlatform', entry_file: 'lib/fa.dart', exported_as: 'createPlatform' })));
+      expect(c.conditionalExportSymbols).toBe(2);
+      expect(c.exported).toBe(3);
+    });
+
+    it('a conditional import, or a sidecar without the field, exports nothing (negative)', () => {
+      for (const d of ['import', undefined] as const) {
+        run(directive(d), EXPORTS);
+        expect(exported()).toEqual([{ file: 'lib/src/unsupported.dart', name: 'createPlatform', entry_file: 'lib/fa.dart', exported_as: 'createPlatform' }]);
+      }
+    });
+
+    it('with a default outside the repo, the public top-level symbols of the alternative are runtime seeds', () => {
+      const c = run([{ file: 'lib/fa.dart', line: 0, col: 0, target: 'dart:io', alternatives: ['lib/src/ext.dart'], directive: 'export' }]);
+      expect(db.prepare(`SELECT s.name, e.kind FROM entry_symbols e JOIN symbols s USING (symbol_id)
+        WHERE s.file = 'lib/src/ext.dart'`).all()).toEqual([{ name: 'extThing', kind: 'runtime' }]);
+      expect(c.conditionalExportSymbols).toBe(1);
+    });
   });
 
   it('warns about an importing file or alternative that is not an indexed document', () => {

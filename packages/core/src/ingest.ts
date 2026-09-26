@@ -196,7 +196,15 @@ export interface ExportsSidecar {
    * resolved the same way. The index sees only `target`, so nothing references the
    * alternatives' declarations; see IngestCounts.conditionalImports. Optional.
    */
-  conditionalImports?: Array<{ file: string; line: number; col: number; target: string; alternatives: string[] }>;
+  conditionalImports?: Array<{
+    file: string; line: number; col: number; target: string; alternatives: string[];
+    /**
+     * `export` for a conditional export (`export 'stub.dart' if (dart.library.io) 'io.dart';`):
+     * the alternatives' twins also take the default's export surface (see
+     * IngestCounts.conditionalExportSymbols). Absent (older sidecars) or `import`: uses only.
+     */
+    directive?: 'import' | 'export';
+  }>;
 }
 
 export interface IngestOptions {
@@ -253,6 +261,16 @@ export interface IngestCounts {
   conditionalImports: number;
   /** conditionalImports alternatives symbols mirrored from a same-named symbol of the target. */
   conditionalMirroredSymbols: number;
+  /**
+   * Conditional exports (`directive: 'export'`): twins X' of the default's symbols X that
+   * took X's export surface (X's symbol_exports rows copied to X', `is_exported = 1`),
+   * plus public top-level symbols of an alternative seeded as runtime entry_symbols when
+   * the default is not an indexed document (nothing to match twins on; fail closed).
+   * Without it the twins were used (mirrored references) but not exported, so nothing
+   * seeded them and they and their private helpers were `private_dead
+   * already_unreachable` (supabase_common's `*_io.dart`: 6 rows).
+   */
+  conditionalExportSymbols: number;
   /** conditionalImports entries or alternatives that are not indexed documents of the repo (warned). */
   unmatchedConditionalImports: number;
   /**
@@ -708,7 +726,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     resolvedUnresolvedImports: 0, deepImportExports: 0,
     unmatchedEntrySymbols: 0, namespaceSpreadRefs: 0, unmatchedNamespaceSpreadRefs: 0, droppedModuleRefs: 0, witnessFiles: 0,
     generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0,
-    ambiguousSymbolRefs: 0, conditionalImports: 0, conditionalMirroredSymbols: 0, unmatchedConditionalImports: 0, sharedDefinitions: 0, warnings: 0,
+    ambiguousSymbolRefs: 0, conditionalImports: 0, conditionalMirroredSymbols: 0, conditionalExportSymbols: 0, unmatchedConditionalImports: 0, sharedDefinitions: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -1591,7 +1609,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       const docAt = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
       const keyOf = new Map<number, string>();
       for (const [norm, row] of symbols) keyOf.set(row.symbolId, norm);
-      const inDoc = db.prepare(`SELECT symbol_id, parent_symbol_id IS NULL AS top, is_exported
+      const inDoc = db.prepare(`SELECT symbol_id, parent_symbol_id IS NULL AS top, is_exported, name
         FROM symbols WHERE package_id = ? AND file = ? AND symbol_id <> ? ORDER BY symbol_id`);
       const mirrorOccurrences = db.prepare(`INSERT INTO occurrences
           (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site)
@@ -1603,7 +1621,20 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       const mirrorEdges = db.prepare(`INSERT OR IGNORE INTO edges (from_symbol_id, to_symbol_id, from_package_id, to_package_id, source)
         SELECT from_symbol_id, ?, from_package_id, ?, source FROM edges WHERE to_symbol_id = ?`);
       const occAt = db.prepare('SELECT 1 FROM occurrences WHERE symbol_id = ? AND package_id = ? AND file = ? AND line = ? AND col = ? LIMIT 1');
+      // Conditional export: the twin X' of an exported X is exported wherever X is.
+      const copyExports = db.prepare(`INSERT OR IGNORE INTO symbol_exports (symbol_id, entry_file, exported_as)
+        SELECT ?, entry_file, exported_as FROM symbol_exports WHERE symbol_id = ?`);
       const isUri = (u: string): boolean => /^[A-Za-z][\w+.-]*:/.test(u);
+      const exportTwin = (x: number, twin: SymRow): void => {
+        const added = Number(copyExports.run(twin.symbolId, x).changes);
+        if (added === 0) return;
+        counts.exportAliases += added;
+        if (!exportedIds.has(twin.symbolId)) {
+          st.exported.run(twin.symbolId);
+          exportedIds.add(twin.symbolId);
+          counts.conditionalExportSymbols += 1;
+        }
+      };
       const unmatchedCond: string[] = [];
       for (const { packageId, repo, data } of sidecars) {
         for (const c of data.conditionalImports ?? []) {
@@ -1626,7 +1657,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
               continue;
             }
             const bKey = keyOf.get(b.moduleSymbolId);
-            const bRows = inDoc.all(b.packageId, b.file, b.moduleSymbolId) as Array<{ symbol_id: number; top: number; is_exported: number }>;
+            const bRows = inDoc.all(b.packageId, b.file, b.moduleSymbolId) as Array<{ symbol_id: number; top: number; is_exported: number; name: string }>;
             // Synthetic `sentei file` module symbols carry no descriptor path: nothing to match on.
             const matchable = t !== undefined && tKey !== undefined && bKey !== undefined && !tKey.startsWith('sentei ') && !bKey.startsWith('sentei ');
             if (matchable) {
@@ -1652,8 +1683,18 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
                 counts.occurrences += Number(mirrorOccurrences.run(twin.symbolId, twin.packageId, r.symbol_id).changes);
                 counts.edges += Number(mirrorEdges.run(twin.symbolId, twin.packageId, r.symbol_id).changes);
                 counts.conditionalMirroredSymbols += 1;
+                if (c.directive === 'export') exportTwin(r.symbol_id, twin);
               }
             } else {
+              // A conditional export whose default has no document to match twins on:
+              // B's public API is exported on some platform, so it is kept alive whole
+              // (runtime seeds: alive, no verdict; fail closed).
+              if (c.directive === 'export') {
+                for (const r of bRows) {
+                  if (r.top !== 1 || r.name.startsWith('_')) continue;
+                  counts.conditionalExportSymbols += Number(st.entrySymbol.run(r.symbol_id, 'runtime').changes);
+                }
+              }
               for (const r of bRows) {
                 if (r.top !== 1) continue;
                 const to = byId.get(r.symbol_id)!;
@@ -1752,7 +1793,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     + (counts.resolvedUnresolvedImports > 0 ? ` resolvedUnresolvedImports=${counts.resolvedUnresolvedImports}` : '')
     + (counts.deepImportExports > 0 ? ` deepImportExports=${counts.deepImportExports}` : '')
     + (counts.namespaceSpreadRefs > 0 ? ` namespaceSpreadRefs=${counts.namespaceSpreadRefs}` : '')
-    + (counts.conditionalImports > 0 ? ` conditionalImports=${counts.conditionalImports} (mirrored ${counts.conditionalMirroredSymbols})` : '')
+    + (counts.conditionalImports > 0 ? ` conditionalImports=${counts.conditionalImports} (mirrored ${counts.conditionalMirroredSymbols}`
+      + `${counts.conditionalExportSymbols > 0 ? `, exported ${counts.conditionalExportSymbols}` : ''})` : '')
     + (counts.droppedModuleRefs > 0 ? ` droppedModuleRefs=${counts.droppedModuleRefs}` : '')
     + (counts.witnessFiles > 0 ? ` witnessFiles=${counts.witnessFiles}` : '')
     + (counts.generatedDocuments > 0 ? ` generatedDocuments=${counts.generatedDocuments}` : '')
