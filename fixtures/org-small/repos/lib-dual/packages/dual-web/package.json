@@ -1,0 +1,12 @@
+{
+  "name": "@acme/dual-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev"
+  },
+  "dependencies": {
+    "next": "16.0.0"
+  }
+}

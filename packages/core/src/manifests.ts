@@ -785,7 +785,8 @@ export function wranglerRuntimeClasses(repoRoot: string, dir: string, repoFiles:
  * Runtime entry points by convention (RUNTIME_ENTRY_CONVENTIONS, wrangler `main`, else a
  * `wrangler dev|deploy <file>` script; the file of a `node|tsx|bun|… <file>` script
  * (runnerTargets) or Dockerfile CMD/ENTRYPOINT (dockerfileTargets), build output mapped
- * to source) of the npm package at `dir`, repo-relative, sorted.
+ * to source; Next.js files loaded by name (nextConventionFiles)) of the npm package at
+ * `dir`, repo-relative, sorted.
  * `scripts` = the package.json `scripts` values.
  */
 export function conventionEntryPoints(
@@ -832,6 +833,7 @@ export function conventionEntryPoints(
     const r = n === null || n === '' ? null : resolveEntry(n, layout);
     if (r !== null && ok(r)) out.add(r);
   }
+  if (deps.has('next')) for (const f of nextConventionFiles(fileSet)) if (ok(f)) out.add(f);
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
 }
 
@@ -936,6 +938,29 @@ export function dockerfileTargets(text: string): string[] {
     else if (workdir !== null && t.startsWith(`${workdir}/`)) out.add(t.slice(workdir.length + 1));
   }
   return [...out];
+}
+
+/**
+ * Next.js files the framework loads by name (beyond the pages/app routers):
+ * `next.config.*` at the project root, and `middleware`, `proxy` (Next 16's name for
+ * middleware), `instrumentation`, `instrumentation-client` and `mdx-components`, which
+ * Next reads from the dir holding the router: `src/` when the project uses `src/app` or
+ * `src/pages` (and has no root `app/` or `pages/`, which would win), else the root. A
+ * root `middleware.ts` in a `src/app` project is ignored by Next, so it is not an entry.
+ */
+function nextConventionFiles(fileSet: ReadonlySet<string>): string[] {
+  const has = (d: string): boolean => {
+    for (const f of fileSet) if (f.startsWith(`${d}/`)) return true;
+    return false;
+  };
+  const base = !has('app') && !has('pages') && (has('src/app') || has('src/pages')) ? 'src/' : '';
+  const names = ['middleware', 'proxy', 'instrumentation', 'instrumentation-client', 'mdx-components'];
+  return [...fileSet].filter((f) => {
+    if (/^next\.config\.[cm]?[jt]s$/.test(f)) return true;
+    if (!f.startsWith(base) || f.slice(base.length).includes('/')) return false;
+    const stem = f.slice(base.length).replace(/\.[cm]?[jt]sx?$/, '');
+    return names.includes(stem) && CODE_EXT.test(f);
+  });
 }
 
 /**

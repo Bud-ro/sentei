@@ -1,0 +1,50 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## middleware.ts
+  // A root middleware.ts in a src/app project: Next ignores it (middleware must sit
+//^ definition scip-typescript npm @acme/dual-web . `middleware.ts`/ enclosing [4:0-5:0]
+  // beside the router dir, here src/), so it is not an entry point.
+
+  // Expected: private_dead already_unreachable (not an entry, nothing imports it).
+  export function middleware(): void {}
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual-web . `middleware.ts`/middleware(). enclosing [4:0-4:37]
+
+## next.config.ts
+  // Next.js config at the project root: loaded by Next by name.
+//^ definition scip-typescript npm @acme/dual-web . `next.config.ts`/ enclosing [3:0-4:0]
+
+  // Expected: alive, no finding (Next reads it).
+  export default { reactStrictMode: true };
+//                 ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-web . `next.config.ts`/reactStrictMode0:
+
+## src/app/page.tsx
+  // A Next.js app-router page under src/app (a runtime entry by the existing router convention).
+//^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/ enclosing [3:0-6:0]
+
+  // Expected: alive, no finding (the page component, loaded by Next).
+  export default function Page(): null {
+//                        ^^^^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/Page(). enclosing [3:0-5:1]
+    return null;
+  }
+
+## src/instrumentation.ts
+  // Next.js instrumentation hook beside the src/app router: loaded by Next by name.
+//^ definition scip-typescript npm @acme/dual-web . src/`instrumentation.ts`/ enclosing [3:0-4:0]
+
+  // Expected: alive, no finding (Next calls it at startup).
+  export function register(): void {}
+//                ^^^^^^^^ definition scip-typescript npm @acme/dual-web . src/`instrumentation.ts`/register(). enclosing [3:0-3:35]
+
+## src/middleware.ts
+  // Next.js middleware beside the src/app router: loaded by Next by name.
+//^ definition scip-typescript npm @acme/dual-web . src/`middleware.ts`/ enclosing [3:0-7:0]
+
+  // Expected: alive, no finding (Next calls it).
+  export function middleware(): void {}
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual-web . src/`middleware.ts`/middleware(). enclosing [3:0-3:37]
+
+  // Expected: alive, no finding (Next reads it).
+  export const config = { matcher: '/' };
+//             ^^^^^^ definition scip-typescript npm @acme/dual-web . src/`middleware.ts`/config.
+//                        ^^^^^^^ definition scip-typescript npm @acme/dual-web . src/`middleware.ts`/matcher0:

@@ -620,6 +620,30 @@ describe('npm manifests', () => {
     expect(p!.unresolvedEntryPoints).toEqual([]);
   });
 
+  it('Next.js files loaded by name: beside the router dir (src/ for src/app), next.config at the root', () => {
+    // src/app project: src/middleware.ts is the middleware; a root middleware.ts is ignored by Next.
+    pkgJson('web/package.json', { name: 'web', private: true, dependencies: { next: '16' } });
+    for (const f of [
+      'src/app/page.tsx', 'src/middleware.ts', 'src/instrumentation.ts', 'src/instrumentation-client.ts', 'src/mdx-components.tsx',
+      'src/lib/util.ts', 'middleware.ts', 'next.config.mjs',
+    ]) write(`web/${f}`);
+    // Root app/ project (Next 16 `proxy.ts`).
+    pkgJson('root/package.json', { name: 'root', private: true, dependencies: { next: '16' } });
+    for (const f of ['app/layout.tsx', 'proxy.ts', 'instrumentation.js', 'next.config.ts', 'src/middleware.ts', 'lib/x.ts']) write(`root/${f}`);
+    // No next dependency: none of this is an entry.
+    pkgJson('plain/package.json', { name: 'plain', main: 'index.ts' });
+    for (const f of ['index.ts', 'middleware.ts', 'next.config.js']) write(`plain/${f}`);
+    const byName = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(byName.get('web')!.runtimeEntryPoints).toEqual([
+      'web/next.config.mjs', 'web/src/app/page.tsx', 'web/src/instrumentation-client.ts', 'web/src/instrumentation.ts',
+      'web/src/mdx-components.tsx', 'web/src/middleware.ts',
+    ]);
+    expect(byName.get('root')!.runtimeEntryPoints).toEqual([
+      'root/app/layout.tsx', 'root/instrumentation.js', 'root/next.config.ts', 'root/proxy.ts',
+    ]);
+    expect(byName.get('plain')!.runtimeEntryPoints).toEqual([]);
+  });
+
   it('Cloudflare Pages functions/ without a wrangler config: a wrangler dependency or a `wrangler pages` script', () => {
     // honojs examples/pages-stack: no wrangler config, wrangler in devDependencies.
     pkgJson('dep/package.json', { name: 'dep', private: true, devDependencies: { wrangler: '^4' } });

@@ -11,6 +11,7 @@
   {"package_id": "npm:acme/lib-dual:@acme/dual", "symbol": "dualUnused", "file": "packages/dual/src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-server", "symbol": "neverCalled", "file": "packages/dual-server/src/server.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-server", "symbol": "unusedRoute", "file": "packages/dual-server/src/routes.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "npm:acme/lib-dual:@acme/dual-web", "symbol": "middleware", "file": "packages/dual-web/middleware.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dyn:@acme/dyn", "symbol": "dynA", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:acme/app-dynamic:@acme/app-dynamic:dynamic_access", "npm:acme/app-dynamic:@acme/app-dynamic:namespace_dynamic"]},
   {"package_id": "npm:acme/lib-dyn:@acme/dyn", "symbol": "dynB", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:acme/app-dynamic:@acme/app-dynamic:dynamic_access", "npm:acme/app-dynamic:@acme/app-dynamic:namespace_dynamic"]},
   {"package_id": "npm:acme/lib-lazy:@acme/lazy", "symbol": "lazyUnused", "file": "src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
