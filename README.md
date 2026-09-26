@@ -331,7 +331,21 @@ published package), `already_unreachable` (an existing private island),
 `<package id>:<flag>`, with flags `opaque_consumer`, `index_failed`,
 `dynamic_access`, `namespace_dynamic`, `unindexed_consumer`, `ambiguous_dep`.
 Version skew (a consumer referencing a symbol missing at HEAD) is reported
-separately, never as a finding.
+separately, never as a finding. Only references that can be skew count
+(analyze.sql `unresolved_ref_classes`): a reference into a package of the same
+repo whose dependency admits HEAD (workspace, path, a range HEAD satisfies), into
+an opaque or export-less package, or into a module no index defines (a deep
+`dist/` import, a JSON module) is an indexing gap instead, counted per target
+package under `report.json` `diagnostics` (`unresolved_same_repo`,
+`unresolved_opaque_target`, `unresolved_unindexed_module`) and summarized under
+the version skew line.
+
+Test, docs, generated and script files are recognized by path
+(`packages/core/src/globs.ts`: `test/`, `tests/`, `__tests__/`, `*.test.*`,
+`*.spec.*`, `*_test.dart`, `mocks/`, `fixtures/`, `e2e/`, `type-tests/`,
+`cypress/`, `playwright/`, Flutter `test_driver/` and `integration_test/`, ...),
+except that nothing under a pub package's `lib/` is ever one of them: every file
+there is importable library code.
 
 ## Views
 
@@ -381,7 +395,8 @@ blockers); the **view totals**, with the reasons of the DELETE and DEPRECATE row
 and ORG-DEAD printed once as "= DEPRECATE" with the assertion as a footnote; then
 **top blockers**, the opaque packages preventing the most verdicts, the "fix that
 repo's tsconfig first" list (the top 10; all of them are in `report.json`); and
-the version skew count. `blame` dates the last edit of the definition line, not
+the version skew count, with one line per class of unresolved references that
+are indexing gaps rather than skew. `blame` dates the last edit of the definition line, not
 its creation, which errs toward younger (the safe direction).
 
 ## Debugging with SQL

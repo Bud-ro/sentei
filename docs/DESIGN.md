@@ -1373,3 +1373,99 @@ Found on the supabase and Workiva dogfood runs.
   tools): package URIs resolve under `lib/`, so nothing can import it. Its
   "no entry points" warning is dropped. `lib/src/`-only packages stay as read.
   Done in discover (it has the file list) so manifests.ts is unchanged.
+
+### Phase 2 fix round 1: version-skew filtering; test globs
+
+**Version skew.** The supabase run reported 2572 version-skew references from
+17 packages; none was skew. analyze.sql's new `unresolved_ref_classes` view
+classifies every `unresolved_refs` row, first match wins, and the report keeps
+only `version_skew` rows; the rest go to `report.json` `diagnostics`
+(`unresolved_same_repo`, `unresolved_opaque_target`,
+`unresolved_unindexed_module`: per target package, count and three example
+names, most referenced first) with one stdout line each under the version skew
+line. The old "index failed" warning is the `opaque_target` class now.
+
+- `same_repo`: consumer and target in one repo, and the consumer's dependency
+  admits HEAD (workspace / path / file, a range HEAD satisfies, or no declared
+  dependency). One commit cannot skew against itself; the miss is an indexing
+  gap (supabase-flutter: 2553 rows into pub workspace packages whose `lib/`
+  failed to index, constraints equal to the HEAD version). **Deviation from the
+  brief** ("same repo can never be skew"): the only real skew seen on any org,
+  Workiva's over_react_analyzer_plugin, lives in the over_react repo and pins
+  `over_react: 5.7.0` while HEAD is 5.8.0: pub takes the registry copy. So an
+  exact version other than HEAD's, or a `^`/`~` range whose major differs from
+  HEAD's, stays skew (Workiva rerun: the 3 `nameLexeme` rows survive). Other
+  ranges that exclude HEAD (`<5.8.0`) are treated as admitting it: a missed
+  skew row is only a report row, never a verdict.
+- `opaque_target`: the target has an untargeted `package_flags` row
+  (`opaque_packages`: index failed or partial, dynamic access) or no exported
+  symbol. Only untargeted flags: a targeted flag is about the target's use of
+  another package, not about its own surface.
+- **External alias re-exports** (auth-helpers-shared's `export { parse as
+  parseCookies } from 'cookie'`): the DB cannot tell "alias of an external
+  module" from "org re-export the checker could not resolve": neither has a
+  `symbols` row, and `symbol_exports` only links org symbols. Both reach the DB
+  the same way, as the target's own sidecar `unresolved` entry
+  (`<entry>#<name>`), which ingest turns into an untargeted `dynamic_access`
+  flag, so such references are `opaque_target` (and on supabase also
+  `same_repo`). Not distinguished further; that would need ingest to record the
+  export's origin module.
+- `unindexed_module`: a deep dist import (sidecar name `*`, e.g.
+  `@supabase/supabase-js/dist/module/lib/types`; the M2 decision routed these
+  to skew, but "missing at HEAD" is unknowable for build output) or a member of
+  a JSON module (`` `openapi.json`/… ``: JSON documents are never indexed).
+  Matched by `*.json` in the module segment only; other non-source modules have
+  not been seen.
+- supabase rerun of the report on the existing DB: version skew 2572 → 0;
+  same_repo 2560, opaque_target 75 (`@supabase/postgrest-typegen`, index
+  failed), unindexed_module 12. Workiva: 3 → 3.
+
+**Test globs.** The supabase run had 235 `private_dead` rows that were test
+infrastructure: `tests/` (cli `@supabase/stack`, pg-delta) and `type-tests/`
+(middleware-openfeature). TEST_GLOBS gain `tests/`, `type-tests/`,
+`testdata/`, `spec/`, `cypress/`, `playwright/`, Flutter `test_driver/` and
+`integration_test/`, `*.fixture.*`, `*.e2e.*`, `vitest.setup.*`,
+`jest.setup.*`, `setupTests.*` (`test/`, `__tests__/`, `__mocks__/`,
+`test-utils/`, `testing/`, `e2e/`, `*.spec.*`, `*.test.*`, `*_test.dart` were
+already there). Rerunning analyze on the supabase DB: `private_dead` 655 →
+424, none left under `tests/` or `type-tests/`. Semantics unchanged: a test
+file's references are not counted consumers (`only_test_refs`), and nothing
+defined in a test file is ever `private_dead`. Not added: `integration/` and
+`integrations/` (supabase uses them for product integrations), `setup.*`,
+tool configs (`vitest.config.ts` stays a script file, whose references
+count). Stories stay test files (the round-3 decision): moving them to docs
+would switch which policy knob counts them and drop the dev-dependency rule,
+and Storybook runs them as tests; `extraEntryPoints` is the way to make them
+consumers. DOCS / SCRIPT: no gaps with findings in the evidence (over_react's
+`web/**/demos/` has none).
+
+**Library surface is never test/docs/script.** `SURFACE_DIRS` in globs.ts
+(`pub: ['lib']`, `npm: []`), spelled by the new `surface_files` view that
+`test_files` / `doc_files` / `script_files` exclude; globs.test.ts checks both
+agree. Everything in a pub package's `lib/` is importable as
+`package:<name>/…` and tests never live there, so `lib/src/*_test.dart`,
+`lib/**/mocks/`, `lib/**/example/`, `lib/testing/` are library code; a
+test-support package's whole API sits in such files. Generated globs still
+apply under `lib/`. The witness uses the same rule for consumer files
+(`inSurfaceDir`), so a mention in `lib/src/foo_test.dart` counts. On the
+Workiva DB, `lib/over_react_test.dart` (over_react_test's main library!) was a
+test file before; after, over_react_analyzer_plugin gets 41 `private_dead`
+rows: the package sits under the repo's `tools/` directory, so every file of it
+was a script file before (no findings at all); the new rows are real (e.g.
+`BoolPropNameReadabilityDiagnostic` and `WrapUnwrapAssistContributor`, whose
+registrations in `plugin.dart` are commented out).
+
+npm gets no such directory. `src/` cannot be exempt, not even from directory
+patterns only: `src/__tests__/`, `src/test/` and `src/mocks/` are standard
+Jest/Vitest layouts. The closest npm analogue of `lib/`, the manifest's entry
+points, is not exempt either: an entry can be test support on purpose (hono's
+`hono/testing`, the known `testing/` trade-off of round 3) and
+`extraEntryPoints` deliberately includes stories.
+
+Not done (outside this change's files): the indexers still match TEST_GLOBS
+without the `lib/` rule (`scip-dart.ts` drops `entrySymbols` in test-named
+files, `consumer-checks.ts` `isExcludedConsumerFile` ignores unresolved imports
+in them); `inSurfaceDir` is exported from `@sentei/core` for them. Globs are
+matched against repo-relative paths, so a whole npm package under a `tests/`,
+`e2e/` or `tools/` directory is still entirely test/script code; matching
+package-relative paths is a separate change.
