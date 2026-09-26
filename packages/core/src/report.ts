@@ -118,6 +118,29 @@ export interface ReportVersionSkew {
   target_package_id: string;
 }
 
+/** Unresolved references into one target package that are not version skew (one class). */
+export interface ReportUnresolvedTarget {
+  target_package_id: string;
+  /** Distinct references (consumer, symbol, position). */
+  count: number;
+  /** Up to 3 symbol names, most referenced first. */
+  examples: string[];
+}
+
+/**
+ * unresolved_refs rows that analyze.sql `unresolved_ref_classes` does not call version
+ * skew, per target package (most references first). They stay visible here because each
+ * is an indexing gap somewhere, not a finding.
+ */
+export interface ReportDiagnostics {
+  /** Consumer and target in one repo, the dependency admits HEAD: an indexing gap. */
+  unresolved_same_repo: ReportUnresolvedTarget[];
+  /** Target opaque (index failed / partial, unresolved exports) or exporting nothing. */
+  unresolved_opaque_target: ReportUnresolvedTarget[];
+  /** Deep dist imports (`*`) and JSON-module members: modules no index defines. */
+  unresolved_unindexed_module: ReportUnresolvedTarget[];
+}
+
 export interface ReportPackage {
   package_id: string;
   name: string;
@@ -184,6 +207,8 @@ export interface Report {
   /** Base verdicts, one per symbol (and verdict), independent of any view. */
   findings: ReportFinding[];
   versionSkew: ReportVersionSkew[];
+  /** Unresolved references that are not version skew (indexing gaps), per class. */
+  diagnostics: ReportDiagnostics;
   /** Filters over findings / versionSkew (REPORT_VIEWS). */
   views: ReportViews;
   packages: ReportPackage[];
@@ -449,20 +474,20 @@ export function buildReport(opts: BuildReportOptions): Report {
     .sort(cmpBy((f) => f.package_id, (f) => f.symbol, (f) => f.verdict, (f) => f.file, (f) => f.line, (f) => f.col));
 
   // ---- version skew ------------------------------------------------------------------
+  // analyze.sql `unresolved_ref_classes` decides which unresolved references are skew;
+  // the others (same-repo indexing gaps, opaque targets, unindexed modules) go to
+  // `diagnostics`, counted per target package. A sidecar row and a SCIP row can name
+  // the same reference; keep one.
   const skewRows = db.prepare(`
-    SELECT u.consumer_package_id AS package_id, p.repo, u.symbol_str, u.file, u.line, u.col, u.target_package_id
-    FROM unresolved_refs u JOIN packages p ON p.package_id = u.consumer_package_id`).all() as Array<{
+    SELECT u.consumer_package_id AS package_id, p.repo, u.symbol_str, u.file, u.line, u.col, u.target_package_id, u.class
+    FROM unresolved_ref_classes u JOIN packages p ON p.package_id = u.consumer_package_id`).all() as Array<{
     package_id: string; repo: string; symbol_str: string; file: string; line: number | null; col: number | null; target_package_id: string;
+    class: string;
   }>;
-  // A sidecar row and a SCIP row can name the same reference; keep one. A reference into
-  // a package whose own index failed is not skew: that package has no definitions at
-  // all, so "missing at HEAD" means nothing there (counted in a warning instead).
-  const indexFailed = new Set((db.prepare("SELECT DISTINCT package_id FROM package_flags WHERE flag = 'index_failed'").all() as Array<{
-    package_id: string;
-  }>).map((r) => r.package_id));
   const skewSeen = new Set<string>();
   const versionSkew: ReportVersionSkew[] = [];
-  const skewDropped = new Map<string, number>();
+  /** class -> target -> symbol name -> references */
+  const gaps = new Map<string, Map<string, Map<string, number>>>();
   for (const r of skewRows) {
     const row: ReportVersionSkew = {
       package_id: r.package_id,
@@ -476,18 +501,31 @@ export function buildReport(opts: BuildReportOptions): Report {
     const key = JSON.stringify([row.package_id, row.symbol, row.file, row.line, row.col, row.target_package_id]);
     if (skewSeen.has(key)) continue;
     skewSeen.add(key);
-    if (indexFailed.has(row.target_package_id)) {
-      skewDropped.set(row.target_package_id, (skewDropped.get(row.target_package_id) ?? 0) + 1);
+    if (r.class === 'version_skew') {
+      versionSkew.push(row);
       continue;
     }
-    versionSkew.push(row);
+    if (!['same_repo', 'opaque_target', 'unindexed_module'].includes(r.class)) {
+      throw new Error(`sentei report: unknown unresolved_ref_classes class ${JSON.stringify(r.class)}`);
+    }
+    const byTarget = gaps.get(r.class) ?? new Map<string, Map<string, number>>();
+    gaps.set(r.class, byTarget);
+    const names = byTarget.get(row.target_package_id) ?? new Map<string, number>();
+    byTarget.set(row.target_package_id, names);
+    names.set(row.symbol, (names.get(row.symbol) ?? 0) + 1);
   }
-  if (skewDropped.size > 0) {
-    const n = [...skewDropped.values()].reduce((a, b) => a + b, 0);
-    const targets = [...skewDropped.keys()].sort(cmp).join(', ');
-    warnings.push(`${n} unresolved reference(s) into package(s) whose index failed (${targets}) not reported as version skew: `
-      + 'their definitions are unknown, not missing');
-  }
+  const gapList = (cls: string): ReportUnresolvedTarget[] => [...(gaps.get(cls) ?? new Map<string, Map<string, number>>())]
+    .map(([target, names]) => ({
+      target_package_id: target,
+      count: [...names.values()].reduce((a, b) => a + b, 0),
+      examples: [...names].sort((a, b) => b[1] - a[1] || cmp(a[0], b[0])).slice(0, 3).map(([n]) => n),
+    }))
+    .sort(cmpBy((g) => -g.count, (g) => g.target_package_id));
+  const diagnostics: ReportDiagnostics = {
+    unresolved_same_repo: gapList('same_repo'),
+    unresolved_opaque_target: gapList('opaque_target'),
+    unresolved_unindexed_module: gapList('unindexed_module'),
+  };
   versionSkew.sort(cmpBy((v) => v.package_id, (v) => v.symbol, (v) => v.file, (v) => v.line, (v) => v.col, (v) => v.target_package_id));
 
   // ---- packages ------------------------------------------------------------------
@@ -583,6 +621,7 @@ export function buildReport(opts: BuildReportOptions): Report {
     warnings,
     findings,
     versionSkew,
+    diagnostics,
     views,
     packages,
     blockers,
@@ -619,6 +658,8 @@ export const VIEW_LABELS: Readonly<Record<ReportViewName, string>> = Object.free
 
 /** Maximum rows printed under "Top blockers" (report.json has them all). */
 const TOP_BLOCKERS = 10;
+/** Target packages named per unresolved-reference diagnostic line (report.json has them all). */
+const TOP_GAP_TARGETS = 5;
 
 export interface FormatSummaryOptions {
   /** Views to print (default: every view). report.json always has them all. */
@@ -732,6 +773,17 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
   if (selected.has('version_skew')) {
     const skewPkgs = new Set(report.versionSkew.map((x) => x.package_id)).size;
     out.push('', `Version skew: ${report.versionSkew.length} reference(s) from ${skewPkgs} package(s) to symbols missing at HEAD`);
+    const d = report.diagnostics;
+    const gapLine = (rows: ReportUnresolvedTarget[], what: string): void => {
+      if (rows.length === 0) return;
+      const n = rows.reduce((a, g) => a + g.count, 0);
+      const shown = rows.slice(0, TOP_GAP_TARGETS).map((g) => `${g.target_package_id} ${g.count}`);
+      const more = rows.length > TOP_GAP_TARGETS ? `, ... and ${rows.length - TOP_GAP_TARGETS} more (see report.json diagnostics)` : '';
+      out.push(`${n} ${what} (indexing gaps, not skew): ${shown.join(', ')}${more}`);
+    };
+    gapLine(d.unresolved_same_repo, 'unresolved same-repo reference(s)');
+    gapLine(d.unresolved_opaque_target, 'unresolved reference(s) into opaque or empty packages');
+    gapLine(d.unresolved_unindexed_module, 'unresolved reference(s) into unindexed modules (deep dist imports, JSON)');
   }
   return `${out.join('\n')}\n`;
 }

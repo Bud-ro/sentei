@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS mat_base_verdicts (
 ) STRICT;
 
 -- Dependents first, so every DROP succeeds.
+DROP VIEW IF EXISTS unresolved_ref_classes;
 DROP VIEW IF EXISTS verdicts;
 DROP VIEW IF EXISTS private_dead;
 DROP VIEW IF EXISTS private_dead_unlocked;
@@ -662,3 +663,61 @@ WHERE NOT EXISTS (
     AND (a.ancestor_id IN (SELECT symbol_id FROM dead)
          OR a.ancestor_id IN (SELECT symbol_id FROM candidate_symbols))
 );
+
+-- ---------------------------------------------------------------------------
+-- Version skew (read by the report): which unresolved_refs rows are skew
+-- ---------------------------------------------------------------------------
+
+-- Every unresolved_refs row (a consumer names a symbol the target org package does not
+-- define at HEAD) with the class that decides whether the report calls it version
+-- skew. Skew means "the consumer resolved to a published version whose symbol is gone
+-- at HEAD"; a row is that only when the consumer can be on another version and the
+-- target was indexed well enough to know what it defines. First match wins:
+--   same_repo         consumer and target live in one repo (one commit) and the
+--                     consumer's manifest dependency on the target admits HEAD: a
+--                     workspace / path / file dependency, a range HEAD satisfies, or
+--                     no declared dependency at all. The miss is an indexing gap
+--                     (supabase-flutter: 2553 rows into pub workspace packages whose
+--                     lib/ did not index). Exception, still skew: an exact version other
+--                     than HEAD's, or a ^ / ~ range whose major differs from HEAD's (the
+--                     registry copy is used; Workiva over_react_analyzer_plugin pins
+--                     `over_react: 5.7.0` in the repo of over_react 5.8.0).
+--   opaque_target     the target has an untargeted package_flags row (schema view
+--                     opaque_packages: index failed or partial, unresolved export
+--                     surface) or exports nothing: what it defines is unknown. An
+--                     alias re-export of an external module (`export { parse as
+--                     parseCookies } from 'cookie'`) the target's checker could not
+--                     resolve is such a flag (dynamic_access, reason `<entry>#<name>`).
+--   unindexed_module  the reference names a module no index defines: a deep dist
+--                     import (sidecar name '*': `pkg/dist/module/lib/types`, build
+--                     output not in the checkout) or a member of a JSON module
+--                     (``openapi.json`/…`: JSON documents are never indexed).
+--   version_skew      everything else.
+-- Skew is reported, never counted: no class here changes a verdict.
+CREATE VIEW unresolved_ref_classes (consumer_package_id, target_package_id, symbol_str, file, line, col, class) AS
+SELECT u.consumer_package_id, u.target_package_id, u.symbol_str, u.file, u.line, u.col,
+       CASE
+         WHEN c.repo = t.repo AND NOT EXISTS (
+           SELECT 1 FROM package_deps d
+           WHERE d.consumer_package_id = u.consumer_package_id
+             AND d.resolved_package_id = u.target_package_id
+             AND t.version IS NOT NULL
+             AND (
+               -- an exact version (version characters only, leading digit) other than HEAD's
+               (d.dep_constraint GLOB '[0-9]*' AND d.dep_constraint NOT GLOB '*[^0-9A-Za-z.+-]*'
+                AND d.dep_constraint <> t.version)
+               -- ^X… / ~X… whose major X is not HEAD's
+               OR ((d.dep_constraint GLOB '^[0-9]*' OR d.dep_constraint GLOB '~[0-9]*')
+                   AND d.dep_constraint NOT GLOB '?*[^0-9A-Za-z.+-]*'
+                   AND substr(d.dep_constraint, 2, instr(d.dep_constraint || '.', '.') - 2)
+                       <> substr(t.version, 1, instr(t.version || '.', '.') - 1))))
+           THEN 'same_repo'
+         WHEN u.target_package_id IN (SELECT package_id FROM opaque_packages)
+           OR NOT EXISTS (SELECT 1 FROM symbols s WHERE s.package_id = u.target_package_id AND s.is_exported = 1)
+           THEN 'opaque_target'
+         WHEN u.symbol_str = '*' OR u.symbol_str GLOB '* *.json`/*' THEN 'unindexed_module'
+         ELSE 'version_skew'
+       END
+FROM unresolved_refs u
+JOIN packages c ON c.package_id = u.consumer_package_id
+JOIN packages t ON t.package_id = u.target_package_id;

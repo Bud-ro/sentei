@@ -211,6 +211,7 @@ describe('buildReport', () => {
       ],
       findings,
       versionSkew,
+      diagnostics: { unresolved_same_repo: [], unresolved_opaque_target: [], unresolved_unindexed_module: [] },
       views: {
         delete: { description: VIEW_DESCRIPTIONS.delete, rows: pick('@acme/util#islandFn', '@acme/util#unusedFn') },
         deprecate: { description: VIEW_DESCRIPTIONS.deprecate, rows: deprecate },
@@ -417,17 +418,95 @@ describe('buildReport guards and skew filtering', () => {
     }
   });
 
-  it('drops version skew into a package whose index failed, with a warning counting it', () => {
-    const app = 'npm:acme/app:@acme/app';
+  const app = 'npm:acme/app:@acme/app';
+  const util = 'npm:acme/lib-core:@acme/util';
+  const SEED_SKEW = 3; // the seed's rows into healthy packages in other repos: real skew
+  const skewTargets = (r: ReturnType<typeof buildReport>): string[] => r.versionSkew.map((v) => `${v.target_package_id}#${v.symbol}`);
+
+  it('drops version skew into a package whose index failed, counting it under unresolved_opaque_target', () => {
     const broken = 'npm:acme/repo-broken:@acme/broken';
     addSkew(app, broken, 'scip-typescript npm @acme/broken . src/`index.ts`/anything().', 'src/main.ts', 1, 0);
     addSkew(app, broken, 'brokenName', 'src/main.ts', 2, 0);
     const r = buildReport({ db, now: NOW });
     expect(r.versionSkew.map((v) => v.target_package_id)).not.toContain(broken);
-    expect(r.versionSkew).toHaveLength(3); // the seed's rows into healthy packages stay
-    expect(r.warnings).toContain(
-      '2 unresolved reference(s) into package(s) whose index failed (npm:acme/repo-broken:@acme/broken) not reported as version skew: their definitions are unknown, not missing',
-    );
+    expect(r.versionSkew).toHaveLength(SEED_SKEW);
+    expect(r.diagnostics.unresolved_opaque_target).toEqual([{ target_package_id: broken, count: 2, examples: ['anything', 'brokenName'] }]);
+    expect(r.warnings.some((w) => w.includes('unresolved reference'))).toBe(false);
+  });
+
+  it('a same-repo reference whose dependency admits HEAD is an indexing gap, not skew', () => {
+    // Siblings of @acme/util (1.0.0) in acme/lib-core: a range HEAD satisfies, a
+    // workspace dependency, and no declared dependency at all (hoisted).
+    const range = addPackage('@acme/sib-range', 'acme/lib-core', 'private', [util]); // ^1.0.0
+    const ws = addPackage('@acme/sib-ws', 'acme/lib-core', 'private', [util]);
+    run("UPDATE package_deps SET dep_constraint = 'workspace:*' WHERE consumer_package_id = ?", ws);
+    const hoisted = addPackage('@acme/sib-none', 'acme/lib-core');
+    addSkew(range, util, 'scip-typescript npm @acme/util . src/`index.ts`/gapA().', 'packages/sib-range/src/a.ts', 1, 0);
+    addSkew(range, util, 'scip-typescript npm @acme/util . src/`index.ts`/gapA().', 'packages/sib-range/src/a.ts', 5, 0);
+    addSkew(ws, util, 'gapB', 'packages/sib-ws/src/a.ts', 1, 0);
+    addSkew(hoisted, util, 'gapC', 'packages/sib-none/src/a.ts', 1, 0);
+    addSkew(hoisted, util, 'gapD', 'packages/sib-none/src/a.ts', 2, 0);
+    const r = buildReport({ db, now: NOW });
+    expect(r.versionSkew).toHaveLength(SEED_SKEW);
+    expect(r.diagnostics.unresolved_same_repo).toEqual([{ target_package_id: util, count: 5, examples: ['gapA', 'gapB', 'gapC'] }]);
+    const text = formatSummary(r).trimEnd().split('\n');
+    expect(text.at(-2)).toBe('Version skew: 3 reference(s) from 2 package(s) to symbols missing at HEAD');
+    expect(text.at(-1)).toBe(`5 unresolved same-repo reference(s) (indexing gaps, not skew): ${util} 5`);
+  });
+
+  it('a same-repo consumer pinned to another version is still real skew (negative)', () => {
+    // over_react_analyzer_plugin pins over_react 5.7.0 in the repo of over_react 5.8.0.
+    const exact = addPackage('@acme/pin-exact', 'acme/lib-core', 'private', [util]);
+    const major = addPackage('@acme/pin-major', 'acme/lib-core', 'private', [util]);
+    const same = addPackage('@acme/pin-head', 'acme/lib-core', 'private', [util]);
+    run("UPDATE package_deps SET dep_constraint = '0.9.0' WHERE consumer_package_id = ?", exact);
+    run("UPDATE package_deps SET dep_constraint = '^0.9.0' WHERE consumer_package_id = ?", major);
+    run("UPDATE package_deps SET dep_constraint = '1.0.0' WHERE consumer_package_id = ?", same);
+    addSkew(exact, util, 'pinnedGone', 'packages/pin-exact/src/a.ts', 1, 0);
+    addSkew(major, util, 'majorGone', 'packages/pin-major/src/a.ts', 1, 0);
+    addSkew(same, util, 'headGap', 'packages/pin-head/src/a.ts', 1, 0);
+    const r = buildReport({ db, now: NOW });
+    expect(skewTargets(r)).toEqual(expect.arrayContaining([`${util}#pinnedGone`, `${util}#majorGone`]));
+    expect(r.versionSkew).toHaveLength(SEED_SKEW + 2);
+    expect(r.diagnostics.unresolved_same_repo).toEqual([{ target_package_id: util, count: 1, examples: ['headGap'] }]);
+  });
+
+  it('a target that is partial, has an unresolved (external alias) export, or exports nothing is not skew', () => {
+    addRepo('acme/lib-partial', 'sha-p', 'partial');
+    addRepo('acme/lib-alias', 'sha-a', 'ok');
+    addRepo('acme/lib-empty', 'sha-e', 'ok');
+    const partial = addPackage('@acme/partial', 'acme/lib-partial', 'private');
+    const alias = addPackage('@acme/alias', 'acme/lib-alias', 'private');
+    const empty = addPackage('@acme/empty', 'acme/lib-empty', 'private');
+    addSymbol(partial, 'p1');
+    addSymbol(alias, 'a1');
+    addSymbol(empty, 'notExported', { exported: false });
+    addFlag(partial, 'opaque_consumer', 'error TS2307', null);
+    // `export { parse as parseCookies } from 'cookie'` with cookie not installed: the
+    // target's own sidecar lists the export as unresolved (ingest: dynamic_access).
+    addFlag(alias, 'dynamic_access', 'src/index.ts#parseCookies', null);
+    addSkew(app, partial, 'partialName', 'src/main.ts', 1, 0);
+    addSkew(app, alias, 'parseCookies', 'src/main.ts', 2, 0);
+    addSkew(app, empty, 'emptyName', 'src/main.ts', 3, 0);
+    const r = buildReport({ db, now: NOW });
+    expect(r.versionSkew).toHaveLength(SEED_SKEW);
+    expect(r.diagnostics.unresolved_opaque_target).toEqual([
+      { target_package_id: alias, count: 1, examples: ['parseCookies'] },
+      { target_package_id: empty, count: 1, examples: ['emptyName'] },
+      { target_package_id: partial, count: 1, examples: ['partialName'] },
+    ]);
+  });
+
+  it('deep dist imports and JSON-module members are unindexed modules, not skew; a missing source member stays skew', () => {
+    addSkew(app, util, '*', 'src/deep.ts', 1, 0);
+    addSkew(app, util, 'scip-typescript npm @acme/util . src/generated/`openapi.json`/`"k"0`:', 'src/json.ts', 1, 0);
+    addSkew(app, util, 'scip-typescript npm @acme/util . src/generated/`openapi.ts`/goneFromTs().', 'src/json.ts', 2, 0);
+    const r = buildReport({ db, now: NOW });
+    expect(skewTargets(r)).toContain(`${util}#goneFromTs`);
+    expect(r.versionSkew).toHaveLength(SEED_SKEW + 1);
+    expect(r.diagnostics.unresolved_unindexed_module).toEqual([{ target_package_id: util, count: 2, examples: ['"k"0', '*'] }]);
+    expect(formatSummary(r)).toContain(
+      `2 unresolved reference(s) into unindexed modules (deep dist imports, JSON) (indexing gaps, not skew): ${util} 2\n`);
   });
 });
 
