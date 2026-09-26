@@ -21,6 +21,10 @@
 //     that maps the package itself, none of them can resolve, so they say
 //     nothing beyond "pub get failed" (the adapter reports that once).
 //
+// With `--batch <json>` (the packages of one pub workspace) it analyzes them
+// with one analysis context collection and prints a JSON array of these
+// outputs, one per package, each equal to a run on that package alone.
+//
 // Positions: 0-based line, 0-based UTF-16 column; files repo-relative POSIX.
 import 'dart:convert';
 import 'dart:io';
@@ -28,6 +32,7 @@ import 'dart:io';
 import 'package:analyzer/dart/analysis/analysis_context.dart';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
+import 'package:analyzer/dart/analysis/session.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/diagnostic/diagnostic.dart';
@@ -40,9 +45,14 @@ const maxReportedDiagnostics = 20;
 
 Future<void> main(List<String> argv) async {
   final parser = ArgParser()
-    ..addOption('repo-root', mandatory: true, help: 'Repo root (paths in the output are relative to it)')
-    ..addOption('package-root', mandatory: true, help: 'Package dir (holds pubspec.yaml)')
-    ..addOption('package-id', mandatory: true, help: 'e.g. pub:acme_x')
+    ..addOption('repo-root', help: 'Repo root (paths in the output are relative to it); required without --batch')
+    ..addOption('package-root', help: 'Package dir (holds pubspec.yaml); required without --batch')
+    ..addOption('package-id', help: 'e.g. pub:acme_x; required without --batch')
+    ..addOption('batch',
+        help: 'JSON file {repoRoot, sdkPath?, orgPackages: [...], pubGetFailed?, packages: [{packageRoot, packageId, '
+            'packageName?, entries: [...], nested: [...]}]}: the packages of one pub workspace, analyzed with one '
+            'analysis context collection; prints a JSON array of their outputs, in order',
+    )
     ..addOption('package-name', help: "The package's pub name (default: the last ':' segment of --package-id)")
     ..addMultiOption('entry', help: 'Entry file, repo-relative POSIX (repeatable)')
     ..addOption('org-packages', defaultsTo: '', help: 'Comma-separated pub names of all org packages')
@@ -61,6 +71,16 @@ Future<void> main(List<String> argv) async {
     stdout.writeln('usage: dart_surface [options]\n${parser.usage}');
     return;
   }
+  if (args['batch'] case final String batch) {
+    stdout.writeln(const JsonEncoder.withIndent('  ').convert(await computeBatch(batch)));
+    return;
+  }
+  for (final required in ['repo-root', 'package-root', 'package-id']) {
+    if (args[required] == null) {
+      stderr.writeln('dart_surface: --$required is required without --batch\n${parser.usage}');
+      exit(64);
+    }
+  }
   final surface = Surface(
     repoRoot: p.normalize(p.absolute(args['repo-root'] as String)),
     packageRoot: p.normalize(p.absolute(args['package-root'] as String)),
@@ -74,6 +94,38 @@ Future<void> main(List<String> argv) async {
   );
   final out = await surface.compute();
   stdout.writeln(const JsonEncoder.withIndent('  ').convert(out));
+}
+
+/// `--batch`: the packages of one pub workspace share one analysis context
+/// collection (included paths: every package dir), so the workspace's
+/// libraries are resolved once instead of once per package. Each package's
+/// output equals a run on it alone.
+Future<List<Map<String, Object>>> computeBatch(String file) async {
+  final spec = jsonDecode(File(file).readAsStringSync()) as Map<String, Object?>;
+  final repoRoot = p.normalize(p.absolute(spec['repoRoot'] as String));
+  final sdkPath = spec['sdkPath'] as String?;
+  final orgPackages = ((spec['orgPackages'] as List?) ?? const []).cast<String>().toSet();
+  final pubGetFailed = spec['pubGetFailed'] == true;
+  final packages = (spec['packages'] as List).cast<Map<String, Object?>>();
+  final roots = [for (final pkg in packages) p.normalize(p.absolute(pkg['packageRoot'] as String))];
+  final collection = AnalysisContextCollection(includedPaths: roots, sdkPath: sdkPath);
+  final out = <Map<String, Object>>[];
+  for (var i = 0; i < packages.length; i++) {
+    final pkg = packages[i];
+    final surface = Surface(
+      repoRoot: repoRoot,
+      packageRoot: roots[i],
+      packageId: pkg['packageId'] as String,
+      entries: ((pkg['entries'] as List?) ?? const []).cast<String>(),
+      orgPackages: orgPackages,
+      nested: [for (final d in ((pkg['nested'] as List?) ?? const []).cast<String>()) p.normalize(p.absolute(d))],
+      pubGetFailed: pubGetFailed,
+      sdkPath: sdkPath,
+      packageNameOverride: pkg['packageName'] as String?,
+    );
+    out.add(await surface.compute(collection));
+  }
+  return out;
 }
 
 class Pos {
@@ -186,6 +238,18 @@ class Surface {
   }
 
   late final AnalysisContext context;
+  late final AnalysisContextCollection collection;
+
+  /// The session of the context that analyzes [file] (in a batch, a
+  /// workspace member's files can be in a context of their own), else the
+  /// package's.
+  AnalysisSession sessionFor(String file) {
+    try {
+      return collection.contextFor(file).currentSession;
+    } on StateError {
+      return context.currentSession;
+    }
+  }
 
   String repoRel(String abs) => p.posix.joinAll(p.split(p.relative(abs, from: repoRoot)));
 
@@ -207,8 +271,10 @@ class Surface {
     return Pos(repoRel(file), loc.lineNumber - 1, loc.columnNumber - 1);
   }
 
-  Future<Map<String, Object>> compute() async {
-    final collection = AnalysisContextCollection(includedPaths: [packageRoot], sdkPath: sdkPath);
+  /// The sidecar of this package. [shared]: a batch's collection (see
+  /// [computeBatch]); absent, one collection for this package alone.
+  Future<Map<String, Object>> compute([AnalysisContextCollection? shared]) async {
+    collection = shared ?? AnalysisContextCollection(includedPaths: [packageRoot], sdkPath: sdkPath);
     context = collection.contextFor(packageRoot);
     final session = context.currentSession;
 
@@ -340,7 +406,7 @@ class Surface {
         if (!isOwnFile(file)) continue;
         final exports = fragment.libraryExports;
         if (exports.isEmpty) continue;
-        final parsed = context.currentSession.getParsedUnit(file);
+        final parsed = sessionFor(file).getParsedUnit(file);
         if (parsed is! ParsedUnitResult) continue;
         final directives = {
           for (final d in parsed.unit.directives.whereType<ExportDirective>()) d.exportKeyword.offset: d,
@@ -394,12 +460,17 @@ class Surface {
 
   /// Consumer checks over every own file (libraries and parts), plus analyzer errors.
   Future<void> _checkOwnFiles() async {
-    final session = context.currentSession;
-    final files = context.contextRoot.analyzedFiles().where((f) => f.endsWith('.dart') && isOwnFile(f)).toList()
+    // Every context's files: in a batch the package's files need not all be
+    // in the context of its root (see [sessionFor]).
+    final files = <String>{
+      for (final c in collection.contexts)
+        ...c.contextRoot.analyzedFiles().where((f) => f.endsWith('.dart') && isOwnFile(f)),
+    }.toList()
       ..sort();
     var errorCount = 0;
     final reported = <String>[];
     for (final file in files) {
+      final session = sessionFor(file);
       final unitResult = await session.getUnitElement(file);
       final parsed = session.getParsedUnit(file);
       final errors = await session.getErrors(file);
@@ -471,7 +542,7 @@ class Surface {
       if (d.configurations.isEmpty) continue;
       final text = d.uri.stringValue;
       if (text == null) continue;
-      base ??= context.currentSession.uriConverter.pathToUri(file) ?? Uri.file(file);
+      base ??= sessionFor(file).uriConverter.pathToUri(file) ?? Uri.file(file);
       conditionalImports.add({
         ...positionIn(file, unit, d.uri.offset).toJson(),
         'target': _uriTarget(base, text),
@@ -585,7 +656,7 @@ class Surface {
   Future<void> _dartDevConfig() async {
     final file = p.join(packageRoot, 'tool', 'dart_dev', 'config.dart');
     if (!File(file).existsSync() || !isOwnFile(file)) return;
-    final unit = await context.currentSession.getUnitElement(file);
+    final unit = await sessionFor(file).getUnitElement(file);
     if (unit is! UnitElementResult) return;
     final element = _topLevel(unit.fragment.element, 'config');
     if (element != null) addEntrySymbol(element, 'config');

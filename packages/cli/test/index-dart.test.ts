@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   BUILD_RUNNER_TIMEOUT_MS,
   buildRunner,
+  DART_SURFACE_DIR,
   flutterReason,
   missingGeneratedParts,
   OVERRIDES_HEADER,
@@ -488,6 +489,26 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
     expect(runs('acme_tools')).toEqual(run);
     expect(ix().packages[1]!.diagnostics).toContain('info: indexed in one scip-dart run with the 3 package(s) of the pub workspace at .');
   });
+
+  it('computes every export surface in one dart-surface run (--batch), each as a run on the package alone', () => {
+    const runs = (pkg: string) => readFileSync(path.join(work, 'index/acme__dart-workspace', `pub__${pkg}.log`), 'utf8')
+      .split('\n').filter((l) => l.startsWith('$ dart run dart_surface'));
+    expect(runs('acme_core')).toHaveLength(1);
+    expect(runs('acme_core')[0]).toMatch(/^\$ dart run dart_surface --batch .*one run for the 3 package\(s\) of the workspace/);
+    expect(runs('acme_ws')).toEqual(runs('acme_core'));
+    expect(ix().packages[2]!.diagnostics).toContain('info: export surface from one dart-surface run with the 3 package(s) of the pub workspace at .');
+    // The same sidecar as dart-surface on acme_core alone.
+    const r = spawnSync('dart', [
+      'run', 'dart_surface', '--repo-root', path.join(tmp, WS), '--package-root', path.join(tmp, WS, 'packages/acme_core'),
+      '--package-id', 'pub:acme_core', '--org-packages', 'acme_core,acme_tools,acme_ws,acme_x', '--entry', 'packages/acme_core/lib/acme_core.dart',
+    ], { cwd: DART_SURFACE_DIR, encoding: 'utf8', shell: process.platform === 'win32' });
+    expect(r.status, r.stderr).toBe(0);
+    const alone = JSON.parse(r.stdout) as ExportsSidecar & { diagnostics: string[] };
+    const batched = readJson<ExportsSidecar>(work, 'index/acme__dart-workspace/pub__acme_core.exports.json');
+    for (const key of ['exports', 'entryPoints', 'entrySymbols', 'conditionalImports', 'unresolved', 'unresolvedImports'] as const) {
+      expect(batched[key], key).toEqual(alone[key]);
+    }
+  }, 300_000);
 
   it('resolves name-based parts (`part of acme_core;`) in their library: references between parts survive (fork patch 8)', () => {
     const core = readScipIndex(path.join(work, 'index/acme__dart-workspace/pub__acme_core.scip'));

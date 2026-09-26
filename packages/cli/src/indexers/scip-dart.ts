@@ -8,7 +8,8 @@
 //     packages of a pub workspace; every analysis context's files; files
 //     resolved library by library; operator expressions are references);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
-//     no export information), same JSON shape as the TypeScript sidecar.
+//     no export information), same JSON shape as the TypeScript sidecar
+//     (`--batch`: every package of a pub workspace in one run).
 // Org dependencies are source-linked with a `pubspec_overrides.yaml`
 // (`dependency_overrides: {<dep>: {path: ...}}`), the pub equivalent of the npm
 // node_modules symlinks: consumer references then carry the lib's own symbols.
@@ -23,7 +24,8 @@
 // indexed by one scip-dart run over all its packages (see [PubWorkspace]).
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TEST_GLOBS, inSurfaceDir, matchGlob } from '@sentei/core';
@@ -83,7 +85,8 @@ export const scipDart: Indexer = {
   // patch 8 (parts resolved in their library), fork patch 9 (operator
   // references), a package with lib/ code but no lib/ document fails;
   // dart-surface: a `main` re-exported by a script is an entry symbol, and
-  // `conditionalImports`; build_runner for missing generated parts.
+  // `conditionalImports`; build_runner for missing generated parts;
+  // dart-surface once per pub workspace (`--batch`).
   version: '1.7.0+sentei.9',
 
   detect({ repo, pkg }) {
@@ -235,49 +238,44 @@ export const scipDart: Indexer = {
       }
     }
 
-    // 4. Export-surface sidecar.
-    const nested = repo.packages
-      .map((p) => packageDir(repo, p))
-      .filter((d) => d !== packageDir(repo, pkg) && existsSync(d))
-      .map((d) => realpathSync(d))
-      .filter((d) => d.startsWith(dir + path.sep));
-    // Ignored manifests (examples, templates, fixtures) strictly inside this
-    // package are separate packages too: scip-dart does not index them, so an
-    // entry symbol or export found there could never match a definition.
-    const ignored = (repo.ignoredManifests ?? [])
-      .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
-      .filter((d) => existsSync(d))
-      .map((d) => realpathSync(d))
-      .filter((d) => d.startsWith(dir + path.sep) && !nested.includes(d));
-    const orgNames = [
-      ...new Set(input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'pub' && p.name !== null ? [p.name] : []))),
-    ].sort();
-    const surfaceArgs = [
-      'run', 'dart_surface',
-      '--repo-root', repoRoot,
-      '--package-root', dir,
-      '--package-id', pkg.packageId,
-      ...(pkg.name !== null && pkg.name !== undefined ? ['--package-name', pkg.name] : []),
-      ...sdkArgs,
-      '--org-packages', orgNames.join(','),
-      ...pkg.entryPoints.flatMap((e) => ['--entry', e]),
-      ...[...nested, ...ignored].flatMap((d) => ['--nested', d]),
-      // Without a package config mapping the package itself (pub get failed;
-      // any config found is an enclosing package's), none of its own
-      // `package:` URIs resolve: one error says so, not one per directive.
-      ...(prepared.diagnostics.some((d) => PUB_GET_FAILED.test(d)) ? ['--pub-get-failed'] : []),
-    ];
-    const sp = await exec('dart', surfaceArgs, DART_SURFACE_DIR);
-    log.push(`$ dart ${surfaceArgs.join(' ')}  (cwd ${DART_SURFACE_DIR})`, '--- stderr', sp.stderr);
+    // 4. Export-surface sidecar. A pub workspace: one dart-surface run for all
+    //    its packages (`--batch`), each output as for the package alone.
+    // Without a package config mapping the package itself (pub get failed;
+    // any config found is an enclosing package's), none of its own
+    // `package:` URIs resolve: one error says so, not one per directive.
+    const pubGetFailed = prepared.diagnostics.some((d) => PUB_GET_FAILED.test(d));
     let out: SurfaceOutput | undefined;
-    if (sp.code === 0) {
-      try {
-        out = JSON.parse(sp.stdout) as SurfaceOutput;
-      } catch (err) {
-        diagnostics.push(`error: dart-surface printed invalid JSON: ${(err as Error).message}`);
-      }
+    if (ws !== undefined) {
+      const shared = await once(workspaceSurfaces, options, `${ws.root}\0${outDir}`, () => surfaceWorkspace(input, ws, sdkArgs, pubGetFailed));
+      log.push(...shared.log);
+      out = shared.outputs.get(pkg.packageId);
+      if (out === undefined) diagnostics.push(`error: ${shared.error ?? 'dart-surface printed no output for this package'}`);
+      else diagnostics.push(`info: export surface from one dart-surface run with the ${ws.packages.length} package(s) of the pub workspace at ${ws.rootPath}`);
     } else {
-      diagnostics.push(`error: dart-surface exited with ${sp.code ?? sp.signal}: ${firstLine(sp.stderr) ?? ''}`);
+      const spec = surfaceSpec(input, pkg);
+      const surfaceArgs = [
+        'run', 'dart_surface',
+        '--repo-root', repoRoot,
+        '--package-root', spec.packageRoot,
+        '--package-id', spec.packageId,
+        ...(spec.packageName !== undefined ? ['--package-name', spec.packageName] : []),
+        ...sdkArgs,
+        '--org-packages', orgPubNames(input).join(','),
+        ...spec.entries.flatMap((e) => ['--entry', e]),
+        ...spec.nested.flatMap((d) => ['--nested', d]),
+        ...(pubGetFailed ? ['--pub-get-failed'] : []),
+      ];
+      const sp = await exec('dart', surfaceArgs, DART_SURFACE_DIR);
+      log.push(`$ dart ${surfaceArgs.join(' ')}  (cwd ${DART_SURFACE_DIR})`, '--- stderr', sp.stderr);
+      if (sp.code === 0) {
+        try {
+          out = JSON.parse(sp.stdout) as SurfaceOutput;
+        } catch (err) {
+          diagnostics.push(`error: dart-surface printed invalid JSON: ${(err as Error).message}`);
+        }
+      } else {
+        diagnostics.push(`error: dart-surface exited with ${sp.code ?? sp.signal}: ${firstLine(sp.stderr) ?? ''}`);
+      }
     }
     if (out === undefined) {
       status = 'failed';
@@ -571,6 +569,98 @@ async function indexWorkspace(repo: DiscoveredRepo, ws: PubWorkspace, outDir: st
     proc.stderr,
   ];
   return { proc, log };
+}
+
+/** The per-package arguments of dart-surface (one `--batch` entry). */
+interface SurfaceSpec {
+  packageRoot: string;
+  packageId: string;
+  packageName?: string;
+  /** Discover entry points, repo-relative POSIX. */
+  entries: string[];
+  /** Real paths of packages and ignored manifests strictly inside this one (their files are not ours). */
+  nested: string[];
+}
+
+function surfaceSpec(input: Pick<IndexerInput, 'repo'>, pkg: DiscoveredPackage): SurfaceSpec {
+  const { repo } = input;
+  const dir = realpathSync(packageDir(repo, pkg));
+  const nested = repo.packages
+    .map((p) => packageDir(repo, p))
+    .filter((d) => d !== packageDir(repo, pkg) && existsSync(d))
+    .map((d) => realpathSync(d))
+    .filter((d) => d.startsWith(dir + path.sep));
+  // Ignored manifests (examples, templates, fixtures) strictly inside this
+  // package are separate packages too: scip-dart does not index them, so an
+  // entry symbol or export found there could never match a definition.
+  const ignored = (repo.ignoredManifests ?? [])
+    .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
+    .filter((d) => existsSync(d))
+    .map((d) => realpathSync(d))
+    .filter((d) => d.startsWith(dir + path.sep) && !nested.includes(d));
+  return {
+    packageRoot: dir,
+    packageId: pkg.packageId,
+    ...(pkg.name !== null && pkg.name !== undefined ? { packageName: pkg.name } : {}),
+    entries: pkg.entryPoints,
+    nested: [...nested, ...ignored],
+  };
+}
+
+/** Pub names of every org package, sorted (dart-surface `--org-packages`). */
+function orgPubNames(input: Pick<IndexerInput, 'orgPackages'>): string[] {
+  return [...new Set(input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'pub' && p.name !== null && p.name !== undefined ? [p.name] : [])))].sort();
+}
+
+const workspaceSurfaces = new WeakMap<IndexerOptions, Map<string, Promise<{ outputs: Map<string, SurfaceOutput>; error?: string; log: string[] }>>>();
+
+/**
+ * One `dart_surface --batch` run for every package of the workspace (one
+ * analysis context collection: the workspace's libraries are resolved once,
+ * not once per package; ~13 s per flame package before). Outputs by package id.
+ */
+async function surfaceWorkspace(
+  input: IndexerInput,
+  ws: PubWorkspace,
+  sdkArgs: string[],
+  pubGetFailed: boolean,
+): Promise<{ outputs: Map<string, SurfaceOutput>; error?: string; log: string[] }> {
+  const { repo } = input;
+  const spec = {
+    repoRoot: realpathSync(repo.localPath),
+    ...(sdkArgs[1] !== undefined ? { sdkPath: sdkArgs[1] } : {}),
+    orgPackages: orgPubNames(input),
+    pubGetFailed,
+    packages: ws.packages.map((p) => surfaceSpec(input, p)),
+  };
+  const tmp = mkdtempSync(path.join(tmpdir(), 'sentei-surface-'));
+  const outputs = new Map<string, SurfaceOutput>();
+  try {
+    const file = path.join(tmp, 'batch.json');
+    writeFileSync(file, JSON.stringify(spec, null, 2));
+    const args = ['run', 'dart_surface', '--batch', file];
+    const started = Date.now();
+    const sp = await exec('dart', args, DART_SURFACE_DIR);
+    const log = [
+      `$ dart ${args.join(' ')}  (cwd ${DART_SURFACE_DIR}; one run for the ${spec.packages.length} package(s) of the workspace, ${((Date.now() - started) / 1000).toFixed(1)} s)`,
+      '--- batch', JSON.stringify(spec, null, 2),
+      '--- stderr', sp.stderr,
+    ];
+    if (sp.code !== 0) return { outputs, error: `dart-surface exited with ${sp.code ?? sp.signal}: ${firstLine(sp.stderr) ?? ''}`, log };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(sp.stdout);
+    } catch (err) {
+      return { outputs, error: `dart-surface printed invalid JSON: ${(err as Error).message}`, log };
+    }
+    if (!Array.isArray(parsed) || parsed.length !== spec.packages.length) {
+      return { outputs, error: `dart-surface --batch printed ${Array.isArray(parsed) ? parsed.length : 'no'} output(s) for ${spec.packages.length} package(s)`, log };
+    }
+    spec.packages.forEach((p, i) => outputs.set(p.packageId, parsed[i] as SurfaceOutput));
+    return { outputs, log };
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 /** Number of `.dart` files under the package's `lib/` (nested packages and dot dirs excluded). */
