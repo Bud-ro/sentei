@@ -2224,3 +2224,87 @@ describe('deep build-output imports of org packages (supabase dist/module/lib/ty
     });
   });
 });
+
+describe('fix round 3 (index error text, pnpm lockfile major)', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-round3-pm-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('D4: the error text leads with the first error line of stderr or stdout, never with ts-compat notes', () => {
+    const orb = {
+      stdout: 'error: no files got indexed. To fix this problem, make sure that the TypeScript projects ["/r"] contain input files or reference other projects.\n',
+      stderr: "sentei-ts-compat: tsconfig lib 'es2025' is newer than TypeScript 5.9.3 knows; read as 'esnext'\n",
+    };
+    expect(stderrTail(orb)).toBe(`: ${orb.stdout.trim()}`);
+    // The error is on stdout, stderr has other lines: the error comes first.
+    expect(stderrTail({ stderr: 'progress 1\nprogress 2\n', stdout: 'Scope: all 13 workspace projects\n ERR_PNPM_LOCKFILE_BREAKING_CHANGE  Lockfile not compatible\n' }))
+      .toBe(': ERR_PNPM_LOCKFILE_BREAKING_CHANGE  Lockfile not compatible | … | progress 1 | progress 2');
+    // Already shown: unchanged.
+    expect(stderrTail({ stderr: '', stdout: 'Scope: all\n[ERR_PNPM_OUTDATED_LOCKFILE] Cannot install\n' })).toBe(': Scope: all | [ERR_PNPM_OUTDATED_LOCKFILE] Cannot install');
+    // Beyond head and tail: the error line is brought forward.
+    const long = ['l1', 'l2', 'l3', 'l4', 'TypeError: boom', 'l6', 'l7', 'l8', 'l9', 'l10', 'l11'].join('\n');
+    expect(stderrTail({ stderr: long })).toBe(': TypeError: boom | … | l1 | l2 | l3 | … | l7 | l8 | l9 | l10 | l11');
+  });
+
+  describe('D6: a pnpm pin older than the lockfile (fake runner)', () => {
+    const execFlags = (): string[] => ['exec', '--yes', '--no-engine-strict', `--prefix=${path.join(root, '.pm/npm-exec-prefix')}`];
+    function repo(name: string, files: Record<string, string>): string {
+      const dir = path.join(root, 'pm', name);
+      mkdirSync(dir, { recursive: true });
+      for (const [f, body] of Object.entries(files)) writeFileSync(path.join(dir, f), body);
+      return dir;
+    }
+    const breaking = (fail: (cmd: string, args: string[]) => boolean, calls: Array<[string, string[]]>, missing: string[] = []): Runner =>
+      async (cmd, args): Promise<ExecResult> => {
+        calls.push([cmd, args]);
+        if (missing.includes(cmd)) return { code: -1, signal: null, stdout: '', stderr: `spawn ${cmd} ENOENT\n`, errno: 'ENOENT', errorMessage: `spawn ${cmd} ENOENT` };
+        if (fail(cmd, args)) {
+          return { code: 1, signal: null, stdout: 'Scope: all 13 workspace projects\n ERR_PNPM_LOCKFILE_BREAKING_CHANGE  Lockfile /x/pnpm-lock.yaml not compatible with current pnpm\n', stderr: '' };
+        }
+        return { code: 0, signal: null, stdout: '', stderr: '' };
+      };
+
+    it('runs the lockfile major up front when the pinned major is older (supabase/auth-helpers)', async () => {
+      const dir = repo('auth-helpers', {
+        'package.json': JSON.stringify({ name: 'x', packageManager: 'pnpm@7.1.7' }),
+        'pnpm-lock.yaml': "lockfileVersion: '6.0'\n",
+      });
+      const calls: Array<[string, string[]]> = [];
+      const diagnostics: string[] = [];
+      expect(await install(dir, dir, diagnostics, [], breaking(() => false, calls, ['pnpm']), root)).toBe(true);
+      expect(calls[1]![1].slice(0, 5)).toEqual([...execFlags(), '--package=pnpm@8']);
+      expect(diagnostics[0]).toBe(
+        "info: pnpm 7.1.7 (from packageManager in package.json) is older than the major that wrote pnpm-lock.yaml (8, from lockfileVersion 6.0 in pnpm-lock.yaml); a fallback runs pnpm@8",
+      );
+    });
+
+    it('retries once at the lockfile major on ERR_PNPM_LOCKFILE_BREAKING_CHANGE, and only once', async () => {
+      const dir = repo('on-path', { 'package.json': JSON.stringify({ name: 'x' }), 'pnpm-lock.yaml': "lockfileVersion: '9.0'\n" });
+      const calls: Array<[string, string[]]> = [];
+      const diagnostics: string[] = [];
+      // pnpm on PATH is too old: it fails; the retry at pnpm@9 succeeds.
+      expect(await install(dir, dir, diagnostics, [], breaking((cmd) => cmd === 'pnpm', calls), root)).toBe(true);
+      expect(calls.map(([c]) => c)).toEqual(['pnpm', 'npm']);
+      expect(calls[1]![1].slice(0, 5)).toEqual([...execFlags(), '--package=pnpm@9']);
+      expect(diagnostics[0]).toBe(
+        'info: pnpm cannot read pnpm-lock.yaml (ERR_PNPM_LOCKFILE_BREAKING_CHANGE); retrying with npm exec --yes --package=pnpm@9 (version 9 from lockfileVersion 9.0 in pnpm-lock.yaml)',
+      );
+      // Still failing at the lockfile major: no second retry, the error says why.
+      const calls2: Array<[string, string[]]> = [];
+      const d2: string[] = [];
+      expect(await install(dir, dir, d2, [], breaking(() => true, calls2), root)).toBe(false);
+      expect(calls2).toHaveLength(2);
+      expect(d2[1]).toMatch(/^error: npm exec .*--package=pnpm@9 -- pnpm install .* exited with code 1: Scope: all 13 workspace projects \| ERR_PNPM_LOCKFILE_BREAKING_CHANGE/);
+      // Other failures are not retried.
+      const calls3: Array<[string, string[]]> = [];
+      const other: Runner = async (cmd, args) => {
+        calls3.push([cmd, args]);
+        return { code: 1, signal: null, stdout: ' ERR_PNPM_OUTDATED_LOCKFILE  Cannot install\n', stderr: '' };
+      };
+      expect(await install(dir, dir, [], [], other, root)).toBe(false);
+      expect(calls3).toHaveLength(1);
+    });
+  });
+});

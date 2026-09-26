@@ -610,7 +610,13 @@ export async function runSurfaceWorker(
  * followed by a long stack), the tail the final verdict. Each part is capped
  * at `max / 2` characters (the head keeps its start, the tail its end).
  * stdout is used when stderr is empty (pnpm prints its errors on stdout); ''
- * when both are empty.
+ * when both are empty. `sentei-ts-compat:` lines (our preload's notes, already
+ * `info:` diagnostics) are never part of it.
+ *
+ * When neither shown part holds the first error-looking line (ERROR_LINE) of
+ * stderr, else of stdout, that line comes first: `: <error> | … | <lines>`.
+ * orb-sync-engine's root showed the two ts-compat notes from stderr while the
+ * cause, `error: no files got indexed`, was on stdout.
  */
 export function stderrTail(
   proc: Pick<ExecResult, 'stderr'> & Partial<Pick<ExecResult, 'stdout'>>,
@@ -622,21 +628,32 @@ export function stderrTail(
     s
       .split(/\r?\n/)
       .map((l) => l.trim())
-      .filter((l) => l !== '');
-  let lines = nonEmpty(proc.stderr);
-  if (lines.length === 0) lines = nonEmpty(proc.stdout ?? '');
+      .filter((l) => l !== '' && !l.startsWith('sentei-ts-compat: '));
+  const errLines = nonEmpty(proc.stderr);
+  const outLines = nonEmpty(proc.stdout ?? '');
+  const lines = errLines.length > 0 ? errLines : outLines;
+  const firstError = errLines.find((l) => ERROR_LINE.test(l)) ?? outLines.find((l) => ERROR_LINE.test(l));
   if (lines.length === 0) return '';
   const half = Math.floor(max / 2);
+  const cap = (s: string): string => (s.length > half ? `${s.slice(0, half)}…` : s);
+  const lead = (shown: readonly string[]): string =>
+    firstError !== undefined && !shown.includes(firstError) ? `${cap(firstError)} | … | ` : '';
   if (lines.length <= head + tail) {
     const all = lines.join(' | ');
-    return `: ${all.length > max ? `${all.slice(0, half)}…${all.slice(all.length - half)}` : all}`;
+    return `: ${lead(lines)}${all.length > max ? `${all.slice(0, half)}…${all.slice(all.length - half)}` : all}`;
   }
   let first = lines.slice(0, head).join(' | ');
   let last = lines.slice(-tail).join(' | ');
   if (first.length > half) first = `${first.slice(0, half)}…`;
   if (last.length > half) last = `…${last.slice(last.length - half)}`;
-  return `: ${first} | … | ${last}`;
+  return `: ${lead([...lines.slice(0, head), ...lines.slice(-tail)])}${first} | … | ${last}`;
 }
+
+/**
+ * A line that reports an error: an `error` word (`error:`, `npm error`, `error TS2307`),
+ * a pnpm `ERR_PNPM_*` / node `ERR_*` code, an `XxxError` name, an npm `E<CODE>` errno.
+ */
+const ERROR_LINE = /\b(?:error|ERROR|Error)\b|\bERR_[A-Z0-9_]+|\b[A-Z]\w*Error\b|\bE[A-Z]{4,}\b/;
 
 /**
  * The environment of every install subprocess: all global, state and cache
@@ -728,7 +745,18 @@ export async function install(
       }
       log.push(`# install env (hermetic, under ${path.resolve(workDir, '.pm')}): ${keys.join(', ')}`);
       // The version to fall back to; for yarn it also picks classic or berry flags.
-      const want = pm === 'npm' ? undefined : packageManagerVersion(repoRoot, d, pm, lockfile);
+      let want = pm === 'npm' ? undefined : packageManagerVersion(repoRoot, d, pm, lockfile);
+      // pnpm: the major that wrote the lockfile. An older pinned major cannot read it
+      // (auth-helpers: packageManager pnpm@7.1.7, lockfileVersion '6.0' from pnpm 8 →
+      // ERR_PNPM_LOCKFILE_BREAKING_CHANGE), so the fallback runs the lockfile's major.
+      const lockPin = pm === 'pnpm' ? lockfileMajor(path.join(d, lockfile), lockfile) : undefined;
+      if (want !== undefined && lockPin !== undefined && majorOf(want.version) !== undefined && majorOf(want.version)! < majorOf(lockPin.version)!) {
+        diagnostics.push(
+          `info: pnpm ${want.version} (${want.source}) is older than the major that wrote ${lockfile} ` +
+            `(${lockPin.version}, ${lockPin.source}); a fallback runs pnpm@${lockPin.version}`,
+        );
+        want = lockPin;
+      }
       const args = installArgs(pm, want?.version, pnpmStoreDir(workDir));
       // Windows: npm/pnpm/yarn are .cmd shims and need a shell.
       const shell = process.platform === 'win32';
@@ -750,6 +778,25 @@ export async function install(
         // forced reinstall). So the prefix is an empty dir in the work dir: no
         // package.json, no devEngines check. The command still runs in `d`
         // (npm exec's run path is the cwd), and pnpm@x lands in npm's npx cache.
+        const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
+        mkdirSync(execPrefix, { recursive: true });
+        cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...args];
+        proc = await run(cmd, cmdArgs, d, env, shell);
+        log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+      }
+      // A pnpm (on PATH, or the pinned one) that cannot read the lockfile: once more at
+      // the lockfile's major, through npm exec.
+      if (
+        lockPin !== undefined && proc.errno === undefined && proc.code !== 0 &&
+        /ERR_PNPM_LOCKFILE_BREAKING_CHANGE/.test(`${proc.stdout}\n${proc.stderr}`) &&
+        !cmdArgs.includes(`--package=pnpm@${lockPin.version}`)
+      ) {
+        const fb = npmExecFallback('pnpm', lockPin.version);
+        diagnostics.push(
+          `info: ${cmd === 'npm' ? cmdArgs.find((a) => a.startsWith('--package='))!.slice('--package='.length) : 'pnpm'} cannot read ${lockfile} ` +
+            `(ERR_PNPM_LOCKFILE_BREAKING_CHANGE); retrying with npm exec --yes --package=${fb.spec} (version ${lockPin.version} ${lockPin.source})`,
+        );
+        cmd = 'npm';
         const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
         mkdirSync(execPrefix, { recursive: true });
         cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...args];
@@ -891,6 +938,27 @@ export function pinnedVersion(pm: Exclude<PackageManager, 'npm'>, lockfile: stri
     return { version: v >= 7 ? '4' : v >= 5 ? '3' : '2', source: `from __metadata.version ${v} in ${lockfile}` };
   }
   return { version: '1', source: `from ${lockfile}` };
+}
+
+/** The leading major of a version or range (`7.1.7` → 7, `^8` → 8), or undefined. */
+function majorOf(version: string): number | undefined {
+  const m = /^[\s^~>=v]*(\d+)/.exec(version);
+  return m === null ? undefined : Number(m[1]);
+}
+
+/**
+ * The pnpm major that wrote `file` (pinnedVersion), or undefined when the lockfile
+ * names no version sentei knows or cannot be read.
+ */
+function lockfileMajor(file: string, lockfile: string): { version: string; source: string } | undefined {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+  const pin = pinnedVersion('pnpm', lockfile, text);
+  return pin.source.startsWith('default major') ? undefined : pin;
 }
 
 /**
