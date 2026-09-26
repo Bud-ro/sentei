@@ -462,10 +462,13 @@ class Surface {
   /// Consumer checks over every own file (libraries and parts), plus analyzer errors.
   Future<void> _checkOwnFiles() async {
     // Every context's files: in a batch the package's files need not all be
-    // in the context of its root (see [sessionFor]).
+    // in the context of its root (see [sessionFor]). Plus the files the
+    // analyzer excludes (analysis_options.yaml `analyzer: exclude:`) in the
+    // package's conventional dirs, which scip-dart indexes too (fork patch 10).
     final files = <String>{
       for (final c in collection.contexts)
         ...c.contextRoot.analyzedFiles().where((f) => f.endsWith('.dart') && isOwnFile(f)),
+      ..._conventionDartFiles().where(isOwnFile),
     }.toList()
       ..sort();
     var errorCount = 0;
@@ -526,6 +529,49 @@ class Surface {
       diagnostics.add('warn: $errorCount Dart analyzer error diagnostic(s) in the package (status unaffected)');
       diagnostics.addAll(reported);
     }
+  }
+
+  /// Top-level dirs whose Dart files scip-dart always indexes (its
+  /// `conventionDirs`, fork patch 10), analyzer excludes or not.
+  static const _conventionDirs = [
+    'lib',
+    'bin',
+    'test',
+    'example',
+    'tool',
+    'benchmark',
+    'web',
+    'integration_test',
+    'test_driver',
+  ];
+
+  /// Every `.dart` file under the package's [_conventionDirs] (dot dirs,
+  /// `build/` dirs and symlinked dirs skipped), absolute and normalized.
+  List<String> _conventionDartFiles() {
+    final out = <String>[];
+    void walk(Directory dir) {
+      final List<FileSystemEntity> entries;
+      try {
+        entries = dir.listSync(followLinks: false);
+      } on FileSystemException {
+        return;
+      }
+      for (final e in entries) {
+        final name = p.basename(e.path);
+        if (e is Directory) {
+          if (name.startsWith('.') || name == 'build') continue;
+          walk(e);
+        } else if (name.endsWith('.dart') && (e is File || (e is Link && File(e.path).existsSync()))) {
+          out.add(p.normalize(e.path));
+        }
+      }
+    }
+
+    for (final d in _conventionDirs) {
+      final dir = Directory(p.join(packageRoot, d));
+      if (dir.existsSync()) walk(dir);
+    }
+    return out;
   }
 
   static int _byPosition(Map<String, Object> a, Map<String, Object> b) {

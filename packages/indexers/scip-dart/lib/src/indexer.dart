@@ -1,5 +1,9 @@
 // Modified by sentei (see PATCHES.md); original: Workiva/scip-dart 1.7.0, Apache-2.0.
 
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:analyzer/dart/analysis/analysis_context.dart';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:path/path.dart' as p;
@@ -107,17 +111,41 @@ Future<void> indexPackages(
 
     // only index dart files of the current dart package, to index nested
     // packages, scip indexing can simply be re-run for that nested package
-    final files =
-        analyzedFiles
-            .where((file) => p.isWithin(dirPath, file))
-            .where(
-              (file) =>
-                  !nestedPackages.any((nested) => p.isWithin(nested, file)),
-            )
-            .toList()
-          ..sort();
+    final analyzed = analyzedFiles
+        .where((file) => p.isWithin(dirPath, file))
+        .where(
+          (file) => !nestedPackages.any((nested) => p.isWithin(nested, file)),
+        )
+        .toSet();
+    // Files the analyzer skips (`analyzer: exclude:` in analysis_options.yaml)
+    // are still code of the package: generated bindings, test fixtures. Their
+    // references must not vanish, so every Dart file of the package's
+    // conventional dirs is indexed, excluded or not (sentei patch 10).
+    final extra = conventionDartFiles(dirPath, nestedPackages)
+        .where((file) => !analyzed.contains(file))
+        .toSet();
+    final files = [...analyzed, ...extra]..sort();
 
     final resolvedUnits = await _resolveByLibrary(collection, files);
+    final resolvedPaths = {for (final unit in resolvedUnits) unit.path};
+    final unresolved = files.where((f) => !resolvedPaths.contains(f)).toList();
+    if (extra.isNotEmpty || unresolved.isNotEmpty) {
+      // One machine-readable line per package for the caller (sentei's
+      // adapter): files indexed beyond the analyzer's analyzedFiles(), and
+      // files that could not be resolved (their references are unknown).
+      stderr.writeln(
+        'sentei-scip-dart: ${jsonEncode({
+          'package': dirPath,
+          'excludedIndexed': [
+            for (final f in extra)
+              if (resolvedPaths.contains(f)) p.posix.joinAll(p.split(p.relative(f, from: dirPath))),
+          ]..sort(),
+          'unresolved': [
+            for (final f in unresolved) p.posix.joinAll(p.split(p.relative(f, from: dirPath))),
+          ]..sort(),
+        })}',
+      );
+    }
 
     if (Flags.instance.performance) {
       print('Analyzing Source took: ${st.elapsedMilliseconds}ms');
@@ -164,6 +192,73 @@ Future<void> indexPackages(
   }
 }
 
+/// Top-level dirs of a pub package whose Dart files are always indexed,
+/// whatever the analyzer excludes.
+const conventionDirs = [
+  'lib',
+  'bin',
+  'test',
+  'example',
+  'tool',
+  'benchmark',
+  'web',
+  'integration_test',
+  'test_driver',
+];
+
+/// Every `.dart` file under [dirPath]'s [conventionDirs], absolute and
+/// normalized, except in dot dirs, `build/` dirs, symlinked dirs and
+/// [nestedPackages].
+List<String> conventionDartFiles(String dirPath, List<String> nestedPackages) {
+  final out = <String>[];
+  void walk(Directory dir) {
+    final path = p.normalize(dir.path);
+    if (nestedPackages.any((n) => n == path || p.isWithin(n, path))) return;
+    final List<FileSystemEntity> entries;
+    try {
+      entries = dir.listSync(followLinks: false);
+    } on FileSystemException {
+      return;
+    }
+    for (final e in entries) {
+      final name = p.basename(e.path);
+      if (e is Directory) {
+        if (name.startsWith('.') || name == 'build') continue;
+        walk(e);
+      } else if (name.endsWith('.dart') &&
+          (e is File || (e is Link && File(e.path).existsSync()))) {
+        out.add(p.normalize(e.path));
+      }
+    }
+  }
+
+  for (final d in conventionDirs) {
+    final dir = Directory(p.join(dirPath, d));
+    if (dir.existsSync()) walk(dir);
+  }
+  return out;
+}
+
+/// The context that analyzes [file], or, for a file no context analyzes
+/// (excluded by analysis_options.yaml), the context with the deepest root
+/// containing it: the analyzer resolves any file of its root on request.
+/// Null when no context root contains the file (it is then left unresolved).
+AnalysisContext? _contextFor(AnalysisContextCollection collection, String file) {
+  try {
+    return collection.contextFor(file);
+  } on StateError {
+    AnalysisContext? best;
+    for (final c in collection.contexts) {
+      final root = p.normalize(c.contextRoot.root.path);
+      if (root != file && !p.isWithin(root, file)) continue;
+      if (best == null || root.length > best.contextRoot.root.path.length) {
+        best = c;
+      }
+    }
+    return best;
+  }
+}
+
 /// Resolves [files] library by library, in [files] order: each library file
 /// with `getResolvedLibrary`, whose units include its parts, so a part is
 /// always analysed in its library's context. Resolving a part on its own
@@ -189,7 +284,8 @@ Future<List<ResolvedUnitResult>> _resolveByLibrary(
 
   await Future.wait(
     files.map((file) async {
-      final session = collection.contextFor(file).currentSession;
+      final session = _contextFor(collection, file)?.currentSession;
+      if (session == null) return;
       final kind = session.getFile(file);
       if (kind is FileResult && kind.isLibrary) {
         take(await session.getResolvedLibrary(file));
@@ -202,7 +298,8 @@ Future<List<ResolvedUnitResult>> _resolveByLibrary(
   }
   await Future.wait(
     leftover.map((file) async {
-      final session = collection.contextFor(file).currentSession;
+      final session = _contextFor(collection, file)?.currentSession;
+      if (session == null) return;
       take(await session.getResolvedLibraryContaining(file));
       if (units.containsKey(file)) return;
       final unit = await session.getResolvedUnit(file);

@@ -1,0 +1,5 @@
+# Phase 2 fix round 3: generated code the analyzer is told to skip
+# (dart-lang cronet_http lib/src/jni/jni_bindings.dart). scip-dart indexes it anyway.
+analyzer:
+  exclude:
+    - lib/src/excluded/**

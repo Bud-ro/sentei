@@ -2,6 +2,7 @@
   "conditionalImports": [],
   "entryPoints": [
     "lib/acme_x.dart",
+    "lib/bindings.dart",
     "lib/builder.dart",
     "lib/extras/extras.dart",
     "lib/mocks/fake_clock.dart",
@@ -145,6 +146,15 @@
       "file": "lib/acme_x.dart",
       "line": 12,
       "name": "usedFn",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/bindings.dart",
+      "exportedAs": "bindingsCall",
+      "file": "lib/src/excluded/bindings_gen.dart",
+      "line": 6,
+      "name": "bindingsCall",
       "sites": []
     },
     {

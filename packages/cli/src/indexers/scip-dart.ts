@@ -6,7 +6,8 @@
 //     valid symbols for operators, nameless elements and import prefixes;
 //     no occurrences for dartdoc `[Name]` links; `--package`, one run for the
 //     packages of a pub workspace; every analysis context's files; files
-//     resolved library by library; operator expressions are references);
+//     resolved library by library; operator expressions are references;
+//     files the analyzer excludes are indexed too);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar
 //     (`--batch`: every package of a pub workspace in one run).
@@ -88,7 +89,9 @@ export const scipDart: Indexer = {
   // `conditionalImports`; build_runner for missing generated parts;
   // dart-surface once per pub workspace (`--batch`).
   // sentei.10: every public library (lib/**, not lib/src/) is a discover entry
-  // point, so dart-surface computes its export surface.
+  // point, so dart-surface computes its export surface; dart-surface: the main
+  // of every library is an entry symbol; fork patch 10 (files the analyzer
+  // excludes are indexed; an unresolvable file makes the package partial).
   version: '1.7.0+sentei.10',
 
   detect({ repo, pkg }) {
@@ -217,6 +220,19 @@ export const scipDart: Indexer = {
       status = 'failed';
       const why = firstLine(proc.stderr);
       diagnostics.push(`error: scip-dart exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
+    } else {
+      // Fork patch 10: files the analyzer excludes are indexed anyway; one
+      // that does not resolve leaves its references unknown (fail closed).
+      const files = scipDartFileReport(proc.stderr, dir);
+      if (files.excludedIndexed.length > 0) {
+        diagnostics.push(
+          `info: scip-dart indexed ${files.excludedIndexed.length} file(s) beyond the analyzer's analyzedFiles() (analysis_options.yaml analyzer: exclude:): ${listSome(files.excludedIndexed)}`,
+        );
+      }
+      if (files.unresolved.length > 0) {
+        status = worstStatus(status, 'partial');
+        diagnostics.push(`error: scip-dart could not resolve ${files.unresolved.length} file(s); references in them are unknown: ${listSome(files.unresolved)}`);
+      }
     }
     if (!existsSync(scipFile) || statSync(scipFile).size === 0) {
       status = 'failed';
@@ -663,6 +679,32 @@ async function surfaceWorkspace(
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+/**
+ * The per-package file report scip-dart (fork patch 10) writes to stderr as
+ * `sentei-scip-dart: {"package": <abs dir>, "excludedIndexed": [...], "unresolved": [...]}`
+ * (package-relative POSIX paths), for the package in `dir` (real absolute path).
+ * Absent (nothing excluded, everything resolved): both empty.
+ */
+export function scipDartFileReport(stderr: string, dir: string): { excludedIndexed: string[]; unresolved: string[] } {
+  for (const line of stderr.split('\n')) {
+    if (!line.startsWith('sentei-scip-dart: ')) continue;
+    try {
+      const r = JSON.parse(line.slice('sentei-scip-dart: '.length)) as { package?: unknown; excludedIndexed?: unknown; unresolved?: unknown };
+      if (typeof r.package !== 'string' || path.resolve(r.package) !== path.resolve(dir)) continue;
+      const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+      return { excludedIndexed: strings(r.excludedIndexed), unresolved: strings(r.unresolved) };
+    } catch {
+      continue;
+    }
+  }
+  return { excludedIndexed: [], unresolved: [] };
+}
+
+/** The first few items of a list, comma-separated, with a count of the rest. */
+function listSome(items: readonly string[], max = 5): string {
+  return items.length <= max ? items.join(', ') : `${items.slice(0, max).join(', ')} (+${items.length - max} more)`;
 }
 
 /** Number of `.dart` files under the package's `lib/` (nested packages and dot dirs excluded). */

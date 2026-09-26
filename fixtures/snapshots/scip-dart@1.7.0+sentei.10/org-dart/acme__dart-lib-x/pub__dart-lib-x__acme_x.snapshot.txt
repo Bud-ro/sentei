@@ -54,10 +54,9 @@
 //    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/unusedFn(). enclosing [15:0-15:20]
 
   // Expected: alive, no finding (private, never exported; reachable via usedFn).
-  int _privateFn() => inExample();
+  int _privateFn() => 1;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_privateFn(). enclosing [18:0-18:32]
-//                    ^^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/inExample().
+//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_privateFn(). enclosing [18:0-18:22]
 
   // Expected: private_dead, reasons ["already_unreachable"] (island with _islandB, reached by nothing).
   // ignore: unused_element
@@ -98,36 +97,11 @@
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/docOnly(). enclosing [37:0-37:19]
 
-  // Expected: needs_review, reasons ["no_refs", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:8 (member loadAcme)"].
-  // Used only through its member, `'logo'.loadAcme()`, by the example app (an ignored
-  // manifest): the witness searches an extension's member names too.
-  extension AcmeLoader on String {
-//          ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeLoader# enclosing [42:0-45:1]
-//                        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-    // Expected: no finding (a member of an extension; not exported on its own).
-    String loadAcme() => 'acme:$this';
-//  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-//         ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeLoader#loadAcme(). enclosing [44:2-44:36]
-  }
-
-  // Expected: deletion_candidate, reasons ["no_refs"]. Its only member `sq` is shorter
-  // than 3 characters, so the witness does not search it: the example's local `sq` is
-  // not a hit.
-  extension AcmeTiny on int {
-//          ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeTiny# enclosing [50:0-53:1]
-//                      ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-    // Expected: no finding (member of an extension).
-    int get sq => this * this;
-//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//          ^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeTiny#`<get>sq`. enclosing [52:2-52:28]
-  }
-
-  // Expected: needs_review, reasons ["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest example/pubspec.yaml)"].
-  // Used inside acme_x only (by _privateFn), so an unexport by the index; the example
-  // app (an ignored manifest, never indexed) names it, which the witness reports.
-  int inExample() => 1;
-//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/inExample(). enclosing [58:0-58:21]
+## lib/bindings.dart
+  // Entry that re-exports generated bindings the analyzer excludes
+//^ definition scip-dart pub acme_x . lib/`bindings.dart`/
+  // (analysis_options.yaml `exclude: [lib/src/excluded/**]`). Phase 2 fix round 3.
+  export 'src/excluded/bindings_gen.dart';
 
 ## lib/builder.dart
   // build_runner builder library, named by build.yaml (`import:`). A real
@@ -176,6 +150,29 @@
 //      ^^^ definition scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/FakeClock#now(). enclosing [7:2-7:26]
 //               ^^^^^^^^ reference scip-dart pub acme_x . lib/src/`wire_test.dart`/wireTick().
   }
+
+## lib/src/bindings_backend.dart
+  // Not exported: used only by the analyzer-excluded lib/src/excluded/bindings_gen.dart.
+//^ definition scip-dart pub acme_x . lib/src/`bindings_backend.dart`/
+
+  // Expected: alive, no finding (reached from bindingsCall; without the excluded
+  // file in the index: private_dead already_unreachable).
+  int bindingsBackend() => 3;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`bindings_backend.dart`/bindingsBackend(). enclosing [4:0-4:27]
+
+## lib/src/excluded/bindings_gen.dart
+  // Generated-style bindings, excluded from analysis by analysis_options.yaml.
+//^ definition scip-dart pub acme_x . lib/src/excluded/`bindings_gen.dart`/
+  // scip-dart used to index only the analyzer's analyzedFiles(), so this file and
+  // its references vanished (fail-open). Phase 2 fix round 3 (fork patch 10).
+  import '../bindings_backend.dart';
+
+  // Expected: alive, no finding (external ref from acme_app bin/clock.dart).
+  int bindingsCall() => bindingsBackend();
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/excluded/`bindings_gen.dart`/bindingsCall(). enclosing [6:0-6:40]
+//                      ^^^^^^^^^^^^^^^ reference scip-dart pub acme_x . lib/src/`bindings_backend.dart`/bindingsBackend().
 
 ## lib/src/impl.dart
   // Re-exported whole by lib/acme_x.dart (`export 'src/impl.dart';`).

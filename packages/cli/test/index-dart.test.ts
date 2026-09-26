@@ -24,6 +24,7 @@ import {
   pubWorkspaceOf,
   SCIP_DART_DIR,
   scipDart,
+  scipDartFileReport,
   setFlutterSdkForTests,
   workspaceRootOf,
   writeOverrides,
@@ -190,7 +191,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(s.unresolvedImports).toEqual([]);
     // `void main() {` on line 10: the runtime calls it, nothing references it.
     expect(s.entrySymbols).toEqual([
-      { name: 'main', file: 'bin/clock.dart', line: 6, col: 5, kind: 'runtime' },
+      { name: 'main', file: 'bin/clock.dart', line: 8, col: 5, kind: 'runtime' },
       { name: 'main', file: 'bin/main.dart', line: 9, col: 5, kind: 'runtime' },
       { name: 'main', file: 'bin/shapes.dart', line: 4, col: 5, kind: 'runtime' },
     ]);
@@ -253,6 +254,21 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(line).toContain('[docOnly]');
     expect(entry.occurrences.filter((o) => o.range[0] === 31)).toEqual([]);
     expect(entry.occurrences.filter((o) => o.symbol === docOnly).map((o) => [o.range[0], o.symbolRoles & 1])).toEqual([[37, 1]]);
+  });
+
+  it('indexes files the analyzer excludes (analysis_options.yaml), with their references (fork patch 10)', () => {
+    const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));
+    const gen = lib.documents.find((d) => d.relativePath === 'lib/src/excluded/bindings_gen.dart');
+    expect(gen, lib.documents.map((d) => d.relativePath).join('\n')).toBeDefined();
+    const refs = gen!.occurrences.filter((o) => (o.symbolRoles & 1) === 0).map((o) => o.symbol);
+    expect(refs).toContain('scip-dart pub acme_x 1.0.0 lib/src/`bindings_backend.dart`/bindingsBackend().');
+    const r = ix('dart-lib-x').packages[0]!;
+    expect(r.status).toBe('ok');
+    expect(r.diagnostics).toContain(
+      "info: scip-dart indexed 1 file(s) beyond the analyzer's analyzedFiles() (analysis_options.yaml analyzer: exclude:): lib/src/excluded/bindings_gen.dart",
+    );
+    // Packages without excludes say nothing about it.
+    expect(ix('dart-app').packages[0]!.diagnostics.some((d) => d.includes('analyzedFiles'))).toBe(false);
   });
 
   it('gives private declarations global symbols (patched scip-dart), consumer refs carry the lib symbols', () => {
@@ -1089,26 +1105,49 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     ]);
   }, 300_000);
 
-  it('a package with Dart files under lib/ but no lib/ document in its index fails (never ok)', async () => {
-    // flame-engine/tiled.dart: scip-dart indexed none of packages/tiled/lib, the
-    // package came out ok, and its consumers produced 451 false version-skew rows.
-    // Here the analyzer is told to skip lib/ (analysis_options exclude).
+  it('indexes files the analyzer excludes, lib/ included, and reports them (fork patch 10)', async () => {
+    // flame-engine/tiled.dart had no lib/ document at all (fork patch 7); here the
+    // analyzer is told to skip lib/ and test/fixtures/ (analysis_options exclude), as
+    // dart-lang excludes generated bindings and test fixtures: scip-dart indexes them
+    // anyway, and the adapter's "no lib/ document" failure (kept for any other cause)
+    // stays off.
     write({
       'nolib/pubspec.yaml': pubspec('acme_nolib', '1.0.0'),
-      'nolib/analysis_options.yaml': 'analyzer:\n  exclude:\n    - lib/**\n',
+      'nolib/analysis_options.yaml': 'analyzer:\n  exclude:\n    - lib/**\n    - test/fixtures/**\n',
       'nolib/lib/acme_nolib.dart': 'int a() => 1;\n',
-      'nolib/bin/main.dart': 'void main() {}\n',
+      'nolib/bin/main.dart': "import 'package:acme_nolib/acme_nolib.dart';\n\nvoid main() => print(a());\n",
+      'nolib/test/fixtures/context.dart': "import 'package:acme_nolib/acme_nolib.dart';\n\nvoid main() => print(a());\n",
+      'nolib/test/fixtures/.hidden/skip.dart': 'void main() {}\n',
     });
     const repos = [repoOf(root, 'nolib', pubPackage('acme_nolib', ['lib/acme_nolib.dart']))];
     repos[0]!.localPath = path.join(root, 'nolib');
     const out = path.join(root, 'out-nolib');
     mkdirSync(out);
     const r = await scipDart.run(inputFor(repos, repos[0]!), out);
-    expect(r.status).toBe('failed');
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
     expect(r.diagnostics).toContain(
-      'error: scip-dart indexed none of the 1 Dart file(s) under lib/ (the analyzer did not cover lib/); the index is incomplete',
+      "info: scip-dart indexed 2 file(s) beyond the analyzer's analyzedFiles() (analysis_options.yaml analyzer: exclude:): lib/acme_nolib.dart, test/fixtures/context.dart",
     );
+    const docs = readScipIndex(r.scipFile!).documents;
+    expect(docs.map((d) => d.relativePath).sort()).toEqual(['bin/main.dart', 'lib/acme_nolib.dart', 'test/fixtures/context.dart']);
+    const a = 'scip-dart pub acme_nolib 1.0.0 lib/`acme_nolib.dart`/a().';
+    expect(docs.find((d) => d.relativePath === 'test/fixtures/context.dart')!.occurrences.some((o) => o.symbol === a)).toBe(true);
+    // dart-surface computes the surface of the excluded entry as usual.
+    const sidecar = readJson<ExportsSidecar>(out, 'pub__acme_nolib.exports.json');
+    expect(sidecar.exports.map((e) => e.name)).toEqual(['a']);
   }, 300_000);
+
+  it('reads the per-package file report scip-dart writes to stderr (fork patch 10)', () => {
+    const stderr = [
+      'some analyzer noise',
+      'sentei-scip-dart: {"package":"/r/ws/packages/a","excludedIndexed":["lib/src/gen.dart"],"unresolved":[]}',
+      'sentei-scip-dart: {"package":"/r/ws/packages/b","excludedIndexed":[],"unresolved":["test/broken.dart"]}',
+      'sentei-scip-dart: {not json',
+    ].join('\n');
+    expect(scipDartFileReport(stderr, '/r/ws/packages/a')).toEqual({ excludedIndexed: ['lib/src/gen.dart'], unresolved: [] });
+    expect(scipDartFileReport(stderr, '/r/ws/packages/b')).toEqual({ excludedIndexed: [], unresolved: ['test/broken.dart'] });
+    expect(scipDartFileReport(stderr, '/r/ws/packages/c')).toEqual({ excludedIndexed: [], unresolved: [] });
+  });
 
   it('a missing part only makes the package partial in lib/ or bin/, not in web/ demo code', async () => {
     // over_react: 19 ungenerated `*.over_react.g.dart` parts under web/ made the whole package partial.

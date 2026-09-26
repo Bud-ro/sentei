@@ -4,18 +4,21 @@
 ## bin/clock.dart
   // Entry point of acme_app (bin/): uses acme_x's test-support API from lib/mocks/,
 //^ definition scip-dart pub acme_app . bin/`clock.dart`/
-  // and a public library in a subdirectory of lib/ (lib/extras/).
+  // a public library in a subdirectory of lib/ (lib/extras/), and bindings the
+  // analyzer excludes in acme_x (lib/bindings.dart -> lib/src/excluded/).
+  import 'package:acme_x/bindings.dart';
   import 'package:acme_x/extras/extras.dart';
   import 'package:acme_x/testing.dart';
 
   // Expected: alive, no finding (bin/ entry point).
   void main() {
-//     ^^^^ definition scip-dart pub acme_app . bin/`clock.dart`/main(). enclosing [6:0-8:1]
-    print(FakeClock().now() + extrasUsed());
+//     ^^^^ definition scip-dart pub acme_app . bin/`clock.dart`/main(). enclosing [8:0-10:1]
+    print(FakeClock().now() + extrasUsed() + bindingsCall());
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^^^^ reference scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/FakeClock#`<constructor>`().
 //                    ^^^ reference scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/FakeClock#now().
 //                            ^^^^^^^^^^ reference scip-dart pub acme_x . lib/extras/`extras.dart`/extrasUsed().
+//                                           ^^^^^^^^^^^^ reference scip-dart pub acme_x . lib/src/excluded/`bindings_gen.dart`/bindingsCall().
   }
 
 ## bin/main.dart
