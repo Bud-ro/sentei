@@ -1314,6 +1314,69 @@ failing `pub get`s. Failures that are real repo problems: dart_ci's pre-2.12 SDK
 bounds, flute's `meta` pin, and one scip-dart crash on jnigen test data
 (`symbol_generator.dart:252`, still open).
 
+### Phase 2 verification reruns (after fix rounds 1–4)
+
+Each org was rerun from a frozen `git archive` copy of the tool (link
+`packages/cli/node_modules` and make `@sentei/*` resolve inside the copy: the
+root `node_modules` carries TypeScript 7, and a live `@sentei/core` link moves
+under a running pipeline), with the first run's config and lockfile pins, and
+spot-checked against the clones. Numbers are first run → rerun.
+
+**supabase** (after round 1, then round 3; `$TMPDIR/dog-supabase2`, `-supabase3`).
+Selection 29 → 37 repos (tree probe: realtime, edge-runtime, supavisor, …; `cli`
+by HEAD size without `--include`); packages 92 → 104 → 108 (nameless consumers
+in, `test_cases` fixtures out). Index 45 ok / 38 partial / 9 failed → 104 ok / 4
+partial / 0 failed: mcp (pnpm 10 from `mise.toml`), tanstack-db, evals
+(engine-strict), sdk / setup-cli (bun via npm exec), orb-sync-lib (TS6046
+compat), the supabase-js core packages (two outDirs), auth-helpers (lockfile
+major), supabase-flutter (pub workspace) all index; still opaque for real
+causes: `@supabase/server` (surface entry outside its tsconfig, named by the
+`cause:` line), `@supabase/middleware` (computed import in a smoke script),
+supa-storage (unresolved `main`). Skew 2572 → 0 (2560 same-repo gaps, 12 deep
+`dist/` imports, now diagnostics); PRIV-DEAD 642 → 82 → 487 (test infrastructure
+under `tests/` gone, then 299 rows back once packages stopped being opaque);
+BLOCKED 239 → 203 → 65 (40 are `@supabase/ssr`, ambiguous between auth-helpers'
+stale copy and the ssr repo; the constraint rule of round 4 settles one of the
+four consumers). Spot checks after round 3: 9 of 10 new rows true; the false
+one (supabase_common's conditional-export alternatives) and cli's `new URL`
+bundler entries drove round 4. The round-1 regression (runtime entries counted
+as export surface: 14 packages opaque) was caught here and fixed in round 3.
+
+**flame-engine** (after the Dart round; `$TMPDIR/dog-flame2`). Index 1182 s →
+431 s; 47 "Cannot override workspace packages" partials → 0; tiled / forge2d /
+gamepads gain their `lib/` documents (0 → 28 / 29 / 16…); unmatched exports
+165 → 0; skew 1233 → 1 (real: tiled renamed `TsxProvider`). oxygen's six false
+DEPRECATE rows (name-based parts) became UNEXPORT `internal_refs_only`;
+`BlockOperators` stays private_dead correctly (flame's `Block` declares `+`
+itself at HEAD); conditional-import variants reachable; Flutter apps no longer
+`unindexed_consumer`. Spot check 9 of 12 true; the three false rows (extension
+used through a member, `pluginClass`, a type annotation credited to the file)
+drove the witness member search, plugin entry symbols and fork patch 12.
+
+**Workiva** (after rounds 1–3; `$TMPDIR/dog-workiva3`). Same 33 repos / 42
+packages; over_react_codemod private_dead 390 → 107; `codemod/lib/test.dart`
+exports no longer `only_test_refs`; no pub `lib/` file classified as test /
+docs / script; `rtl` needs_review through the cross-manager witness;
+over_react_test no longer a blocker (build_runner wrote its parts); PRIV-DEAD
+428 → 188, findings 1205 → 953; the 3 `nameLexeme` rows stay skew. Spot check
+12 of 13 true; the false needs_review (a doc-comment import and a string key)
+drove the witness text hygiene fix; generated parts under `.dart_tool` drove
+fork patch 13.
+
+**dart-lang** (after rounds 1–3; `$TMPDIR/dog-dartlang2`). Index 3968 s →
+2080 s, blame 1280 s → 1031 s; `test`'s `pkgs/test` discovered, dartdoc's
+`testing/*` fixtures gone, `sse` has entry points; index 189 / 57 / 18 → 225 ok
+/ 4 partial / 34 failed, the workspace-override failures and the jnigen crash
+gone. Every wrong row of the first run is fixed (js_interop_gen 351 → 16
+private_dead, intl4x, `protocol_generated.dart`, `getTeam` → `only_docs_refs`,
+the `test` package's references, `stopLogWriter`, `Int64` / `sink` no longer
+skew). BLOCKED 2926 → 2452 (54 %): flute and pub-dev still fail, which round 5
+addresses (sentei's root `pubspec_overrides.yaml` replaced the pubspec's own
+`dependency_overrides`; the conflict-retry cap of 3 was one drop short for
+both). 397 false skew rows are one indexer gap (extension-type representation
+fields), and ffigen / jnigen output with a "generated" header is not yet
+recognised for Dart (292 of 495 private_dead): both in round 5.
+
 ### Phase 2 fix round 1: TS indexer toolchain
 
 From the supabase run (`index.txt`, per-package logs); all in
