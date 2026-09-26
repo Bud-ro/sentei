@@ -13,7 +13,9 @@ import {
   BUILD_RUNNER_TIMEOUT_MS,
   buildRunner,
   DART_SURFACE_DIR,
+  dartLibraryEntries,
   dartPartUris,
+  isDartPartFile,
   flutterReason,
   missingGeneratedParts,
   OVERRIDES_HEADER,
@@ -135,7 +137,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.12',
+        indexerVersion: '1.7.0+sentei.13',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -736,6 +738,25 @@ describe('build_runner for missing generated parts', () => {
       "// part 'line.g.dart';",
       "part 'last.g.dart';",
     ].join('\n'))).toEqual(['one.g.dart', 'two.dart', 'meta.g.dart', 'last.g.dart']);
+  });
+
+  it('isDartPartFile / dartLibraryEntries: part files are not passed to dart-surface as --entry', () => {
+    expect(isDartPartFile("// header\npart of 'game.dart';\n\nclass A {}\n")).toBe(true);
+    expect(isDartPartFile('/* c */ part of flamedeck;\n')).toBe(true);
+    expect(isDartPartFile("library x;\nimport 'a.dart';\n/// This is part of the API.\nclass A {}\n")).toBe(false);
+    expect(isDartPartFile("var s = '''\npart of 'x.dart';\n''';\n")).toBe(false);
+    expect(isDartPartFile("part 'a.g.dart';\nvoid main() {}\n")).toBe(false);
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-dart-parts-')));
+    try {
+      mkdirSync(path.join(dir, 'pkg/lib/src'), { recursive: true });
+      writeFileSync(path.join(dir, 'pkg/lib/game.dart'), "library;\npart 'src/part.dart';\n");
+      writeFileSync(path.join(dir, 'pkg/lib/src/part.dart'), "part of '../game.dart';\nint x = 1;\n");
+      writeFileSync(path.join(dir, 'pkg/lib/other.dart'), 'int y = 2;\n');
+      expect(dartLibraryEntries(dir, ['pkg/lib/game.dart', 'pkg/lib/src/part.dart', 'pkg/lib/other.dart', 'pkg/lib/missing.dart']))
+        .toEqual(['pkg/lib/game.dart', 'pkg/lib/other.dart', 'pkg/lib/missing.dart']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('records nothing when no generated part is missing', async () => {

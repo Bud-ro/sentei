@@ -107,7 +107,9 @@ export const scipDart: Indexer = {
   // primary constructor are definitions: 397 false skew rows on jni); the
   // sidecar's generatedFiles (header sniff over the index's documents);
   // dart-surface: grinder tasks (`@Task` / `@DefaultTask`) are entry symbols.
-  version: '1.7.0+sentei.12',
+  // sentei.13: part files are no longer passed as `--entry` (dartLibraryEntries),
+  // so the sidecar's entryPoints lists libraries only.
+  version: '1.7.0+sentei.13',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -695,7 +697,8 @@ function surfaceSpec(input: Pick<IndexerInput, 'repo'>, pkg: DiscoveredPackage):
     packageRoot: dir,
     packageId: pkg.packageId,
     ...(pkg.name !== null && pkg.name !== undefined ? { packageName: pkg.name } : {}),
-    entries: pkg.entryPoints,
+    // Part files are not libraries (dart-surface would log "not a library").
+    entries: dartLibraryEntries(repo.localPath, pkg.entryPoints),
     nested: [...nested, ...ignored],
   };
 }
@@ -950,8 +953,56 @@ const isDartIdentChar = (c: string | undefined): boolean => c !== undefined && /
  * a Dart process before build_runner; this is exact for directives.
  */
 export function dartPartUris(text: string): string[] {
-  type Tok = { kind: 'word' | 'string' | 'semi'; value: string; simple: boolean; depth: number };
-  const toks: Tok[] = [];
+  const toks = dartTokens(text);
+  const out: string[] = [];
+  for (let k = 0; k + 2 < toks.length; k++) {
+    const [a, b, c] = [toks[k]!, toks[k + 1]!, toks[k + 2]!];
+    if (a.kind === 'word' && a.value === 'part' && a.depth === 0 && b.kind === 'string' && b.simple && c.kind === 'semi') out.push(b.value);
+  }
+  return out;
+}
+
+/**
+ * Whether a Dart source is a part file: a top-level `part of` directive at the start of
+ * a statement (the first token, or right after a `;`), comments and strings skipped by
+ * the same lexer as [dartPartUris], so a doc comment or a string that says "part of" is
+ * not one. A cheap text check, no analyzer.
+ */
+export function isDartPartFile(text: string): boolean {
+  if (!/\bpart\s+of\b/.test(text)) return false;
+  const toks = dartTokens(text);
+  for (let k = 0; k + 1 < toks.length; k++) {
+    const [a, b] = [toks[k]!, toks[k + 1]!];
+    if (a.kind === 'word' && a.value === 'part' && a.depth === 0 && b.kind === 'word' && b.value === 'of'
+      && (k === 0 || toks[k - 1]!.kind === 'semi')) return true;
+  }
+  return false;
+}
+
+/**
+ * The entries (repo-relative POSIX) of a pub package that are libraries: every one but
+ * the part files ([isDartPartFile]). discover lists every `lib/**` file, and a part is
+ * not a library, so dart-surface would only log "not a library" for it (flamedeck: 2
+ * files). An unreadable file is kept (dart-surface decides).
+ */
+export function dartLibraryEntries(localPath: string, entries: readonly string[]): string[] {
+  return entries.filter((e) => {
+    if (!e.endsWith('.dart')) return true;
+    let text: string;
+    try {
+      text = readFileSync(path.resolve(localPath, ...e.split('/')), 'utf8');
+    } catch {
+      return true;
+    }
+    return !isDartPartFile(text);
+  });
+}
+
+type DartTok = { kind: 'word' | 'string' | 'semi'; value: string; simple: boolean; depth: number };
+
+/** Top-level tokens of a Dart source: words, simple strings and `;`, with their brace depth. */
+function dartTokens(text: string): DartTok[] {
+  const toks: DartTok[] = [];
   const n = text.length;
   let i = 0;
   const readString = (): { value: string; simple: boolean } => {
@@ -1035,12 +1086,7 @@ export function dartPartUris(text: string): string[] {
     }
   };
   lex(false);
-  const out: string[] = [];
-  for (let k = 0; k + 2 < toks.length; k++) {
-    const [a, b, c] = [toks[k]!, toks[k + 1]!, toks[k + 2]!];
-    if (a.kind === 'word' && a.value === 'part' && a.depth === 0 && b.kind === 'string' && b.simple && c.kind === 'semi') out.push(b.value);
-  }
-  return out;
+  return toks;
 }
 
 /**
