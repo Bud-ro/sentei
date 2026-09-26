@@ -1861,3 +1861,13 @@ consumer scan now tests ignored dirs on package-relative paths, so a kept
 `pkgs/test/pubspec.yaml` was and is counted there; a test pins that. dart-lang:
 packages 264 → 265 (+`pub:dart-lang/test:test`, published-public, 217
 resolved consumers), ignored manifests 202 → 201; no other manifest changed side.
+
+**`testing` and `test_packages` join the default `ignoreManifestDirs`**
+(`fixtures`, `__fixtures__`, `test_fixtures`, `testdata`, `test_data`, `golden`,
+`goldens` were already there). dartdoc's `testing/test_package*/` and
+`testing/sky_engine` pubspecs have no `publish_to: none`, so they were
+published-public org packages: in the run's report 28 `deprecation_candidate`
+rows, 2 `needs_review` and 1 `blocked` row, and `test_package_bad` (an
+intentionally broken import) a blocker. The rule above still applies: a
+`pkgs/testing` or a workspace member named `testing` stays a package. dart-lang:
+packages 265 → 259 (the six dartdoc fixtures), ignored manifests 201 → 207.

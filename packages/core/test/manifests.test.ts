@@ -78,7 +78,7 @@ describe('listFiles', () => {
 
 describe('ignored manifest dirs', () => {
   it('the default list covers test-data dirs (test_fixtures, testdata, goldens, …)', () => {
-    for (const d of ['test_fixtures', 'test_fixture', 'testdata', 'test_data', 'golden', 'goldens', 'fixtures', 'test']) {
+    for (const d of ['test_fixtures', 'test_fixture', 'testdata', 'test_data', 'golden', 'goldens', 'fixtures', '__fixtures__', 'test', 'testing', 'test_packages']) {
       expect(DEFAULT_IGNORE_MANIFEST_DIRS, d).toContain(d);
     }
   });
@@ -120,7 +120,7 @@ describe('ignored manifest dirs', () => {
     write('templates/vercel/pubspec.yaml', 'name: real\n');
     write('templates/vercel/lib/a.dart');
     write('examples/basic/src/main.ts');
-    pkgJson('packages/testing/package.json', { name: 'testing' }); // "testing" is not "test"
+    pkgJson('packages/testing/package.json', { name: 'testing' }); // ignored name, but a packages/ member
     write('packages/testing/index.ts');
     const logs: string[] = [];
     const pkgs = readRepoManifests(root, warn, listFiles(root), { log: (l) => logs.push(l) });
@@ -177,6 +177,24 @@ describe('ignored manifest dirs', () => {
     expect(r.packages.map((p) => p.manifest)).toEqual(['pubspec.yaml', 'pkgs/a/pubspec.yaml', 'tools/bench/pubspec.yaml', 'tools/test/pubspec.yaml']);
     expect(r.ignored.map((m) => m.manifest)).toEqual([
       'example/pubspec.yaml', 'other/example/pubspec.yaml', 'pkgs/a/example/pubspec.yaml', 'pkgs/a/example/test_data/x/pubspec.yaml',
+    ]);
+  });
+
+  it('testing/ fixture packages (dartdoc) are ignored; a workspace member named testing is kept', () => {
+    write('pubspec.yaml', 'name: dartdoc\nworkspace:\n  - tools/testing\n');
+    write('lib/dartdoc.dart');
+    write('testing/test_package/pubspec.yaml', 'name: test_package\n');
+    write('testing/test_package/lib/a.dart');
+    write('testing/test_package_bad/pubspec.yaml', 'name: test_package_bad\n');
+    write('testing/pubspec.yaml', 'name: testing_root\n'); // leaf match, not a member
+    write('tools/testing/pubspec.yaml', 'name: testing_tool\nresolution: workspace\n');
+    write('pkgs/testing/pubspec.yaml', 'name: testing_pkg\n');
+    write('pkgs/foo/test_packages/p/pubspec.yaml', 'name: p\n');
+    const r = readRepoManifestsWithIgnored(root, warn, listFiles(root));
+    expect(r.packages.map((p) => p.name)).toEqual(['dartdoc', 'testing_pkg', 'testing_tool']);
+    expect(r.ignored.map((m) => m.manifest)).toEqual([
+      'pkgs/foo/test_packages/p/pubspec.yaml', 'testing/pubspec.yaml',
+      'testing/test_package/pubspec.yaml', 'testing/test_package_bad/pubspec.yaml',
     ]);
   });
 

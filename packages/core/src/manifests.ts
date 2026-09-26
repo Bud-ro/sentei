@@ -99,6 +99,8 @@ export const DEFAULT_IGNORE_MANIFEST_DIRS: readonly string[] = Object.freeze([
   'fixtures', '__fixtures__', 'fixture', 'templates', 'template', 'examples', 'example',
   'benchmarks', 'bench', 'playground', 'playgrounds', 'sandbox', '__mocks__', 'test', 'tests', '__tests__',
   'test_fixtures', 'test_fixture', 'testdata', 'test_data', 'golden', 'goldens',
+  // dartdoc's testing/test_package*/ fixture packages (one intentionally broken).
+  'testing', 'test_packages',
 ]);
 
 /** True if any directory segment of repo-relative `file` is in `dirs` (the basename is not checked). */
