@@ -262,11 +262,11 @@ keys and wrong types are errors, so a typo cannot silently fail open.
 |---|---|---|
 | `minAgeDays` | 180 | every verdict on an export needs its blame date to be at least this old; unknown dates block them |
 | `trustPrivateRegistry` | true | `published-private` packages count as private (nobody outside the org can depend on them) |
-| `countTestsAsConsumers` | false | references from test files count as uses |
+| `countTestsAsConsumers` | false | references from test files count as uses (always, without it, for a dev-only dependency and for test-support code, below) |
 | `countDocsAsConsumers` | false | references from docs files count as uses |
 | `keep` | `[]` | never report these: `"npm:@acme/foo#sym"` (every package named `@acme/foo`), `"npm:acme/foo:@acme/foo#sym"` (only the one in repo `acme/foo`), `"pub:bar#*"` |
 | `ignoreManifestDirs` | built-in list | directory names (fixtures, templates, examples, ...) whose manifests are not org packages; replaces the default |
-| `ignoreManifests` | `[]` | globs `"<repo>/<manifest path>"`, e.g. `"vscode/package.json"` |
+| `ignoreManifests` | `[]` | globs `"<repo>/<manifest path>"` (repo name without the org), e.g. `"vscode/package.json"`, `"over_react/app/**"`: those manifests are not org packages (never indexed, never a blocker, not a counted consumer; the text witness still scans their code, fail closed). The report lists every one in a warning. Use it for a package that cannot be indexed and that nothing depends on (a pre-Dart-2.12 example app, a repo-internal demo); a blocker's hint gives the exact entry |
 | `repos` | `{}` | which GitHub repos to clone, see [Choosing repos](#choosing-repos) |
 
 **Per-repo `sentei.json`** (repo root) holds overlays only; per-repo policy
@@ -343,6 +343,24 @@ package under `report.json` `diagnostics` (`unresolved_same_repo`,
 `unresolved_opaque_target`, `unresolved_unindexed_module`) and summarized under
 the version skew line.
 
+**Test-support code** is meant to be used by other packages' tests, so their
+test-file uses of it count as references even under a regular dependency
+(analyze.sql `test_support_symbols`): symbols exported through an entry named
+`test`, `testing`, `test_utils`, `test-utils`, `testkit`, `mock(s)` or
+`*_test_utils`, `*_testing`, … (pub `lib/test.dart`, npm `./testing` →
+`src/testing.ts` or `src/testing/index.ts`), symbols under `lib/src/test*/`,
+`lib/src/mocks/`, `lib/testing/`, `src/testing/`, `src/test-utils/`, and every
+symbol of a package named `*testkit`, `*_test`, `*_test_utils`, `*-testing`, … A
+test-support helper used only by its own package's tests is still
+`only_test_refs`.
+
+**Mixed repos.** A package of the other manager in the same repo is a witness
+consumer: a Dart package that reads a JS bundle built in the same repo through
+`@JS('acmeBridge.start')` keeps the bundle's `acmeBridge` alive
+(`needs_review`), even when the index saw it used only inside its own package
+(an unexport). Dart files count when they use JS interop; JS files count for a
+Dart symbol only when its file exports Dart to JS (`@JSExport`).
+
 Test, docs, generated and script files are recognized by path
 (`packages/core/src/globs.ts`: `test/`, `tests/`, `__tests__/`, `*.test.*`,
 `*.spec.*`, `*_test.dart`, `mocks/`, `fixtures/`, `e2e/`, `type-tests/`,
@@ -413,14 +431,21 @@ below), or pass `--strict` in CI to make them exit 2.
 The report stage prints: the policy line (and the selected views with
 `--view`); a `!!` warning banner (`minAgeDays` 0, repos whose index was partial
 or failed, dependencies on a name several org packages share, excluded or
-uncloned repos that carry manifests: the first ten on stdout, all of them in
-`report.json`); a per-package
+uncloned repos that carry manifests, manifests excluded by `ignoreManifests`:
+the first ten on stdout, all of them in `report.json`); a per-package
 table (package name, repo, visibility, private, opaque, one count per view,
 blockers); the **view totals**, with the reasons of the DELETE and DEPRECATE rows
 (`no_refs`, `only_test_refs`, `dead_island`: islands are a reason, not a column)
 and ORG-DEAD printed once as "= DEPRECATE" with the assertion as a footnote; then
 **top blockers**, the opaque packages preventing the most verdicts, the "fix that
-repo's tsconfig first" list (the top 10; all of them are in `report.json`); and
+repo's tsconfig first" list (the top 10; all of them are in `report.json`),
+followed by a "What to do:" line per blocker (`report.json` `blockers[].hint`):
+the first error line and the index log for a failed or partial index (a
+pre-2.12 Dart SDK constraint is named as such), the `ignoreManifests` entry
+that removes a blocker nothing depends on, the unresolved entry point, the
+candidates of an ambiguous dependency with the `ignoreManifests` entries to drop
+the wrong ones (there is no way to pin a dependency to one package id), or the
+unindexed / dynamic code that makes a package opaque; and
 the version skew count, with one line per class of unresolved references that
 are indexing gaps rather than skew. `blame` dates the last edit of the definition line, not
 its creation, which errs toward younger (the safe direction).

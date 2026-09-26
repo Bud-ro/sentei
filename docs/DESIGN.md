@@ -1223,26 +1223,35 @@ workarounds, codemod and over_react_codemod index on 3.13, 0 ambiguous deps
 (= ORG-DEAD), UNEXPORT 172, PRIV-DEAD 428, REVIEW 16 (all 4 checked real),
 BLOCKED 348, skew 3 (all real: `nameLexeme` pinned at 5.7.0). Spot checks:
 deprecate 1 right / 6 public-API-only / 1 wrong; private_dead 2 right / 2
-wrong standing for 390 rows. Wrong rows and the fixes adopted:
+wrong standing for 390 rows. Wrong rows and the fixes (what was built, and where):
 - `bin/*.dart` that only `export 'package:x/src/executables/X.dart'`: the
   `main` lives in the export namespace, not the file's top-level functions,
-  so over_react_codemod had 0 entry symbols (dart-surface resolves `main`
-  through the export namespace).
+  so over_react_codemod had 0 entry symbols. **In flight: Dart agent**
+  (dart-surface resolves `main` through the export namespace).
 - A test-support library (`codemod/lib/test.dart`) used by another repo's
-  tests under a regular dependency came out `only_test_refs`: references from
-  test files to test-support code now count (symbols defined in
-  `lib/test.dart`, `lib/testing.dart`, `test_utils`, `mocks`, `testing` paths,
-  or packages named `*_test`/`*_test_utils`).
+  tests under a regular dependency came out `only_test_refs`. **Built**:
+  analyze.sql `test_support_symbols` (entries named `test` / `testing` /
+  `test_utils` / `testkit` / `mock` / …, test-support dirs, packages named
+  `*testkit` / `*_test` / `*_test_utils` / …); `external_refs` counts other
+  packages' test-file uses of them, the witness scans consumers' test files
+  for them. See "Phase 2 fix round 1: test-support libraries; cross-manager
+  witness; blocker hints" below.
 - Test/docs/script globs matched inside `lib/` (`lib/over_react_test.dart`,
-  `lib/src/mocks/`, `lib/src/handlers/example/`): for pub packages nothing
-  under `lib/` is test, docs or script code.
+  `lib/src/mocks/`, `lib/src/handlers/example/`). **Built**: for pub packages
+  nothing under `lib/` is test, docs or script code (`surface_files`, see
+  "version-skew filtering; test globs" below).
 - A private npm bundle consumed only by Dart through `@JS('rtl.…')` got an
-  unexport verdict (fail-open): same-repo packages of another manager are
-  now witness consumers of each other.
+  unexport verdict (fail-open). **Built**: witness.ts `crossHits`, same-repo
+  packages of the other manager witness each other (Dart → npm in full, npm →
+  Dart only for symbols whose file exports Dart to JS), and unexports of such
+  packages are re-checked (section below).
 - Blockers: over_react_test (one uncommitted generated part) and todo_client
-  (a pre-2.12 example app) block ~330 findings each; the report now says why
-  and suggests `ignoreManifests`, and missing generated parts trigger one
-  targeted `build_runner` attempt when the package depends on it.
+  (a pre-2.12 example app) block ~330 findings each. **Built**: each blocker
+  gets a `hint` (report.json) and a "What to do:" summary line naming the error,
+  the index log and, for a blocker nothing depends on, the `ignoreManifests`
+  entry; the report warns about every manifest `ignoreManifests` excluded
+  (section below). **In flight: Dart agent**: one targeted `build_runner`
+  attempt when a generated part is missing and the package depends on it.
 
 ### Phase 2 fix round 1: TS indexer toolchain
 
@@ -1668,3 +1677,103 @@ summary is in `packages/cli/src/stages/index.ts` and `main.ts`.
   documented codes stay 0/1/2). `index --json` prints `{"summary": …}` on
   stdout, with progress on stderr, like `repos --json`. `index()` returns the
   summary; the `Stage` type is unchanged (`STAGES` wraps it).
+
+### Phase 2 fix round 1: test-support libraries; cross-manager witness; blocker hints
+
+**Test-support libraries** (analyze.sql `test_support_names`,
+`test_support_symbols`). A symbol is test-support surface when an entry whose
+stem matches a name pattern exports it (`symbol_exports.entry_file`; the stem of
+an `index.*` entry is its dir: `src/testing/index.ts`), when it sits under a
+test-support dir of its package (package-relative `lib/src/test*/`,
+`lib/src/mock/`, `lib/src/mocks/`, `lib/testing/`, `lib/mocks/`,
+`src/testing/`, `src/test-utils/`, `src/test_utils/`), or when its package's
+unscoped name matches. Patterns: `test`, `testing`, `testkit`, `*testkit`,
+`test_utils`, `test-utils`, `*_test_utils`, `*-test-utils`, `*_test_util`,
+`*-test-util`, `*_testing`, `*-testing`, `*_testing_library`,
+`*-testing-library`, `*_test`, `mock`, `mocks`, `*_mock(s)`, `*-mock(s)`. The
+brief's list plus what the Workiva DB shows consumed by other packages' tests
+(`built_redux_test_utils.dart`, `react_test_utils.dart`, `mock.dart`,
+`react_testing_library`). `external_ref_occurrences` gains `test_support`;
+`external_refs` counts a test-file use when `count_tests OR dev_dep OR
+test_support`, and `test_only_refs` no longer calls such a use excluded. Only
+cross-package uses: own-package test uses stay `only_test_refs` and nothing
+changes for private_dead (the own tests are not consumers). The witness scans
+consumers' test files for a test-support symbol, as for a dev-only dependency;
+it recreates the analyze views first, so an older DB has the view. Workiva
+DB: the three `lib/test.dart` exports, `applyPatches` (exported through it)
+and react's `findRenderedComponentWithTypeV2` lose their verdicts; nothing else
+changes; analyze 5.4 s → 6.7 s. Fixture: org-dart `dart-testkit` (`acme_kit`),
+used by `dart-app/test/kit_test.dart` through a regular dependency; negatives:
+`kitRealOnlyInTests` (normal entry) and `ownTestOnlyFake` (own test) stay
+`only_test_refs`. org-small lib-testkit is unchanged (its test uses count
+through its dev-only dependency, and now also by its name `@acme/testkit`).
+
+**Cross-manager witness** (witness.ts `crossHits`). discover.json gives each
+package the packages of the other manager in its repo. For a pending symbol S
+of P, each such C is scanned with no import check, no entry vouching and no
+SCIP same-line filter (SCIP resolves nothing across languages): any name of S
+(declared name and export aliases, never `default`) as a whole identifier in a
+comment-blanked file of C's own language (`.dart` for pub, JS/TS for npm, so a
+built copy of P's bundle in the pub package is not read) is a hit. Strings are
+kept, so `@JS('acmeBridge.start')` names both segments and an `@JS()`
+declaration binds its own name: the @JS rule needs no separate parser. Two
+gates, both found on the Workiva DB:
+- a Dart file counts only if it uses JS interop (`@JS(`, `dart:js*`,
+  `dart:html`, `package:js/`);
+- **deviation** ("of each other"): JS files witness a Dart symbol only when the
+  symbol's own file exports Dart to JS (`@JSExport`, `createJSInteropWrapper`,
+  `createDartExport`). Without that gate the vendored testing-library sources
+  in react_testing_library's `js_src/` downgraded 30 Dart wrappers
+  (`getByRole`, `within`, `configure`, …) named like the JS functions they
+  wrap; JS cannot name a Dart declaration otherwise.
+Unexports (`unexport_candidate`, and `deprecation_candidate
+[internal_refs_only]` without `dead_island`) of a package with such partners
+are re-checked the same way (analyze never sends them to the witness): a hit
+replaces the verdict by `needs_review` with the base reasons plus the
+`witness_mismatch` reasons, so the symbol is no longer a candidate, stays a
+seed, and the private_dead cascade is recomputed as usual; no hit leaves the
+verdict. `checked` counts only the downgraded ones (checked = passed +
+mismatched stays true); a log line gives both numbers. Workiva DB: exactly one
+verdict changes, `react_testing_library_src#rtl` (the Workiva case) →
+needs_review with hits in `lib/src/dom/accessibility_helpers.dart`. Fixture:
+org-dart `dart-js` (Dart `bin/main.dart` with `@JS('acmeBridge.start')` and an
+`@JS()` declaration; npm `js_src/`): `acmeBridge` (an unexport by the index)
+and `acmeLegacyStart` (no_refs) become needs_review, `jsOnlyUnused` stays a
+deletion. Not handled: a bundle global named differently from the exported
+symbol (vite `build.lib.name`); `ignoredManifests` of the other manager are not
+paired.
+
+**Blocker hints** (report.ts `blockerHint`). Every `report.json` blocker has a
+`hint`, and the summary prints "What to do:" with one line per shown blocker,
+from the blocker's own `package_flags`: the first error line of an
+`index_failed` or index `opaque_consumer` reason and the log path
+(`indexLogPath`: `<work>/index/<repoSlug>/<packageSlug>.log`, the cli's slugs
+re-spelled in core; `packages/cli/test/report-hints.test.ts` checks they
+agree; the report stage passes its work dir), "pre-null-safety SDK
+constraint" when pub get says the lower bound must be 2.12.0, and, when no org
+package depends on the blocker, the `ignoreManifests` entry that removes it; a
+discover `opaque_consumer`'s unresolved entry point; an `ambiguous_dep`'s
+candidates with the `ignoreManifests` entries to drop the wrong ones;
+unindexed and dynamic code with its file. Workiva:
+`pub:Workiva/over_react:todo_client` gets `"ignoreManifests":
+["over_react/app/over_react_redux/todo_client/pubspec.yaml"]`,
+over_react_test the missing generated part and its log.
+**Deviations from the brief:** there is no `deps.<name>: <package_id>` pin in
+sentei.json (config.ts has none; discover resolves by name only), so the
+ambiguous hint uses `ignoreManifests`, which is what discover's log already
+suggested. `repos.ignoreManifests: ["<repo>:<path>"]` was not added: the
+top-level `ignoreManifests` (globs over `"<repo name>/<manifest path>"`)
+already existed with the same effect, and a second key would split the
+configuration. Its semantics stay as built: an ignored manifest is not a
+package (not indexed, not in package_deps, never a blocker or a counted
+consumer), but the text witness still scans its code (PLAN §12, fail closed),
+rather than "not a consumer" at all. What was missing was visibility:
+discover records the glob that matched (`DiscoverIgnoredManifest.ignoredBy`,
+only for config globs, not the routine ignore dirs / VS Code extensions /
+private duplicates) in a new `ignored_manifests (repo, manifest, glob)` table
+(cascade child of repos, additive like `excluded_repos`, SCHEMA_VERSION stays
+11), and the report warns about every one next to the excluded repos
+(`ignoredManifestsWarning`; `shortenExcludedWarning` cuts both lists on
+stdout). Not verified end to end on Workiva: no rerun with the suggested
+`ignoreManifests` entry (the hints and the witness were checked on a copy of
+the dog-workiva2 DB and its checkouts).
