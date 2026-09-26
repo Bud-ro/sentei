@@ -549,9 +549,27 @@ function duplicateNamesMessage(dups: Array<[string, Array<{ loc: string; ignoreE
 }
 
 /**
+ * Top-level dirs of a pub package holding platform / native code: Flutter runners and
+ * plugin implementations (android, ios, macos, linux, windows, web, darwin) and FFI
+ * sources (native). That code talks to Dart over method channels or FFI and cannot
+ * import a Dart library, so it is never a consumer of an org package.
+ */
+export const PUB_PLATFORM_DIRS: ReadonlySet<string> = new Set(['android', 'ios', 'macos', 'linux', 'windows', 'web', 'darwin', 'native']);
+/** Flutter tool output inside platform dirs, wherever it sits. */
+const PUB_GENERATED_DIRS: ReadonlySet<string> = new Set(['.plugin_symlinks', 'ephemeral']);
+
+/** Is repo-relative `file` platform / native code of the pub package at `pkgPath`? */
+function isPubPlatformFile(pkgPath: string, file: string): boolean {
+  const rel = pkgPath === '.' ? file : file.slice(pkgPath.length + 1);
+  const segs = rel.split('/');
+  return PUB_PLATFORM_DIRS.has(segs[0]!) || segs.slice(0, -1).some((s) => PUB_GENERATED_DIRS.has(s));
+}
+
+/**
  * First-file summary of files in unindexed languages owned by `pkg`: files under its
- * dir, minus nested packages' dirs, skipped dirs (already absent from `files`, see listFiles) and
- * ignored manifest dirs. null if there are none.
+ * dir, minus nested packages' dirs, skipped dirs (already absent from `files`, see listFiles),
+ * ignored manifest dirs and, for pub packages, platform / native code (PUB_PLATFORM_DIRS).
+ * null if there are none.
  */
 function unindexedConsumerFlag(
   pkg: DiscoverPackage, repoPkgs: readonly DiscoverPackage[], files: readonly string[], ignoreDirs: ReadonlySet<string>,
@@ -563,6 +581,7 @@ function unindexedConsumerFlag(
     if (!UNINDEXED_LANGUAGE_EXTS.has(ext)) continue;
     if (inIgnoredDir(f, ignoreDirs)) continue;
     if (owningPackage(repoPkgs, f) !== pkg) continue;
+    if (pkg.manager === 'pub' && isPubPlatformFile(pkg.path, f)) continue;
     hits.push(f);
     byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
   }

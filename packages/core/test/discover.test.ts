@@ -375,6 +375,47 @@ describe('discoverLocal on a synthetic org', () => {
       ]);
     });
 
+    it('ignores platform / native code of pub packages (Flutter runners, federated plugins, FFI), not other unindexed code', () => {
+      org(['widgets', 'app', 'pads', 'box2d', 'tooling']);
+      write('org/repos/widgets/pubspec.yaml', 'name: acme_widgets\n');
+      write('org/repos/widgets/lib/acme_widgets.dart', '');
+      const dep = 'dependencies:\n  acme_widgets:\n    path: ../widgets\n';
+      // A Flutter app: runners for every platform, generated registrants, tool output.
+      write('org/repos/app/pubspec.yaml', `name: app\npublish_to: none\n${dep}`);
+      write('org/repos/app/lib/main.dart', '');
+      for (const f of ['android/app/src/main/kotlin/MainActivity.kt', 'android/app/src/main/java/GeneratedPluginRegistrant.java',
+        'ios/Runner/AppDelegate.swift', 'ios/Runner/GeneratedPluginRegistrant.m', 'macos/Flutter/GeneratedPluginRegistrant.swift',
+        'linux/flutter/generated_plugin_registrant.cc', 'windows/runner/main.cpp', 'web/interop.c',
+        'linux/flutter/ephemeral/.plugin_symlinks/x/linux/x_plugin.cc']) write(`org/repos/app/${f}`, '');
+      // Federated plugin implementations in a monorepo (gamepads_*), an FFI shim (forge2d).
+      write('org/repos/pads/packages/pads_darwin/pubspec.yaml', `name: pads_darwin\n${dep.replace('../widgets', '../../../widgets')}`);
+      write('org/repos/pads/packages/pads_darwin/lib/pads_darwin.dart', '');
+      write('org/repos/pads/packages/pads_darwin/darwin/pads_darwin/Package.swift', '');
+      write('org/repos/box2d/pubspec.yaml', `name: box2d\n${dep}`);
+      write('org/repos/box2d/lib/box2d.dart', '');
+      write('org/repos/box2d/native/wasm/shim.c', '');
+      // Outside those dirs, unindexed code in a pub package still flags it.
+      write('org/repos/tooling/pubspec.yaml', `name: tooling\n${dep}`);
+      write('org/repos/tooling/lib/tooling.dart', '');
+      write('org/repos/tooling/tool/gen.py', '');
+      write('org/repos/tooling/android_notes/x.kt', '');
+      const m = discoverLocal({ orgDir: join(tmp, 'org') });
+      expect(Object.fromEntries(m.repos.flatMap((r) => r.packages.map((p) => [p.packageId, p.flags])))).toEqual({
+        'pub:acme/app:app': [],
+        'pub:acme/box2d:box2d': [],
+        'pub:acme/pads:pads_darwin': [],
+        'pub:acme/tooling:tooling': [{ flag: 'unindexed_consumer', reason: '1 .kt, 1 .py file(s), e.g. android_notes/x.kt', file: 'android_notes/x.kt' }],
+        'pub:acme/widgets:acme_widgets': [],
+      });
+    });
+
+    it('fixtures/org-dart: the Flutter app\'s Android/iOS runner stubs do not make it an unindexed consumer', () => {
+      const m = discoverLocal({ orgDir: fileURLToPath(new URL('../../../fixtures/org-dart', import.meta.url)) });
+      const app = m.repos.find((r) => r.repo === 'acme/flutter-app')!.packages[0]!;
+      expect(app.deps.some((d) => d.resolvedPackageId !== null)).toBe(true); // a consumer of an org package
+      expect(app.flags).toEqual([]);
+    });
+
     it('is not set for shell/YAML/JSON/Markdown/Dockerfile-only consumers or for packages without org deps', () => {
       org(['lib', 'app', 'third']);
       write('org/repos/lib/package.json', { name: '@acme/lib' });
