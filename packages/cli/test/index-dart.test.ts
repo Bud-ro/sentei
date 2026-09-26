@@ -575,7 +575,7 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
     const side = (pkg: string) => readJson<ExportsSidecar>(work, 'index/acme__dart-workspace', `pub__${pkg}.exports.json`);
     expect(side('acme_core').conditionalImports).toEqual([
       {
-        file: 'packages/acme_core/lib/src/storage.dart', line: 4, col: 7,
+        file: 'packages/acme_core/lib/src/storage.dart', line: 4, col: 7, directive: 'import',
         target: 'packages/acme_core/lib/src/storage_stub.dart',
         alternatives: ['packages/acme_core/lib/src/storage_io.dart', 'packages/acme_core/lib/src/storage_web.dart'],
       },
@@ -1096,7 +1096,7 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(sdk).toEqual([]);
   }, 300_000);
 
-  it('resolves conditional directive URIs to repo paths, else keeps the package:/dart: URI', async () => {
+  it('resolves conditional directive URIs to repo paths, else keeps the package:/dart: URI; says import or export', async () => {
     write({
       'cond/pubspec.yaml': pubspec('acme_cond', '1.0.0'),
       'cond/lib/acme_cond.dart': [
@@ -1114,8 +1114,8 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     mkdirSync(out);
     const r = await scipDart.run(inputFor(repos, repos[0]!), out);
     expect(readJson<ExportsSidecar>(r.exportsFile).conditionalImports).toEqual([
-      { file: 'lib/acme_cond.dart', line: 0, col: 7, target: 'dart:math', alternatives: ['lib/src/io.dart'] },
-      { file: 'lib/acme_cond.dart', line: 1, col: 7, target: 'lib/src/io.dart', alternatives: ['package:path/path.dart'] },
+      { file: 'lib/acme_cond.dart', line: 0, col: 7, directive: 'import', target: 'dart:math', alternatives: ['lib/src/io.dart'] },
+      { file: 'lib/acme_cond.dart', line: 1, col: 7, directive: 'export', target: 'lib/src/io.dart', alternatives: ['package:path/path.dart'] },
     ]);
   }, 300_000);
 

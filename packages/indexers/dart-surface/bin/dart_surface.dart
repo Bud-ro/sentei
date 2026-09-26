@@ -188,9 +188,9 @@ class Surface {
 
   /// Every `import`/`export` with configurations (`if (dart.library.io) 'b.dart'`)
   /// in the package's own files: the analyzer follows one variant only, so the
-  /// others look unused. `target` is the default URI, `alternatives` the
-  /// configured ones, each resolved by [_uriTarget]. Positions are the default
-  /// URI's string literal.
+  /// others look unused. `directive` is `import` or `export`, `target` the
+  /// default URI, `alternatives` the configured ones, each resolved by
+  /// [_uriTarget]. Positions are the default URI's string literal.
   final conditionalImports = <Map<String, Object>>[];
 
   /// Own `package:<self>/...` directive URIs that did not resolve after a
@@ -596,6 +596,7 @@ class Surface {
       base ??= sessionFor(file).uriConverter.pathToUri(file) ?? Uri.file(file);
       conditionalImports.add({
         ...positionIn(file, unit, d.uri.offset).toJson(),
+        'directive': d is ExportDirective ? 'export' : 'import',
         'target': _uriTarget(base, text),
         'alternatives': [
           for (final c in d.configurations)

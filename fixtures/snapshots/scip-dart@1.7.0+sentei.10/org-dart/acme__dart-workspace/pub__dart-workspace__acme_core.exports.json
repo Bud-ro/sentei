@@ -6,6 +6,7 @@
         "packages/acme_core/lib/src/storage_web.dart"
       ],
       "col": 7,
+      "directive": "import",
       "file": "packages/acme_core/lib/src/storage.dart",
       "line": 4,
       "target": "packages/acme_core/lib/src/storage_stub.dart"

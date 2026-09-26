@@ -320,6 +320,13 @@ export interface DeepImportExport {
 /** One configurable directive; its position is the default URI's string literal. */
 export interface ConditionalImport extends SourcePosition {
   /**
+   * Which directive (Dart; additive, absent in sidecars before adapter
+   * `1.7.0+sentei.10`). A conditional `export` puts the alternatives on the
+   * export surface too (not applied by ingest yet: docs/DESIGN.md, Phase 2 fix
+   * round 3, open item).
+   */
+  directive?: 'import' | 'export';
+  /**
    * The default (unconditional) URI, resolved against the directive's file:
    * the repo-relative POSIX path of the file it names when that is inside the
    * repo (relative URIs, and `package:` URIs of packages checked out in the
