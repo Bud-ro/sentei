@@ -43,7 +43,7 @@ function report(): Report {
     warnings: [WARNING],
     findings,
     versionSkew,
-    diagnostics: { unresolved_same_repo: [], unresolved_opaque_target: [], unresolved_unindexed_module: [] },
+    diagnostics: { unresolved_same_repo: [], unresolved_opaque_target: [], unresolved_unindexed_module: [], unresolved_moved_at_head: [] },
     views: buildViews(findings, versionSkew, new Set(['npm:acme/lib-core:@acme/util', 'npm:acme/app:@acme/app'])),
     packages: [],
     blockers: [],

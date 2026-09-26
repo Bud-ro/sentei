@@ -816,9 +816,70 @@ WHERE NOT EXISTS (
 --                     import (sidecar name '*': `pkg/dist/module/lib/types`, build
 --                     output not in the checkout) or a member of a JSON module
 --                     (``openapi.json`/…`: JSON documents are never indexed).
+--   moved_at_head     the target still defines the name at HEAD, somewhere else: the
+--                     reference's descriptor without its file (`Int64#MAX_VALUE.`; getter /
+--                     setter markers and backticks dropped, so `window.` matches
+--                     `` `<get>window`. ``) is some HEAD symbol's, or it names a member
+--                     `Owner#m` whose Owner exists at HEAD and m is a member of Owner or of a
+--                     type Owner's declaration names, transitively (a supertype: edges from a
+--                     type symbol, any package). The consumer resolved a published version
+--                     where the symbol lived in another file (fixnum's Int64 moved behind a
+--                     conditional export) or was declared on the class itself (build_daemon's
+--                     IOWebSocketChannel#sink, inherited from AdapterWebSocketChannel at
+--                     HEAD): an upgrade does not break it, so it is not skew. dart-lang: 36 of
+--                     115 rows.
 --   version_skew      everything else.
--- Skew is reported, never counted: no class here changes a verdict.
+-- Skew is reported, never counted: no class here changes a verdict. The descriptor keys
+-- are computed once per target package (head) and per reference (refs); the supertype
+-- walk starts only from owners of unresolved member references.
 CREATE VIEW unresolved_ref_classes (consumer_package_id, target_package_id, symbol_str, file, line, col, class) AS
+WITH refs AS MATERIALIZED (
+  -- dkey: the descriptor after the file (text after the last '/'), accessor-normalized.
+  SELECT u.consumer_package_id, u.target_package_id, u.symbol_str, u.file, u.line, u.col,
+         replace(replace(replace(substr(u.symbol_str, length(rtrim(u.symbol_str, replace(u.symbol_str, '/', ''))) + 1),
+           '`', ''), '<get>', ''), '<set>', '') AS dkey
+  FROM unresolved_refs u
+),
+head AS MATERIALIZED (
+  SELECT s.symbol_id, s.package_id,
+         replace(replace(replace(substr(s.symbol_str, length(rtrim(s.symbol_str, replace(s.symbol_str, '/', ''))) + 1),
+           '`', ''), '<get>', ''), '<set>', '') AS dkey
+  FROM symbols s
+  WHERE s.package_id IN (SELECT target_package_id FROM unresolved_refs)
+),
+moved_same (target_package_id, dkey) AS MATERIALIZED (
+  SELECT DISTINCT r.target_package_id, r.dkey
+  FROM refs r
+  JOIN head h ON h.package_id = r.target_package_id AND h.dkey = r.dkey
+  WHERE r.dkey <> ''
+),
+-- Owner#member references whose Owner (the dkey up to its first '#') exists at HEAD.
+owners (target_package_id, dkey, owner_id) AS MATERIALIZED (
+  SELECT DISTINCT r.target_package_id, r.dkey, h.symbol_id
+  FROM refs r
+  JOIN head h ON h.package_id = r.target_package_id AND h.dkey = substr(r.dkey, 1, instr(r.dkey, '#'))
+  WHERE instr(r.dkey, '#') > 1 AND instr(r.dkey, '#') < length(r.dkey)
+),
+-- The owner and every type its declaration names (a type symbol: top-level, descriptor
+-- ending in '#'), transitively: supertypes, mixins, interfaces.
+supertypes (target_package_id, dkey, type_id) AS (
+  SELECT target_package_id, dkey, owner_id FROM owners
+  UNION
+  SELECT st.target_package_id, st.dkey, e.to_symbol_id
+  FROM supertypes st
+  JOIN edges e ON e.from_symbol_id = st.type_id
+  JOIN symbols t ON t.symbol_id = e.to_symbol_id
+  WHERE t.parent_symbol_id IS NULL AND t.symbol_str GLOB '*#'
+),
+moved_inherited (target_package_id, dkey) AS MATERIALIZED (
+  SELECT DISTINCT st.target_package_id, st.dkey
+  FROM supertypes st
+  JOIN (SELECT parent_symbol_id,
+               replace(replace(replace(substr(symbol_str, length(rtrim(symbol_str, replace(symbol_str, '/', ''))) + 1),
+                 '`', ''), '<get>', ''), '<set>', '') AS mkey
+        FROM symbols WHERE parent_symbol_id IS NOT NULL) m ON m.parent_symbol_id = st.type_id
+  WHERE substr(m.mkey, instr(m.mkey, '#') + 1) = substr(st.dkey, instr(st.dkey, '#') + 1)
+)
 SELECT u.consumer_package_id, u.target_package_id, u.symbol_str, u.file, u.line, u.col,
        CASE
          WHEN c.repo = t.repo AND NOT EXISTS (
@@ -840,8 +901,11 @@ SELECT u.consumer_package_id, u.target_package_id, u.symbol_str, u.file, u.line,
            OR NOT EXISTS (SELECT 1 FROM symbols s WHERE s.package_id = u.target_package_id AND s.is_exported = 1)
            THEN 'opaque_target'
          WHEN u.symbol_str = '*' OR u.symbol_str GLOB '* *.json`/*' THEN 'unindexed_module'
+         WHEN (u.target_package_id, u.dkey) IN (SELECT target_package_id, dkey FROM moved_same)
+           OR (u.target_package_id, u.dkey) IN (SELECT target_package_id, dkey FROM moved_inherited)
+           THEN 'moved_at_head'
          ELSE 'version_skew'
        END
-FROM unresolved_refs u
+FROM refs u
 JOIN packages c ON c.package_id = u.consumer_package_id
 JOIN packages t ON t.package_id = u.target_package_id;

@@ -139,6 +139,11 @@ export interface ReportDiagnostics {
   unresolved_opaque_target: ReportUnresolvedTarget[];
   /** Deep dist imports (`*`) and JSON-module members: modules no index defines. */
   unresolved_unindexed_module: ReportUnresolvedTarget[];
+  /**
+   * The target still defines the name at HEAD in another file, or as a member of a
+   * supertype: the consumer's published version declared it elsewhere; not skew.
+   */
+  unresolved_moved_at_head: ReportUnresolvedTarget[];
 }
 
 export interface ReportPackage {
@@ -608,7 +613,7 @@ export function buildReport(opts: BuildReportOptions): Report {
       versionSkew.push(row);
       continue;
     }
-    if (!['same_repo', 'opaque_target', 'unindexed_module'].includes(r.class)) {
+    if (!['same_repo', 'opaque_target', 'unindexed_module', 'moved_at_head'].includes(r.class)) {
       throw new Error(`sentei report: unknown unresolved_ref_classes class ${JSON.stringify(r.class)}`);
     }
     const byTarget = gaps.get(r.class) ?? new Map<string, Map<string, number>>();
@@ -628,6 +633,7 @@ export function buildReport(opts: BuildReportOptions): Report {
     unresolved_same_repo: gapList('same_repo'),
     unresolved_opaque_target: gapList('opaque_target'),
     unresolved_unindexed_module: gapList('unindexed_module'),
+    unresolved_moved_at_head: gapList('moved_at_head'),
   };
   versionSkew.sort(cmpBy((v) => v.package_id, (v) => v.symbol, (v) => v.file, (v) => v.line, (v) => v.col, (v) => v.target_package_id));
 
@@ -885,16 +891,18 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
     const skewPkgs = new Set(report.versionSkew.map((x) => x.package_id)).size;
     out.push('', `Version skew: ${report.versionSkew.length} reference(s) from ${skewPkgs} package(s) to symbols missing at HEAD`);
     const d = report.diagnostics;
-    const gapLine = (rows: ReportUnresolvedTarget[], what: string): void => {
+    const gapLine = (rows: ReportUnresolvedTarget[], what: string, tag = 'indexing gaps, not skew'): void => {
       if (rows.length === 0) return;
       const n = rows.reduce((a, g) => a + g.count, 0);
       const shown = rows.slice(0, TOP_GAP_TARGETS).map((g) => `${g.target_package_id} ${g.count}`);
       const more = rows.length > TOP_GAP_TARGETS ? `, ... and ${rows.length - TOP_GAP_TARGETS} more (see report.json diagnostics)` : '';
-      out.push(`${n} ${what} (indexing gaps, not skew): ${shown.join(', ')}${more}`);
+      out.push(`${n} ${what} (${tag}): ${shown.join(', ')}${more}`);
     };
     gapLine(d.unresolved_same_repo, 'unresolved same-repo reference(s)');
     gapLine(d.unresolved_opaque_target, 'unresolved reference(s) into opaque or empty packages');
     gapLine(d.unresolved_unindexed_module, 'unresolved reference(s) into unindexed modules (deep dist imports, JSON)');
+    gapLine(d.unresolved_moved_at_head, 'reference(s) to names HEAD defines elsewhere (moved file, accessor, inherited member)',
+      'the consumer\'s version declared them there; not skew');
   }
   return `${out.join('\n')}\n`;
 }

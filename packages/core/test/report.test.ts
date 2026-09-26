@@ -211,7 +211,7 @@ describe('buildReport', () => {
       ],
       findings,
       versionSkew,
-      diagnostics: { unresolved_same_repo: [], unresolved_opaque_target: [], unresolved_unindexed_module: [] },
+      diagnostics: { unresolved_same_repo: [], unresolved_opaque_target: [], unresolved_unindexed_module: [], unresolved_moved_at_head: [] },
       views: {
         delete: { description: VIEW_DESCRIPTIONS.delete, rows: pick('@acme/util#islandFn', '@acme/util#unusedFn') },
         deprecate: { description: VIEW_DESCRIPTIONS.deprecate, rows: deprecate },
@@ -510,6 +510,61 @@ describe('buildReport guards and skew filtering', () => {
     expect(r.diagnostics.unresolved_unindexed_module).toEqual([{ target_package_id: util, count: 2, examples: ['"k"0', '*'] }]);
     expect(formatSummary(r)).toContain(
       `2 unresolved reference(s) into unindexed modules (deep dist imports, JSON) (indexing gaps, not skew): ${util} 2\n`);
+  });
+
+  it('a name the target still defines at HEAD (moved file, accessor, inherited member) is not skew; a renamed owner stays skew', () => {
+    // dart-lang: fixnum's Int64 moved to int64_native.dart behind a conditional export;
+    // web_socket_channel's IOWebSocketChannel#sink is inherited from
+    // AdapterWebSocketChannel at HEAD, and WebSocketChannel#stream from another org
+    // package's StreamChannelMixin; web's ElementEventGetters was renamed (real skew).
+    const P = 'scip-dart pub util . lib/';
+    const sym = (pkg: string, str: string, name: string, parent: number | null = null): number => Number(db.prepare(
+      'INSERT INTO symbols (symbol_str, package_id, file, line, col, kind, name, parent_symbol_id, is_exported) VALUES (?, ?, ?, 0, 0, NULL, ?, ?, ?)')
+      .run(str, pkg, 'lib/x.dart', name, parent, parent === null ? 1 : 0).lastInsertRowid);
+    const edge = (from: number, to: number, fromPkg: string, toPkg: string): void =>
+      run("INSERT INTO edges (from_symbol_id, to_symbol_id, from_package_id, to_package_id, source) VALUES (?, ?, ?, ?, 'scip')", from, to, fromPkg, toPkg);
+    const int64 = sym(util, `${P}src/\`int64_native.dart\`/Int64#`, 'Int64');
+    sym(util, `${P}src/\`int64_native.dart\`/Int64#MAX_VALUE.`, 'MAX_VALUE', int64);
+    sym(util, `${P}src/\`default.dart\`/\`<get>clock\`.`, '<get>clock');
+    const io = sym(util, `${P}\`io.dart\`/IOWebSocketChannel#`, 'IOWebSocketChannel');
+    const adapter = sym(util, `${P}\`adapter.dart\`/AdapterWebSocketChannel#`, 'AdapterWebSocketChannel');
+    sym(util, `${P}\`adapter.dart\`/AdapterWebSocketChannel#sink.`, 'sink', adapter);
+    edge(io, adapter, util, util);
+    const channel = sym(util, `${P}src/\`channel.dart\`/WebSocketChannel#`, 'WebSocketChannel');
+    addRepo('acme/stream', 'sha-s', 'ok');
+    const stream = addPackage('@acme/stream', 'acme/stream');
+    const mixin = sym(stream, 'scip-dart pub stream . lib/`stream_channel.dart`/StreamChannelMixin#', 'StreamChannelMixin');
+    const iface = sym(stream, 'scip-dart pub stream . lib/`stream_channel.dart`/StreamChannel#', 'StreamChannel');
+    sym(stream, 'scip-dart pub stream . lib/`stream_channel.dart`/StreamChannel#stream.', 'stream', iface);
+    edge(channel, mixin, util, stream);
+    edge(mixin, iface, stream, stream);
+    // Members elsewhere that must NOT make these moved (negative): a same-named member
+    // of an unrelated class, and an Events class the renamed owner's members moved to.
+    const other = sym(util, `${P}\`other.dart\`/Other#`, 'Other');
+    sym(util, `${P}\`other.dart\`/Other#close().`, 'close', other);
+    const events = sym(util, `${P}\`events.dart\`/ElementEvents#`, 'ElementEvents');
+    sym(util, `${P}\`events.dart\`/ElementEvents#\`<get>onClick\`.`, '<get>onClick', events);
+    const moved = [
+      `${P}src/\`int64.dart\`/Int64#`, `${P}src/\`int64.dart\`/Int64#MAX_VALUE.`, `${P}src/\`clock.dart\`/clock.`,
+      `${P}\`io.dart\`/IOWebSocketChannel#sink.`, `${P}src/\`channel.dart\`/WebSocketChannel#\`<get>stream\`.`,
+    ];
+    const skew = [
+      `${P}\`events.dart\`/ElementEventGetters#\`<get>onClick\`.`, // renamed owner
+      `${P}\`io.dart\`/IOWebSocketChannel#close().`, // member gone; only an unrelated class has one
+      `${P}src/\`int64.dart\`/Int64#gone.`, // owner moved, member gone
+      `${P}\`gone.dart\`/`, // a missing file: never matches the empty descriptor
+    ];
+    for (const [i, str] of [...moved, ...skew].entries()) addSkew(app, util, str, 'src/main.ts', i + 1, 0);
+    const r = buildReport({ db, now: NOW });
+    expect(r.versionSkew).toHaveLength(SEED_SKEW + skew.length);
+    expect(r.diagnostics.unresolved_moved_at_head).toEqual([
+      { target_package_id: util, count: moved.length, examples: expect.any(Array) as unknown as string[] },
+    ]);
+    const cls = (db.prepare("SELECT symbol_str, class FROM unresolved_ref_classes WHERE consumer_package_id = ? AND file = 'src/main.ts' AND line > 0")
+      .all(app) as Array<{ symbol_str: string; class: string }>).filter((x) => [...moved, ...skew].includes(x.symbol_str));
+    expect(cls.filter((x) => x.class === 'moved_at_head').map((x) => x.symbol_str).sort()).toEqual([...moved].sort());
+    expect(cls.filter((x) => x.class === 'version_skew').map((x) => x.symbol_str).sort()).toEqual([...skew].sort());
+    expect(formatSummary(r)).toContain(`${moved.length} reference(s) to names HEAD defines elsewhere (moved file, accessor, inherited member) (the consumer's version declared them there; not skew): ${util} ${moved.length}\n`);
   });
 });
 
