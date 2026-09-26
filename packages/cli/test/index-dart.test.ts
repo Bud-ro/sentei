@@ -10,7 +10,10 @@ import { parseDescriptors, parseScipSymbol, readScipIndex } from '@sentei/core/s
 import { snapshotScip } from '@sentei/core/scip/snapshot';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  BUILD_RUNNER_TIMEOUT_MS,
+  buildRunner,
   flutterReason,
+  missingGeneratedParts,
   OVERRIDES_HEADER,
   ownLibDartFiles,
   parseOverrideConflicts,
@@ -535,6 +538,91 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
     expect(r.status, r.stderr).toBe(0);
     expect(snapshotScip(readScipIndex(path.join(work, 'index/acme__dart-workspace/pub__acme_core.scip')))).toBe(snapshotScip(readScipIndex(alone)));
   }, 300_000);
+});
+
+describe('build_runner for missing generated parts', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-build-runner-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  function pkg(name: string, pubspecText: string, files: Record<string, string>): string {
+    const dir = path.join(root, name);
+    for (const [f, body] of Object.entries({ 'pubspec.yaml': pubspecText, ...files })) {
+      mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      writeFileSync(path.join(dir, f), body);
+    }
+    return dir;
+  }
+  const withRunner = 'name: gen\ndev_dependencies:\n  build_runner: ^2.4.0\n';
+  const lib = {
+    'lib/model.dart': "part 'model.g.dart';\npart \"model.freezed.dart\";\npart 'handwritten.dart';\n",
+    'lib/handwritten.dart': "part of 'model.dart';\n",
+    'lib/src/ok.dart': "part 'ok.g.dart';\n",
+    'lib/src/ok.g.dart': "part of 'ok.dart';\n",
+    'example/pubspec.yaml': 'name: example\n',
+    'example/lib/e.dart': "part 'e.g.dart';\n", // a nested package: not ours
+    'web/demo.dart': "part 'demo.over_react.g.dart';\n",
+  };
+
+  it('lists own missing *.g.dart / *.freezed.dart parts only', () => {
+    const dir = pkg('list', withRunner, lib);
+    expect(missingGeneratedParts(dir)).toEqual([
+      "lib/model.dart: 'model.freezed.dart'",
+      "lib/model.dart: 'model.g.dart'",
+      "web/demo.dart: 'demo.over_react.g.dart'",
+    ]);
+  });
+
+  it('records nothing when no generated part is missing', async () => {
+    const dir = pkg('none', withRunner, { 'lib/a.dart': 'int a() => 1;\n' });
+    const calls: string[][] = [];
+    const diagnostics: string[] = [];
+    expect(await buildRunner(dir, diagnostics, [], 'dart', async (_c, a) => (calls.push(a), { code: 0, signal: null, stdout: '', stderr: '' }))).toBeUndefined();
+    expect(calls).toEqual([]);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('skips a package that does not depend on build_runner', async () => {
+    const dir = pkg('nodep', 'name: nodep\n', lib);
+    const diagnostics: string[] = [];
+    expect(await buildRunner(dir, diagnostics, [], 'dart', async () => { throw new Error('must not run'); })).toBe('skipped');
+    expect(diagnostics).toEqual([
+      "info: build_runner: skipped (3 generated part(s) missing, e.g. lib/model.dart: 'model.freezed.dart'; build_runner is not a dependency)",
+    ]);
+  });
+
+  it('runs `dart run build_runner build --delete-conflicting-outputs` in the package, time-boxed, and reports what is still missing', async () => {
+    const dir = pkg('runs', withRunner, lib);
+    const calls: Array<[string, string[], string, number | undefined]> = [];
+    const diagnostics: string[] = [];
+    const log: string[] = [];
+    const outcome = await buildRunner(dir, diagnostics, log, '/sdk/bin/dart', async (cmd, args, cwd, timeoutMs) => {
+      calls.push([cmd, args, cwd, timeoutMs]);
+      writeFileSync(path.join(dir, 'lib/model.g.dart'), "part of 'model.dart';\n");
+      writeFileSync(path.join(dir, 'lib/model.freezed.dart'), "part of 'model.dart';\n");
+      return { code: 0, signal: null, stdout: '[INFO] Succeeded after 1.2s', stderr: '' };
+    });
+    expect(outcome).toBe('ran');
+    expect(calls).toEqual([['/sdk/bin/dart', ['run', 'build_runner', 'build', '--delete-conflicting-outputs'], dir, BUILD_RUNNER_TIMEOUT_MS]]);
+    expect(BUILD_RUNNER_TIMEOUT_MS).toBe(600_000);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatch(/^info: build_runner: ran \(3 generated part\(s\) missing, e\.g\. lib\/model\.dart: 'model\.freezed\.dart'; 1 still missing; [\d.]+ s\)$/);
+    expect(log.join('\n')).toContain('[INFO] Succeeded after 1.2s');
+  });
+
+  it('reports a failing or timed-out build_runner as failed', async () => {
+    const dir = pkg('fails', withRunner, lib);
+    const failed: string[] = [];
+    expect(await buildRunner(dir, failed, [], 'dart', async () => ({ code: 78, signal: null, stdout: '', stderr: 'Could not find package "build_runner".\n' }))).toBe('failed');
+    expect(failed).toEqual([
+      "warn: build_runner: failed (3 generated part(s) missing, e.g. lib/model.dart: 'model.freezed.dart'; exited with 78: Could not find package \"build_runner\".)",
+    ]);
+    const slow: string[] = [];
+    expect(await buildRunner(dir, slow, [], 'dart', async () => ({ code: null, signal: 'SIGTERM', stdout: '', stderr: '', timedOut: true }), 1000)).toBe('failed');
+    expect(slow[0]).toMatch(/; timed out after 1 s\)$/);
+  });
 });
 
 describe('Flutter package detection', () => {

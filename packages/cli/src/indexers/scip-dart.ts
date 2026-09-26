@@ -83,7 +83,7 @@ export const scipDart: Indexer = {
   // patch 8 (parts resolved in their library), fork patch 9 (operator
   // references), a package with lib/ code but no lib/ document fails;
   // dart-surface: a `main` re-exported by a script is an entry symbol, and
-  // `conditionalImports`.
+  // `conditionalImports`; build_runner for missing generated parts.
   version: '1.7.0+sentei.9',
 
   detect({ repo, pkg }) {
@@ -103,11 +103,16 @@ export const scipDart: Indexer = {
     // A pub workspace resolves once, at its root, for every member.
     const ws = pubWorkspaceOf(repo, pkg);
     if (ws !== undefined) {
-      const shared = await once(workspacePrepares, options, ws.root, () => prepareWorkspace(input, ws));
+      const { shared, perPackage } = await once(workspacePrepares, options, ws.root, () => prepareWorkspace(input, ws));
+      const own = perPackage.get(dir);
       return {
         status: shared.status,
-        diagnostics: [`info: ${workspaceRole(ws, dir)}: resolved once at the workspace root for ${ws.packages.length} package(s)`, ...shared.diagnostics],
-        log: [...shared.log],
+        diagnostics: [
+          `info: ${workspaceRole(ws, dir)}: resolved once at the workspace root for ${ws.packages.length} package(s)`,
+          ...shared.diagnostics,
+          ...(own?.diagnostics ?? []),
+        ],
+        log: [...shared.log, ...(own?.log ?? [])],
       };
     }
     // 1. Source-link org dependencies (before `pub get`, which reads the overrides).
@@ -117,6 +122,7 @@ export const scipDart: Indexer = {
     const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
     const flutter = flutterReason(input);
     let cmd = 'dart';
+    let dart = 'dart';
     if (flutter !== undefined) {
       const sdk = await flutterSdk();
       log.push(...sdk.log);
@@ -128,6 +134,7 @@ export const scipDart: Indexer = {
         return { status: 'partial', diagnostics, log };
       }
       cmd = 'flutter';
+      dart = flutterDart(sdk.root);
       diagnostics.push(`info: Flutter package (${flutter}); Flutter SDK ${sdk.version ?? '?'} at ${sdk.root}`);
     }
     const proc = await pubGet(input, dir, args, links, diagnostics, log, exec, cmd);
@@ -137,6 +144,8 @@ export const scipDart: Indexer = {
       diagnostics.push(`error: ${cmd} ${args.join(' ')} exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
     } else {
       diagnostics.push(`info: ran ${cmd} ${args.join(' ')}`);
+      // 3. Missing generated parts (`*.g.dart` never committed): build_runner, if the package uses it.
+      await buildRunner(dir, diagnostics, log, dart);
     }
     return { status, diagnostics, log };
   },
@@ -421,7 +430,13 @@ function workspaceRole(ws: PubWorkspace, dir: string): string {
  * stage passes one `options` object to every prepare/run call of a run, so it
  * keys the memo (a direct adapter call with its own options object redoes it).
  */
-const workspacePrepares = new WeakMap<IndexerOptions, Map<string, Promise<PrepareResult>>>();
+const workspacePrepares = new WeakMap<IndexerOptions, Map<string, Promise<WorkspacePrepared>>>();
+
+/** [prepareWorkspace]'s result: shared by every package, plus each package's own lines (build_runner), by real dir. */
+interface WorkspacePrepared {
+  shared: PrepareResult;
+  perPackage: Map<string, { diagnostics: string[]; log: string[] }>;
+}
 const workspaceRuns = new WeakMap<IndexerOptions, Map<string, Promise<{ proc: ExecResult; log: string[] }>>>();
 
 function once<T>(store: WeakMap<IndexerOptions, Map<string, Promise<T>>>, options: IndexerOptions, key: string, fn: () => Promise<T>): Promise<T> {
@@ -471,10 +486,11 @@ export function workspaceFlutterReason(input: Pick<IndexerInput, 'repo' | 'looku
  * pubspec_overrides.yaml, and runs `dart pub get` (`flutter pub get` when
  * [workspaceFlutterReason]) at the root, with the usual conflict retries.
  */
-async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<PrepareResult> {
+async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<WorkspacePrepared> {
   const { repo, options } = input;
   const diagnostics: string[] = [];
   const log: string[] = [];
+  const perPackage: WorkspacePrepared['perPackage'] = new Map();
   for (const p of ws.packages) {
     const d = realpathSync(packageDir(repo, p));
     if (d !== ws.root) removeOurOverrides(d, diagnostics);
@@ -488,6 +504,7 @@ async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<
   const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
   const flutter = workspaceFlutterReason(input, ws);
   let cmd = 'dart';
+  let dart = 'dart';
   if (flutter !== undefined) {
     const sdk = await flutterSdk();
     log.push(...sdk.log);
@@ -496,19 +513,32 @@ async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<
         `error: Flutter package (${flutter}) but \`flutter\` is not on PATH: not resolved; install the Flutter SDK to index it` +
           (sdk.error ? ` (${sdk.error})` : ''),
       );
-      return { status: 'partial', diagnostics, log };
+      return { shared: { status: 'partial', diagnostics, log }, perPackage };
     }
     cmd = 'flutter';
+    dart = flutterDart(sdk.root);
     diagnostics.push(`info: Flutter workspace (${flutter}); Flutter SDK ${sdk.version ?? '?'} at ${sdk.root}`);
   }
   const proc = await pubGet(input, ws.root, args, links, diagnostics, log, exec, cmd, write);
   if (proc.code !== 0) {
     const why = firstLine(proc.stderr) ?? firstLine(proc.stdout) ?? '';
     diagnostics.push(`error: ${cmd} ${args.join(' ')} exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
-    return { status: 'partial', diagnostics, log };
+    return { shared: { status: 'partial', diagnostics, log }, perPackage };
   }
   diagnostics.push(`info: ran ${cmd} ${args.join(' ')} at the workspace root ${ws.rootPath}`);
-  return { status: 'ok', diagnostics, log };
+  // Missing generated parts, per package (build_runner runs in a member's dir).
+  for (const p of ws.packages) {
+    const d = realpathSync(packageDir(repo, p));
+    const own = { diagnostics: [] as string[], log: [] as string[] };
+    await buildRunner(d, own.diagnostics, own.log, dart);
+    perPackage.set(d, own);
+  }
+  return { shared: { status: 'ok', diagnostics, log }, perPackage };
+}
+
+/** The `dart` of a Flutter SDK (runs build_runner against the Flutter packages). */
+function flutterDart(flutterRoot: string): string {
+  return path.join(flutterRoot, 'bin', process.platform === 'win32' ? 'dart.bat' : 'dart');
 }
 
 /** Puts back (or removes) a pubspec_overrides.yaml sentei wrote in `dir`. */
@@ -563,6 +593,104 @@ export function ownLibDartFiles(repo: DiscoveredRepo, pkg: DiscoveredPackage): n
   };
   walk(lib);
   return n;
+}
+
+// ---- build_runner ----------------------------------------------------------
+
+/** Parts build_runner writes: `*.g.dart` (json_serializable, built_value, over_react's `*.over_react.g.dart`) and `*.freezed.dart`. */
+const GENERATED_PART = /\.(?:g|freezed)\.dart$/;
+
+/** At most this long for `dart run build_runner build` (a large over_react package takes minutes). */
+export const BUILD_RUNNER_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * `part '<uri>';` directives of the package's own Dart files (nested packages,
+ * dot dirs, build/ and node_modules/ skipped) whose relative URI names a
+ * generated part (see [GENERATED_PART]) that does not exist, as
+ * `<file relative to dir>: '<uri>'`, sorted.
+ */
+export function missingGeneratedParts(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (d: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (d !== dir && entries.some((e) => e.isFile() && e.name === 'pubspec.yaml')) return;
+    for (const e of entries) {
+      if (e.name.startsWith('.') || e.name === 'build' || e.name === 'node_modules') continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && e.name.endsWith('.dart')) {
+        let text: string;
+        try {
+          text = readFileSync(p, 'utf8');
+        } catch {
+          continue;
+        }
+        for (const m of text.matchAll(/^[ \t]*part[ \t]+(['"])([^'"\n]+)\1[ \t]*;/gm)) {
+          const uri = m[2]!;
+          if (uri.includes(':') || !GENERATED_PART.test(uri)) continue;
+          if (!existsSync(path.resolve(path.dirname(p), ...uri.split('/')))) {
+            out.push(`${path.relative(dir, p).split(path.sep).join('/')}: '${uri}'`);
+          }
+        }
+      }
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+/**
+ * Generates missing `*.g.dart` / `*.freezed.dart` parts before indexing: a
+ * library whose generated part is missing is incomplete (references inside
+ * the part are unknown; Workiva's over_react packages commit none of them).
+ * When [missingGeneratedParts] finds any and the pubspec depends on
+ * build_runner, runs `dart run build_runner build --delete-conflicting-outputs`
+ * in `dir` (after pub get), time-boxed to [BUILD_RUNNER_TIMEOUT_MS], output to
+ * the package log. Records one `build_runner: ran|skipped|failed` diagnostic
+ * and returns that outcome; undefined (nothing recorded) when no generated
+ * part is missing. `dart` is the Flutter SDK's for a Flutter package.
+ */
+export async function buildRunner(
+  dir: string,
+  diagnostics: string[],
+  log: string[],
+  dart = 'dart',
+  run: (cmd: string, args: string[], cwd: string, timeoutMs?: number) => Promise<ExecResult> = exec,
+  timeoutMs = BUILD_RUNNER_TIMEOUT_MS,
+): Promise<'ran' | 'skipped' | 'failed' | undefined> {
+  const missing = missingGeneratedParts(dir);
+  if (missing.length === 0) return undefined;
+  const some = `${missing.length} generated part(s) missing, e.g. ${missing[0]}`;
+  let pubspec = '';
+  try {
+    pubspec = readFileSync(path.join(dir, 'pubspec.yaml'), 'utf8');
+  } catch {
+    // no pubspec: nothing to run
+  }
+  if (!/^[ \t]+build_runner[ \t]*:/m.test(pubspec)) {
+    diagnostics.push(`info: build_runner: skipped (${some}; build_runner is not a dependency)`);
+    return 'skipped';
+  }
+  const args = ['run', 'build_runner', 'build', '--delete-conflicting-outputs'];
+  const started = Date.now();
+  const proc = await run(dart, args, dir, timeoutMs);
+  const secs = ((Date.now() - started) / 1000).toFixed(1);
+  log.push(`$ ${dart} ${args.join(' ')}  (cwd ${dir}; ${secs} s)`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+  if (proc.timedOut === true || proc.code !== 0) {
+    const why = proc.timedOut === true
+      ? `timed out after ${Math.round(timeoutMs / 1000)} s`
+      : `exited with ${proc.code ?? proc.signal}${firstLine(proc.stderr) ?? firstLine(proc.stdout) ? `: ${firstLine(proc.stderr) ?? firstLine(proc.stdout)}` : ''}`;
+    diagnostics.push(`warn: build_runner: failed (${some}; ${why})`);
+    return 'failed';
+  }
+  const still = missingGeneratedParts(dir).length;
+  diagnostics.push(`info: build_runner: ran (${some}; ${still} still missing; ${secs} s)`);
+  return 'ran';
 }
 
 // ---- pubspec_overrides.yaml ------------------------------------------------
@@ -1010,17 +1138,30 @@ export interface ExecResult {
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
+  /** Killed after its time box. */
+  timedOut?: true;
 }
 
-function exec(cmd: string, args: string[], cwd: string): Promise<ExecResult> {
+function exec(cmd: string, args: string[], cwd: string, timeoutMs?: number): Promise<ExecResult> {
   return new Promise((resolve) => {
     // Windows: the SDK's `dart` is an .exe, but Flutter's is a .bat shim that needs a shell.
     const child = spawn(cmd, args, { cwd, env: process.env, shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
     child.stdout.setEncoding('utf8').on('data', (c: string) => (stdout += c));
     child.stderr.setEncoding('utf8').on('data', (c: string) => (stderr += c));
-    child.on('error', (err) => resolve({ code: -1, signal: null, stdout, stderr: `${stderr}${err.message}\n` }));
-    child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ code: -1, signal: null, stdout, stderr: `${stderr}${err.message}\n` });
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, stdout, stderr, ...(timedOut ? { timedOut: true as const } : {}) });
+    });
   });
 }

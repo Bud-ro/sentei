@@ -63,6 +63,18 @@ opens pull requests.
   to its source through the package's tsconfig outDir→rootDir (or the dist→src
   convention), and its module counts as package surface; one with no source flags the
   package (`opaque_consumer`), so its symbols get no verdict.
+- Dart packages are resolved with `dart pub get` (`flutter pub get` for Flutter
+  packages; `flutter` must be on `PATH`), org dependencies source-linked in a
+  `pubspec_overrides.yaml` (an existing one is backed up to `.sentei-backup/`).
+  A pub workspace (root `workspace:`, members `resolution: workspace`) is
+  resolved once at its root, with the links there and only for org
+  dependencies outside the workspace, and indexed by one scip-dart run over
+  all its packages. When `part '*.g.dart'` / `*.freezed.dart` files are missing
+  and the package depends on `build_runner`, `dart run build_runner build
+  --delete-conflicting-outputs` runs first (at most 10 minutes; the outcome is
+  a `build_runner: ran|skipped|failed` line in the package's index
+  diagnostics). A package whose `lib/` has Dart files but whose index has none
+  of them is `failed`, never `ok`.
 - tsconfig `lib`/`target`/`module` values newer than the bundled TypeScript
   5.9 (`ES2025`) are read as its newest (`esnext`, `nodenext`), with an
   `info:` line in the package's index log.
