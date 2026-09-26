@@ -168,6 +168,8 @@ export interface ReportBlocker {
   reasons: string[];
   blocks_packages: string[];
   blocked_findings: number;
+  /** What to do about it, per flag (blockerHint): the first error line and index log, an ignoreManifests entry, … */
+  hint: string;
 }
 
 export interface ReportRepo {
@@ -218,6 +220,8 @@ export interface Report {
 
 export interface BuildReportOptions {
   db: DatabaseSync;
+  /** The work dir, for index log paths in blocker hints (`<work>/index/…`); default `<work>`. */
+  workDir?: string;
   /** Epoch seconds; defaults to now (injectable for tests). */
   now?: number;
 }
@@ -362,6 +366,99 @@ export function buildViews(findings: ReportFinding[], versionSkew: ReportVersion
     }
   }
   return v;
+}
+
+/** A package as blockerHint needs it. */
+interface HintPackage {
+  package_id: string;
+  repo: string;
+  path: string;
+  manager: string;
+  name: string;
+}
+
+/**
+ * The per-package index log the index stage writes: `<work>/index/<repo slug>/<package
+ * slug>.log`, slugs as the cli's repoSlug / packageSlug (`pub:acme/x:acme_x` ->
+ * `index/acme__x/pub__x__acme_x.log`; packages/cli/test/report-hints.test.ts checks they agree).
+ */
+export function indexLogPath(workDir: string, p: Pick<HintPackage, 'repo' | 'manager' | 'name'>): string {
+  const clean = (x: string): string => x.replace(/^@/, '').replace(/\//g, '__').replace(/[^A-Za-z0-9._-]/g, '_');
+  const repoName = p.repo.slice(p.repo.indexOf('/') + 1);
+  return `${workDir}/index/${p.repo.replaceAll('/', '__')}/${[p.manager, repoName, p.name].map(clean).join('__')}.log`;
+}
+
+/** The org sentei.json `ignoreManifests` entry that excludes package p: `<repo name>/<manifest path>`. */
+export function ignoreManifestEntry(p: Pick<HintPackage, 'repo' | 'path' | 'manager'>): string {
+  const file = p.manager === 'pub' ? 'pubspec.yaml' : 'package.json';
+  return `${p.repo.slice(p.repo.indexOf('/') + 1)}/${p.path === '.' || p.path === '' ? '' : `${p.path}/`}${file}`;
+}
+
+/** First meaningful line of a flag reason: `error:` / `warn:` / `discover:` prefix dropped, at most 240 characters. */
+function firstLine(reason: string | null): string {
+  const line = (reason ?? '').split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
+  const bare = line.replace(/^(?:error|warn|warning|discover):\s*/i, '');
+  return bare.length > 240 ? `${bare.slice(0, 237)}...` : bare;
+}
+
+/**
+ * What to do about one blocker (report.json `hint`, one summary line), from its own
+ * package_flags rows, in flag order:
+ *   index_failed / opaque_consumer from the index: the first error line and the index
+ *     log; a pre-2.12 Dart SDK constraint is named as such; and when no org package
+ *     depends on the blocker (an example app, a repo-internal demo) the
+ *     `ignoreManifests` entry that removes it (the text witness still reads its code);
+ *   opaque_consumer from discover: the entry point that resolves to no file;
+ *   ambiguous_dep: the candidates, and the `ignoreManifests` entries to drop the ones
+ *     the dependency does not mean (sentei.json has no way to pin a dependency);
+ *   unindexed_consumer, dynamic_access, namespace_dynamic: what was seen, and where.
+ */
+export function blockerHint(
+  id: string,
+  flags: ReadonlyArray<{ flag: string; reason: string | null; file: string | null; target_package_id: string | null }>,
+  pkgOf: ReadonlyMap<string, HintPackage>,
+  hasDependents: boolean,
+  workDir = '<work>',
+): string {
+  const p = pkgOf.get(id);
+  const parts: string[] = [];
+  const log = p ? ` (log: ${indexLogPath(workDir, p)})` : '';
+  const indexRows = flags.filter((f) => f.flag === 'index_failed'
+    || (f.flag === 'opaque_consumer' && !(f.reason ?? '').startsWith('discover: ')));
+  const failed = indexRows.find((f) => f.flag === 'index_failed');
+  const indexRow = failed ?? indexRows[0];
+  if (indexRow) {
+    const line = firstLine(indexRow.reason);
+    const preNullSafety = /lower bound of "sdk: [^"]*" must be 2\.12\.0/.test(indexRow.reason ?? '');
+    parts.push(`${failed ? 'index failed' : 'index partial'}: ${preNullSafety ? 'pre-null-safety SDK constraint, the current Dart SDK cannot resolve it: ' : ''}${line}${log}`);
+    if (!hasDependents && p) {
+      parts.push(`nothing in the org depends on it; if it is an example or demo, exclude it in the org sentei.json: "ignoreManifests": [${JSON.stringify(ignoreManifestEntry(p))}]`);
+    }
+  }
+  const unresolved = flags.filter((f) => f.flag === 'opaque_consumer' && (f.reason ?? '').startsWith('discover: '));
+  if (unresolved.length > 0) {
+    const what = unresolved.map((f) => firstLine(f.reason).replace(/^unresolved entry point /, '')).join(', ');
+    parts.push(`manifest entry point(s) resolve to no file: ${what}${unresolved[0]!.file ? ` (${unresolved[0]!.file})` : ''}; `
+      + 'build output missing from the checkout? The package surface is unknown until it resolves');
+  }
+  const ambiguous = flags.filter((f) => f.flag === 'ambiguous_dep' && f.target_package_id !== null);
+  for (const reason of uniqSorted(ambiguous.map((f) => f.reason ?? ''))) {
+    const m = /^dep (\S+) matches \d+ org packages: (.*)$/.exec(reason);
+    const cands = m ? m[2]!.split(', ') : uniqSorted(ambiguous.map((f) => f.target_package_id!));
+    const entries = cands.flatMap((c) => (pkgOf.has(c) ? [JSON.stringify(ignoreManifestEntry(pkgOf.get(c)!))] : []));
+    parts.push(`dependency ${m ? m[1] : '?'} names several org packages (${cands.join(', ')}); sentei.json cannot pin a dependency, `
+      + `so exclude the ones it does not mean: "ignoreManifests": [${entries.join(', ')}] minus the real one`);
+  }
+  const unindexed = flags.find((f) => f.flag === 'unindexed_consumer');
+  if (unindexed) parts.push(`code in a language sentei cannot index: ${firstLine(unindexed.reason)}; its uses of org packages are invisible`);
+  for (const flag of ['dynamic_access', 'namespace_dynamic']) {
+    const rows = flags.filter((f) => f.flag === flag);
+    if (rows.length === 0) continue;
+    const r = rows[0]!;
+    parts.push(`${flag === 'dynamic_access' ? 'dynamic import / require' : 'dynamic namespace access'}: ${r.file ? `${r.file}: ` : ''}${firstLine(r.reason)}`
+      + `${rows.length > 1 ? ` (+${rows.length - 1} more)` : ''}`);
+  }
+  return parts.join('; ');
 }
 
 export function buildReport(opts: BuildReportOptions): Report {
@@ -536,17 +633,18 @@ export function buildReport(opts: BuildReportOptions): Report {
 
   // ---- packages ------------------------------------------------------------------
   const pkgRows = db.prepare(`
-    SELECT p.package_id, p.name, p.repo, p.visibility,
+    SELECT p.package_id, p.name, p.repo, p.visibility, p.path, p.manager,
            EXISTS (SELECT 1 FROM private_packages c WHERE c.package_id = p.package_id) AS private,
            EXISTS (SELECT 1 FROM opaque_packages o WHERE o.package_id = p.package_id) AS opaque,
            (SELECT count(*) FROM symbols s WHERE s.package_id = p.package_id AND s.is_exported = 1) AS exported,
            (SELECT count(*) FROM symbols s WHERE s.package_id = p.package_id
               AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.module_symbol_id = s.symbol_id)) AS symbols
     FROM packages p`).all() as Array<{
-    package_id: string; name: string; repo: string; visibility: string; private: number; opaque: number; exported: number; symbols: number;
+    package_id: string; name: string; repo: string; visibility: string; path: string; manager: string;
+    private: number; opaque: number; exported: number; symbols: number;
   }>;
-  const flagRows = db.prepare('SELECT package_id, flag, reason, file FROM package_flags').all() as Array<{
-    package_id: string; flag: string; reason: string | null; file: string | null;
+  const flagRows = db.prepare('SELECT package_id, flag, reason, file, target_package_id FROM package_flags').all() as Array<{
+    package_id: string; flag: string; reason: string | null; file: string | null; target_package_id: string | null;
   }>;
   const consumerRows = db.prepare(
     'SELECT DISTINCT resolved_package_id AS package_id, consumer_package_id FROM package_deps WHERE resolved_package_id IS NOT NULL',
@@ -556,6 +654,7 @@ export function buildReport(opts: BuildReportOptions): Report {
   }>;
 
   const repoOf = new Map(pkgRows.map((p) => [p.package_id, p.repo]));
+  const pkgOf = new Map(pkgRows.map((p) => [p.package_id, p]));
   const privateIds = new Set(pkgRows.filter((p) => p.private === 1).map((p) => p.package_id));
   const views = buildViews(findings, versionSkew, privateIds);
   const packages: ReportPackage[] = pkgRows
@@ -615,6 +714,7 @@ export function buildReport(opts: BuildReportOptions): Report {
           ...blockedFindings.map((f) => f.package_id),
         ]),
         blocked_findings: blockedFindings.length,
+        hint: blockerHint(id, own, pkgOf, consumerRows.some((c) => c.package_id === id), opts.workDir),
       };
     })
     .sort(cmpBy((b) => -b.blocked_findings, (b) => b.blocker_package_id));
@@ -772,6 +872,11 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
         ['l', 'l', 'l', 'r', 'l'],
       ));
       if (report.blockers.length > shown.length) out.push(`... and ${report.blockers.length - shown.length} more (see report.json)`);
+      const hinted = shown.filter((b) => b.hint !== '');
+      if (hinted.length > 0) {
+        out.push('What to do:');
+        for (const b of hinted) out.push(`  ${b.blocker_package_id}: ${b.hint}`);
+      }
     }
   }
 

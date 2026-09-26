@@ -22,7 +22,7 @@ export interface ReportStageOptions {
  * needs analyze again.
  */
 export async function report(ctx: StageContext, opts: ReportStageOptions = {}): Promise<void> {
-  const r = buildReport({ db: ctx.db });
+  const r = buildReport({ db: ctx.db, workDir: ctx.work });
   const out = join(ctx.work, 'report.json');
   writeFileSync(out, `${JSON.stringify(r, null, 2)}\n`);
 

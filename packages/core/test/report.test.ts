@@ -5,7 +5,7 @@ import { analyzeSql } from '../src/analyze.ts';
 import { defaultOrgConfig } from '../src/config.ts';
 import { openDb } from '../src/db.ts';
 import { writeDiscoverToDb } from '../src/discover.ts';
-import { buildReport, formatSummary, formatTable, ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS } from '../src/report.ts';
+import { blockerHint, buildReport, formatSummary, formatTable, ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS } from '../src/report.ts';
 
 const NOW = 1_700_000_000;
 const VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
@@ -251,9 +251,12 @@ describe('buildReport', () => {
       ],
       blockers: [
         { blocker_package_id: 'npm:acme/app-dyn:@acme/dyn', repo: 'acme/app-dyn', flags: ['dynamic_access', 'namespace_dynamic'],
-          reasons: ["src/load.cts: require('@acme/' + name)", 'src/main.ts: P[key]'], blocks_packages: ['npm:acme/lib-pub:@acme/pub'], blocked_findings: 2 },
+          reasons: ["src/load.cts: require('@acme/' + name)", 'src/main.ts: P[key]'], blocks_packages: ['npm:acme/lib-pub:@acme/pub'], blocked_findings: 2,
+          hint: "dynamic import / require: src/load.cts: require('@acme/' + name); dynamic namespace access: src/main.ts: P[key]" },
         { blocker_package_id: 'npm:acme/repo-broken:@acme/broken', repo: 'acme/repo-broken', flags: ['index_failed'],
-          reasons: ['tsconfig.json: invalid JSON'], blocks_packages: ['npm:acme/lib-core:@acme/core'], blocked_findings: 1 },
+          reasons: ['tsconfig.json: invalid JSON'], blocks_packages: ['npm:acme/lib-core:@acme/core'], blocked_findings: 1,
+          hint: 'index failed: tsconfig.json: invalid JSON (log: <work>/index/acme__repo-broken/npm__repo-broken__acme__broken.log); '
+            + 'nothing in the org depends on it; if it is an example or demo, exclude it in the org sentei.json: "ignoreManifests": ["repo-broken/packages/broken/package.json"]' },
       ],
       repos: [
         { repo: 'acme/app', head_sha: 'sha-app', index_status: 'ok' },
@@ -641,3 +644,51 @@ describe('buildReport: manifests excluded by ignoreManifests', () => {
   });
 });
 
+describe('blocker hints', () => {
+  const pkgOf = new Map([
+    ['pub:acme/over_react:todo_client', { package_id: 'pub:acme/over_react:todo_client', repo: 'acme/over_react', path: 'app/todo_client', manager: 'pub', name: 'todo_client' }],
+    ['npm:acme/a:@acme/x', { package_id: 'npm:acme/a:@acme/x', repo: 'acme/a', path: '.', manager: 'npm', name: '@acme/x' }],
+    ['npm:acme/b:@acme/x', { package_id: 'npm:acme/b:@acme/x', repo: 'acme/b', path: 'packages/x', manager: 'npm', name: '@acme/x' }],
+    ['npm:acme/app:app', { package_id: 'npm:acme/app:app', repo: 'acme/app', path: '.', manager: 'npm', name: 'app' }],
+  ]);
+  const flag = (f: string, reason: string | null, file: string | null = null, target: string | null = null) =>
+    ({ flag: f, reason, file, target_package_id: target });
+
+  it('index failure: first error line, the log, and for a package nothing depends on the ignoreManifests entry', () => {
+    const reason = "error: dart pub get exited with 65: The lower bound of \"sdk: '>=2.11.0 <3.0.0'\" must be 2.12.0'\nmore output";
+    const id = 'pub:acme/over_react:todo_client';
+    expect(blockerHint(id, [flag('opaque_consumer', reason)], pkgOf, false, '/w')).toBe(
+      'index partial: pre-null-safety SDK constraint, the current Dart SDK cannot resolve it: dart pub get exited with 65: '
+      + "The lower bound of \"sdk: '>=2.11.0 <3.0.0'\" must be 2.12.0' (log: /w/index/acme__over_react/pub__over_react__todo_client.log); "
+      + 'nothing in the org depends on it; if it is an example or demo, exclude it in the org sentei.json: '
+      + '"ignoreManifests": ["over_react/app/todo_client/pubspec.yaml"]');
+    // Something depends on it: fix the index, no ignore suggestion.
+    expect(blockerHint(id, [flag('index_failed', 'error: tsc crashed')], pkgOf, true, '/w'))
+      .toBe('index failed: tsc crashed (log: /w/index/acme__over_react/pub__over_react__todo_client.log)');
+  });
+
+  it('ambiguous dependency: candidates and the ignoreManifests entries (no pin exists)', () => {
+    const reason = 'dep @acme/x matches 2 org packages: npm:acme/a:@acme/x, npm:acme/b:@acme/x';
+    const rows = [flag('ambiguous_dep', reason, 'package.json', 'npm:acme/a:@acme/x'), flag('ambiguous_dep', reason, 'package.json', 'npm:acme/b:@acme/x')];
+    expect(blockerHint('npm:acme/app:app', rows, pkgOf, false)).toBe(
+      'dependency @acme/x names several org packages (npm:acme/a:@acme/x, npm:acme/b:@acme/x); sentei.json cannot pin a dependency, '
+      + 'so exclude the ones it does not mean: "ignoreManifests": ["a/package.json", "b/packages/x/package.json"] minus the real one');
+  });
+
+  it('discover-unresolved entry point, unindexed code, dynamic access', () => {
+    expect(blockerHint('npm:acme/app:app', [flag('opaque_consumer', 'discover: unresolved entry point ./dist/x.js', 'package.json')], pkgOf, false))
+      .toBe('manifest entry point(s) resolve to no file: ./dist/x.js (package.json); build output missing from the checkout? '
+        + 'The package surface is unknown until it resolves');
+    expect(blockerHint('npm:acme/app:app', [flag('unindexed_consumer', '2 .py file(s), e.g. scripts/a.py', 'scripts/a.py')], pkgOf, false))
+      .toBe('code in a language sentei cannot index: 2 .py file(s), e.g. scripts/a.py; its uses of org packages are invisible');
+    expect(blockerHint('npm:acme/app:app', [flag('dynamic_access', "require(x)", 'a.cjs'), flag('dynamic_access', 'import(y)', 'b.ts')], pkgOf, false))
+      .toBe('dynamic import / require: a.cjs: require(x) (+1 more)');
+  });
+
+  it('the summary prints a "What to do" line per shown blocker, with the work dir in log paths', () => {
+    addFlag('npm:acme/app-dyn:@acme/dyn', 'index_failed', 'error: boom', null);
+    const text = formatSummary(buildReport({ db, now: NOW, workDir: '/tmp/w' }));
+    expect(text).toContain('What to do:\n  npm:acme/app-dyn:@acme/dyn: index failed: boom (log: /tmp/w/index/acme__app-dyn/npm__app-dyn__acme__dyn.log); ');
+    expect(text).toContain('  npm:acme/repo-broken:@acme/broken: index failed: tsconfig.json: invalid JSON (log: /tmp/w/index/');
+  });
+});
