@@ -2889,3 +2889,82 @@ neither was done.
 - Not verified end to end: a real re-index of supabase-flutter with the current
   Dart adapter (the measurement patched `directive` into copied sidecars), and a
   run with blame (deletion counts).
+
+### Phase 2 fix round 4: generated parts under .dart_tool; build_runner diagnostics
+
+Evidence: the Workiva rerun (`$TMPDIR/dog-workiva3`, adapter `+sentei.10`),
+defects D2–D4 of its REPORT.md. Adapter `1.7.0+sentei.11`; fork patch 13 in
+`packages/indexers/scip-dart/PATCHES.md`. Measured on copies of the clones
+(never in place), Dart 3.13.4.
+
+**Generated parts under `.dart_tool/build/generated/` (D3, fork patch 13).**
+over_react's builders are `build_to: cache`: build_runner writes
+`x.over_react.g.dart` to `.dart_tool/build/generated/<package>/<path>`, never
+next to the library, and the analyzer resolves `part 'x.over_react.g.dart';`
+to that file (analyzer `PackageConfigWorkspace.findFile`; the unit's path is
+the generated one). The fork indexed only the files its contexts and
+convention walk list (no dot dirs), so the part was resolved with its library
+and dropped: over_react_test came out `ok` with none of its 13 generated parts
+in the DB, every reference inside them lost, and no diagnostic (the part is
+not missing, so the old "library is incomplete" error could not fire).
+Fail-open: a declaration used only from a generated part looks dead. Now the
+fork indexes every part of every library it resolves from the package's
+files; one under the package dir is a document at its real path
+(`.dart_tool/build/generated/over_react_test/lib/src/over_react_test/wrapper_component.over_react.g.dart`),
+one outside the package (a pub workspace member's generated parts sit under
+the workspace root's `.dart_tool/`, because the analyzer's workspace root is
+the package config's dir) is reported (`unindexedParts`) and the adapter makes
+the package `partial` with a `cause:` line. Ingest needs nothing: the
+document's repo-relative path is under the package, and `GENERATED_GLOBS`
+(`**/*.g.dart`, `**/generated/**`) already mark it generated (no verdict for
+what it declares; its references count), so **no globs.ts change is needed**.
+On a copy of over_react_test with its build_runner output: 37 → 50
+documents, the 13 parts indexed (e.g. the wrapper part's 142 occurrences,
+including `PropsMetaCollection` / `PropsMeta` of over_react). The existing
+fixture snapshots are byte-identical; the adapter is bumped to `+sentei.11`
+anyway because the version is the index cache key, and a rerun on the same
+commits would otherwise reuse `+sentei.10` indexes without the parts.
+A part that is still missing keeps the existing rule (partial for `lib/` and
+`bin/`, a warning elsewhere, sentei.5) and now also writes a `cause:` line
+(the missing part) when it is what made the package partial, so ingest's
+`opaque_consumer` reason names it. Fixture: new repo `dart-gen` (`acme_gen`),
+whose part is committed only as
+`.dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart` (`.gitignore`
+re-includes that dir; the test and snapshot copies keep
+`.dart_tool/build/generated/` and drop the rest of `.dart_tool/`); its
+`splitSettingPairs`, used only by the part, is alive, and private_dead
+`already_unreachable` with the fork before patch 13 (checked by reverting it).
+
+**build_runner outcome (D2).** `buildRunner` called any non-zero exit
+`failed` and looked for parts only next to the source, so over_react_test
+said `warn: build_runner: failed (13 generated part(s) missing …)` while it
+indexed `ok`, and over_react `ran (108 missing; 108 still missing)`, although
+all of them had been written under `.dart_tool/build/generated/`.
+`missingGeneratedParts` now counts a part as present when it exists next to
+the source or at `.dart_tool/build/generated/<pubspec name>/<path in the
+package>` under the package or (for a workspace member) the workspace root,
+before and after the run. Outcomes: `ran (N missing; M still missing)` with
+the true M; a non-zero exit (or timeout) that left every part in place is
+`info: build_runner: ran with errors (…; 0 still missing; exited with 1: …)`;
+one with parts still missing is `warn: build_runner: failed (…; M still
+missing; …)`. Verified on a copy of over_react_test with its
+`.dart_tool/build` removed: 13 missing, build_runner exits 1 after 18.8 s
+(`Failed to build with build_runner/aot … wrote 2336 outputs`, the pre-2.12
+`*_unsound_test.dart` DDC builds), `ran with errors (…; 0 still missing; …)`.
+On the dog-workiva3 clones as they are, over_react's 108 and over_react_test's
+13 now count 0 missing, so the next index run does not start build_runner
+again (not re-run on over_react itself).
+
+**Part directives in comments and strings (D4).** The trigger scan was a
+line regex that skipped only strings with `$`. over_react_analyzer_plugin's
+rule docs keep examples in raw triple-quoted strings
+(`const _details = r'''… part 'create_ref_usage.over_react.g.dart'; …'''`):
+34 false "missing" parts, which would start a pointless build_runner run
+(time-boxed at 10 minutes) in a package that depends on it. The directives
+now come from a small Dart lexer (`dartPartUris`): comments (`//`, `///`,
+nested block comments) and string literals (single, double, triple, raw,
+`${…}` interpolation) are skipped, and a directive is a top-level `part`
+followed by a plain string and `;` (`part of` never matches; a URI with
+interpolation or escapes is not a directive's). Parsing with the analyzer
+would need a Dart process before build_runner, for the same answer on
+directives. analyzer_plugin: 34 → 0.

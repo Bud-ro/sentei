@@ -73,11 +73,17 @@ opens pull requests.
   resolved once at its root, with the links there and only for org
   dependencies outside the workspace, and indexed by one scip-dart run over
   all its packages. When `part '*.g.dart'` / `*.freezed.dart` files are missing
-  and the package depends on `build_runner`, `dart run build_runner build
+  (neither next to the library nor under `.dart_tool/build/generated/<package>/`,
+  where `build_to: cache` builders such as over_react's write them) and the
+  package depends on `build_runner`, `dart run build_runner build
   --delete-conflicting-outputs` runs first (at most 10 minutes; the outcome is
-  a `build_runner: ran|skipped|failed` line in the package's index
-  diagnostics). A package whose `lib/` has Dart files but whose index has none
-  of them is `failed`, never `ok`.
+  a `build_runner: ran|ran with errors|skipped|failed` line in the package's
+  index diagnostics: `ran with errors` is a non-zero exit that still wrote
+  every part). Parts the analyzer resolves from `.dart_tool/build/generated/`
+  are indexed as generated documents at that path. A part that is still
+  missing (under `lib/` or `bin/`), or that lies outside the package, makes the
+  package `partial`. A package whose `lib/` has Dart files but whose index has
+  none of them is `failed`, never `ok`.
 - Files a runtime starts (a `node scripts/x.mjs` / `tsx` script, a Dockerfile `CMD`,
   Next.js `next.config.*` / `middleware`, a `bin`) are entry points that keep what
   they use reachable, never export surface. When the package's tsconfig does not
