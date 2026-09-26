@@ -45,7 +45,7 @@
       "entry": "lib/acme_x.dart",
       "exportedAs": "AcmeLoader",
       "file": "lib/acme_x.dart",
-      "line": 42,
+      "line": 44,
       "name": "AcmeLoader",
       "sites": []
     },
@@ -54,7 +54,7 @@
       "entry": "lib/acme_x.dart",
       "exportedAs": "AcmeTiny",
       "file": "lib/acme_x.dart",
-      "line": 50,
+      "line": 52,
       "name": "AcmeTiny",
       "sites": []
     },
@@ -63,8 +63,17 @@
       "entry": "lib/acme_x.dart",
       "exportedAs": "IntTimes",
       "file": "lib/acme_x.dart",
-      "line": 29,
+      "line": 31,
       "name": "IntTimes",
+      "sites": []
+    },
+    {
+      "col": 15,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "Handle",
+      "file": "lib/src/handle.dart",
+      "line": 7,
+      "name": "Handle",
       "sites": []
     },
     {
@@ -72,7 +81,7 @@
       "entry": "lib/acme_x.dart",
       "exportedAs": "docOnly",
       "file": "lib/acme_x.dart",
-      "line": 37,
+      "line": 39,
       "name": "docOnly",
       "sites": []
     },
@@ -99,7 +108,7 @@
       "entry": "lib/acme_x.dart",
       "exportedAs": "inExample",
       "file": "lib/acme_x.dart",
-      "line": 58,
+      "line": 60,
       "name": "inExample",
       "sites": []
     },
@@ -135,7 +144,7 @@
       "entry": "lib/acme_x.dart",
       "exportedAs": "unusedFn",
       "file": "lib/acme_x.dart",
-      "line": 15,
+      "line": 17,
       "name": "unusedFn",
       "sites": []
     },
@@ -144,7 +153,7 @@
       "entry": "lib/acme_x.dart",
       "exportedAs": "usedFn",
       "file": "lib/acme_x.dart",
-      "line": 12,
+      "line": 14,
       "name": "usedFn",
       "sites": []
     },

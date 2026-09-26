@@ -38,7 +38,7 @@
 
   // Expected: alive, no finding (bin/ entry point).
   void main() {
-//     ^^^^ definition scip-dart pub acme_app . bin/`main.dart`/main(). enclosing [9:0-16:1]
+//     ^^^^ definition scip-dart pub acme_app . bin/`main.dart`/main(). enclosing [9:0-17:1]
     print(usedFn()); // unqualified imported top-level function
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/usedFn().
@@ -58,6 +58,11 @@
     print(pubUsed());
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^^ reference scip-dart pub acme_pub . lib/`acme_pub.dart`/pubUsed().
+    print(Handle.wrap(7).raw); // extension type: primary constructor and representation field
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^ reference scip-dart pub acme_x . lib/src/`handle.dart`/Handle#
+//               ^^^^ reference scip-dart pub acme_x . lib/src/`handle.dart`/Handle#wrap().
+//                       ^^^ reference scip-dart pub acme_x . lib/src/`handle.dart`/Handle#raw.
   }
 
 ## bin/shapes.dart

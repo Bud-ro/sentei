@@ -14,4 +14,5 @@ void main() {
   print(implUsed()); // declared in src/impl.dart, reached through `export 'src/impl.dart'`
   print(partUsed()); // declared in a part file
   print(pubUsed());
+  print(Handle.wrap(7).raw); // extension type: primary constructor and representation field
 }

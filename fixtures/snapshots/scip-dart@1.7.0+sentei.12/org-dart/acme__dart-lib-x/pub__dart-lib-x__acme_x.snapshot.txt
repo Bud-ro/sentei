@@ -38,6 +38,8 @@
   // `show` combinator: only Shown joins the surface; Hidden does not.
   export 'src/shown.dart' show Shown;
 //                             ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#
+  // An extension type (fork patch 14: its representation field and primary constructor).
+  export 'src/handle.dart';
 
   // A part file: its declarations belong to this library, so they are surface too.
   part 'src/part_a.dart';
@@ -45,27 +47,27 @@
   // Expected: alive, no finding (external ref from acme_app bin/main.dart, unqualified call).
   int usedFn() => _privateFn() + 1;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/usedFn(). enclosing [12:0-12:33]
+//    ^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/usedFn(). enclosing [14:0-14:33]
 //                ^^^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/_privateFn().
 
   // Expected: deletion_candidate, reasons ["no_refs"] (public in the entry file, referenced nowhere).
   int unusedFn() => 0;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/unusedFn(). enclosing [15:0-15:20]
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/unusedFn(). enclosing [17:0-17:20]
 
   // Expected: alive, no finding (private, never exported; reachable via usedFn).
   int _privateFn() => inExample();
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_privateFn(). enclosing [18:0-18:32]
+//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_privateFn(). enclosing [20:0-20:32]
 //                    ^^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/inExample().
 
   // Expected: private_dead, reasons ["already_unreachable"] (island with _islandB, reached by nothing).
   // ignore: unused_element
   int _islandA(int n) => n <= 0 ? 0 : _islandB(n - 1);
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_islandA(). enclosing [22:0-22:52]
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_islandA(). enclosing [24:0-24:52]
 //             ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//                 ^ definition local 0 enclosing [22:13-22:18]
+//                 ^ definition local 0 enclosing [24:13-24:18]
 //                       ^ reference local 0
 //                                    ^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/_islandB().
 //                                             ^ reference local 0
@@ -73,9 +75,9 @@
   // Expected: private_dead, reasons ["already_unreachable"] (island with _islandA, reached by nothing).
   int _islandB(int n) => n <= 0 ? 1 : _islandA(n - 1);
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_islandB(). enclosing [25:0-25:52]
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/_islandB(). enclosing [27:0-27:52]
 //             ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//                 ^ definition local 1 enclosing [25:13-25:18]
+//                 ^ definition local 1 enclosing [27:13-27:18]
 //                       ^ reference local 1
 //                                    ^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/_islandA().
 //                                             ^ reference local 1
@@ -83,43 +85,43 @@
   // Expected: alive, no finding. Used only implicitly by acme_app (`3.doubled`):
   // no identifier in the consumer names IntTimes, only its member.
   extension IntTimes on int {
-//          ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/IntTimes# enclosing [29:0-33:1]
+//          ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/IntTimes# enclosing [31:0-35:1]
 //                      ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
     // Expected: alive, no finding (member of a live extension; external ref `3.doubled`).
     /// Twice the value. See [docOnly].
     int get doubled => this * 2;
 //  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//          ^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/IntTimes#`<get>doubled`. enclosing [31:2-32:30]
+//          ^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/IntTimes#`<get>doubled`. enclosing [33:2-34:30]
   }
 
   // Expected: deletion_candidate, reasons ["no_refs"]. Named only by the dartdoc
   // link `[docOnly]` on `doubled` above: a doc link is not a reference (fork patch 4).
   int docOnly() => 3;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/docOnly(). enclosing [37:0-37:19]
+//    ^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/docOnly(). enclosing [39:0-39:19]
 
   // Expected: needs_review, reasons ["no_refs", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:8 (member loadAcme)"].
   // Used only through its member, `'logo'.loadAcme()`, by the example app (an ignored
   // manifest): the witness searches an extension's member names too.
   extension AcmeLoader on String {
-//          ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeLoader# enclosing [42:0-45:1]
+//          ^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeLoader# enclosing [44:0-47:1]
 //                        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
     // Expected: no finding (a member of an extension; not exported on its own).
     String loadAcme() => 'acme:$this';
 //  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-//         ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeLoader#loadAcme(). enclosing [44:2-44:36]
+//         ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeLoader#loadAcme(). enclosing [46:2-46:36]
   }
 
   // Expected: deletion_candidate, reasons ["no_refs"]. Its only member `sq` is shorter
   // than 3 characters, so the witness does not search it: the example's local `sq` is
   // not a hit.
   extension AcmeTiny on int {
-//          ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeTiny# enclosing [50:0-53:1]
+//          ^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeTiny# enclosing [52:0-55:1]
 //                      ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
     // Expected: no finding (member of an extension).
     int get sq => this * this;
 //  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//          ^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeTiny#`<get>sq`. enclosing [52:2-52:28]
+//          ^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeTiny#`<get>sq`. enclosing [54:2-54:28]
   }
 
   // Expected: needs_review, reasons ["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest acme/dart-lib-x:example/pubspec.yaml)"].
@@ -127,7 +129,7 @@
   // app (an ignored manifest, never indexed) names it, which the witness reports.
   int inExample() => 1;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/inExample(). enclosing [58:0-58:21]
+//    ^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/inExample(). enclosing [60:0-60:21]
 
 ## lib/bindings.dart
   // Entry that re-exports generated bindings the analyzer excludes
@@ -238,6 +240,28 @@
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/excluded/`bindings_gen.dart`/bindingsCall(). enclosing [6:0-6:40]
 //                      ^^^^^^^^^^^^^^^ reference scip-dart pub acme_x . lib/src/`bindings_backend.dart`/bindingsBackend().
+
+## lib/src/handle.dart
+  // An extension type (Dart 3.3, hence acme_x's `sdk: ^3.3.0`). Its
+//^ definition scip-dart pub acme_x . lib/src/`handle.dart`/
+  // representation `raw` is a field and `Handle.wrap` its primary constructor;
+  // neither is a Declaration node, so scip-dart defined neither while acme_app
+  // referenced both: false version skew (dart-lang: 397 rows on jni's
+  // `JConstructorId#pointer.` from ok_http and cronet_http). Fork patch 14.
+
+  // Expected: alive, no finding (acme_app calls `Handle.wrap(7)` and reads `.raw`).
+  extension type Handle.wrap(int raw) {
+//               ^^^^^^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Handle# enclosing [7:0-10:1]
+//                      ^^^^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Handle#wrap(). enclosing [7:15-7:35]
+//                           ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                               ^^^ definition local 0 enclosing [7:27-7:34]
+//                               ^^^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Handle#raw. enclosing [7:27-7:34]
+    // Expected: no finding (member of a live extension type).
+    bool get isNull => raw == 0;
+//  ^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//           ^^^^^^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Handle#`<get>isNull`. enclosing [9:2-9:30]
+//                     ^^^ reference scip-dart pub acme_x . lib/src/`handle.dart`/Handle#raw.
+  }
 
 ## lib/src/impl.dart
   // Re-exported whole by lib/acme_x.dart (`export 'src/impl.dart';`).

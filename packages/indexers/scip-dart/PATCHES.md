@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.11` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 9 below, pub workspaces resolved once at the root, a package with `lib/` code but no `lib/` document fails, and dart-surface finds a re-exported `main`; sentei.10: patches 10 to 12 below, every public library under `lib/` is an entry point, dart-surface records the `main` of every library and the Flutter plugin classes named in pubspec.yaml; sentei.11: patch 13 below): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.12` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 9 below, pub workspaces resolved once at the root, a package with `lib/` code but no `lib/` document fails, and dart-surface finds a re-exported `main`; sentei.10: patches 10 to 12 below, every public library under `lib/` is an entry point, dart-surface records the `main` of every library and the Flutter plugin classes named in pubspec.yaml; sentei.11: patch 13 below; sentei.12: patch 14 below): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -1529,6 +1529,116 @@ Diff against the state after patch 12:
 +    ],
 +  );
  }
+```
+
+## 14. Extension types: the representation field and the primary constructor are definitions (`lib/src/scip_visitor.dart`)
+
+`extension type JConstructorId._fromPointer(JMethodIDPtr pointer)` declares
+three things: the type, the primary constructor `_fromPointer` and the
+representation field `pointer` (the declaring parameter is also a field).
+The analyzer's AST has a `PrimaryConstructorDeclaration` for the constructor,
+which is not a `Declaration` node, and a plain formal parameter for the
+field, so upstream defined only the type (plus the parameter as a local
+symbol). References resolved to the field and constructor elements anyway
+(`JConstructorId#pointer.`, `JConstructorId#_fromPointer().`,
+`Plain#` `` `<constructor>` ``). A reference to a symbol no document defines
+looks like a name removed at HEAD: dart-lang reported 397 false
+version-skew rows on jni's `JConstructorId#pointer.` referenced from
+ok_http (346) and cronet_http (51). Now:
+
+- a `PrimaryConstructorDeclaration` registers its constructor element as a
+  definition at its name (the type name when unnamed, like upstream's
+  unnamed constructors), enclosing the primary constructor (name and
+  parameter list);
+- a formal parameter whose element is a declaring `FieldFormalParameterElement`
+  (not the `this.x` form, which upstream already handles as a reference)
+  registers its field as a definition at the parameter's name (the field's
+  own fragment has no name offset), enclosing the parameter. The parameter
+  stays a local definition at the same range.
+
+`_registerAsDefinition` takes an optional name offset/length for the second
+case. Covers any declaring parameter, so class primary constructors (a
+language feature not enabled in Dart 3.13) get their fields too when they
+land. Snapshots: new definitions on extension types only (fixture:
+`dart-lib-x/lib/src/handle.dart`, used from acme_app). Upstreamable.
+
+Diff against the file with patches 1–13 applied (line numbers as in the
+vendored file, header included):
+
+```diff
+--- a/lib/src/scip_visitor.dart
++++ b/lib/src/scip_visitor.dart
+@@ -61,4 +61,6 @@ class ScipVisitor extends GeneralizingAstVisitor {
+     } else if (node is FormalParameter) {
+       _visitFormalParameter(node);
++    } else if (node is PrimaryConstructorDeclaration) {
++      _visitPrimaryConstructor(node);
+     } else if (node is SimpleIdentifier) {
+       _visitSimpleIdentifier(node);
+@@ -159,8 +161,39 @@ class ScipVisitor extends GeneralizingAstVisitor {
+   }
+ 
++  /// A primary constructor (`extension type E._(int p)`, `extension type
++  /// E(int p)`) is not a [Declaration] node, so upstream defined no symbol
++  /// for it while `E._(1)` / `E(1)` referenced `E#_().` / `E#<constructor>().`
++  /// (sentei patch 14). Defined at its name (the type name when unnamed).
++  void _visitPrimaryConstructor(PrimaryConstructorDeclaration node) {
++    final element = node.declaredFragment?.element;
++    if (element == null) return;
++    _registerAsDefinition(element, node);
++  }
++
+   void _visitFormalParameter(FormalParameter node) {
+     final element = _symbolGenerator.elementFor(node);
+     if (element == null) return;
+ 
++    // A declaring parameter of a primary constructor (an extension type's
++    // representation, `extension type E(int p)`) also declares the field
++    // `p`, which `e.p` references as `E#p.`: define the field at the
++    // parameter's name as well (sentei patch 14). The parameter itself
++    // stays a (local) definition below.
++    if (node is! FieldFormalParameter &&
++        element is FieldFormalParameterElement &&
++        element.isDeclaring) {
++      // The field's fragment has no name offset: use the parameter's name.
++      final field = element.field;
++      final name = node.name;
++      if (field != null && name != null) {
++        _registerAsDefinition(
++          field,
++          node,
++          offset: name.offset,
++          length: name.length,
++        );
++      }
++    }
++
+     // if the parameter is a `this.someFieldOnThClass`, we need to register
+     // it as a reference to said field, as well as a declaration of a parameter.
+@@ -286,11 +319,15 @@ class ScipVisitor extends GeneralizingAstVisitor {
+     AstNode node, {
+     List<Relationship>? relationships,
++    int? offset,
++    int? length,
+   }) {
+     final symbol = _symbolGenerator.symbolFor(element);
+     if (symbol == null) return null;
++    final nameOffset = offset ?? element.nameOffset;
++    final nameLength = length ?? element.nameLength;
+ 
+     final meta = getSymbolMetadata(
+       element,
+-      element.nameOffset,
++      nameOffset,
+       _analysisErrors,
+     );
+@@ -307,5 +344,5 @@ class ScipVisitor extends GeneralizingAstVisitor {
+     occurrences.add(
+       Occurrence(
+-        range: _lineInfo.getRange(element.nameOffset, element.nameLength),
++        range: _lineInfo.getRange(nameOffset, nameLength),
+         symbol: symbol,
+         symbolRoles: SymbolRole.Definition.value,
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)

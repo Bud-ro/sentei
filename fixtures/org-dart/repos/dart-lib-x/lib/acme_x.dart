@@ -5,6 +5,8 @@ library;
 export 'src/impl.dart';
 // `show` combinator: only Shown joins the surface; Hidden does not.
 export 'src/shown.dart' show Shown;
+// An extension type (fork patch 14: its representation field and primary constructor).
+export 'src/handle.dart';
 
 // A part file: its declarations belong to this library, so they are surface too.
 part 'src/part_a.dart';

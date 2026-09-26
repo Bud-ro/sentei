@@ -78,6 +78,7 @@ that must be source-linked.
 | `operator ==`, `operator []` (SCIP names must be backticked: `` Vec#`==`(). ``) | `dart-lib-x/lib/syntax.dart` `Vec`, used by `dart-app/bin/shapes.dart` | no finding (`Vec` is used; members live with it) |
 | Unnamed extension (`extension on String`) | `lib/syntax.dart`, used by `labelOf` | no finding: it and its getter are `local` symbols |
 | Generic function typedef with a type parameter and a named parameter | `lib/syntax.dart` `typedef Mapper = T Function<T>(T value, {int? times})`; a closure with a named parameter in `bin/shapes.dart` | `Mapper` alive (named by acme_app); `T`, `times` and the closure are `local` |
+| Extension type: representation field and primary constructor (dart-lang jni `JConstructorId#pointer.`, 397 false skew rows) | `dart-lib-x/lib/src/handle.dart` `extension type Handle.wrap(int raw)` (acme_x is `sdk: ^3.3.0` for it), used by `bin/main.dart` as `Handle.wrap(7).raw` | `Handle` alive, no `version_skew` rows: fork patch 14 defines `Handle#wrap().` and `Handle#raw.` (they were referenced, never defined) |
 | Import prefix (`import 'src/shown.dart' as p;`) | `lib/syntax.dart` | no finding: the prefix is a `local` symbol, not a declaration |
 | build.yaml `builder_factories` | `dart-lib-x/build.yaml` → `lib/builder.dart` `acmeBuilder` | no finding: exported but called by build_runner by name (sidecar `entrySymbols`) |
 | dart_dev's `config` | `dart-lib-x/tool/dart_dev/config.dart` | no finding (sidecar `entrySymbols`) |

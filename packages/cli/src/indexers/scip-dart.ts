@@ -11,7 +11,8 @@
 //     package config gets its enclosing pubspec's package; a variable's
 //     enclosing range covers its type annotation; the parts of every indexed
 //     library are indexed, build_runner's .dart_tool/build/generated/ output
-//     included);
+//     included; an extension type's representation field and primary
+//     constructor are definitions);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar
 //     (`--batch`: every package of a pub workspace in one run).
@@ -102,7 +103,9 @@ export const scipDart: Indexer = {
   // sentei.11: fork patch 13 (the parts of every indexed library are
   // documents, build_runner output under .dart_tool/build/generated/ included;
   // a part outside the package makes it partial).
-  version: '1.7.0+sentei.11',
+  // sentei.12: fork patch 14 (an extension type's representation field and
+  // primary constructor are definitions: 397 false skew rows on jni).
+  version: '1.7.0+sentei.12',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));

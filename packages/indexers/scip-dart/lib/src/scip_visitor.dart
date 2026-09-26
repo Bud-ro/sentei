@@ -60,6 +60,8 @@ class ScipVisitor extends GeneralizingAstVisitor {
       _visitDeclaration(node);
     } else if (node is FormalParameter) {
       _visitFormalParameter(node);
+    } else if (node is PrimaryConstructorDeclaration) {
+      _visitPrimaryConstructor(node);
     } else if (node is SimpleIdentifier) {
       _visitSimpleIdentifier(node);
     } else if (node is NamedType) {
@@ -158,9 +160,40 @@ class ScipVisitor extends GeneralizingAstVisitor {
     _registerAsDefinition(element, node, relationships: relationships);
   }
 
+  /// A primary constructor (`extension type E._(int p)`, `extension type
+  /// E(int p)`) is not a [Declaration] node, so upstream defined no symbol
+  /// for it while `E._(1)` / `E(1)` referenced `E#_().` / `E#<constructor>().`
+  /// (sentei patch 14). Defined at its name (the type name when unnamed).
+  void _visitPrimaryConstructor(PrimaryConstructorDeclaration node) {
+    final element = node.declaredFragment?.element;
+    if (element == null) return;
+    _registerAsDefinition(element, node);
+  }
+
   void _visitFormalParameter(FormalParameter node) {
     final element = _symbolGenerator.elementFor(node);
     if (element == null) return;
+
+    // A declaring parameter of a primary constructor (an extension type's
+    // representation, `extension type E(int p)`) also declares the field
+    // `p`, which `e.p` references as `E#p.`: define the field at the
+    // parameter's name as well (sentei patch 14). The parameter itself
+    // stays a (local) definition below.
+    if (node is! FieldFormalParameter &&
+        element is FieldFormalParameterElement &&
+        element.isDeclaring) {
+      // The field's fragment has no name offset: use the parameter's name.
+      final field = element.field;
+      final name = node.name;
+      if (field != null && name != null) {
+        _registerAsDefinition(
+          field,
+          node,
+          offset: name.offset,
+          length: name.length,
+        );
+      }
+    }
 
     // if the parameter is a `this.someFieldOnThClass`, we need to register
     // it as a reference to said field, as well as a declaration of a parameter.
@@ -285,13 +318,17 @@ class ScipVisitor extends GeneralizingAstVisitor {
     Element element,
     AstNode node, {
     List<Relationship>? relationships,
+    int? offset,
+    int? length,
   }) {
     final symbol = _symbolGenerator.symbolFor(element);
     if (symbol == null) return null;
+    final nameOffset = offset ?? element.nameOffset;
+    final nameLength = length ?? element.nameLength;
 
     final meta = getSymbolMetadata(
       element,
-      element.nameOffset,
+      nameOffset,
       _analysisErrors,
     );
     symbols.add(
@@ -306,7 +343,7 @@ class ScipVisitor extends GeneralizingAstVisitor {
 
     occurrences.add(
       Occurrence(
-        range: _lineInfo.getRange(element.nameOffset, element.nameLength),
+        range: _lineInfo.getRange(nameOffset, nameLength),
         symbol: symbol,
         symbolRoles: SymbolRole.Definition.value,
         diagnostics: meta.diagnostics,

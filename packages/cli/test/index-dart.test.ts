@@ -133,7 +133,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.11',
+        indexerVersion: '1.7.0+sentei.12',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -172,19 +172,20 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     });
     const rows = s.exports.map((e) => [e.exportedAs, e.name, e.file, e.line, e.col]);
     expect(rows).toEqual([
-      ['AcmeLoader', 'AcmeLoader', 'lib/acme_x.dart', 42, 10],
-      ['AcmeTiny', 'AcmeTiny', 'lib/acme_x.dart', 50, 10],
-      ['IntTimes', 'IntTimes', 'lib/acme_x.dart', 29, 10],
+      ['AcmeLoader', 'AcmeLoader', 'lib/acme_x.dart', 44, 10],
+      ['AcmeTiny', 'AcmeTiny', 'lib/acme_x.dart', 52, 10],
+      ['Handle', 'Handle', 'lib/src/handle.dart', 7, 15],
+      ['IntTimes', 'IntTimes', 'lib/acme_x.dart', 31, 10],
       ['Shown', 'Shown', 'lib/src/shown.dart', 3, 6],
-      ['docOnly', 'docOnly', 'lib/acme_x.dart', 37, 4],
+      ['docOnly', 'docOnly', 'lib/acme_x.dart', 39, 4],
       ['implUnused', 'implUnused', 'lib/src/impl.dart', 6, 4],
       ['implUsed', 'implUsed', 'lib/src/impl.dart', 3, 4],
-      ['inExample', 'inExample', 'lib/acme_x.dart', 58, 4],
+      ['inExample', 'inExample', 'lib/acme_x.dart', 60, 4],
       ['partUnused', 'partUnused', 'lib/src/part_a.dart', 8, 4],
       ['partUsed', 'partUsed', 'lib/src/part_a.dart', 5, 4],
       ['shownOnly', 'shownOnly', 'lib/src/impl.dart', 10, 4],
-      ['unusedFn', 'unusedFn', 'lib/acme_x.dart', 15, 4],
-      ['usedFn', 'usedFn', 'lib/acme_x.dart', 12, 4],
+      ['unusedFn', 'unusedFn', 'lib/acme_x.dart', 17, 4],
+      ['usedFn', 'usedFn', 'lib/acme_x.dart', 14, 4],
       ['acmeBuilder', 'acmeBuilder', 'lib/builder.dart', 5, 7],
       ['Mapper', 'Mapper', 'lib/syntax.dart', 36, 8],
       ['Vec', 'Vec', 'lib/syntax.dart', 9, 6],
@@ -262,11 +263,25 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));
     const entry = lib.documents.find((d) => d.relativePath === 'lib/acme_x.dart')!;
     const docOnly = 'scip-dart pub acme_x 1.0.0 lib/`acme_x.dart`/docOnly().';
-    // `  /// Twice the value. See [docOnly].` on line 32: a doc link, not a use.
-    const line = readFileSync(path.join(FIXTURE, 'repos/dart-lib-x/lib/acme_x.dart'), 'utf8').split('\n')[31]!;
+    // `  /// Twice the value. See [docOnly].` on line 34: a doc link, not a use.
+    const line = readFileSync(path.join(FIXTURE, 'repos/dart-lib-x/lib/acme_x.dart'), 'utf8').split('\n')[33]!;
     expect(line).toContain('[docOnly]');
-    expect(entry.occurrences.filter((o) => o.range[0] === 31)).toEqual([]);
-    expect(entry.occurrences.filter((o) => o.symbol === docOnly).map((o) => [o.range[0], o.symbolRoles & 1])).toEqual([[37, 1]]);
+    expect(entry.occurrences.filter((o) => o.range[0] === 33)).toEqual([]);
+    expect(entry.occurrences.filter((o) => o.symbol === docOnly).map((o) => [o.range[0], o.symbolRoles & 1])).toEqual([[39, 1]]);
+  });
+
+  it("defines an extension type's representation field and primary constructor, which a consumer references (fork patch 14)", () => {
+    const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));
+    const doc = lib.documents.find((d) => d.relativePath === 'lib/src/handle.dart')!;
+    const at = (o: { range: number[] }) => `${o.range[0]}:${o.range[1]}-${o.range.length === 3 ? o.range[2] : o.range[3]}`;
+    const defs = doc.occurrences.filter((o) => (o.symbolRoles & 1) === 1 && !o.symbol.startsWith('local ')).map((o) => `${at(o)} ${o.symbol.split('`handle.dart`/')[1]}`);
+    // `extension type Handle.wrap(int raw) {` on line 8.
+    expect(defs).toEqual(expect.arrayContaining(['7:15-21 Handle#', '7:22-26 Handle#wrap().', '7:31-34 Handle#raw.']));
+    const app = readScipIndex(path.join(work, 'index/acme__dart-app/pub__acme_app.scip'));
+    const refs = new Set(app.documents.flatMap((d) => d.occurrences.filter((o) => (o.symbolRoles & 1) === 0).map((o) => o.symbol)));
+    for (const name of ['Handle#wrap().', 'Handle#raw.']) {
+      expect(refs).toContain(`scip-dart pub acme_x 1.0.0 lib/src/\`handle.dart\`/${name}`);
+    }
   });
 
   it('indexes files the analyzer excludes (analysis_options.yaml), with their references (fork patch 10)', () => {
