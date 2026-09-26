@@ -301,7 +301,7 @@ separately, never as a finding.
 |---|---|---|---|
 | `delete` | `deletion_candidate` | DELETE | `sentei/delete` (warning) |
 | `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `dead_island` | DEPRECATE | `sentei/deprecate` (note) |
-| `org_dead` | the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion** | ORG-DEAD (a total line, with a footnote) | `sentei/org-dead` (warning), only with `--view org_dead` |
+| `org_dead` | the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion** | ORG-DEAD (rows plus the unlocked helpers; the total line carries a footnote) | `sentei/org-dead` (warning), only with `--view org_dead` |
 | `unexport` | `unexport_candidate`, plus (`published`) `deprecation_candidate` with only `internal_refs_only` | UNEXPORT | `sentei/unexport` (note) |
 | `private_dead` | `private_dead`, minus the helpers listed under `org_dead` | PRIV-DEAD | `sentei/private-dead` (note) |
 | `needs_review` | `needs_review` | REVIEW | `sentei/needs-review` (note) |

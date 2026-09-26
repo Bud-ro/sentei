@@ -48,8 +48,8 @@ export const ASSERTING_VIEWS: readonly ReportViewName[] = ['org_dead'];
 export const ORG_DEAD_ASSERTION =
   'The org is the only consumer of these packages: nothing outside the org depends on them, although they are published.';
 
-/** Per-package count columns (views with one row per finding of that package). */
-export const PACKAGE_COUNT_VIEWS = ['delete', 'deprecate', 'unexport', 'private_dead', 'needs_review', 'blocked'] as const;
+/** Per-package count columns (views with one row per finding of that package; org_dead counts the private helpers it unlocks too). */
+export const PACKAGE_COUNT_VIEWS = ['delete', 'deprecate', 'org_dead', 'unexport', 'private_dead', 'needs_review', 'blocked'] as const;
 
 /** Verdicts the report knows how to place in a view; anything else is a bug upstream. */
 export const REPORT_VERDICTS = [
@@ -508,7 +508,9 @@ export function buildReport(opts: BuildReportOptions): Report {
       const mine = findings.filter((f) => f.package_id === p.package_id);
       const counts: Record<string, number> = Object.fromEntries(PACKAGE_COUNT_VIEWS.map((v) => {
         const view = views[v];
-        const rows = v === 'unexport' ? [...view.rows, ...views.unexport.published] : view.rows;
+        const rows = v === 'unexport' ? [...view.rows, ...views.unexport.published]
+          : v === 'org_dead' ? [...view.rows, ...views.org_dead.private_dead]
+          : view.rows;
         return [v, rows.filter((f) => f.package_id === p.package_id).length];
       }));
       return {

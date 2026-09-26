@@ -146,6 +146,7 @@ describe('buildReport', () => {
   it('produces the exact report JSON', () => {
     const report = buildReport({ db, now: NOW });
     const counts = (o: Partial<Record<string, number>>): Record<string, number> => ({
+      org_dead: 0,
       delete: 0, deprecate: 0, unexport: 0, private_dead: 0, needs_review: 0, blocked: 0, ...o,
     });
     const blockedCounts = (n: number, review = 0): Record<string, number> =>
@@ -237,7 +238,7 @@ describe('buildReport', () => {
           consumers: ['npm:acme/app:@acme/app'], blocked_by: [],
           counts: counts({ delete: 2, unexport: 1, private_dead: 2 }), exported: 4, symbols: 6 },
         { ...open, visibility: 'published-public', private: false, opaque: false, flags: [], consumers: [], blocked_by: [],
-          counts: counts({ deprecate: 3, unexport: 1, private_dead: 1 }), exported: 4, symbols: 6 },
+          counts: counts({ deprecate: 3, org_dead: 4, unexport: 1, private_dead: 1 }), exported: 4, symbols: 6 },
         { ...pub, visibility: 'published-public', private: false, opaque: false, flags: [],
           consumers: ['npm:acme/app-dyn:@acme/dyn'], blocked_by: dynBlockers,
           counts: blockedCounts(2), exported: 2, symbols: 2 },
@@ -336,15 +337,15 @@ describe('formatSummary', () => {
 
     const header = lines.indexOf('Packages (7), 15 finding(s)');
     expect(header).toBeGreaterThan(7);
-    expect(lines[header + 1]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +DEPRECATE +UNEXPORT +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
+    expect(lines[header + 1]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +DEPRECATE +ORG-DEAD +UNEXPORT +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
     // PACKAGE is the name, REPO the repo: together the package id, readable.
     const util = lines.find((l) => l.startsWith('@acme/util '));
-    expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +yes +2 +0 +1 +2 +0 +0$/);
-    expect(lines.find((l) => l.startsWith('@acme/open '))).toMatch(/^@acme\/open +acme\/lib-pub +published-public +0 +3 +1 +1 +0 +0$/);
+    expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +yes +2 +0 +0 +1 +2 +0 +0$/);
+    expect(lines.find((l) => l.startsWith('@acme/open '))).toMatch(/^@acme\/open +acme\/lib-pub +published-public +0 +3 +4 +1 +1 +0 +0$/);
     const pub = lines.find((l) => l.startsWith('@acme/pub '));
     expect(pub).toMatch(/^@acme\/pub +acme\/lib-pub +published-public +0 .*npm:acme\/app-dyn:@acme\/dyn:dynamic_access, npm:acme\/app-dyn:@acme\/dyn:namespace_dynamic$/);
     expect(lines.find((l) => l.startsWith('@acme/broken '))).toMatch(/acme\/repo-broken +private +yes +yes +0/);
-    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(/^TOTAL +2 +3 +2 +3 +1 +3$/);
+    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(/^TOTAL +2 +3 +4 +2 +3 +1 +3$/);
     // Every row of the package table has its BLOCKED BY column at the same offset.
     const col = lines[header + 1]!.indexOf('BLOCKED BY');
     expect(pub!.indexOf('npm:acme/app-dyn:@acme/dyn:')).toBe(col);
@@ -377,7 +378,7 @@ describe('formatSummary', () => {
     const lines = formatSummary(buildReport({ db, now: NOW }), { views: parseViews(['org-dead,delete']) }).split('\n');
     expect(lines[2]).toBe('views: delete, org_dead');
     const header = lines.findIndex((l) => l.startsWith('PACKAGE '));
-    expect(lines[header]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +BLOCKED BY$/);
+    expect(lines[header]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +ORG-DEAD +BLOCKED BY$/);
     const views = lines.indexOf('Views');
     expect(lines.slice(views + 1, views + 3).map((l) => l.trim().split(/ +/)[0])).toEqual(['DELETE', 'ORG-DEAD']);
     expect(lines[views + 3]).toMatch(/^dead_island:/);
