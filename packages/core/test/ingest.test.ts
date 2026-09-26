@@ -677,6 +677,56 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(c.warnings).toBe(1);
   });
 
+  it('a targeted sidecar opaque_consumer (deep dist import with no source) blocks the target only, and is replaced on re-ingest', () => {
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:acme/mono:@acme/app'),
+      flags: [
+        { flag: 'opaque_consumer', reason: 'deep import @acme/lib/dist/esm/gone has no source', file: 'apps/app/src/main.ts', line: 0, col: 21, targetPackage: '@acme/lib' },
+      ],
+    });
+    run();
+    const rows = () => db.prepare('SELECT package_id, flag, reason, file, target_package_id FROM package_flags').all();
+    expect(rows()).toEqual([
+      {
+        package_id: 'npm:acme/mono:@acme/app', flag: 'opaque_consumer', reason: 'deep import @acme/lib/dist/esm/gone has no source',
+        file: 'apps/app/src/main.ts', target_package_id: 'npm:acme/mono:@acme/lib',
+      },
+    ]);
+    // Blocks @acme/lib; the consumer itself stays transparent.
+    expect(db.prepare('SELECT package_id FROM opaque_packages').all()).toEqual([]);
+    expect(db.prepare('SELECT package_id, blocker_package_id, flag FROM blocked_packages').all()).toEqual([
+      { package_id: 'npm:acme/mono:@acme/lib', blocker_package_id: 'npm:acme/mono:@acme/app', flag: 'opaque_consumer' },
+    ]);
+    run();
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('puts the exports of a deep-imported module on the target package surface (deepImportExports), by file and name', () => {
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]));
+    const deep = (targetPackage: string, name: string, file = 'src/a.ts') => ({ targetPackage, entry: 'src/a.ts', exportedAs: name, name, file });
+    const exported = () => db.prepare('SELECT name FROM symbols WHERE is_exported = 1 ORDER BY name').all().map((r) => (r as { name: string }).name);
+    // Without the deep import, helper is private.
+    writeJson('acme/mono', 'app.exports.json', sidecar('npm:acme/mono:@acme/app'));
+    expect(run().deepImportExports).toBe(0);
+    expect(exported()).toEqual(['Foo']);
+    writeJson('acme/mono', 'app.exports.json', {
+      ...sidecar('npm:acme/mono:@acme/app'),
+      deepImportExports: [
+        deep('@acme/lib', 'helper'),
+        deep('@acme/lib', 'gone'), // no longer declared at HEAD: marks nothing
+        deep('@acme/lib', 'bar'), // a member, not a top-level declaration: marks nothing
+        deep('@acme/app', 'main', 'src/main.ts'), // self: ignored
+        deep('left-pad', 'pad'), // not an org package: ignored
+      ],
+    });
+    const c = run();
+    expect(c.deepImportExports).toBe(1);
+    expect(exported()).toEqual(['Foo', 'helper']);
+    const helper = id('scip-typescript npm @acme/lib . src/`a.ts`/helper().');
+    expect(db.prepare('SELECT entry_file, exported_as FROM symbol_exports WHERE symbol_id = ?').all(helper)).toEqual([{ entry_file: 'src/a.ts', exported_as: 'helper' }]);
+    expect(logs.at(-1)).toMatch(/ deepImportExports=1/);
+  });
+
   it('rejects an unknown sidecar flag', () => {
     writeJson('acme/mono', 'app.exports.json', { ...sidecar('npm:acme/mono:@acme/app'), flags: [{ flag: 'looks_fine', reason: 'x', file: null }] });
     expect(() => run()).toThrow(/unknown flag "looks_fine"/);

@@ -100,10 +100,11 @@ export interface ExportsSidecar {
   /**
    * `targetPackage` (npm name), when present, names the org package whose members the
    * construct hides: the flag is then targeted at that package only (blocks it, does
-   * not make this package opaque). Absent: untargeted.
+   * not make this package opaque). Absent: untargeted. `opaque_consumer` comes targeted
+   * (a deep build-output import of that package with no source to link).
    */
   flags?: Array<{
-    flag: 'namespace_dynamic' | 'dynamic_access'; reason: string; file: string | null; line?: number; col?: number;
+    flag: 'namespace_dynamic' | 'dynamic_access' | 'opaque_consumer'; reason: string; file: string | null; line?: number; col?: number;
     targetPackage?: string;
   }>;
   /** Imports of names an org package does not export (version skew; optional). */
@@ -143,6 +144,13 @@ export interface ExportsSidecar {
    * the self-import unresolved) becomes a self `witness_files` row (consumer = target),
    * whatever its scope. Optional.
    */
+  /**
+   * Exports of modules of other org packages that this package imports by a deep path
+   * (`@acme/x/dist/module/lib/types`, source-linked): `entry` (the module) and `file`
+   * (the declaration) relative to the target package dir, `name` the declared name.
+   * Each matching top-level declaration goes on the target's export surface. Optional.
+   */
+  deepImportExports?: Array<{ targetPackage: string; entry: string; exportedAs: string; name: string; file: string }>;
   unindexedImports?: Array<{
     file: string; module: string; targetPackage: string; scope?: 'script' | 'docs' | 'test';
     /**
@@ -223,6 +231,8 @@ export interface IngestCounts {
    * (occurrences + edges), not as unresolved_refs.
    */
   resolvedUnresolvedImports: number;
+  /** Symbols put on a package's export surface only by another package's deep import (sidecar deepImportExports). */
+  deepImportExports: number;
   /** Sidecar entrySymbols that matched no definition (warned). */
   unmatchedEntrySymbols: number;
   /**
@@ -310,7 +320,7 @@ const INGEST_FLAGS = ['opaque_consumer', 'index_failed', 'dynamic_access', 'name
 type IngestFlag = (typeof INGEST_FLAGS)[number] | 'unindexed_consumer' | 'ambiguous_dep';
 /** Reason prefix of the `ambiguous_dep` rows ingest writes (and deletes); discover's lack it. */
 const INGEST_AMBIGUOUS_PREFIX = 'ingest: ';
-const SIDECAR_FLAGS: ReadonlySet<string> = new Set(['namespace_dynamic', 'dynamic_access']);
+const SIDECAR_FLAGS: ReadonlySet<string> = new Set(['namespace_dynamic', 'dynamic_access', 'opaque_consumer']);
 
 /** Bare package name of a module specifier: `@scope/x/deep` -> `@scope/x`, `x/deep` -> `x`. */
 export function barePackageName(module: string): string {
@@ -628,7 +638,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
   const counts: IngestCounts = {
     documents: 0, symbols: 0, occurrences: 0, edges: 0, exported: 0, unresolved: 0, flags: 0, unmatchedExports: 0,
     namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, shorthandRefs: 0, unmatchedShorthandRefs: 0, exportAliases: 0,
-    resolvedUnresolvedImports: 0,
+    resolvedUnresolvedImports: 0, deepImportExports: 0,
     unmatchedEntrySymbols: 0, namespaceSpreadRefs: 0, unmatchedNamespaceSpreadRefs: 0, droppedModuleRefs: 0, witnessFiles: 0,
     generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0,
     ambiguousSymbolRefs: 0, conditionalImports: 0, conditionalMirroredSymbols: 0, unmatchedConditionalImports: 0, warnings: 0,
@@ -1283,6 +1293,37 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         }
       }
     }
+    // ---- Deep-import surface (sidecar deepImportExports) --------------------------
+    // A module of package T that a consumer imports by a deep path
+    // (`@acme/x/dist/module/lib/types`, source-linked to src/lib/types.ts) is an entry
+    // point of T in all but name: its exports go on T's export surface, like the
+    // sidecar exports of a declared entry (symbol_exports, entry_file = that module).
+    // Otherwise the consumer's reference would reach a symbol reachability calls
+    // private, and a used declaration would be reported private_dead. Matched by
+    // (file, name) of a top-level declaration: the consumer's sidecar may be cached
+    // while T moved on; a name that no longer matches marks nothing.
+    {
+      const topNamed = db.prepare('SELECT symbol_id FROM symbols WHERE package_id = ? AND file = ? AND name = ? AND parent_symbol_id IS NULL ORDER BY symbol_id');
+      for (const { packageId, data } of sidecars) {
+        for (const d of data.deepImportExports ?? []) {
+          const resolved = resolveName(packageId, `npm:${d.targetPackage}`);
+          const targets = typeof resolved === 'object' ? resolved.ambiguous : resolved === undefined ? [] : [resolved];
+          for (const t of targets) {
+            const info = pkgs.get(t);
+            if (t === packageId || info === undefined) continue;
+            const inPkg = (f: string): string => (info.path === '' ? f : `${info.path}/${f}`);
+            for (const { symbol_id: id } of topNamed.all(t, inPkg(d.file), d.name) as Array<{ symbol_id: number }>) {
+              if (!exportedIds.has(id)) {
+                st.exported.run(id);
+                exportedIds.add(id);
+                counts.deepImportExports += 1;
+              }
+              counts.exportAliases += Number(st.exportAlias.run(id, inPkg(d.entry), d.exportedAs).changes);
+            }
+          }
+        }
+      }
+    }
     // ---- Sidecar unresolvedImports (after every sidecar's exports are known) -----
     // The consumer's checker could not find `name` in the org package it imports. When
     // the target exports that name at HEAD (an alias in symbol_exports, or an exported
@@ -1603,6 +1644,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     + `exported=${counts.exported} unresolved=${counts.unresolved} flags=${counts.flags} unmatchedExports=${counts.unmatchedExports} `
     + `namespaceMemberRefs=${counts.namespaceMemberRefs} shorthandRefs=${counts.shorthandRefs} exportAliases=${counts.exportAliases}`
     + (counts.resolvedUnresolvedImports > 0 ? ` resolvedUnresolvedImports=${counts.resolvedUnresolvedImports}` : '')
+    + (counts.deepImportExports > 0 ? ` deepImportExports=${counts.deepImportExports}` : '')
     + (counts.namespaceSpreadRefs > 0 ? ` namespaceSpreadRefs=${counts.namespaceSpreadRefs}` : '')
     + (counts.conditionalImports > 0 ? ` conditionalImports=${counts.conditionalImports} (mirrored ${counts.conditionalMirroredSymbols})` : '')
     + (counts.droppedModuleRefs > 0 ? ` droppedModuleRefs=${counts.droppedModuleRefs}` : '')
