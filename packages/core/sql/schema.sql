@@ -406,9 +406,13 @@ END;
 
 -- The "would-be deletion" verdicts: deletion_candidate (private package) and a
 -- deprecation_candidate that is not an internal-only export (reasons no_refs /
--- only_test_refs, or dead_island: published package, the same evidence as a deletion;
--- the report's org_dead view reads these as deletions). A deprecation_candidate with
--- reason internal_refs_only and no dead_island is the published form of an unexport.
+-- only_test_refs / only_docs_refs, or dead_island: published package, the same
+-- evidence as a deletion; the report's org_dead view reads these as deletions). A
+-- deprecation_candidate with reason internal_refs_only and no dead_island is the
+-- published form of an unexport (it may also carry only_test_refs / only_docs_refs).
+-- only_test_refs / only_docs_refs: the only uses are in test / docs files the policy
+-- does not count (both may appear). The summary's reason breakdown counts each
+-- finding once, by precedence dead_island > only_test_refs > only_docs_refs > no_refs.
 
 -- §5.1: no deletion/deprecation candidate while any consumer of the symbol's package is opaque.
 CREATE TRIGGER IF NOT EXISTS findings_candidate_requires_transparent_consumers

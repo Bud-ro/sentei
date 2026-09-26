@@ -72,8 +72,10 @@ const MAX_ISLAND_PASSES = 10;
 
 /**
  * Dead islands that are no longer islands revert to an unexport: unexport_candidate in
- * a private package, deprecation_candidate [internal_refs_only(, only_test_refs)] in a
- * published one (schema view private_packages). A dead island (reason `dead_island`)
+ * a private package, deprecation_candidate [internal_refs_only(, only_test_refs)(,
+ * only_docs_refs)] in a published one (schema view private_packages). only_docs_refs sits
+ * next to only_test_refs (uses only in uncounted docs files); the summary's reason
+ * breakdown ranks dead_island > only_test_refs > only_docs_refs > no_refs. A dead island (reason `dead_island`)
  * is an internal-only export whose internal users were all candidates when analyze ran. When the witness downgrades such a user to needs_review
  * (witness_mismatch: it is not a candidate any more, so it is a seed again), the island
  * becomes reachable in the recomputed mat_reachable_after and is really an unexport:
