@@ -17,6 +17,13 @@
       "name": "main"
     },
     {
+      "col": 5,
+      "file": "lib/src/worker_main.dart",
+      "kind": "runtime",
+      "line": 6,
+      "name": "main"
+    },
+    {
       "col": 6,
       "file": "tool/dart_dev/config.dart",
       "kind": "runtime",

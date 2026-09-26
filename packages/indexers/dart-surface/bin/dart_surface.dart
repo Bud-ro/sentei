@@ -211,11 +211,15 @@ class Surface {
 
   /// Declarations the runtime or a tool invokes by convention, with no
   /// reference in code (the sidecar's `entrySymbols`), keyed by position:
-  ///   - `main` of a `lib/*.dart` entry (Flutter's lib/main.dart);
-  ///   - `main` of every library outside `lib/` (bin/, tool/, benchmark/,
-  ///     example/, web/, root scripts, ...): these are run directly
-  ///     (`dart run`, `dart <file>`), declared there or re-exported (its
-  ///     export namespace, see [_addMain]). Test files are dropped by the adapter;
+  ///   - `main` of every library of the package (see [_addMain]): outside
+  ///     `lib/` (bin/, tool/, benchmark/, example/, web/, root scripts, ...)
+  ///     these are run directly (`dart run`, `dart <file>`); under `lib/`,
+  ///     Flutter's lib/main.dart, and any library a tool compiles or spawns
+  ///     by path (js_interop_gen's `lib/src/dart_main.dart`, compiled with
+  ///     dart2js from a string in `cli.dart`; isolate entry points). A
+  ///     top-level `main` exists to be run, and no code references it.
+  ///     Declared there or re-exported (its export namespace). Test files
+  ///     are dropped by the adapter;
   ///   - build.yaml builder factories (see [_buildYamlFactories]);
   ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
   final entrySymbols = <String, Map<String, Object>>{};
@@ -291,7 +295,6 @@ class Surface {
       entryPoints.add(entry);
       final relToPkg = p.posix.joinAll(p.split(p.relative(abs, from: packageRoot)));
       final isBin = relToPkg.startsWith('bin/');
-      final isLibTop = relToPkg.startsWith('lib/') && !relToPkg.substring(4).contains('/');
       if (!isBin && !relToPkg.startsWith('lib/')) continue;
       final uri = session.uriConverter.pathToUri(abs);
       if (uri == null) {
@@ -305,9 +308,7 @@ class Surface {
         diagnostics.add('info: entry $entry is not a library (${lib.runtimeType}); it exports nothing');
         continue;
       }
-      // The runtime calls `main` of lib/main.dart (Flutter); nothing in code
-      // references it. (bin/** is covered by the scan of files outside lib/.)
-      if (isLibTop) _addMain(lib.element);
+      // (`main` of every library, entries included, comes from the scan of own files.)
       // bin/ entries are programs: they export nothing (their files are still seeds).
       if (isBin) continue;
       records.addAll(await _exportsOf(entry, lib.element));
@@ -478,9 +479,8 @@ class Surface {
       final missingPartOffsets = <int>{};
       if (unitResult is UnitElementResult && parsed is ParsedUnitResult) {
         final fragment = unitResult.fragment;
-        // A program outside lib/ (the library's defining file, not a part).
-        final relToPkg = p.posix.joinAll(p.split(p.relative(file, from: packageRoot)));
-        if (!relToPkg.startsWith('lib/') && fragment.element.firstFragment.source.fullName == file) {
+        // Every library's `main` (the defining file, not a part), lib/src/ included.
+        if (fragment.element.firstFragment.source.fullName == file) {
           _addMain(fragment.element);
         }
         // A part whose file does not exist: the library is incomplete.

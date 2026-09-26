@@ -197,7 +197,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(sidecar('dart-bad', 'acme_bad').entrySymbols).toEqual([{ name: 'main', file: 'bin/main.dart', line: 2, col: 5, kind: 'runtime' }]);
   });
 
-  it('records Dart entry conventions: main outside lib/ (not tests), build.yaml builder factories, dart_dev config', () => {
+  it('records Dart entry conventions: main of every library (not tests), build.yaml builder factories, dart_dev config', () => {
     // Positions are the declarations' names, as SCIP defines them (ingest matches on them).
     expect(sidecar('dart-lib-x', 'acme_x').entrySymbols).toEqual([
       { name: 'main', file: 'benchmark/bench.dart', line: 5, col: 5, kind: 'runtime' }, // runnable script, not a discover entry
@@ -206,6 +206,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       // the pipeline) the ignored example dir is excluded.
       { name: 'main', file: 'example/bin/demo.dart', line: 4, col: 5, kind: 'runtime' },
       { name: 'acmeBuilder', file: 'lib/builder.dart', line: 5, col: 7, kind: 'runtime' }, // build.yaml builder_factories
+      { name: 'main', file: 'lib/src/worker_main.dart', line: 6, col: 5, kind: 'runtime' }, // a main anywhere, lib/src/ included
       { name: 'config', file: 'tool/dart_dev/config.dart', line: 5, col: 6, kind: 'runtime' }, // dart_dev convention
     ]); // test/x_test.dart's main is not one
     const lib = readScipIndex(path.join(work, 'index/acme__dart-lib-x/pub__acme_x.scip'));

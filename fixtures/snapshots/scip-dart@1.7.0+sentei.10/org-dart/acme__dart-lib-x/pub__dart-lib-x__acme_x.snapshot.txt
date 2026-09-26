@@ -261,6 +261,24 @@
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`wire_test.dart`/_wireIsland(). enclosing [14:0-14:23]
 
+## lib/src/worker_main.dart
+  // A program under lib/src/ that nothing imports: a tool compiles or spawns it by
+//^ definition scip-dart pub acme_x . lib/src/`worker_main.dart`/
+  // path (dart-lang/web js_interop_gen compiles lib/src/dart_main.dart with dart2js
+  // from a string in cli.dart; isolate / web-worker entry points). Phase 2 fix round 3.
+
+  // Expected: alive, no finding (a top-level main is a runtime entry symbol,
+  // wherever it is; before round 3: private_dead already_unreachable).
+  void main() => print(_workerHelper());
+//     ^^^^ definition scip-dart pub acme_x . lib/src/`worker_main.dart`/main(). enclosing [6:0-6:38]
+//               ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//                     ^^^^^^^^^^^^^ reference scip-dart pub acme_x . lib/src/`worker_main.dart`/_workerHelper().
+
+  // Expected: alive, no finding (reached from main; was private_dead).
+  int _workerHelper() => 42;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`worker_main.dart`/_workerHelper(). enclosing [9:0-9:26]
+
 ## lib/syntax.dart
   // Second entry library of acme_x (lib/*.dart): declarations whose SCIP symbols
 //^ definition scip-dart pub acme_x . lib/`syntax.dart`/

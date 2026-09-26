@@ -157,3 +157,4 @@ docs / example files: a use there makes them needs_review with a note.
 | Case | Where | Expected |
 | --- | --- | --- |
 | Public library in a subdirectory of `lib/` (dart-lang/sse, timezone `lib/data/`) | `dart-lib-x/lib/extras/extras.dart`: discover entry point (every `lib/**/*.dart` outside `lib/src/`) | `extrasUsed` (used by `dart-app/bin/clock.dart`) alive; `extrasUnused` deletion_candidate `["no_refs"]` (was private_dead `already_unreachable`: not exported) |
+| `main` anywhere in the package (js_interop_gen `lib/src/dart_main.dart`, compiled by path) | `dart-lib-x/lib/src/worker_main.dart`: `main` calls `_workerHelper`; nothing imports the file | both alive (sidecar `entrySymbols`: the `main` of every library of the package; before, only outside `lib/` and in `lib/*.dart` entries, so both were private_dead) |
