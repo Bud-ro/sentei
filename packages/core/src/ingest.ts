@@ -15,7 +15,7 @@ import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { parsePackageRef, packageRefMatches } from './config.ts';
 import { DISCOVER_REASON_PREFIX } from './discover.ts';
 import { matchGlob } from './glob.ts';
-import { GENERATED_GLOBS } from './globs.ts';
+import { GENERATED_GLOBS, inVendoredDir } from './globs.ts';
 import {
   normalizeSymbolVersion,
   occurrenceEnclosingSpan,
@@ -947,8 +947,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     }
 
     // Documents (+ synthetic file symbols where the indexer emitted no module symbol).
-    // is_generated: listed in a sidecar's generatedFiles, or a GENERATED_GLOBS path (so
-    // Dart, whose adapter has no such field, keeps working).
+    // is_generated: listed in a sidecar's generatedFiles, a GENERATED_GLOBS path (so
+    // Dart, whose adapter has no such field, keeps working), or vendored code in a
+    // VENDORED_GLOBS directory below the package root (treated like generated code).
     const generated = new Set(sidecars.flatMap(({ repo, data }) => (data.generatedFiles ?? []).map((f) => `${repo}\0${f}`)));
     for (const w of docs) {
       if (w.moduleSymbolId === 0) {
@@ -960,7 +961,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       }
       const pk = pkgs.get(w.packageId)!;
       const isEntry = pk.entryPoints.has(w.file) || pk.runtimeEntryPoints.has(w.file) ? 1 : 0;
-      const isGenerated = generated.has(`${w.repo}\0${w.file}`) || GENERATED_GLOBS.some((g) => matchGlob(g, w.file)) ? 1 : 0;
+      const isGenerated = generated.has(`${w.repo}\0${w.file}`) || GENERATED_GLOBS.some((g) => matchGlob(g, w.file))
+        || inVendoredDir(w.file, pk.path) ? 1 : 0;
       st.document.run(w.packageId, w.file, w.moduleSymbolId, isEntry, isGenerated);
       counts.documents += 1;
       counts.generatedDocuments += isGenerated;

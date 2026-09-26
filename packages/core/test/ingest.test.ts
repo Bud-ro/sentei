@@ -1127,7 +1127,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(count(db, 'SELECT count(*) AS n FROM witness_files')).toBe(2);
   });
 
-  it('marks sidecar generatedFiles and GENERATED_GLOBS documents is_generated; their declarations get no verdicts', () => {
+  it('marks sidecar generatedFiles, GENERATED_GLOBS and vendored documents is_generated; their declarations get no verdicts', () => {
     writeScip('acme/mono', 'lib.scip', [
       { path: 'src/a.ts', occurrences: [
         { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
@@ -1141,15 +1141,22 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { range: [0, 0, 0], symbol: `${LIB}src/\`c.ts\`/`, roles: 1 },
         { range: [1, 13, 16], symbol: `${LIB}src/\`c.ts\`/Plain#`, roles: 1, enclosing: [1, 0, 1, 20] },
       ] },
+      // Vendored code (VENDORED_GLOBS below the package root) is marked like generated code.
+      { path: 'src/vendor/d.ts', occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/vendor/\`d.ts\`/`, roles: 1 },
+        { range: [1, 13, 16], symbol: `${LIB}src/vendor/\`d.ts\`/Vend#`, roles: 1, enclosing: [1, 0, 1, 20] },
+      ] },
     ]);
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:acme/mono:@acme/lib', [exp('Gen', 'src/a.ts', 1, 13), exp('Glob', 'src/b.generated.ts', 1, 13), exp('Plain', 'src/c.ts', 1, 13)]),
+      ...sidecar('npm:acme/mono:@acme/lib', [exp('Gen', 'src/a.ts', 1, 13), exp('Glob', 'src/b.generated.ts', 1, 13), exp('Plain', 'src/c.ts', 1, 13),
+        exp('Vend', 'src/vendor/d.ts', 1, 13)]),
       generatedFiles: ['src/a.ts'],
     });
     const c = run();
-    expect(c.generatedDocuments).toBe(2);
+    expect(c.generatedDocuments).toBe(3);
     expect(db.prepare("SELECT file, is_generated FROM documents WHERE package_id = 'npm:acme/mono:@acme/lib' ORDER BY file").all()).toEqual([
       { file: 'src/a.ts', is_generated: 1 }, { file: 'src/b.generated.ts', is_generated: 1 }, { file: 'src/c.ts', is_generated: 0 },
+      { file: 'src/vendor/d.ts', is_generated: 1 },
     ]);
     db.prepare("INSERT OR REPLACE INTO policy (key, value) VALUES ('minAgeDays', '0')").run();
     analyzeOrg({ db, now: 1_800_000_000, log: () => {} });

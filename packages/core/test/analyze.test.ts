@@ -410,6 +410,30 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(generated).toEqual([...genFiles].sort());
   });
 
+  it('treats vendored code (third_party/, vendor/, vendored/ below the package root) like generated code', () => {
+    aliveExport('used');
+    for (const [i, file] of ['lib/src/third_party/lsp/protocol_generated.dart', 'third_party/x.ts', 'src/vendor/y.ts', 'src/vendored/z.ts'].entries()) {
+      doc(lib, file);
+      sym(lib, file, `vendExport${i}`, { exported: true });
+      sym(lib, file, `vendPrivate${i}`);
+    }
+    // A vendored file of the consumer calling an org export keeps it alive.
+    const target = sym(lib, 'src/fns.ts', 'usedByVendored', { exported: true });
+    const vend = doc(app, 'third_party/shim.ts');
+    use(vend, target, 'third_party/shim.ts');
+    // Negative: a package whose OWN root is under third_party/ is org code.
+    run("INSERT INTO repos (repo) VALUES ('acme/tp')");
+    run("INSERT INTO packages (package_id, repo, path, manager, name, version, visibility) VALUES ('npm:acme/tp:forked', 'acme/tp', 'third_party/forked', 'npm', 'forked', '1.0.0', 'private')");
+    doc('npm:acme/tp:forked', 'third_party/forked/src/index.ts', true);
+    sym('npm:acme/tp:forked', 'third_party/forked/src/index.ts', 'forkedUnused', { exported: true });
+    sym('npm:acme/tp:forked', 'third_party/forked/src/index.ts', 'forkedDead');
+    analyze();
+    expect(findings()).toEqual([
+      f('forkedDead', 'private_dead', ['already_unreachable']),
+      f('forkedUnused', 'needs_review', DELETE),
+    ]);
+  });
+
   it('never reports import prefixes (kind import-prefix) as private_dead', () => {
     aliveExport('used');
     const prefix = insertSymbol(lib, 'src/fns.ts', '$0', 'import-prefix');

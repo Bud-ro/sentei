@@ -79,6 +79,7 @@ DROP VIEW IF EXISTS symbol_owners;
 DROP VIEW IF EXISTS doc_files;
 DROP VIEW IF EXISTS script_files;
 DROP VIEW IF EXISTS generated_files;
+DROP VIEW IF EXISTS vendored_files;
 DROP VIEW IF EXISTS test_files;
 DROP VIEW IF EXISTS surface_files;
 DROP VIEW IF EXISTS ref_occurrences;
@@ -185,13 +186,34 @@ WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file
     OR ('/' || file) GLOB '*/example/*'
     OR ('/' || file) GLOB '*/demo/*');
 
+-- Vendored files: a `third_party/`, `vendor/` or `vendored/` directory BELOW the
+-- package root (the path is made package-relative first, so a package whose own root
+-- lies under such a directory is not vendored as a whole): the SAME list as
+-- VENDORED_GLOBS in globs.ts (test/globs.test.ts checks). Third-party code copied into
+-- the package is treated like generated code (generated_files below): nothing defined
+-- in it gets a verdict or a private_dead row, references from it still count. dart-lang
+-- dart_mcp_server's vendored LSP protocol bindings were 321 private_dead rows.
+CREATE VIEW vendored_files (package_id, file) AS
+SELECT d.package_id, d.file
+FROM documents d
+JOIN packages p ON p.package_id = d.package_id
+WHERE substr(d.file, 1, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END))
+      = (CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END)
+  AND (('/' || substr(d.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1)) GLOB '*/third_party/*'
+    OR ('/' || substr(d.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1)) GLOB '*/vendor/*'
+    OR ('/' || substr(d.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1)) GLOB '*/vendored/*');
+
 -- Generated files: documents ingest marked is_generated (sidecar generatedFiles:
--- `@generated` / "do not edit" headers), plus build_runner / protoc / freezed / mockito
--- output and generated dirs by path: the SAME list as GENERATED_GLOBS in globs.ts
--- (test/globs.test.ts checks). Nothing
+-- `@generated` / "do not edit" headers; vendored files), plus build_runner / protoc /
+-- freezed / mockito / ffigen output and generated dirs by path: the SAME list as
+-- GENERATED_GLOBS in globs.ts (test/globs.test.ts checks), plus vendored_files (for a
+-- DB ingested before ingest marked them). Nothing
 -- defined in them gets a verdict or a private_dead row (their declarations regenerate);
 -- references FROM them still count like any other file's.
 CREATE VIEW generated_files (package_id, file) AS
+SELECT package_id, file
+FROM vendored_files
+UNION
 SELECT package_id, file
 FROM documents
 WHERE is_generated = 1
@@ -203,6 +225,7 @@ WHERE is_generated = 1
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.freezed.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.mocks.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.over_react.g.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*_generated.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.generated.*'
    OR ('/' || file) GLOB '*/generated/*'
    OR ('/' || file) GLOB '*/__generated__/*';

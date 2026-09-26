@@ -103,10 +103,45 @@ export const GENERATED_GLOBS: readonly string[] = Object.freeze([
   '**/*.freezed.dart',
   '**/*.mocks.dart',
   '**/*.over_react.g.dart',
+  // Phase 2 fix round 2 (dart-lang): ffigen / jnigen / LSP-protocol output is named
+  // `*_generated.dart` (`objective_c_bindings_generated.dart`, `protocol_generated.dart`).
+  // `*.generated.dart` is already `*.generated.*`.
+  '**/*_generated.dart',
   '**/*.generated.*',
   '**/generated/**',
   '**/__generated__/**',
 ]);
+
+/**
+ * Vendored third-party code: copied into the package, maintained elsewhere. Treated like
+ * generated code (the `vendored_files` view feeds `generated_files`, and ingest marks
+ * such documents is_generated): nothing DEFINED in it gets a verdict or a private_dead
+ * row (deleting from a vendored copy only makes the next re-vendoring harder, and its
+ * unused surface is upstream's business), while references FROM it still count (a
+ * vendored file calling an org symbol keeps it alive, fail closed).
+ *
+ * Unlike every other list here, these are matched against the PACKAGE-relative path
+ * (`inVendoredDir`): only a directory BELOW the package root counts. A package whose
+ * own root lies under such a directory (`third_party/foo/pubspec.yaml`, a vendored
+ * fork promoted to an org package) is org code and gets verdicts like any other.
+ * Same `**\/<dir>/**` shape; the `vendored_files` view in analyze.sql spells the list.
+ */
+export const VENDORED_GLOBS: readonly string[] = Object.freeze([
+  '**/third_party/**',
+  '**/vendor/**',
+  '**/vendored/**',
+]);
+
+/**
+ * True when repo-relative `file` lies in a VENDORED_GLOBS directory below the root of
+ * its package (`pkgPath` repo-relative, '.' or '' for the repo root).
+ */
+export function inVendoredDir(file: string, pkgPath: string): boolean {
+  const base = pkgPath === '.' || pkgPath === '' ? '' : `${pkgPath}/`;
+  if (base !== '' && !file.startsWith(base)) return false;
+  const rel = `/${file.slice(base.length)}`;
+  return VENDORED_GLOBS.some((g) => rel.includes(`/${g.slice(3, -3)}/`));
+}
 
 /**
  * Runnable code that is neither library surface nor a test: playgrounds, benchmarks,

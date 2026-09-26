@@ -3,13 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { matchGlob } from '../src/glob.ts';
-import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS } from '../src/globs.ts';
+import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS, VENDORED_GLOBS } from '../src/globs.ts';
 
 // analyze.sql spells the test/docs globs as SQLite GLOB conditions (it is loaded
 // verbatim). Parse them back and compare with the TypeScript lists the witness uses.
 
 const SQL = readFileSync(new URL('../sql/analyze.sql', import.meta.url), 'utf8');
 const BASENAME = "substr(file, length(rtrim(file, replace(file, '/', ''))) + 1)";
+// vendored_files matches the package-relative path.
+const PKGREL = "('/' || substr(d.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1))";
 
 function viewGlobs(view: string): string[] {
   const start = SQL.indexOf(`CREATE VIEW ${view} `);
@@ -23,7 +25,7 @@ function viewGlobs(view: string): string[] {
     let m: RegExpExecArray | null;
     if ((m = /^(.*) GLOB '([^']*)'$/.exec(cond))) {
       if (m[1] === BASENAME && !m[2]!.includes('/')) out.push(`**/${m[2]}`);
-      else if (m[1] === "('/' || file)" && /^\*\/[^*/]+\/\*$/.test(m[2]!)) out.push(`**/${m[2]!.slice(2, -2)}/**`);
+      else if ((m[1] === "('/' || file)" || m[1] === PKGREL) && /^\*\/[^*/]+\/\*$/.test(m[2]!)) out.push(`**/${m[2]!.slice(2, -2)}/**`);
       else throw new Error(`${view}: unrecognised GLOB condition: ${cond}`);
     }
   }
@@ -44,6 +46,16 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
     expect(viewGlobs('generated_files')).toEqual([...GENERATED_GLOBS]);
   });
 
+  it('vendored_files spells exactly VENDORED_GLOBS, on the package-relative path', () => {
+    expect(viewGlobs('vendored_files')).toEqual([...VENDORED_GLOBS]);
+    const start = SQL.indexOf('CREATE VIEW vendored_files ');
+    const body = SQL.slice(start, SQL.indexOf(';', start));
+    expect(body.split(`${PKGREL} GLOB '`).length - 1).toBe(VENDORED_GLOBS.length);
+    // generated_files includes it
+    const g = SQL.indexOf('CREATE VIEW generated_files ');
+    expect(SQL.slice(g, SQL.indexOf(';', g))).toContain('FROM vendored_files');
+  });
+
   it('script_files spells exactly SCRIPT_GLOBS', () => {
     expect(viewGlobs('script_files')).toEqual([...SCRIPT_GLOBS]);
   });
@@ -57,6 +69,7 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
       'lib/a.g.dart', 'lib/src/b.pb.dart', 'c.pbenum.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart',
       'test/g.mocks.dart', 'lib/h.over_react.g.dart', 'src/i.generated.ts', 'generated/j.ts', 'src/__generated__/k.ts',
       'lib/g.dart', 'lib/pb.dart', 'src/generator/l.ts', 'src/generated.ts', 'lib/x.g.dart.bak',
+      'lib/src/objective_c_bindings_generated.dart', 'lib/generated_bindings.dart', 'lib/src/generated_dart.ts',
       'playground/p.ts', 'src/playgrounds/q.ts', 'bench/r.ts', 'benchmark/s.ts', 'x/benchmarks/t.ts', 'sandbox/u.ts',
       'scripts/v.ts', 'tool/w.dart', 'src/tools/x.ts', 'src/scripting/y.ts', 'src/toolsy/z.ts', 'scripts.ts',
       // Round 3 additions (honojs): test support and tool configs.
@@ -90,7 +103,8 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
       ]);
       expect(inView('generated_files')).toEqual([
         'c.pbenum.dart', 'generated/j.ts', 'lib/a.g.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart',
-        'lib/h.over_react.g.dart', 'lib/src/b.pb.dart', 'src/__generated__/k.ts', 'src/i.generated.ts', 'test/g.mocks.dart',
+        'lib/h.over_react.g.dart', 'lib/src/b.pb.dart', 'lib/src/objective_c_bindings_generated.dart', 'src/__generated__/k.ts',
+        'src/i.generated.ts', 'test/g.mocks.dart',
       ]);
       expect(inView('doc_files')).toEqual(['demo/d.ts', 'docs/g.ts', 'examples/x/y.ts', 'src/example/z.ts']);
     } finally {
@@ -165,6 +179,52 @@ describe('SURFACE_DIRS: nothing under a pub package lib/ is a test, docs or scri
       expect(inView('doc_files')).toEqual(['example/lib/main.dart']);
       expect(inView('script_files')).toEqual([]);
       expect(inView('generated_files')).toEqual(['lib/src/gen.g.dart']);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('VENDORED_GLOBS: vendored code below the package root is generated code', () => {
+  const pkgPath: Record<string, string> = {
+    'pub:acme/r:root': '.', 'pub:acme/r:mcp': 'pkgs/mcp', 'pub:acme/r:forked': 'third_party/forked', 'npm:acme/r:web': 'vendor/web',
+  };
+  const docs: Array<[string, string, boolean]> = [
+    // below the package root: vendored
+    ['pub:acme/r:root', 'third_party/lsp/lib/protocol.dart', true],
+    ['pub:acme/r:root', 'lib/src/vendored/x.dart', true],
+    ['pub:acme/r:mcp', 'pkgs/mcp/lib/src/third_party/language_server_protocol/lib/json_parsing.dart', true],
+    ['pub:acme/r:mcp', 'pkgs/mcp/tool/vendor/a.dart', true],
+    ['pub:acme/r:forked', 'third_party/forked/lib/src/vendor/v.dart', true],
+    ['npm:acme/r:web', 'vendor/web/src/vendor/jquery.js', true],
+    // the package's OWN root is under such a dir: org code (negative)
+    ['pub:acme/r:forked', 'third_party/forked/lib/forked.dart', false],
+    ['pub:acme/r:forked', 'third_party/forked/lib/src/impl.dart', false],
+    ['npm:acme/r:web', 'vendor/web/src/index.ts', false],
+    // names that only look alike (negative)
+    ['pub:acme/r:root', 'lib/src/vendors/a.dart', false],
+    ['pub:acme/r:root', 'lib/src/third_party.dart', false],
+    ['pub:acme/r:root', 'lib/src/my_vendor/a.dart', false],
+    ['pub:acme/r:mcp', 'pkgs/mcp/lib/src/vendored_thing.dart', false],
+  ];
+
+  it('inVendoredDir and the vendored_files / generated_files views agree', () => {
+    for (const [id, f, want] of docs) expect(inVendoredDir(f, pkgPath[id]!), f).toBe(want);
+    // A file outside the package path is never vendored by it.
+    expect(inVendoredDir('other/vendor/x.dart', 'pkgs/mcp')).toBe(false);
+    const db = openDb(':memory:');
+    try {
+      db.exec("INSERT INTO repos (repo) VALUES ('acme/r')");
+      const pkg = db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/r', ?, ?, ?, 'private')");
+      for (const [id, path] of Object.entries(pkgPath)) pkg.run(id, path, id.slice(0, 3), id.slice(id.lastIndexOf(':') + 1));
+      const ins = db.prepare('INSERT INTO documents (package_id, file) VALUES (?, ?)');
+      for (const [id, f] of docs) ins.run(id, f);
+      db.exec(analyzeSql());
+      const inView = (v: string): string[] =>
+        (db.prepare(`SELECT file FROM ${v} ORDER BY file`).all() as Array<{ file: string }>).map((r) => r.file);
+      const want = docs.filter(([, , v]) => v).map(([, f]) => f).sort();
+      expect(inView('vendored_files')).toEqual(want);
+      expect(inView('generated_files')).toEqual(want);
     } finally {
       db.close();
     }
