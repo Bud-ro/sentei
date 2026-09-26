@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { requireAnalyzed } from './analyze.ts';
-import { excludedReposWarning, shortenExcludedWarning } from './repo-select.ts';
+import { excludedReposWarning, ignoredManifestsWarning, shortenExcludedWarning } from './repo-select.ts';
 import { parseDescriptors, parseScipSymbol } from './scip/read.ts';
 
 /**
@@ -425,6 +425,12 @@ export function buildReport(opts: BuildReportOptions): Report {
     repo: string; reason: string; manifests: string;
   }>).map((r) => ({ repo: r.repo, reason: r.reason, manifests: JSON.parse(r.manifests) as string[] }));
   if (excludedRows.length > 0) warnings.push(excludedReposWarning(excludedRows));
+  // Manifests the org sentei.json `ignoreManifests` excluded from analysed repos: said as
+  // loudly, since whatever they would have blocked or kept alive by reference is gone.
+  const ignoredRows = db.prepare('SELECT repo, manifest, glob FROM ignored_manifests ORDER BY repo, manifest').all() as Array<{
+    repo: string; manifest: string; glob: string;
+  }>;
+  if (ignoredRows.length > 0) warnings.push(ignoredManifestsWarning(ignoredRows));
 
   // Dependencies whose name several org packages share (package ids are
   // <manager>:<repo>:<name>): say which one discover picked, or that it could not.

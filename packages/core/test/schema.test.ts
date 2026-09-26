@@ -211,6 +211,17 @@ describe('packages invariants', () => {
   });
 });
 
+describe('ignored_manifests', () => {
+  it('is a cascade child of repos keyed by (repo, manifest)', () => {
+    run("INSERT INTO repos (repo) VALUES ('acme/ig')");
+    run("INSERT INTO ignored_manifests (repo, manifest, glob) VALUES ('acme/ig', 'app/pubspec.yaml', 'ig/app/**')");
+    expect(() => run("INSERT INTO ignored_manifests (repo, manifest, glob) VALUES ('acme/ig', 'app/pubspec.yaml', 'x')")).toThrow();
+    expect(() => run("INSERT INTO ignored_manifests (repo, manifest, glob) VALUES ('acme/nope', 'package.json', 'x')")).toThrow();
+    run("DELETE FROM repos WHERE repo = 'acme/ig'");
+    expect(count('SELECT count(*) AS n FROM ignored_manifests')).toBe(0);
+  });
+});
+
 describe('excluded_repos', () => {
   it('takes a JSON array of manifests or NULL, nothing else', () => {
     run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/a', 'archived', NULL), ('acme/b', 'size', '[\"package.json\"]')");

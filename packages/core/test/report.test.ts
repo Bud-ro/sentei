@@ -603,3 +603,41 @@ describe('formatTable', () => {
     ]);
   });
 });
+
+describe('buildReport: manifests excluded by ignoreManifests', () => {
+  it('discover persists them (config globs only); the report warns like it does for excluded repos', () => {
+    const d = openDb(':memory:');
+    try {
+      const ignored = (manifest: string, ignoredBy?: string) => ({
+        path: manifest.slice(0, manifest.lastIndexOf('/')) || '.', manifest, manager: 'pub' as const, name: null, deps: [], depsUnknown: false,
+        ...(ignoredBy ? { ignoredBy } : {}),
+      });
+      writeDiscoverToDb(d, {
+        org: 'acme', source: { kind: 'local', dir: 'x' }, generatedAt: NOW, policy: defaultOrgConfig().policy, keep: [],
+        repos: [{
+          repo: 'acme/over_react', localPath: 'x', defaultBranch: null, headSha: null, config: { extraEntryPoints: [], extraEdges: [], keep: [] }, packages: [],
+          ignoredManifests: [
+            ignored('app/over_react_redux/todo_client/pubspec.yaml', 'over_react/app/**'),
+            ignored('example/pubspec.yaml'), // a default ignore dir: routine, not reported
+            ...Array.from({ length: 11 }, (_, i) => ignored(`demos/d${i}/pubspec.yaml`, 'over_react/demos/*/pubspec.yaml')),
+          ],
+        }],
+      });
+      markAnalyzed(d);
+      const report = buildReport({ db: d, now: NOW });
+      expect(report.warnings).toHaveLength(1);
+      const w = report.warnings[0]!;
+      expect(w).toMatch(/^12 manifest\(s\) excluded by ignoreManifests are not org packages \(not indexed; only the text witness reads them\): /);
+      expect(w).toContain('acme/over_react:app/over_react_redux/todo_client/pubspec.yaml ("over_react/app/**")');
+      expect(w).not.toContain('example/pubspec.yaml');
+      const text = formatSummary(report);
+      expect(text).toContain('… and 2 more (all in report.json warnings)\n');
+      // Rediscovering the repo without them clears the rows (cascade from repos).
+      writeDiscoverToDb(d, { org: 'acme', source: { kind: 'local', dir: 'x' }, generatedAt: NOW, policy: defaultOrgConfig().policy, keep: [], repos: [] });
+      expect(buildReport({ db: d, now: NOW }).warnings).toEqual([]);
+    } finally {
+      d.close();
+    }
+  });
+});
+

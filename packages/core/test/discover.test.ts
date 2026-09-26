@@ -327,6 +327,29 @@ describe('discoverLocal on a synthetic org', () => {
     ]);
     expect(logs).toContain('acme/vscode: skipped 1 manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): package.json');
     expect(logs).toContain('warning: org sentei.json ignoreManifests "nope/**" matched no manifest');
+    // The glob that matched is recorded (discover.json) and written to ignored_manifests.
+    expect(m.repos.flatMap((r) => r.ignoredManifests.map((x) => [r.repo, x.manifest, x.ignoredBy]))).toEqual([
+      ['acme/starter', 'apps/vercel/package.json', 'starter/apps/*/package.json'],
+      ['acme/vscode', 'package.json', 'vscode/package.json'],
+    ]);
+    writeDiscoverToDb(db, m);
+    expect(all('SELECT repo, manifest, glob FROM ignored_manifests ORDER BY repo')).toEqual([
+      { repo: 'acme/starter', manifest: 'apps/vercel/package.json', glob: 'starter/apps/*/package.json' },
+      { repo: 'acme/vscode', manifest: 'package.json', glob: 'vscode/package.json' },
+    ]);
+  });
+
+  it('manifests ignored by a default dir, as a VS Code extension or as a private duplicate carry no ignoredBy', () => {
+    org(['a']);
+    write('org/repos/a/package.json', { name: 'a' });
+    write('org/repos/a/examples/demo/package.json', { name: 'demo' });
+    write('org/repos/a/ext/package.json', { name: 'ext', engines: { vscode: '^1.0.0' } });
+    const m = discoverLocal({ orgDir: join(tmp, 'org') });
+    expect(m.repos[0]!.ignoredManifests.map((x) => [x.manifest, x.ignoredBy])).toEqual([
+      ['examples/demo/package.json', undefined], ['ext/package.json', undefined],
+    ]);
+    writeDiscoverToDb(db, m);
+    expect(all('SELECT * FROM ignored_manifests')).toEqual([]);
   });
 
   it('manifests under default ignore dirs are not org packages; ignoreManifestDirs replaces the default', () => {

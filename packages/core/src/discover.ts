@@ -142,6 +142,12 @@ export interface DiscoverIgnoredManifest {
   deps: DiscoverDep[];
   /** Unparseable manifest: deps unknown, the witness scans it for every package. */
   depsUnknown: boolean;
+  /**
+   * The org sentei.json `ignoreManifests` glob that excluded it; absent when an ignored
+   * dir, a VS Code extension or a private duplicate did (those are routine, not
+   * reported). Written to the DB table ignored_manifests for the report's warning.
+   */
+  ignoredBy?: string;
 }
 
 export interface DiscoverRepo {
@@ -307,7 +313,9 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   const ignoreDirs: ReadonlySet<string> = new Set(ignoreDirList);
   const usedIgnoreGlobs = new Set<string>();
 
-  const repos: Array<DiscoverRepo & { manifests: ManifestPackage[]; ignored: IgnoredManifest[]; files: string[] }> = [];
+  const repos: Array<DiscoverRepo & {
+    manifests: ManifestPackage[]; ignored: IgnoredManifest[]; files: string[]; ignoredBy: Map<string, string>;
+  }> = [];
   for (const r of [...opts.repos].sort((a, b) => cmp(a.name, b.name))) {
     const repo = `${opts.org}/${r.name}`;
     const localPath = r.localPath;
@@ -332,11 +340,16 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       if (hit && !hasLibDir(hit[1] ?? '.')) return;
       warn(m);
     };
+    /** manifest -> the ignoreManifests glob that matched it. */
+    const ignoredBy = new Map<string, string>();
     const { packages: manifests, ignored } = readRepoManifestsWithIgnored(localPath, manifestWarn, files, {
       ignoreDirs: ignoreDirList,
       ignoreManifest: (manifest) => {
         const hit = orgConfig.ignoreManifests.find((g) => matchGlob(g, `${r.name}/${manifest}`));
-        if (hit !== undefined) usedIgnoreGlobs.add(hit);
+        if (hit !== undefined) {
+          usedIgnoreGlobs.add(hit);
+          ignoredBy.set(manifest, hit);
+        }
         return hit !== undefined;
       },
       log: (m) => log(`${repo}: ${m}`),
@@ -377,6 +390,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       manifests,
       ignored,
       files,
+      ignoredBy,
     });
   }
   for (const g of orgConfig.ignoreManifests) {
@@ -485,6 +499,8 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       name: m.name,
       deps: m.deps.map((d) => resolveDep(d, r.repo)),
       depsUnknown: m.depsUnknown,
+      // (an ignored dir wins: readRepoManifestsWithIgnored does not ask the glob then)
+      ...(r.ignoredBy.has(m.manifest) ? { ignoredBy: r.ignoredBy.get(m.manifest)! } : {}),
     }));
     r.packages = r.manifests.map((m): DiscoverPackage => ({
       packageId: packageIdOf(m.manager, r.repo, m.name),
@@ -550,7 +566,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     generatedAt: opts.now ?? Math.floor(Date.now() / 1000),
     policy: orgConfig.policy,
     keep: orgConfig.keep,
-    repos: repos.map(({ manifests: _m, ignored: _i, files: _f, ...r }) => r),
+    repos: repos.map(({ manifests: _m, ignored: _i, files: _f, ignoredBy: _b, ...r }) => r),
   };
 }
 
@@ -641,8 +657,10 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
     // opaque_consumer: those whose reason lacks DISCOVER_REASON_PREFIX), so these survive it.
     const insFlag = db.prepare('INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, ?, ?, ?, ?)');
 
+    const insIgnored = db.prepare('INSERT INTO ignored_manifests (repo, manifest, glob) VALUES (?, ?, ?)');
     for (const r of model.repos) {
       insRepo.run(r.repo, r.defaultBranch, r.headSha);
+      for (const m of r.ignoredManifests ?? []) if (m.ignoredBy !== undefined) insIgnored.run(r.repo, m.manifest, m.ignoredBy);
       for (const p of r.packages) {
         insPkg.run(p.packageId, r.repo, p.path, p.manager, p.name, p.version, p.visibility, p.isLibrary === true ? 1 : 0, JSON.stringify(p.entryPoints));
       }

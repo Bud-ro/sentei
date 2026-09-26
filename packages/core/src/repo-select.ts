@@ -221,11 +221,39 @@ export function excludedReposWarning(items: readonly ExcludedRepoInfo[]): string
   return `${items.length}${EXCLUDED_WARNING_HEAD}${list.join(', ')}`;
 }
 
-/** The excluded-repo warning cut to its first `limit` repos ("… and 5 more (report.json)"); other warnings unchanged. */
+/** A manifest of an analysed repo excluded by the org sentei.json `ignoreManifests`. */
+export interface IgnoredManifestInfo {
+  /** "org/name". */
+  repo: string;
+  /** Repo-relative manifest file. */
+  manifest: string;
+  /** The ignoreManifests entry that matched. */
+  glob: string;
+}
+
+const IGNORED_WARNING_HEAD = ' manifest(s) excluded by ignoreManifests are not org packages (not indexed; only the text witness reads them): ';
+
+/**
+ * "N manifest(s) excluded by ignoreManifests are not org packages (…): acme/app:examples/
+ * demo/package.json ("app/examples/**"), …", every manifest listed; shortened for stdout
+ * like the excluded-repo warning (shortenExcludedWarning).
+ */
+export function ignoredManifestsWarning(items: readonly IgnoredManifestInfo[]): string {
+  return `${items.length}${IGNORED_WARNING_HEAD}${items.map((x) => `${x.repo}:${x.manifest} (${JSON.stringify(x.glob)})`).join(', ')}`;
+}
+
+/**
+ * The excluded-repo (or ignored-manifest) warning cut to its first `limit` items
+ * ("… and 5 more (report.json)"); other warnings unchanged.
+ */
 export function shortenExcludedWarning(warning: string, limit = 10, where = 'all in report.json warnings'): string {
-  const at = warning.indexOf(EXCLUDED_WARNING_HEAD);
-  if (at < 0 || !/^\d+$/.test(warning.slice(0, at))) return warning;
-  const head = warning.slice(0, at + EXCLUDED_WARNING_HEAD.length);
+  const headText = [EXCLUDED_WARNING_HEAD, IGNORED_WARNING_HEAD].find((h) => {
+    const i = warning.indexOf(h);
+    return i > 0 && /^\d+$/.test(warning.slice(0, i));
+  });
+  if (headText === undefined) return warning;
+  const at = warning.indexOf(headText);
+  const head = warning.slice(0, at + headText.length);
   const items = warning.slice(head.length).split(/(?<=\)), /);
   if (items.length <= limit) return warning;
   return `${head}${items.slice(0, limit).join(', ')} … and ${items.length - limit} more (${where})`;

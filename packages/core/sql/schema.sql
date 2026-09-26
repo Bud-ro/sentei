@@ -34,6 +34,18 @@ CREATE TABLE IF NOT EXISTS excluded_repos (
   manifests TEXT CHECK (manifests IS NULL OR (json_valid(manifests) AND json_type(manifests) = 'array'))
 ) STRICT;
 
+-- Manifests of analysed repos that the org sentei.json `ignoreManifests` excluded
+-- (glob: the entry that matched), written by discover. Not org packages: never
+-- indexed, never a consumer in package_deps; only the text witness still reads their
+-- code (discover.json ignoredManifests). The report warns about them next to the
+-- excluded repos. Additive like excluded_repos (SCHEMA_VERSION unchanged).
+CREATE TABLE IF NOT EXISTS ignored_manifests (
+  repo     TEXT NOT NULL REFERENCES repos (repo) ON DELETE CASCADE,
+  manifest TEXT NOT NULL,                        -- repo-relative package.json / pubspec.yaml
+  glob     TEXT NOT NULL,
+  PRIMARY KEY (repo, manifest)
+) STRICT;
+
 -- Org-owned packages (npm package.json / pub pubspec.yaml), one per manifest.
 -- Identity is (repo, path, manager), not the name: two repos may publish the same
 -- name (a fork, a rewrite, a private copy), and both are real packages.
