@@ -1377,6 +1377,39 @@ both). 397 false skew rows are one indexer gap (extension-type representation
 fields), and ffigen / jnigen output with a "generated" header is not yet
 recognised for Dart (292 of 495 private_dead): both in round 5.
 
+### Phase 2 final verification (after fix rounds 5–7)
+
+**flame-engine** (`$TMPDIR/dog-flame3`, tool at round 5): 21 of 49 repos, 71
+packages, index 405 s, 67 ok / 0 partial / 4 failed (all four are real:
+pre-null-safety SDK bounds and an `intl` conflict). DELETE 9 (9 of 9 checked
+right), DEPRECATE 34 (8 of 8 right; four are documented public API that only
+tests and docs use, which is where `org_dead`'s assertion carries real risk),
+skew 3 (all real), REVIEW 76. The one wrong class, 34 of 46 PRIV-DEAD rows in
+ignite (a webpack app whose entry sentei did not know), drove round 6; with the
+round-6 bundler entries 30 of the 34 are reachable and the other 4 are dead.
+Round 6's unexport policy (no unexport rows for private apps nothing depends
+on; types named in public signatures are pinned) cut flame's findings from 925
+to 421 without touching any other view.
+
+**dart-lang** (`$TMPDIR/dog-dartlang3`, tool at round 5): 32 of 41 repos, 263
+packages, index 2632 s, blame 1700 s, 257 ok / 4 partial / 2 failed (the six
+remaining are real: pre-2.12 SDK bounds, protoc output never generated, test
+data importing `package:path/src`). BLOCKED 54 % → 3 %, skew 397 → 0, unresolved
+same-repo references 1949 → 1. Of 20 spot checks 16 were right; the four wrong
+rows were three matcher symbols (used through `test`'s re-export by dozens of
+org test files), one protoc gRPC stub, plus `hybridMain` (called by URI) still
+DELETE, and 758 of 1147 DEPRECATE rows were package:web's IDL bindings. Round 7
+fixed all four classes; measured on a copy of that run's index it takes
+DEPRECATE 1147 → 338 (matcher 77 → 32, web 758 → 1), PRIV-DEAD 1263 → 1184,
+adds no row to any candidate view, and turns `testCodeBuildHook` into a
+needs_review. What remains is policy, recorded here so a user can decide:
+flute's only consumer is its `benchmarks/` app, an ignored manifest dir, so its
+701 DELETE rows are true but pointless (the witness reverts 1629 islands and
+flags 57 rows); self-string witness hits (an error message naming its own
+symbol) push real candidates into REVIEW; re-exports across repos are not
+recorded; the witness scans the symbol's own dependents, not a re-exporter's;
+`flutter pub get` rewrites `analysis_options.yaml` in some clones (harmless).
+
 ### Phase 2 fix round 1: TS indexer toolchain
 
 From the supabase run (`index.txt`, per-package logs); all in
