@@ -12,6 +12,7 @@ over them).
 | `dart-lib-x` | `acme_x` | private (`publish_to: none`) | lib: entry `lib/acme_x.dart` with `export`, `export ... show`, `part`; entries `lib/syntax.dart`, `lib/builder.dart` |
 | `dart-lib-pub` | `acme_pub` | **published-public** (no `publish_to`) | lib with one unused export |
 | `dart-app` | `acme_app` | private (`publish_to: none`) | consumer (`bin/main.dart`, `bin/shapes.dart`): `path:` dep on `acme_x`, hosted `^1.0.0` dep on `acme_pub`; `test/kit_test.dart` uses `acme_kit` (regular `path:` dep) |
+| `dart-js` | `acme_js_app` (root) + npm `acme-js-src` (`js_src/`) | private | mixed repo: Dart `bin/main.dart` reads the JS bundle built from `js_src/` through `@JS('acmeBridge.start')`; no dependency either way |
 | `dart-testkit` | `acme_kit` | private (`publish_to: none`) | test-support library: `lib/testing.dart` entry, `lib/src/test_utils/` |
 | `flutter-widgets` | `acme_widgets` | private (`publish_to: none`) | Flutter lib (`environment.flutter`, `flutter: {sdk: flutter}`): `AcmeButton` (used), `AcmeBanner` (unused) |
 | `flutter-app` | `acme_flutter_app` | private (`publish_to: none`) | Flutter app: `lib/main.dart` `main` calls `runApp` with an `AcmeButton`; `path:` dep on `acme_widgets` |
@@ -102,3 +103,16 @@ uses as references, whatever the dependency kind.
 | Normal library symbol used only by another package's test (negative) | `dart-testkit/lib/acme_kit.dart` `kitRealOnlyInTests` | deletion_candidate `["only_test_refs"]` |
 | Test-support symbol used only by its own package's test | `dart-testkit/lib/src/fakes.dart` `ownTestOnlyFake` | deletion_candidate `["only_test_refs"]` |
 | Test-support symbol used nowhere | `unusedFakeServer` | deletion_candidate `["no_refs"]` |
+
+### Mixed repo: Dart reading a JS bundle of the same repo (Phase 2 fix round 1)
+
+The witness scans the same-repo packages of the other manager (witness.ts
+`crossHits`): any name of the symbol in a JS-interop Dart file, strings included,
+so `@JS('acmeBridge.start')` names `acmeBridge` and `start`. It also re-checks
+unexports of such packages, which analyze otherwise never sends to the witness.
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| npm export used only inside its package, read by Dart through `@JS('acmeBridge.start')` | `dart-js/js_src/src/index.ts` `acmeBridge` (the bundle's default export) | needs_review `["internal_refs_only", "witness_mismatch:pub:acme/dart-js:acme_js_app:bin/main.dart:8"]`, not unexport_candidate |
+| npm export nothing in the index uses, bound by an `@JS()` declaration of the same name | `acmeLegacyStart` | needs_review `["no_refs", …main.dart:13, …main.dart:18]` |
+| npm export no Dart file names (negative) | `jsOnlyUnused` | deletion_candidate `["no_refs"]` |

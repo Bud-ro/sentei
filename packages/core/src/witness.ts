@@ -11,7 +11,15 @@
 //     fixtures… skipped as org packages, so unindexed and absent from package_deps)
 //     whose deps resolve to P, or whose deps are unknown (unparseable manifest); the
 //     files scanned are those under the manifest's dir (minus nested org packages).
-//     PLAN §12: this unindexed code can only downgrade a verdict, never add edges.
+//     PLAN §12: this unindexed code can only downgrade a verdict, never add edges;
+//   - packages of the OTHER manager in P's repo (a Dart package and the npm package
+//     that builds the JS bundle it reads through `@JS('…')`): scanned by crossHits,
+//     not by steps 1-2 below (no import, no vouching: any name of S in a file of C's
+//     own language; JS-interop Dart files only; JS files only for a Dart S whose file
+//     exports to JS with `@JSExport` & co.). Unexports of such a P (analyze sends
+//     them nowhere else) are scanned the same way: a hit turns unexport_candidate /
+//     deprecation_candidate [internal_refs_only] into needs_review with the same
+//     witness_mismatch reasons; no hit leaves the verdict as it was.
 // In each C:
 //   1. files that import/require/re-export P (per-language regex, whole file);
 //   2. in those files, any NAME of S as a whole identifier: S's declared name plus every
@@ -457,6 +465,12 @@ function addDefaultTargets(t: DefaultTargets, file: string, pkgPath: string | nu
   }
 }
 
+/** A Dart file that uses JS interop (an `@JS` annotation, `dart:js*`, `dart:html`, `package:js/`): crossHits. */
+const DART_JS_INTEROP_RE = /@JS\s*\(|\b(?:import|export)\s+['"](?:dart:js|dart:html|package:js\/)/;
+
+/** A Dart file that hands Dart code to JS by name (crossHits, npm consumers of a pub package). */
+const DART_JS_EXPORT_RE = /@JSExport\b|\bcreateJSInteropWrapper\b|\bcreateDartExport\b/;
+
 /** Directive lines never counted for the `self` consumer (P naming S in its own export/part directives). */
 const SELF_DIRECTIVE_LINE_RES: Record<'npm' | 'pub', RegExp[]> = {
   pub: [/^\s*(?:export|part)\b/, /^\s*(?:show|hide)\b/, /^\s*import\s+['"].*\b(?:show|hide)\b/],
@@ -643,6 +657,8 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   requireAnalyzed(db, 'witness');
 
   const locs = new Map<string, ConsumerLoc>();
+  /** Same-repo packages of the other manager, per package id (crossHits). */
+  const crossConsumers = new Map<string, string[]>();
   /** Ignored-manifest consumers by resolved package id; `anyPackage` = deps unknown. */
   const ignoredConsumers = new Map<string, Set<string>>();
   const ignoredAnyPackage: string[] = [];
@@ -655,6 +671,9 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         manager: p.packageId.slice(0, p.packageId.indexOf(':')),
         nestedPaths: new Set(r.packages.filter((q) => q.packageId !== p.packageId).map((q) => q.path)),
       });
+      const managerOf = (id: string): string => id.slice(0, id.indexOf(':'));
+      const other = r.packages.filter((q) => managerOf(q.packageId) !== managerOf(p.packageId)).map((q) => q.packageId).sort(cmp);
+      if (other.length > 0) crossConsumers.set(p.packageId, other);
     }
     for (const m of r.ignoredManifests ?? []) {
       const key = `ignored:${r.repo}/${m.manifest}`;
@@ -1064,6 +1083,56 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return v;
   };
 
+  /**
+   * CROSS-MANAGER step: hits in C, a package of the OTHER manager in P's repo (a Dart
+   * package reading P's JS bundle through `@JS('acmeBridge.start')`, JS code calling
+   * Dart compiled to JS). No import can express that use, so there is no import check
+   * and no entry vouching; SCIP resolved nothing across the languages, so no
+   * same-line occurrence filter either: any name of S as a whole identifier in a
+   * comment-blanked file of C's own language is a hit (`.dart` for pub, JS/TS for npm:
+   * a vendored build of P's bundle in a pub package is P's own output, not a use).
+   * Strings are kept, so `@JS('…')` names are searched: every dot-separated segment of
+   * the annotation string, and the declaration it annotates (`@JS() external X
+   * get foo;` binds JS `foo`). A Dart file counts only if it uses JS interop
+   * (DART_JS_INTEROP_RE); without it no JS name is reachable from Dart.
+   * The other direction (JS files of an npm C naming a Dart S) counts only when S's
+   * own file hands Dart code to JS by name (DART_JS_EXPORT_RE: `@JSExport`,
+   * `createJSInteropWrapper`, `createDartExport`): JS cannot otherwise name a Dart
+   * declaration, and a Dart interop wrapper is routinely named like the JS function
+   * it wraps (Workiva react_testing_library: `getByRole`, `within`, `configure` … in
+   * the vendored testing-library sources, 30 false downgrades without this rule).
+   */
+  const crossHits = (row: PendingRow, plan: SearchPlan, consumer: string): Hit[] => {
+    const dart = consumer.startsWith('pub:');
+    if (!dart && !dartExportsToJs(row)) return [];
+    const files = consumerFiles(consumer, row.test_support === 1);
+    if (files === null) return [{ consumer, file: null, line: 0 }];
+    const hits: Hit[] = [];
+    for (const f of files) {
+      if ((extname(f) === '.dart') !== dart) continue;
+      const text = readNoComments(consumer, f);
+      if (dart && !DART_JS_INTEROP_RE.test(text)) continue;
+      for (const line of nameLines(text, plan.names)) hits.push({ consumer, file: f, line });
+    }
+    return hits;
+  };
+
+  /** Whether pub symbol S's defining file exports Dart code to JS (DART_JS_EXPORT_RE); unreadable: true (fail closed). */
+  const jsExportCache = new Map<string, boolean>();
+  const dartExportsToJs = (row: PendingRow): boolean => {
+    const key = `${row.package_id}\0${row.file}`;
+    let v = jsExportCache.get(key);
+    if (v === undefined) {
+      try {
+        v = DART_JS_EXPORT_RE.test(readNoComments(row.package_id, row.file));
+      } catch {
+        v = true;
+      }
+      jsExportCache.set(key, v);
+    }
+    return v;
+  };
+
   const aliasesOf = db.prepare(
     'SELECT DISTINCT entry_file, exported_as FROM symbol_exports WHERE symbol_id = ? ORDER BY entry_file, exported_as',
   );
@@ -1153,7 +1222,33 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return hits;
   };
 
+  /**
+   * Unexports (unexport_candidate, and the published form deprecation_candidate
+   * [internal_refs_only] without dead_island) of packages that share a repo with a
+   * package of the other manager: analyze never sends them to the witness (their
+   * internal uses are real), but "only used inside its package" is exactly what a
+   * cross-manager use contradicts (Workiva react_testing_library's `rtl`, the default
+   * export of its JS bundle, read by Dart as `@JS('rtl.render')`). Only crossHits run.
+   */
+  const unexports = crossConsumers.size === 0 ? [] : (db
+    .prepare(
+      `SELECT f.symbol_id, f.verdict, f.reasons, f.blocked_by, s.name, s.file, s.line, s.package_id,
+              p.manager, p.name AS pkg_name,
+              p.package_id IN (SELECT package_id FROM private_packages) AS priv,
+              s.symbol_id IN (SELECT symbol_id FROM test_support_symbols) AS test_support
+       FROM findings f
+       JOIN symbols s ON s.symbol_id = f.symbol_id
+       JOIN packages p ON p.package_id = s.package_id
+       WHERE (f.verdict = 'unexport_candidate'
+              OR (f.verdict = 'deprecation_candidate'
+                  AND EXISTS (SELECT 1 FROM json_each(f.reasons) WHERE value = 'internal_refs_only')
+                  AND NOT EXISTS (SELECT 1 FROM json_each(f.reasons) WHERE value = 'dead_island')))
+       ORDER BY f.symbol_id`,
+    )
+    .all() as unknown as Array<PendingRow & { verdict: string }>).filter((r) => crossConsumers.has(r.package_id));
+
   const del = db.prepare("DELETE FROM findings WHERE symbol_id = ? AND verdict = 'needs_review'");
+  const delVerdict = db.prepare('DELETE FROM findings WHERE symbol_id = ? AND verdict = ?');
   const insFinding = db.prepare('INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, ?, ?, ?)');
   const insOk = db.prepare('INSERT OR REPLACE INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)');
 
@@ -1170,6 +1265,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       const plan = planFor(row);
       const all = [
         ...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev || row.test_support === 1)),
+        ...(crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c)),
         ...extraFileHits(row, plan),
         // P is its own consumer for own files that import it BY NAME (unindexed files
         // outside the tsconfig program, e.g. codeup's `actions/*.ts` importing "codeup").
@@ -1203,6 +1299,26 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         insFinding.run(row.symbol_id, row.priv === 1 ? 'deletion_candidate' : 'deprecation_candidate', JSON.stringify(base), row.blocked_by);
         counts.passed += 1;
       }
+    }
+    // Counted only when downgraded (checked = passed + mismatched stays true).
+    let unexportsDowngraded = 0;
+    for (const row of unexports) {
+      const plan = planFor(row);
+      const hits = (crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c))
+        .sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);
+      if (hits.length === 0) continue; // the unexport stands
+      const reasons = hits
+        .slice(0, MAX_HITS)
+        .map((h) => `witness_mismatch:${h.consumer}:${h.file === null ? 'checkout missing' : `${h.file}:${h.line}`}`);
+      delVerdict.run(row.symbol_id, row.verdict);
+      insFinding.run(row.symbol_id, 'needs_review', JSON.stringify([...(JSON.parse(row.reasons) as string[]), ...reasons]), row.blocked_by);
+      counts.checked += 1;
+      counts.mismatched += 1;
+      unexportsDowngraded += 1;
+      log(`[witness] mismatch (cross-manager) ${row.package_id}#${row.name} (${row.file}): ${reasons.join(', ')}${hits.length > MAX_HITS ? ` (+${hits.length - MAX_HITS} more)` : ''}`);
+    }
+    if (unexports.length > 0) {
+      log(`[witness] cross-manager: ${unexports.length} unexport(s) checked, ${unexportsDowngraded} downgraded to needs_review`);
     }
     // Propagate the outcomes (header): current views, dead islands, private_dead cascade.
     db.exec(analyzeSql());

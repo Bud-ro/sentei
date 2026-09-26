@@ -1,0 +1,7 @@
+name: acme_js_app
+description: "Dart half of a mixed repo: reads the JS bundle built from js_src/ (npm acme-js-src) through @JS interop."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0

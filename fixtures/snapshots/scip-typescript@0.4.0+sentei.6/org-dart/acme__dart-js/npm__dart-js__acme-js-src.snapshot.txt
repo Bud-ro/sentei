@@ -1,0 +1,35 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/index.ts
+  // Entry of the JS bundle; its default export becomes the global `acmeBridge`, which
+//^ definition scip-typescript npm acme-js-src . src/`index.ts`/ enclosing [7:0-23:0]
+  // acme_js_app (bin/main.dart, same repo) reads through @JS('acmeBridge.start').
+
+  // Expected: needs_review, reasons ["internal_refs_only",
+  // "witness_mismatch:pub:acme/dart-js:acme_js_app:bin/main.dart:8"]: an unexport by the
+  // index (only this file uses it: the assignment below), but the Dart package of the same
+  // repo names it through @JS.
+  let acmeBridge: { start(): string };
+//    ^^^^^^^^^^ definition scip-typescript npm acme-js-src . src/`index.ts`/acmeBridge.
+//                  ^^^^^ definition scip-typescript npm acme-js-src . src/`index.ts`/acmeBridge.typeLiteral0:start().
+  // (Workiva's bundle picks one of two builds here, by React version.)
+  acmeBridge = { start: (): string => 'started' };
+//^^^^^^^^^^ reference scip-typescript npm acme-js-src . src/`index.ts`/acmeBridge.
+//               ^^^^^ reference scip-typescript npm acme-js-src . src/`index.ts`/acmeBridge.typeLiteral0:start().
+  export default acmeBridge;
+//               ^^^^^^^^^^ reference scip-typescript npm acme-js-src . src/`index.ts`/acmeBridge.
+
+  // Expected: needs_review, reasons ["no_refs", "witness_mismatch:pub:acme/dart-js:acme_js_app:bin/main.dart:13",
+  // "witness_mismatch:pub:acme/dart-js:acme_js_app:bin/main.dart:18"] (the @JS-annotated
+  // Dart declaration of the same name, and its call).
+  export function acmeLegacyStart(): string {
+//                ^^^^^^^^^^^^^^^ definition scip-typescript npm acme-js-src . src/`index.ts`/acmeLegacyStart(). enclosing [15:0-17:1]
+    return 'legacy';
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"]: no Dart file names it.
+  export function jsOnlyUnused(): string {
+//                ^^^^^^^^^^^^ definition scip-typescript npm acme-js-src . src/`index.ts`/jsOnlyUnused(). enclosing [20:0-22:1]
+    return 'unused';
+  }

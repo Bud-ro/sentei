@@ -1,0 +1,9 @@
+{
+  "name": "acme-js-src",
+  "description": "Source of the JS bundle acme_js_app reads through @JS (nothing imports this package).",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

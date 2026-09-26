@@ -1,0 +1,24 @@
+{
+  "entryPoints": [
+    "bin/main.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "bin/main.dart",
+      "kind": "runtime",
+      "line": 15,
+      "name": "main"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-js:acme_js_app",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

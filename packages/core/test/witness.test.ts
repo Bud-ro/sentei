@@ -1155,3 +1155,100 @@ describe('runWitness: round 4 (entry vouching, messages, indexed consumer files)
     expectMismatch(org, org.ids['findByTestId']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/t.ts:2']);
   });
 });
+
+// A mixed repo: pub package acme_js_app at the root (Dart, reads the JS bundle through
+// @JS) and npm package acme-js-src in js_src/ (the bundle's source). No dependency either way.
+describe('runWitness: same-repo packages of the other manager', () => {
+  const PUB = 'pub:acme/mixed:acme_js_app';
+  const NPM = 'npm:acme/mixed:acme-js-src';
+
+  function buildMixed(
+    files: Record<string, string>,
+    symbols: Array<{ pkg: string; name: string; file: string; verdict: string; reasons: string[]; exportedAs?: string }>,
+  ): Org {
+    const root = mkdtempSync(join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-witness-mixed-'));
+    roots.push(root);
+    for (const [rel, text] of Object.entries(files)) write(root, rel, text);
+    const db = openDb(':memory:');
+    dbs.push(db);
+    const run = (sql: string, ...p: Array<string | number | null>): number => Number(db.prepare(sql).run(...p).lastInsertRowid);
+    run("INSERT INTO repos (repo, index_status) VALUES ('acme/mixed', 'ok')");
+    run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/mixed', '.', 'pub', 'acme_js_app', 'private')", PUB);
+    run("INSERT INTO packages (package_id, repo, path, manager, name, visibility, is_library) VALUES (?, 'acme/mixed', 'js_src', 'npm', 'acme-js-src', 'private', 1)", NPM);
+    const ids: Record<string, number> = {};
+    for (const s of symbols) {
+      const id = run('INSERT INTO symbols (symbol_str, package_id, file, line, name, is_exported) VALUES (?, ?, ?, 0, ?, 1)', `sym ${s.name}`, s.pkg, s.file, s.name);
+      ids[s.name] = id;
+      run('INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)', id, s.file, s.exportedAs ?? s.name);
+      run("INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, ?, ?, '[]')", id, s.verdict, JSON.stringify(s.reasons));
+    }
+    db.exec(analyzeSql());
+    run("INSERT INTO run_params (key, value) VALUES ('analyzed_at', '0')");
+    return {
+      db,
+      ids,
+      log: [],
+      discover: { repos: [{ repo: 'acme/mixed', localPath: root, packages: [{ packageId: PUB, path: '.' }, { packageId: NPM, path: 'js_src' }] }] },
+    };
+  }
+
+  const DART_MAIN = [
+    "import 'dart:js_interop';",
+    '',
+    "@JS('acmeBridge.start')",
+    'external JSString _start();',
+    '',
+    '@JS()',
+    'external JSString acmeLegacyStart();',
+    '',
+    'void main() => print(_start().toDart + acmeLegacyStart().toDart);',
+    '',
+  ].join('\n');
+
+  it('a Dart @JS use downgrades the npm package\'s would-be deletion and its unexport; other names pass', () => {
+    const org = buildMixed({
+      'bin/main.dart': DART_MAIN,
+      // No JS interop: a Dart name here cannot reach the bundle.
+      'bin/other.dart': 'void main() => print(jsOnlyUnused);\nconst jsOnlyUnused = 1;\n',
+      // A built copy of the bundle inside the pub package: JS, not the pub package's language.
+      'lib/js/bundle.js': 'var jsOnlyUnused = 1; var acmeBridge = {};\n',
+      'js_src/src/index.ts': 'const acmeBridge = {};\nexport default acmeBridge;\nexport function acmeLegacyStart() {}\nexport function jsOnlyUnused() {}\n',
+    }, [
+      { pkg: NPM, name: 'acmeBridge', file: 'js_src/src/index.ts', verdict: 'unexport_candidate', reasons: ['internal_refs_only'], exportedAs: 'default' },
+      { pkg: NPM, name: 'acmeLegacyStart', file: 'js_src/src/index.ts', verdict: 'needs_review', reasons: ['no_refs', 'witness_pending'] },
+      { pkg: NPM, name: 'jsOnlyUnused', file: 'js_src/src/index.ts', verdict: 'needs_review', reasons: ['no_refs', 'witness_pending'] },
+    ]);
+    expect(witness(org)).toEqual({ checked: 3, passed: 1, mismatched: 2 });
+    expect(findings(org, org.ids['acmeBridge']!)).toEqual([
+      { verdict: 'needs_review', reasons: ['internal_refs_only', `witness_mismatch:${PUB}:bin/main.dart:3`] },
+    ]);
+    expectMismatch(org, org.ids['acmeLegacyStart']!, [`witness_mismatch:${PUB}:bin/main.dart:7`, `witness_mismatch:${PUB}:bin/main.dart:9`]);
+    expectPass(org, org.ids['jsOnlyUnused']!);
+  });
+
+  it('leaves an unexport alone when no file of the other manager names it', () => {
+    const org = buildMixed({ 'bin/main.dart': DART_MAIN, 'js_src/src/index.ts': 'const helper = 1;\nexport { helper };\n' }, [
+      { pkg: NPM, name: 'helper', file: 'js_src/src/index.ts', verdict: 'unexport_candidate', reasons: ['internal_refs_only'] },
+    ]);
+    expect(witness(org)).toEqual({ checked: 0, passed: 0, mismatched: 0 });
+    expect(org.log).toContain('[witness] cross-manager: 1 unexport(s) checked, 0 downgraded to needs_review');
+    expect(findings(org, org.ids['helper']!)).toEqual([{ verdict: 'unexport_candidate', reasons: ['internal_refs_only'] }]);
+  });
+
+  it('JS files of the npm package witness a pub symbol only when its file exports Dart to JS', () => {
+    const org = buildMixed({
+      'lib/interop.dart': "import 'dart:js_interop';\n@JSExport()\nclass DartApi { void dartExported() {} }\nvoid dartUnused() {}\n",
+      // A Dart wrapper named like the JS function it wraps (no JS export): not a use.
+      'lib/wrap.dart': "import 'dart:js_interop';\n@JS('lib.getByRole')\nexternal JSAny getByRole();\n",
+      'js_src/src/call.ts': 'declare const api: { dartExported(): void };\napi.dartExported();\nexport function getByRole() {}\n',
+    }, [
+      { pkg: PUB, name: 'getByRole', file: 'lib/wrap.dart', verdict: 'needs_review', reasons: ['no_refs', 'witness_pending'] },
+      { pkg: PUB, name: 'dartExported', file: 'lib/interop.dart', verdict: 'needs_review', reasons: ['no_refs', 'witness_pending'] },
+      { pkg: PUB, name: 'dartUnused', file: 'lib/interop.dart', verdict: 'needs_review', reasons: ['no_refs', 'witness_pending'] },
+    ]);
+    witness(org);
+    expectMismatch(org, org.ids['dartExported']!, [`witness_mismatch:${NPM}:js_src/src/call.ts:1`, `witness_mismatch:${NPM}:js_src/src/call.ts:2`]);
+    expectPass(org, org.ids['dartUnused']!);
+    expectPass(org, org.ids['getByRole']!);
+  });
+});

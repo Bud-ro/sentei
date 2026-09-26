@@ -2,6 +2,7 @@
   "org": "acme",
   "repos": [
     { "name": "dart-app", "default_branch": "main" },
+    { "name": "dart-js", "default_branch": "main" },
     { "name": "dart-lib-pub", "default_branch": "main" },
     { "name": "dart-lib-x", "default_branch": "main" },
     { "name": "dart-testkit", "default_branch": "main" },

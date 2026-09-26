@@ -1,0 +1,37 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## bin/main.dart
+  // Dart half of a mixed repo (the Workiva react_testing_library shape): the JS bundle
+//^ definition scip-dart pub acme_js_app . bin/`main.dart`/
+  // built from js_src/ (npm acme-js-src) sets the global `acmeBridge`, which Dart reads
+  // through JS interop. No import can express this use; the witness pairs the two
+  // managers' packages of one repo instead.
+  import 'dart:js_interop';
+
+  // Expected: alive, no finding (local to the bin/ entry point).
+  @JS('acmeBridge.start')
+// ^^ reference scip-dart pub dart:js_interop . dart:js_interop/JS#
+  external JSString _start();
+//         ^^^^^^^^ reference scip-dart pub dart:js_interop . dart:js_interop/JSString#
+//                  ^^^^^^ definition scip-dart pub acme_js_app . bin/`main.dart`/_start(). enclosing [7:0-8:27]
+
+  // Expected: alive, no finding (the declaration name is the JS name: `acmeLegacyStart`).
+  @JS()
+// ^^ reference scip-dart pub dart:js_interop . dart:js_interop/JS#
+  external JSString acmeLegacyStart();
+//         ^^^^^^^^ reference scip-dart pub dart:js_interop . dart:js_interop/JSString#
+//                  ^^^^^^^^^^^^^^^ definition scip-dart pub acme_js_app . bin/`main.dart`/acmeLegacyStart(). enclosing [11:0-12:36]
+
+  // Expected: alive, no finding (bin/ entry point).
+  void main() {
+//     ^^^^ definition scip-dart pub acme_js_app . bin/`main.dart`/main(). enclosing [15:0-18:1]
+    print(_start().toDart);
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^ reference scip-dart pub acme_js_app . bin/`main.dart`/_start().
+//                 ^^^^^^ reference scip-dart pub dart:js_interop . dart:js_interop/JSStringToString#`<get>toDart`.
+    print(acmeLegacyStart().toDart);
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^^^^ reference scip-dart pub acme_js_app . bin/`main.dart`/acmeLegacyStart().
+//                          ^^^^^^ reference scip-dart pub dart:js_interop . dart:js_interop/JSStringToString#`<get>toDart`.
+  }
