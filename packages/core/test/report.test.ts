@@ -789,6 +789,20 @@ describe('blocker hints', () => {
       + 'so exclude the ones it does not mean: "ignoreManifests": ["a/package.json", "b/packages/x/package.json"] minus the real one');
   });
 
+  it('a targeted deep-import opaque_consumer names the import and the consumer, not "index partial" (fix round 4)', () => {
+    const reason = 'deep import @acme/x/dist/module/lib/types has no source';
+    const rows = [
+      flag('opaque_consumer', reason, 'src/a.ts', 'npm:acme/a:@acme/x'),
+      flag('opaque_consumer', reason, 'src/b.ts', 'npm:acme/a:@acme/x'),
+    ];
+    expect(blockerHint('npm:acme/app:app', rows, pkgOf, true, '/w'))
+      .toBe('deep import @acme/x/dist/module/lib/types has no source (from npm:acme/app:app, src/a.ts)');
+    // With a partial index as well: both, the index line first.
+    expect(blockerHint('npm:acme/app:app', [flag('opaque_consumer', 'error: tsc'), ...rows], pkgOf, true, '/w'))
+      .toBe('index partial: tsc (log: /w/index/acme__app/npm__app__app.log); '
+        + 'deep import @acme/x/dist/module/lib/types has no source (from npm:acme/app:app, src/a.ts)');
+  });
+
   it('discover-unresolved entry point, unindexed code, dynamic access', () => {
     expect(blockerHint('npm:acme/app:app', [flag('opaque_consumer', 'discover: unresolved entry point ./dist/x.js', 'package.json')], pkgOf, false))
       .toBe('manifest entry point(s) resolve to no file: ./dist/x.js (package.json); build output missing from the checkout? '

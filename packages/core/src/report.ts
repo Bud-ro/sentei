@@ -415,6 +415,8 @@ function firstLine(reason: string | null): string {
  *     depends on the blocker (an example app, a repo-internal demo) the
  *     `ignoreManifests` entry that removes it (the text witness still reads its code);
  *   opaque_consumer from discover: the entry point that resolves to no file;
+ *   opaque_consumer targeted at another package (a deep dist import with no source):
+ *     that reason and the consumer, not "index partial" (the index may be ok);
  *   ambiguous_dep: the candidates, and the `ignoreManifests` entries to drop the ones
  *     the dependency does not mean (sentei.json has no way to pin a dependency);
  *   unindexed_consumer, dynamic_access, namespace_dynamic: what was seen, and where.
@@ -429,8 +431,10 @@ export function blockerHint(
   const p = pkgOf.get(id);
   const parts: string[] = [];
   const log = p ? ` (log: ${indexLogPath(workDir, p)})` : '';
+  // A TARGETED opaque_consumer (the TS adapter's deep dist import with no source) says
+  // nothing about the index, which may be ok: it gets its own line below.
   const indexRows = flags.filter((f) => f.flag === 'index_failed'
-    || (f.flag === 'opaque_consumer' && !(f.reason ?? '').startsWith('discover: ')));
+    || (f.flag === 'opaque_consumer' && f.target_package_id === null && !(f.reason ?? '').startsWith('discover: ')));
   const failed = indexRows.find((f) => f.flag === 'index_failed');
   const indexRow = failed ?? indexRows[0];
   if (indexRow) {
@@ -440,6 +444,13 @@ export function blockerHint(
     if (!hasDependents && p) {
       parts.push(`nothing in the org depends on it; if it is an example or demo, exclude it in the org sentei.json: "ignoreManifests": [${JSON.stringify(ignoreManifestEntry(p))}]`);
     }
+  }
+  const targeted = flags.filter((f) => f.flag === 'opaque_consumer' && f.target_package_id !== null);
+  const targetedReasons = uniqSorted(targeted.map((f) => firstLine(f.reason)));
+  if (targetedReasons.length > 0) {
+    const r = targeted.find((f) => firstLine(f.reason) === targetedReasons[0])!;
+    parts.push(`${targetedReasons[0]} (from ${id}${r.file ? `, ${r.file}` : ''})`
+      + `${targetedReasons.length > 1 ? ` (+${targetedReasons.length - 1} more)` : ''}`);
   }
   const unresolved = flags.filter((f) => f.flag === 'opaque_consumer' && (f.reason ?? '').startsWith('discover: '));
   if (unresolved.length > 0) {
