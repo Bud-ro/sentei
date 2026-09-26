@@ -284,8 +284,9 @@ export const scipTypescript: Indexer = {
   //   Dockerfile CMD, next.config.*, bins) are no export surface: outside the
   //   program they no longer make the sidecar `unresolved` / the package partial,
   //   and they are indexed through a runtime tsconfig (RUNTIME_TSCONFIG);
-  //   a tsconfig matching no file is an empty index, not a failure; `cause:`
-  //   diagnostics.
+  //   `shorthandRefs` also carries references to CommonJS require bindings
+  //   (collectRequireAliasRefs); a tsconfig matching no file is an empty index,
+  //   not a failure; `cause:` diagnostics.
   version: '0.4.0+sentei.8',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an

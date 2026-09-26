@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
+  "bin": { "dual-script": "bin/cli.cjs" },
   "scripts": {
     "start": "node scripts/serve.mjs"
   },

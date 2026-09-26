@@ -1,6 +1,28 @@
 # sentei scip snapshot: scip-typescript 0.4.0
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
+## bin/cli.cjs
+  // A CommonJS bin (supabase edge-runtime `say/index.js` shape): no exports, only a
+//^ definition scip-typescript npm @acme/dual-script . bin/`cli.cjs`/ enclosing [5:0-10:0]
+  // value assigned to module.exports. scip-typescript resolves `banner.text` through
+  // the require alias to the module, never to the `banner` binding.
+
+  // Expected: alive, no finding (used at top level through the require alias).
+  const banner = require('./banner.cjs');
+//      ^^^^^^ definition scip-typescript npm @acme/dual-script . bin/`cli.cjs`/banner.
+//                       ^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-script . bin/`banner.cjs`/
+
+  module.exports = require('node:http').createServer((_req, res) => {
+//^^^^^^ reference local 1
+//       ^^^^^^^ reference local 1
+//                                                    ^^^^ definition local 4
+//                                                          ^^^ definition local 5
+    res.end(banner.text);
+//  ^^^ reference local 5
+//          ^^^^^^ reference scip-typescript npm @acme/dual-script . bin/`banner.cjs`/
+//                 ^^^^ reference local 8
+  });
+
 ## next.config.mjs
   // Next.js config (the package depends on `next`): loaded by name, a runtime entry
 //^ definition scip-typescript npm @acme/dual-script . `next.config.mjs`/ enclosing [4:0-5:0]
@@ -45,8 +67,8 @@
   // Export surface of @acme/dual-script (`exports`). The package also has runtime
 //^ definition scip-typescript npm @acme/dual-script . src/`index.ts`/ enclosing [6:0-9:0]
   // entries outside its tsconfig program (`include: ["src"]`, no allowJs): the
-  // `node scripts/serve.mjs` start script and Next.js `next.config.mjs`. They seed
-  // reachability but are no surface, so the package is not opaque.
+  // `node scripts/serve.mjs` start script, Next.js `next.config.mjs` and a CommonJS
+  // bin. They seed reachability but are no surface, so the package is not opaque.
 
   // Expected: deletion_candidate, reasons ["no_refs"] (not blocked, and the package is not opaque).
   export function scriptLibUnused(): number {

@@ -10,6 +10,7 @@ import ts from 'typescript';
 import {
   barePackageName,
   checkConsumerFiles,
+  collectRequireAliasRefs,
   isExcludedConsumerFile,
   isGeneratedFile,
   scanUnindexedImports,
@@ -276,6 +277,11 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     consumer.namespaceMemberRefs.push(...r.namespaceMemberRefs);
     consumer.shorthandRefs.push(...r.shorthandRefs);
     consumer.namespaceSpreadRefs.push(...r.namespaceSpreadRefs);
+    if (input.packageName !== undefined && input.packageName !== null) {
+      // Only files SCIP indexes have the variable's definition (see indexedFiles above).
+      const indexed = rootsKnown ? files.filter((sf) => indexedFiles.has(path.resolve(sf.fileName))) : files;
+      consumer.shorthandRefs.push(...collectRequireAliasRefs(indexed, checker, input.pkgDir, input.packageName, toRepoRel));
+    }
     collectDeepImportExports(files, checker, input.orgPackageDirs, input.packageName ?? null, deepImportExports);
     // Every other compiler error is informational: it does not change what SCIP links.
     // Per own file (plus the program's global/options diagnostics), deduplicated.

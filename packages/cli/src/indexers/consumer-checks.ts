@@ -733,6 +733,70 @@ function truncate(s: string, max = 80): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * References to top-level CommonJS require bindings that scip-typescript 0.4.0 does
+ * not link (workaround at the indexer boundary, PLAN.md §6.6). In a JavaScript file
+ * TypeScript binds `const cat = require("cat")` (and `const x = require("m").y`) as an
+ * ALIAS of the required module; scip-typescript defines the variable (`index.js/cat.`)
+ * but resolves every use (`cat.say`) through the alias to the module itself, so the
+ * variable has no reference and looked `private_dead` (supabase/edge-runtime
+ * `say/index.js`). For each such top-level binding of an own file, every identifier
+ * the checker resolves to the same alias symbol is a reference to the variable's
+ * declaration (shape of `ShorthandRef`: `member` is the binding name, `targetPackage`
+ * this package, `targetFile` relative to `pkgDir`). Ingest adds only those SCIP does
+ * not already have. Destructured bindings (`const { a } = require()`) are locals in
+ * SCIP and never verdict subjects; skipped.
+ */
+export function collectRequireAliasRefs(
+  files: readonly ts.SourceFile[],
+  checker: ts.TypeChecker,
+  pkgDir: string,
+  selfName: string,
+  toRepoRel: (abs: string) => string,
+): ShorthandRef[] {
+  const out: ShorthandRef[] = [];
+  for (const sf of files) {
+    const aliases = new Map<ts.Symbol, ts.Identifier>();
+    for (const stmt of sf.statements) {
+      if (!ts.isVariableStatement(stmt)) continue;
+      for (const decl of stmt.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || decl.initializer === undefined || !isRequireInitializer(decl.initializer)) continue;
+        const sym = checker.getSymbolAtLocation(decl.name);
+        if (sym !== undefined && sym.flags & ts.SymbolFlags.Alias) aliases.set(sym, decl.name);
+      }
+    }
+    if (aliases.size === 0) continue;
+    const file = toRepoRel(path.resolve(sf.fileName));
+    const targetFile = path.relative(pkgDir, path.resolve(sf.fileName)).split(path.sep).join(path.posix.sep);
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node)) {
+        const sym = checker.getSymbolAtLocation(node);
+        const decl = sym === undefined ? undefined : aliases.get(sym);
+        if (decl !== undefined && decl !== node) {
+          const at = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+          const def = sf.getLineAndCharacterOfPosition(decl.getStart(sf));
+          out.push({
+            file, line: at.line, col: at.character, member: node.text,
+            targetPackage: selfName, targetFile, targetLine: def.line, targetCol: def.character,
+          });
+        }
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/** `require('m')`, or a property access chain on it (`require('m').y`, `require('m').a.b`). */
+function isRequireInitializer(e: ts.Expression): boolean {
+  let x: ts.Expression = e;
+  while (ts.isPropertyAccessExpression(x)) x = x.expression;
+  return ts.isCallExpression(x) && ts.isIdentifier(x.expression) && x.expression.text === 'require' &&
+    x.arguments.length === 1 && ts.isStringLiteralLike(x.arguments[0]!);
+}
+
+/**
  * True when a repo-relative POSIX file is a test or docs file that does not
  * count as a consumer under the policy. Uses the same TEST_GLOBS / DOCS_GLOBS
  * lists as the witness; a core test keeps those lists identical to the

@@ -33,7 +33,18 @@
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
   "packageId": "npm:acme/lib-dual:@acme/dual-script",
-  "shorthandRefs": [],
+  "shorthandRefs": [
+    {
+      "col": 10,
+      "file": "packages/dual-script/bin/cli.cjs",
+      "line": 8,
+      "member": "banner",
+      "targetCol": 6,
+      "targetFile": "bin/cli.cjs",
+      "targetLine": 5,
+      "targetPackage": "@acme/dual-script"
+    }
+  ],
   "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []
