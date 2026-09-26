@@ -6,7 +6,7 @@ import { create, toBinary } from '@bufbuild/protobuf';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { analyzeOrg } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { ingestOrg, repoSlug, statusReason, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
+import { barePackageName, ingestOrg, repoSlug, statusReason, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
 import { IndexSchema, SymbolInformation_Kind } from '../src/scip/scip_pb.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
@@ -1470,5 +1470,22 @@ describe('statusReason (the opaque_consumer / index_failed reason of a partial /
     expect(statusReason(['info: x', 'warn: w'])).toBe('warn: w');
     expect(statusReason(['info: x'])).toBe('info: x');
     expect(statusReason([])).toBeNull();
+  });
+});
+
+describe('barePackageName', () => {
+  it('npm: scoped and unscoped names, deep paths', () => {
+    expect(barePackageName('@acme/lib/deep/path')).toBe('@acme/lib');
+    expect(barePackageName('@acme/lib')).toBe('@acme/lib');
+    expect(barePackageName('left-pad')).toBe('left-pad');
+    expect(barePackageName('hono/dist/types/router')).toBe('hono');
+  });
+
+  it('pub: the package: scheme is stripped (flame-engine: defend_the_donut `show HasGameReference`)', () => {
+    expect(barePackageName('package:flame/components.dart')).toBe('flame');
+    expect(barePackageName('package:flame_forge2d/flame_forge2d.dart')).toBe('flame_forge2d');
+    expect(barePackageName('package:acme_x/src/deep/a.dart')).toBe('acme_x');
+    // dart: libraries and relative imports name no org package (unchanged).
+    expect(barePackageName('dart:async')).toBe('dart:async');
   });
 });

@@ -322,10 +322,17 @@ type IngestFlag = (typeof INGEST_FLAGS)[number] | 'unindexed_consumer' | 'ambigu
 const INGEST_AMBIGUOUS_PREFIX = 'ingest: ';
 const SIDECAR_FLAGS: ReadonlySet<string> = new Set(['namespace_dynamic', 'dynamic_access', 'opaque_consumer']);
 
-/** Bare package name of a module specifier: `@scope/x/deep` -> `@scope/x`, `x/deep` -> `x`. */
+/**
+ * Bare package name of a module specifier: npm `@scope/x/deep` -> `@scope/x`, `x/deep`
+ * -> `x`; Dart `package:flame/components.dart` -> `flame` (the `package:` scheme is
+ * stripped; before, the name kept it, so every Dart unresolved import was dropped as
+ * "does not name another org package" and a name removed from a `show` clause never
+ * became a version-skew row).
+ */
 export function barePackageName(module: string): string {
-  const parts = module.split('/');
-  return module.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!;
+  const spec = module.startsWith('package:') ? module.slice('package:'.length) : module;
+  const parts = spec.split('/');
+  return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!;
 }
 
 export function repoSlug(repo: string): string {
