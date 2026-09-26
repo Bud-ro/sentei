@@ -271,6 +271,25 @@ describe('runWitness', () => {
     expectPass(org, org.ids['unnamed']!);
   });
 
+  it('scans consumers\' test files for a test-support symbol (exported through a `testing` entry), not for others', () => {
+    const files = {
+      'src/lib.test.ts': "import { fakeServer, realFn } from '@acme/lib';\nimport { fakeServer as f } from '@acme/lib/testing';\nfakeServer(); realFn();\n",
+    };
+    const org = buildOrg({
+      symbols: [{ name: 'fakeServer', exports: [['src/testing.ts', 'fakeServer'], ['src/index.ts', 'fakeServer']] }, { name: 'realFn' }],
+      files,
+      libFiles: { 'package.json': JSON.stringify({ name: '@acme/lib', exports: { '.': './src/index.ts', './testing': './src/testing.ts' } }) },
+    });
+    expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+    expectMismatch(org, org.ids['fakeServer']!, [
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/lib.test.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/lib.test.ts:2',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/lib.test.ts:3',
+    ]);
+    // Negative: a normal symbol named only in a consumer's test file still passes.
+    expectPass(org, org.ids['realFn']!);
+  });
+
   it('refuses to run on a DB analyze has not processed, but accepts an analyzed DB with no findings', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }], notAnalyzed: true });
     expect(() => witness(org)).toThrow(/not been analyzed; run analyze first/);

@@ -71,6 +71,8 @@ DROP VIEW IF EXISTS internal_ref_occurrences;
 DROP VIEW IF EXISTS external_refs;
 DROP VIEW IF EXISTS overlay_refs;
 DROP VIEW IF EXISTS external_ref_occurrences;
+DROP VIEW IF EXISTS test_support_symbols;
+DROP VIEW IF EXISTS test_support_names;
 DROP VIEW IF EXISTS owner_ref_occurrences;
 DROP VIEW IF EXISTS symbol_ancestors;
 DROP VIEW IF EXISTS symbol_owners;
@@ -272,10 +274,74 @@ SELECT a.ancestor_id, r.symbol_id, r.package_id, r.file, r.line, r.col, r.enclos
 FROM ref_occurrences r
 JOIN symbol_ancestors a ON a.symbol_id = r.symbol_id;
 
+-- Names that mark test-support code (GLOB patterns, matched case-sensitively): an entry
+-- point's stem (`lib/test.dart`, `lib/testing.dart`, `src/test-utils.ts`, or the dir of
+-- an index file: `src/testing/index.ts`) or a package name without its npm scope
+-- (`@acme/testkit`, `acme-testkit`, `over_react_test`, `built_redux_test_utils`,
+-- `react_testing_library`, `w_transport_mock`). See test_support_symbols.
+CREATE VIEW test_support_names (pattern) AS
+VALUES ('test'), ('testing'), ('testkit'), ('*testkit'), ('test_utils'), ('test-utils'),
+       ('*_test_utils'), ('*-test-utils'), ('*_test_util'), ('*-test-util'),
+       ('*_testing'), ('*-testing'), ('*_testing_library'), ('*-testing-library'), ('*_test'),
+       ('mock'), ('mocks'), ('*_mock'), ('*_mocks'), ('*-mock'), ('*-mocks');
+
+-- Test-support surface: symbols whose purpose is to be used by OTHER packages' tests
+-- (Workiva codemod's `lib/test.dart`, depended on as a regular dependency by other
+-- repos' tests). A symbol is in it when
+--   * an entry point whose stem matches test_support_names exports it (symbol_exports:
+--     pub `lib/test.dart` / `lib/testing.dart`, npm `./testing` -> `src/testing.ts` or
+--     `src/testing/index.ts`), or
+--   * it is defined under a test-support dir of its package (package-relative):
+--     `lib/src/test*/`, `lib/src/mock/`, `lib/src/mocks/`, `lib/testing/`, `lib/mocks/`,
+--     `src/testing/`, `src/test-utils/`, `src/test_utils/`, or
+--   * its package's name matches test_support_names (a whole test-support package).
+-- external_refs then counts other packages' test-file uses of it. Only cross-package
+-- uses: a test-support helper used only by its own package's tests is still
+-- only_test_refs, and nothing here changes private_dead (the package's own tests are
+-- not consumers).
+CREATE VIEW test_support_symbols (symbol_id) AS
+WITH entries AS (
+  SELECT DISTINCT x.symbol_id,
+         substr(x.entry_file, length(rtrim(x.entry_file, replace(x.entry_file, '/', ''))) + 1) AS base,
+         rtrim(rtrim(x.entry_file, replace(x.entry_file, '/', '')), '/') AS dir
+  FROM symbol_exports x
+),
+stems AS (
+  SELECT symbol_id, dir,
+         CASE WHEN instr(base, '.') > 0 THEN substr(base, 1, instr(base, '.') - 1) ELSE base END AS stem
+  FROM entries
+)
+SELECT st.symbol_id
+FROM stems st
+JOIN test_support_names n
+  ON (CASE WHEN st.stem = 'index' THEN substr(st.dir, length(rtrim(st.dir, replace(st.dir, '/', ''))) + 1) ELSE st.stem END)
+     GLOB n.pattern
+UNION
+SELECT s.symbol_id
+FROM symbols s
+JOIN packages p ON p.package_id = s.package_id
+WHERE substr(s.file, 1, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END))
+      = (CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END)
+  AND (substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'lib/src/test*/*'
+    OR substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'lib/src/mock/*'
+    OR substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'lib/src/mocks/*'
+    OR substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'lib/testing/*'
+    OR substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'lib/mocks/*'
+    OR substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'src/testing/*'
+    OR substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'src/test-utils/*'
+    OR substr(s.file, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 1) GLOB 'src/test_utils/*')
+UNION
+SELECT s.symbol_id
+FROM symbols s
+JOIN packages p ON p.package_id = s.package_id
+JOIN test_support_names n
+  ON (CASE WHEN instr(p.name, '/') > 0 THEN substr(p.name, instr(p.name, '/') + 1) ELSE p.name END) GLOB n.pattern;
+
 -- Cross-package uses (members count for their owners), tagged with whether the using
--- file is a test / docs file, and whether the consumer declares the symbol's package
--- ONLY as a dev dependency (package_deps.dev = 1): a test-support library's whole
--- purpose is its consumers' tests, so those test uses count (external_refs).
+-- file is a test / docs file, whether the consumer declares the symbol's package ONLY
+-- as a dev dependency (package_deps.dev = 1), and whether the symbol is test-support
+-- surface (test_support_symbols): a test-support library's whole purpose is its
+-- consumers' tests, so those test uses count (external_refs).
 CREATE VIEW external_ref_occurrences AS
 SELECT r.symbol_id, r.member_symbol_id, r.package_id AS consumer_package_id, r.file, r.line, r.col,
        t.file IS NOT NULL AS in_test,
@@ -284,7 +350,8 @@ SELECT r.symbol_id, r.member_symbol_id, r.package_id AS consumer_package_id, r.f
                JOIN package_deps pd ON pd.resolved_package_id = s.package_id
                WHERE s.symbol_id = r.symbol_id
                  AND pd.consumer_package_id = r.package_id
-                 AND pd.dev = 1) AS dev_dep
+                 AND pd.dev = 1) AS dev_dep,
+       r.symbol_id IN (SELECT symbol_id FROM test_support_symbols) AS test_support
 FROM owner_ref_occurrences r
 LEFT JOIN test_files t ON t.package_id = r.package_id AND t.file = r.file
 LEFT JOIN doc_files d ON d.package_id = r.package_id AND d.file = r.file
@@ -305,14 +372,15 @@ JOIN symbol_ancestors a ON a.symbol_id = e.to_symbol_id
 WHERE e.source = 'overlay';
 
 -- Counted cross-package references per consumer package. Test files count only with
--- countTestsAsConsumers or when the consumer's dependency on the symbol's package is
--- dev-only (dev_dep); docs files only with countDocsAsConsumers.
+-- countTestsAsConsumers, when the consumer's dependency on the symbol's package is
+-- dev-only (dev_dep), or when the symbol is test-support surface (test_support); docs
+-- files only with countDocsAsConsumers.
 CREATE VIEW external_refs (symbol_id, consumer_package_id, n) AS
 SELECT symbol_id, consumer_package_id, count(*)
 FROM (
   SELECT e.symbol_id, e.consumer_package_id
   FROM external_ref_occurrences e, analysis_params p
-  WHERE (NOT e.in_test OR p.count_tests OR e.dev_dep) AND (NOT e.in_docs OR p.count_docs)
+  WHERE (NOT e.in_test OR p.count_tests OR e.dev_dep OR e.test_support) AND (NOT e.in_docs OR p.count_docs)
   UNION ALL
   SELECT symbol_id, from_package_id FROM overlay_refs WHERE is_external
 )
@@ -353,11 +421,12 @@ GROUP BY symbol_id;
 -- Symbols with uses in excluded test files (any package, including their own) and no
 -- counted cross-package use: the report can say "delete the tests too" (reason
 -- only_test_refs). Counted internal uses may coexist (unexport + only_test_refs).
--- A test use through a dev-only dependency is counted, never excluded.
+-- A test use through a dev-only dependency, or of test-support surface, is counted,
+-- never excluded.
 CREATE VIEW test_only_refs (symbol_id) AS
 SELECT e.symbol_id
 FROM external_ref_occurrences e, analysis_params p
-WHERE e.in_test AND NOT p.count_tests AND NOT e.dev_dep
+WHERE e.in_test AND NOT p.count_tests AND NOT e.dev_dep AND NOT e.test_support
 UNION
 SELECT i.symbol_id
 FROM internal_ref_occurrences i, analysis_params p

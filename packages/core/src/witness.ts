@@ -126,7 +126,10 @@
 // is itself the consumer being checked; its own tests/docs are still skipped).
 // Exception, mirroring analyze.sql `external_refs`: a consumer whose dependency on P is
 // dev-only (package_deps.dev = 1) has its test files scanned too, whatever
-// countTestsAsConsumers says (a test-support library is consumed by tests).
+// countTestsAsConsumers says (a test-support library is consumed by tests); so does
+// every consumer when S is test-support surface (analyze.sql test_support_symbols:
+// exported through a `test` / `testing` / … entry, under a test-support dir, or in a
+// package named like one).
 // No hit → witness_ok row and a deletion_candidate when P is private (schema view
 // private_packages: nobody outside the org can depend on it), a deprecation_candidate
 // when P is published: the same evidence either way, so the report's delete, deprecate
@@ -569,6 +572,8 @@ interface PendingRow {
   pkg_name: string;
   /** 1 = P is private (schema view private_packages): a pass is a deletion_candidate, else a deprecation_candidate. */
   priv: number;
+  /** 1 = S is test-support surface (analyze.sql test_support_symbols): consumers' test files are scanned too. */
+  test_support: number;
 }
 
 /** What to search for one pending symbol. */
@@ -1081,11 +1086,15 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return { names: all.filter((n) => n !== 'default'), defaults, entries };
   };
 
+  // The current views (test_support_symbols below; a DB analyzed by an older sentei
+  // may lack it). Idempotent: every view is dropped and recreated.
+  db.exec(analyzeSql());
   const pending = db
     .prepare(
       `SELECT f.symbol_id, f.reasons, f.blocked_by, s.name, s.file, s.line, s.package_id,
               p.manager, p.name AS pkg_name,
-              p.package_id IN (SELECT package_id FROM private_packages) AS priv
+              p.package_id IN (SELECT package_id FROM private_packages) AS priv,
+              s.symbol_id IN (SELECT symbol_id FROM test_support_symbols) AS test_support
        FROM findings f
        JOIN symbols s ON s.symbol_id = f.symbol_id
        JOIN packages p ON p.package_id = s.package_id
@@ -1120,7 +1129,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         hits.push({ consumer: c, file: null, line: 0 });
         continue;
       }
-      const dev = (devOf.get(c, row.package_id) as { dev: number | null } | undefined)?.dev === 1;
+      const dev = row.test_support === 1 || (devOf.get(c, row.package_id) as { dev: number | null } | undefined)?.dev === 1;
       if (excluded(file, loc, dev)) continue;
       let text: string;
       try {
@@ -1160,7 +1169,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       ];
       const plan = planFor(row);
       const all = [
-        ...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev)),
+        ...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev || row.test_support === 1)),
         ...extraFileHits(row, plan),
         // P is its own consumer for own files that import it BY NAME (unindexed files
         // outside the tsconfig program, e.g. codeup's `actions/*.ts` importing "codeup").

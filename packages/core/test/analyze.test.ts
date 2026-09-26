@@ -262,7 +262,8 @@ describe('analyzeOrg on hand-built rows', () => {
   });
 
   it('counts consumer test-file refs into a package the consumer declares only as a dev dependency', () => {
-    const kit = pkg('@acme/testkit');
+    // (Not named like a test-support package: that alone would count its test uses.)
+    const kit = pkg('@acme/helpers');
     dep(app, kit);
     run('UPDATE package_deps SET dev = 1 WHERE consumer_package_id = ? AND resolved_package_id = ?', app, kit);
     doc(kit, 'src/index.ts', true);
@@ -274,8 +275,8 @@ describe('analyzeOrg on hand-built rows', () => {
     use(testMod, testOnly, 'src/widgets.test.ts');
     analyze();
     expect(findings()).toEqual([
-      f('testOnly', 'needs_review', ['only_test_refs', 'witness_pending']),
       f('unusedKit', 'needs_review', DELETE),
+      f('testOnly', 'needs_review', ['only_test_refs', 'witness_pending']),
     ]);
     expect(db.prepare('SELECT symbol_id, consumer_package_id FROM external_refs').all()).toEqual([{ symbol_id: helper, consumer_package_id: app }]);
     expect(db.prepare('SELECT symbol_id FROM test_only_refs').all()).toEqual([{ symbol_id: testOnly }]);
@@ -284,10 +285,92 @@ describe('analyzeOrg on hand-built rows', () => {
     run('UPDATE package_deps SET dev = 0 WHERE consumer_package_id = ? AND resolved_package_id = ?', app, kit);
     analyze();
     expect(findings().map((r) => [r.name, r.reasons])).toEqual([
-      ['testOnly', ['only_test_refs', 'witness_pending']],
       ['renderHelper', ['only_test_refs', 'witness_pending']],
       ['unusedKit', DELETE],
+      ['testOnly', ['only_test_refs', 'witness_pending']],
     ]);
+  });
+
+  describe('test-support surface (test_support_symbols)', () => {
+    function exportVia(symbolId: number, entry: string, as?: string): void {
+      run('INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)', symbolId, entry,
+        as ?? (db.prepare('SELECT name FROM symbols WHERE symbol_id = ?').get(symbolId) as { name: string }).name);
+    }
+    const supportIds = (): number[] =>
+      (db.prepare('SELECT symbol_id FROM test_support_symbols WHERE symbol_id NOT IN (SELECT symbol_id FROM module_symbols) ORDER BY symbol_id').all() as Array<{ symbol_id: number }>).map((r) => r.symbol_id);
+
+    it('counts another package\'s test uses of a symbol exported through a `testing` entry (regular dependency)', () => {
+      doc(lib, 'src/testing.ts', true);
+      const fake = sym(lib, 'src/fns.ts', 'fakeServer', { exported: true });
+      exportVia(fake, 'src/testing.ts');
+      const normal = sym(lib, 'src/fns.ts', 'realOnlyInTests', { exported: true });
+      exportVia(normal, 'src/index.ts');
+      const testMod = doc(app, 'src/lib.test.ts');
+      use(testMod, fake, 'src/lib.test.ts');
+      use(testMod, normal, 'src/lib.test.ts');
+      analyze();
+      // Negative: a normal library symbol used only by another package's tests stays only_test_refs.
+      expect(findings()).toEqual([f('realOnlyInTests', 'needs_review', ['only_test_refs', 'witness_pending'])]);
+      expect(supportIds()).toEqual([fake]);
+      expect(db.prepare('SELECT symbol_id, consumer_package_id FROM external_refs').all()).toEqual([{ symbol_id: fake, consumer_package_id: app }]);
+      expect(db.prepare('SELECT symbol_id FROM test_only_refs').all()).toEqual([{ symbol_id: normal }]);
+    });
+
+    it('reads the entry stem from the file name or, for an index file, its dir; other stems are not test support', () => {
+      const names = ['viaTestUtils', 'viaDirIndex', 'viaDartTest', 'viaSuffix', 'viaMock', 'viaContest', 'viaLatest', 'viaIndex'];
+      const entries = ['src/test-utils.ts', 'src/testing/index.ts', 'lib/test.dart', 'lib/acme_test_utils.dart', 'lib/mock.dart',
+        'src/contest.ts', 'src/latest/index.ts', 'src/index.ts'];
+      const ids = names.map((n, i) => {
+        const id = sym(lib, 'src/fns.ts', n, { exported: true });
+        exportVia(id, entries[i]!);
+        return id;
+      });
+      analyze();
+      expect(supportIds()).toEqual(ids.slice(0, 5));
+    });
+
+    it('counts test-support dirs (package-relative) and whole test-support packages by name', () => {
+      const kit = pkg('@acme/widgets-testkit');
+      dep(app, kit);
+      doc(kit, 'src/index.ts', true);
+      const kitFn = sym(kit, 'src/index.ts', 'renderWidget', { exported: true });
+      doc(lib, 'src/testing/fixtures.ts');
+      const dirFn = sym(lib, 'src/testing/fixtures.ts', 'makeFixture', { exported: true });
+      doc(lib, 'src/other/testing.ts');
+      const notDir = sym(lib, 'src/other/testing.ts', 'notSupport', { exported: true });
+      const testMod = doc(app, 'src/lib.test.ts');
+      for (const s of [kitFn, dirFn, notDir]) use(testMod, s, 'src/lib.test.ts');
+      analyze();
+      expect(supportIds()).toEqual([kitFn, dirFn]);
+      expect(findings()).toEqual([f('notSupport', 'needs_review', ['only_test_refs', 'witness_pending'])]);
+    });
+
+    it('matches pub test-support dirs under lib/ relative to the package dir', () => {
+      run('INSERT INTO repos (repo) VALUES (?)', 'acme/mono');
+      run("INSERT INTO packages (package_id, repo, path, manager, name, version, visibility) VALUES (?, ?, 'pkgs/kit', 'pub', 'acme_kit', '1.0.0', 'private')",
+        'pub:acme/mono:acme_kit', 'acme/mono');
+      const kit = 'pub:acme/mono:acme_kit';
+      doc(kit, 'pkgs/kit/lib/src/testing/fakes.dart');
+      doc(kit, 'pkgs/kit/lib/src/mocks/mock_a.dart');
+      doc(kit, 'pkgs/kit/lib/src/impl.dart');
+      doc(kit, 'lib/src/testing/outside.dart'); // not under the package dir (hypothetical row)
+      const a = sym(kit, 'pkgs/kit/lib/src/testing/fakes.dart', 'fakeA', { exported: true });
+      const b = sym(kit, 'pkgs/kit/lib/src/mocks/mock_a.dart', 'MockA', { exported: true });
+      sym(kit, 'pkgs/kit/lib/src/impl.dart', 'impl', { exported: true });
+      sym(kit, 'lib/src/testing/outside.dart', 'outside', { exported: true });
+      analyze();
+      expect(supportIds()).toEqual([a, b]);
+    });
+
+    it('keeps own-package test uses test-only (only_test_refs, private_dead unchanged)', () => {
+      doc(lib, 'src/testing.ts', true);
+      const fake = sym(lib, 'src/fns.ts', 'fakeOwn', { exported: true });
+      exportVia(fake, 'src/testing.ts');
+      const ownTest = doc(lib, 'src/fns.test.ts');
+      use(ownTest, fake, 'src/fns.test.ts');
+      analyze();
+      expect(findings()).toEqual([f('fakeOwn', 'needs_review', ['only_test_refs', 'witness_pending'])]);
+    });
   });
 
   it('a dev dependency does not make its docs-file uses count', () => {
