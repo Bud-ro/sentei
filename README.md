@@ -345,7 +345,11 @@ Test, docs, generated and script files are recognized by path
 `*.spec.*`, `*_test.dart`, `mocks/`, `fixtures/`, `e2e/`, `type-tests/`,
 `cypress/`, `playwright/`, Flutter `test_driver/` and `integration_test/`, ...),
 except that nothing under a pub package's `lib/` is ever one of them: every file
-there is importable library code.
+there is importable library code. TypeScript files are also generated when a
+comment in their first 20 lines says so (`@generated`, "do not edit", ...), when
+they sit under a tool-output directory (`.nuxt/`, `.svelte-kit/`, `.prisma/`,
+...), or when they have the exact shape of `supabase gen types typescript`
+output (which carries no header).
 
 ## Views
 

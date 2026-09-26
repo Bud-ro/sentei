@@ -274,6 +274,8 @@ export const scipTypescript: Indexer = {
   //   import(), `typeof import()` values, destructuring of any namespace):
   //   destructured / accessed members are `namespaceMemberRefs`; a rest element,
   //   computed key or widening use is `namespace_dynamic` + a spread ref.
+  //   `generatedFiles` also holds headerless `supabase gen types` output and
+  //   files under `.prisma/`.
   version: '0.4.0+sentei.6',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an

@@ -1546,6 +1546,32 @@ describe('unjs final round (scope, SFC, generated files, heap retry, nuxt)', () 
     expect(isGeneratedFile(f('worker-configuration.ts', 'export {}\n'), 'src/worker-configuration.ts')).toBe(false);
   });
 
+  it('detects headerless `supabase gen types typescript` output by its shape, and nothing that merely resembles it', () => {
+    const f = (name: string, body: string): string => {
+      const abs = path.join(root, 'sb', name);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, body);
+      return abs;
+    };
+    const schema = (indent: string, blocks = ['Tables', 'Views', 'Functions']): string =>
+      `${indent}public: {\n${blocks.map((b) => `${indent}${indent}${b}: {\n${indent}${indent}${indent}[_ in never]: never\n${indent}${indent}}\n`).join('')}${indent}}\n`;
+    const JSON_T = 'export type Json =\n  | string\n  | number\n  | { [key: string]: Json | undefined }\n  | Json[]\n\n';
+    const gen = (name: string, body: string): boolean => isGeneratedFile(f(name, body), `web/data/${name}`);
+    // dbdev-website's data/database.types.ts shape (current CLI), with a padding
+    // table so Views / Functions sit far past the 16 KB header window.
+    const big = `${' '.repeat(6)}// ${'x'.repeat(100)}\n`.repeat(300);
+    expect(gen('database.types.ts', `${JSON_T}export type Database = {\n  public: {\n    Tables: {\n${big}    }\n    Views: {}\n    Functions: {}\n  }\n}\n`)).toBe(true);
+    // Older CLIs (`export interface Database`), reformatted with tabs, behind a leading comment.
+    expect(gen('db_types.ts', `// eslint-disable\n${JSON_T}export interface Database {\n${schema('\t')}}\n`)).toBe(true);
+    // Negative: hand-written code that names a Database type, or lacks one of the blocks.
+    expect(gen('client.ts', `import type { Database } from './database.types';\n${JSON_T}export type Database2 = {\n${schema('  ')}}\n`)).toBe(false);
+    expect(gen('partial.ts', `${JSON_T}export type Database = {\n${schema('  ', ['Tables', 'Views'])}}\n`)).toBe(false);
+    expect(gen('schema.ts', `export type Database = {\n${schema('  ')}}\n`)).toBe(false); // no leading Json type
+    expect(gen('gen.js', `${JSON_T}export type Database = {\n${schema('  ')}}\n`)).toBe(false); // not a TypeScript file
+    // Prisma's generated client dir.
+    expect(isGeneratedFile(f('index.d.ts', 'export {}\n'), 'src/.prisma/client/index.d.ts')).toBe(true);
+  });
+
   it('retries scip-typescript with the no-hover-signature preload after a heap exhaustion', async () => {
     const calls: string[][] = [];
     const run: Runner = async (_cmd, args) => {

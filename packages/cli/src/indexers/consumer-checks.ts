@@ -781,7 +781,7 @@ const UNINDEXED_SKIP_DIRS = new Set([
  * Tool-output directories that can still be part of a TypeScript program (Nuxt's
  * `.nuxt/tsconfig.json` includes `.nuxt/*.d.ts`): every own file under one is generated.
  */
-const GENERATED_DIRS = new Set(['.nuxt', '.output', '.svelte-kit', '.next', '.astro', '.vercel', '.wrangler']);
+const GENERATED_DIRS = new Set(['.nuxt', '.output', '.svelte-kit', '.next', '.astro', '.vercel', '.wrangler', '.prisma']);
 
 /**
  * Module specifiers in a text scan (comments are not stripped: a commented-out
@@ -1015,12 +1015,14 @@ const HEADER_BYTES = 16 * 1024;
 
 /**
  * True when a file is generated: its repo-relative path matches core
- * GENERATED_GLOBS or lies under a tool-output dir (`.nuxt/`, ...), its name is
- * `worker-configuration.d.ts` or `*.generated.d.ts`, or a comment in its first
- * 20 lines says so (GENERATED_HEADERS). Only comment text counts: a generator's
- * source holding the header as a string literal (capnp-es
- * `SOURCE_COMMENT = \`// This file has been automatically generated...\``) is
- * hand-written code. `head` is the file's start (read when absent).
+ * GENERATED_GLOBS or lies under a tool-output dir (`.nuxt/`, `.prisma/`, ...),
+ * its name is `worker-configuration.d.ts` or `*.generated.d.ts`, a comment in
+ * its first 20 lines says so (GENERATED_HEADERS), or it has the headerless
+ * shape of `supabase gen types typescript` output (isSupabaseGenTypes). Only
+ * comment text counts for headers: a generator's source holding the header as a
+ * string literal (capnp-es `SOURCE_COMMENT = \`// This file has been
+ * automatically generated...\``) is hand-written code. `head` is the file's
+ * start (read when absent).
  */
 export function isGeneratedFile(abs: string, repoRel: string, head?: string): boolean {
   if (GENERATED_GLOBS.some((g) => matchGlob(g, repoRel))) return true;
@@ -1028,7 +1030,40 @@ export function isGeneratedFile(abs: string, repoRel: string, head?: string): bo
   if (segs.some((seg) => GENERATED_DIRS.has(seg))) return true;
   if (GENERATED_NAME.test(segs[segs.length - 1]!)) return true;
   const text = head ?? readHead(abs);
-  return text !== undefined && headerComments(text).some((c) => GENERATED_HEADERS.some((re) => re.test(c)));
+  if (text === undefined) return false;
+  if (headerComments(text).some((c) => GENERATED_HEADERS.some((re) => re.test(c)))) return true;
+  return /\.[cm]?tsx?$/.test(repoRel) && isSupabaseGenTypes(abs, text);
+}
+
+/** Largest file read whole for the supabase-types signature (the output of a large schema). */
+const SIGNATURE_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * `supabase gen types typescript` (and postgrest-typegen) output carries no
+ * generated header. Its shape is fixed and specific, so all of it is required:
+ * the first statement (after comments and blank lines) is `export type Json =`,
+ * a top-level `export type Database = {` (older CLIs: `export interface
+ * Database {`) follows, and schema blocks with `Tables: {`, `Views: {` and
+ * `Functions: {` members appear at the indentation the generator writes (one
+ * level inside a schema: four spaces, or two tabs after reformatting). A hand-written file that
+ * merely mentions `Database` never starts with `export type Json =`. `head` is
+ * the file's start; the whole file is read only when the head starts that way.
+ */
+export function isSupabaseGenTypes(abs: string, head: string): boolean {
+  const body = head.replace(/^\uFEFF?(?:\s+|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*/, '');
+  if (!/^export type Json\s*=/.test(body)) return false;
+  let text = head;
+  try {
+    if (statSync(abs).size <= SIGNATURE_MAX_BYTES) text = readFileSync(abs, 'utf8');
+  } catch {
+    // keep the head
+  }
+  return (
+    /^export (?:type Database = |interface Database )\{\s*$/m.test(text) &&
+    /^(?: {4}|\t{2})Tables: \{/m.test(text) &&
+    /^(?: {4}|\t{2})Views: \{/m.test(text) &&
+    /^(?: {4}|\t{2})Functions: \{/m.test(text)
+  );
 }
 
 function readHead(abs: string): string | undefined {
