@@ -267,6 +267,9 @@ export const scipTypescript: Indexer = {
   //   link (unindexed files, unresolved self modules) are `unindexedImports`
   //   with `targetPackage` = self; JavaScript entries outside the program are
   //   text-scanned into `unresolved`.
+  // Not bumped for the toolchain round (package-manager choice and pins,
+  // engine-strict flags, ts-option-compat): the sidecar format is unchanged and
+  // the packages it rescues were partial/failed, which the cache never reuses.
   version: '0.4.0+sentei.5',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
@@ -356,7 +359,9 @@ export const scipTypescript: Indexer = {
       diagnostics,
       beforeRetry: () => rmSync(scipFile, { force: true }),
       retry: SCIP_NODOCS_RETRY,
+      nodeArgs: TS_OPTION_COMPAT,
     });
+    diagnostics.push(...tsCompatNotes(proc.stderr));
     if (proc.code !== 0) {
       status = 'failed';
       diagnostics.push(`error: scip-typescript ${describeExit(proc)}${stderrTail(proc)}`);
@@ -471,6 +476,22 @@ const SCIP_NODOCS_RETRY = {
   note: 'and without hover signatures (SCIP documentation only; symbols and occurrences are unchanged)',
 };
 
+/**
+ * Preloaded into scip-typescript and the export-surface worker (both run
+ * TypeScript 5.9.3): tsconfig `lib`/`target`/`module`/`moduleResolution`
+ * values newer than it knows (`ES2025`, written for TypeScript 6/7) are read as
+ * the newest it does know, instead of TS6046 failing the whole package; each
+ * such value leaves a `sentei-ts-compat:` line on stderr (see ts-option-compat.cjs).
+ */
+const TS_OPTION_COMPAT = ['--require', fileURLToPath(new URL('./ts-option-compat-preload.cjs', import.meta.url))];
+
+/** The `info:` diagnostics for the `sentei-ts-compat:` notes on a child's stderr (once each). */
+export function tsCompatNotes(stderr: string): string[] {
+  const prefix = 'sentei-ts-compat: ';
+  const notes = stderr.split(/\r?\n/).flatMap((l) => (l.startsWith(prefix) ? [`info: ${l.slice(prefix.length).trim()}`] : []));
+  return [...new Set(notes)];
+}
+
 /** Absolute path of the export-surface worker script. */
 const SURFACE_WORKER = fileURLToPath(new URL('./surface-worker.ts', import.meta.url));
 
@@ -494,6 +515,8 @@ export interface RunNodeOptions {
   beforeRetry?: () => void;
   /** Extra node options for the retry only (before the script), and why (appended to the `warn:`). */
   retry?: { nodeArgs: string[]; note: string };
+  /** Node options for every attempt (before the retry's and the script). */
+  nodeArgs?: string[];
   run?: Runner;
 }
 
@@ -507,7 +530,7 @@ export async function runNode(o: RunNodeOptions): Promise<ExecResult> {
   let heap = o.maxOldSpaceMb;
   let extra: string[] = [];
   const once = async (): Promise<ExecResult> => {
-    const args = [`--max-old-space-size=${heap}`, ...extra, ...o.args];
+    const args = [`--max-old-space-size=${heap}`, ...(o.nodeArgs ?? []), ...extra, ...o.args];
     const proc = await run(process.execPath, args, o.cwd, process.env, false, o.input);
     o.log.push(`$ node ${args.join(' ')}  (cwd ${o.cwd})`, '--- stdout', truncateLog(proc.stdout), '--- stderr', proc.stderr);
     return proc;
@@ -552,6 +575,7 @@ export async function runSurfaceWorker(
     input: JSON.stringify(job),
     log,
     diagnostics,
+    nodeArgs: TS_OPTION_COMPAT,
     ...(run !== undefined ? { run } : {}),
   });
   if (proc.errno !== undefined || proc.code !== 0) {

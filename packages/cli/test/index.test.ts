@@ -1,13 +1,14 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -1625,6 +1626,131 @@ describe('unjs final round (scope, SFC, generated files, heap retry, nuxt)', () 
         'warn: nuxt app without .nuxt/tsconfig.json; npm exec --yes -- nuxt prepare was killed by SIGTERM (timeout 10 min)',
       ]);
     });
+  });
+});
+
+describe('(toolchain 4) tsconfig values newer than the bundled TypeScript (supabase/orb-sync-engine, TS6046)', () => {
+  const compat = createRequire(import.meta.url)('../src/indexers/ts-option-compat.cjs') as {
+    compatAlias: (option: string, value: unknown, known: ReadonlySet<string>) => string | undefined;
+    patchTypeScript: (ts: unknown, note: (text: string) => void) => void;
+  };
+  const preload = path.resolve(import.meta.dirname, '../src/indexers/ts-option-compat-preload.cjs');
+  const libs = new Set(['es5', 'es2023', 'es2024', 'esnext', 'es2024.collection', 'esnext.collection', 'esnext.full', 'dom']);
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-tscompat-')));
+    mkdirSync(path.join(root, 'src'));
+    // orb-sync-engine's root tsconfig (TypeScript 7), plus a lib part TypeScript 5.9 lacks.
+    writeFileSync(
+      path.join(root, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { lib: ['ES2025', 'DOM', 'esnext.temporal'], target: 'es2025', module: 'nodenext', moduleResolution: 'nodenext', strict: true }, include: ['src'] }),
+    );
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'es2025-lib', version: '1.0.0' }));
+    writeFileSync(path.join(root, 'src/index.ts'), 'export function last(xs: number[]): number {\n  return xs.at(-1) ?? 0;\n}\n');
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('reads a newer ES year or esnext part as the newest known value; anything else stays unknown', () => {
+    expect(compat.compatAlias('lib', 'es2025', libs)).toBe('esnext');
+    expect(compat.compatAlias('lib', 'ES2025', libs)).toBe('esnext');
+    expect(compat.compatAlias('lib', 'es2025.collection', libs)).toBe('esnext.collection');
+    expect(compat.compatAlias('lib', 'es2026.full', libs)).toBe('esnext.full');
+    expect(compat.compatAlias('lib', 'es2025.temporal', libs)).toBe('esnext');
+    expect(compat.compatAlias('lib', 'esnext.temporal', libs)).toBe('esnext');
+    // Known values, older unknown years, typos and non-ES libs are not aliased (TS6046 as before).
+    expect(compat.compatAlias('lib', 'es2024', libs)).toBeUndefined();
+    expect(compat.compatAlias('lib', 'es2016.nope', libs)).toBeUndefined();
+    expect(compat.compatAlias('lib', 'dom.nope', libs)).toBeUndefined();
+    expect(compat.compatAlias('lib', 'es205', libs)).toBeUndefined();
+    const targets = new Set(['es5', 'es2024', 'esnext']);
+    expect(compat.compatAlias('target', 'es2025', targets)).toBe('esnext');
+    expect(compat.compatAlias('target', 'es2023', targets)).toBeUndefined();
+    expect(compat.compatAlias('target', 'es3000.x', targets)).toBeUndefined();
+    expect(compat.compatAlias('target', 'latest', targets)).toBeUndefined();
+    const modules = new Set(['commonjs', 'es2022', 'esnext', 'node16', 'node20', 'nodenext', 'preserve']);
+    expect(compat.compatAlias('module', 'es2025', modules)).toBe('esnext');
+    expect(compat.compatAlias('module', 'node22', modules)).toBe('nodenext');
+    expect(compat.compatAlias('module', 'amd2', modules)).toBeUndefined();
+    expect(compat.compatAlias('moduleResolution', 'node22', new Set(['node10', 'node16', 'nodenext', 'bundler']))).toBe('nodenext');
+    expect(compat.compatAlias('moduleResolution', 'bundler2', new Set(['bundler', 'nodenext']))).toBeUndefined();
+    // Without an esnext to fall back to there is nothing to alias to.
+    expect(compat.compatAlias('lib', 'es2025', new Set(['es5', 'es2024']))).toBeUndefined();
+  });
+
+  it('patches the option maps of a real TypeScript: no TS6046, one note per value, unknown typos still rejected', () => {
+    const ts = createRequire(import.meta.url)('typescript') as typeof import('typescript');
+    const cfg = { compilerOptions: { lib: ['ES2025', 'DOM'], target: 'es2025', module: 'node22' } };
+    const before = ts.parseJsonConfigFileContent(cfg, ts.sys, root);
+    const notes: string[] = [];
+    compat.patchTypeScript(ts, (t) => notes.push(t));
+    compat.patchTypeScript(ts, (t) => notes.push(`twice: ${t}`)); // idempotent
+    try {
+      const after = ts.parseJsonConfigFileContent(cfg, ts.sys, root);
+      ts.parseJsonConfigFileContent(cfg, ts.sys, root);
+      if (ts.versionMajorMinor === '5.9') expect(before.errors.map((e) => e.code)).toEqual([6046, 6046, 6046]);
+      expect(after.errors).toEqual([]);
+      expect(after.options.lib).toEqual(['lib.esnext.d.ts', 'lib.dom.d.ts']);
+      expect(after.options.target).toBe(ts.ScriptTarget.ESNext);
+      expect(after.options.module).toBe(ts.ModuleKind.NodeNext);
+      expect(notes).toEqual([
+        `tsconfig lib 'es2025' is newer than TypeScript ${ts.version} knows; read as 'esnext'`,
+        `tsconfig target 'es2025' is newer than TypeScript ${ts.version} knows; read as 'esnext'`,
+        `tsconfig module 'node22' is newer than TypeScript ${ts.version} knows; read as 'nodenext'`,
+      ]);
+      const typo = ts.parseJsonConfigFileContent({ compilerOptions: { lib: ['es2O22'] } }, ts.sys, root);
+      expect(typo.errors.map((e) => e.code)).toEqual([6046]);
+    } finally {
+      // Other tests in this worker share the module: restore plain lookups.
+      for (const d of (ts as unknown as { optionDeclarations: Array<{ name: string; type: unknown; element?: { type: unknown } }> }).optionDeclarations) {
+        const map = d.name === 'lib' ? d.element?.type : d.type;
+        if (map instanceof Map && Object.prototype.hasOwnProperty.call(map, 'get')) delete (map as unknown as { get?: unknown }).get;
+      }
+    }
+  });
+
+  it('scip-typescript fails on the ES2025 tsconfig without the preload and indexes it with the preload, noting each value', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const pkgJson = createRequire(import.meta.url).resolve('@sourcegraph/scip-typescript/package.json');
+    const bin = path.join(path.dirname(pkgJson), 'dist/src/main.js');
+    const scip = (extra: string[], out: string) =>
+      spawnSync(process.execPath, [...extra, bin, 'index', '--cwd', root, '--output', path.join(root, out), '--no-progress-bar'], { encoding: 'utf8' });
+    const plain = scip([], 'plain.scip');
+    expect(plain.status).toBe(1);
+    expect(plain.stdout + plain.stderr).toContain('TS6046');
+    const patched = scip(['--require', preload], 'patched.scip');
+    expect(patched.status).toBe(0);
+    expect(statSync(path.join(root, 'patched.scip')).size).toBeGreaterThan(0);
+    expect(tsCompatNotes(patched.stderr)).toEqual([
+      "info: tsconfig lib 'es2025' is newer than TypeScript 5.9.3 knows; read as 'esnext'",
+      "info: tsconfig lib 'esnext.temporal' is newer than TypeScript 5.9.3 knows; read as 'esnext'",
+      "info: tsconfig target 'es2025' is newer than TypeScript 5.9.3 knows; read as 'esnext'",
+    ]);
+  });
+
+  it('the export-surface worker reads the same tsconfig without a tsconfig error (the preload patches its imported TypeScript)', async () => {
+    const log: string[] = [];
+    const diagnostics: string[] = [];
+    const job = {
+      sidecarFile: path.join(root, 'surface.json'),
+      input: {
+        packageId: 'npm:acme/es2025:es2025-lib',
+        repoRoot: root,
+        pkgDir: root,
+        nestedPackageDirs: [],
+        entryPoints: ['src/index.ts'],
+        tsconfig: path.join(root, 'tsconfig.json'),
+        orgPackageNames: [],
+        orgPackageDirs: [],
+        packageName: 'es2025-lib',
+      },
+    };
+    const r = await runSurfaceWorker(job, root, 1024, log, diagnostics);
+    expect(r).toBeDefined();
+    expect(r!.diagnostics.filter((d) => /TS6046|tsconfig:/.test(d))).toEqual([]);
+    expect(r!.partial).toBe(false);
+    const sidecar = JSON.parse(readFileSync(job.sidecarFile, 'utf8')) as ExportsSidecar;
+    expect(sidecar.exports.map((e) => e.name)).toEqual(['last']);
+    expect(log.some((l) => l.includes("sentei-ts-compat: tsconfig lib 'es2025'"))).toBe(true);
   });
 });
 
