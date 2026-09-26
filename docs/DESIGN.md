@@ -1565,3 +1565,13 @@ tables only (no schema or analyze.sql change):
   and by name, the URI fallback, the negative dead helper, warnings). The
   scip-dart adapter must copy the field into `<pkg>.exports.json` (the Dart
   branch's side).
+
+**`lib/` exemption in the adapter checks.** `isExcludedConsumerFile` and
+`unindexedScope` (consumer-checks.ts) take an optional package location and
+apply core `inSurfaceDir` first, so a file under a pub package's `lib/` is
+never test/docs/script code there either, as in the SQL views. The TS adapter
+passes its (npm) package, a no-op today (`SURFACE_DIRS.npm` is empty). The one
+pub caller, `scip-dart.ts`'s unresolved-import filter
+(`isExcludedConsumerFile(m.file, input.policy)`), still calls it without a
+package and so keeps glob-only matching until it passes `{ manager: 'pub',
+path: pkg.path }` (that file belongs to the Dart branch).

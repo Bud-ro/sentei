@@ -266,7 +266,8 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   // Test/docs files that the policy does not count as consumers: analyze ignores
   // their references, so neither an unresolved org module nor a dynamic construct
   // there can hide a counted use.
-  const excluded = (f: { file: string }): boolean => isExcludedConsumerFile(f.file, input.policy);
+  const pkgLocation = { manager: 'npm', path: toRepoRel(path.resolve(input.pkgDir)) || '.' };
+  const excluded = (f: { file: string }): boolean => isExcludedConsumerFile(f.file, input.policy, pkgLocation);
   const selfName = input.packageName ?? null;
   /** Program files importing this package by its own name where that does not resolve. */
   const unresolvedSelf: UnindexedImport[] = [];
@@ -277,7 +278,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       // an example's `vite.config.ts` importing the package): SCIP links nothing,
       // but no other package's use is hidden. Recorded like an unindexed file's
       // import of the package (core's self-witness reads the file), never partial.
-      const scope = unindexedScope(m.file);
+      const scope = unindexedScope(m.file, pkgLocation);
       if (!unresolvedSelf.some((u) => u.file === m.file && u.module === m.module)) {
         unresolvedSelf.push({ file: m.file, module: m.module, targetPackage: selfName, ...(scope !== undefined ? { scope } : {}) });
       }

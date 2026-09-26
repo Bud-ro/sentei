@@ -24,7 +24,7 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync,
 import path from 'node:path';
 import ts from 'typescript';
 import * as core from '@sentei/core';
-import { DOCS_GLOBS, SCRIPT_GLOBS, TEST_GLOBS, matchGlob } from '@sentei/core';
+import { DOCS_GLOBS, inSurfaceDir, SCRIPT_GLOBS, TEST_GLOBS, matchGlob } from '@sentei/core';
 import type {
   ConsumerFlag,
   ConsumerPolicy,
@@ -739,9 +739,12 @@ function truncate(s: string, max = 80): string {
  * lists as the witness; a core test keeps those lists identical to the
  * test_files / doc_files views in packages/core/sql/analyze.sql, so references
  * from such files are ignored by analyze and nothing found there can hide a
- * counted use.
+ * counted use. With `pkg` (the file's package: manager and repo-relative dir), a file
+ * in one of its SURFACE_DIRS (a pub package's `lib/`) is never test or docs code,
+ * as in the SQL views; without it, only the globs apply.
  */
-export function isExcludedConsumerFile(file: string, policy: Partial<ConsumerPolicy> | undefined): boolean {
+export function isExcludedConsumerFile(file: string, policy: Partial<ConsumerPolicy> | undefined, pkg?: PackageLocation): boolean {
+  if (pkg !== undefined && inSurfaceDir(file, pkg.manager, pkg.path)) return false;
   const isTest = TEST_GLOBS.some((g) => matchGlob(g, file));
   const isDocs = DOCS_GLOBS.some((g) => matchGlob(g, file));
   return (isTest && policy?.countTestsAsConsumers !== true) || (isDocs && policy?.countDocsAsConsumers !== true);
@@ -805,13 +808,21 @@ const SCRIPT_DIR_GLOBS = SCRIPT_GLOBS.filter((g) => g.endsWith('/**'));
  * The `scope` of an unindexed file: `test` (core TEST_GLOBS), else `docs`
  * (DOCS_GLOBS), else `script` (the directory shapes of SCRIPT_GLOBS), else
  * undefined. Core routes scoped entries to the witness (`witness_files`), never
- * to flags, whatever the consumer policy says.
+ * to flags, whatever the consumer policy says. With `pkg`, a file in one of the
+ * package's SURFACE_DIRS (a pub package's `lib/`) has no scope (see isExcludedConsumerFile).
  */
-export function unindexedScope(file: string): UnindexedImport['scope'] {
+export function unindexedScope(file: string, pkg?: PackageLocation): UnindexedImport['scope'] {
+  if (pkg !== undefined && inSurfaceDir(file, pkg.manager, pkg.path)) return undefined;
   if (TEST_GLOBS.some((g) => matchGlob(g, file))) return 'test';
   if (DOCS_GLOBS.some((g) => matchGlob(g, file))) return 'docs';
   if (SCRIPT_DIR_GLOBS.some((g) => matchGlob(g, file))) return 'script';
   return undefined;
+}
+
+/** A package's manager and dir (repo-relative POSIX, '.' for the repo root), for core `inSurfaceDir`. */
+export interface PackageLocation {
+  manager: string;
+  path: string;
 }
 
 export interface PackageWalkInput {
@@ -864,6 +875,8 @@ export interface UnindexedScanInput extends PackageWalkInput {
   selfName: string | null;
   /** Files already walked (`walkPackageFiles`); walked here when absent. */
   files?: readonly string[];
+  /** The package's manager (default `npm`): its SURFACE_DIRS are never scoped. */
+  manager?: string;
 }
 
 /**
@@ -890,6 +903,7 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
   const pkgDir = path.resolve(input.pkgDir);
   const nested = input.nestedPackageDirs.map((d) => path.resolve(d));
   const toRepoRel = (abs: string): string => path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
+  const pkgLocation: PackageLocation = { manager: input.manager ?? 'npm', path: toRepoRel(pkgDir) || '.' };
   const isOwnCode = (abs: string): boolean =>
     isInside(abs, pkgDir) && !abs.split(path.sep).includes('node_modules') && !nested.some((d) => isInside(abs, d));
   const push = (u: UnindexedImport): void => {
@@ -902,7 +916,7 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
     const sfc = SFC_FILE.test(abs);
     if (!sfc && (!CODE_FILE.test(abs) || input.indexedFiles.has(abs))) continue;
     const file = toRepoRel(abs);
-    const scope = unindexedScope(file);
+    const scope = unindexedScope(file, pkgLocation);
     let text: string;
     try {
       text = readFileSync(abs, 'utf8');

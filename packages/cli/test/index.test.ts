@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
-import { isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
+import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
 import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
@@ -1507,6 +1507,16 @@ describe('unjs final round (scope, SFC, generated files, heap retry, nuxt)', () 
     expect(unindexedScope('eslint.config.mjs')).toBeUndefined();
     expect(unindexedScope('vitest.workspace.ts')).toBeUndefined();
     expect(unindexedScope('pages/playground.vue')).toBeUndefined();
+  });
+
+  it("never treats a pub package's lib/ as test/docs/script code (core inSurfaceDir), npm dirs unchanged", () => {
+    const pub = { manager: 'pub', path: 'pkgs/a' };
+    expect(unindexedScope('pkgs/a/lib/src/testing/mocks/fake.dart', pub)).toBeUndefined();
+    expect(unindexedScope('pkgs/a/test/fake.dart', pub)).toBe('test');
+    expect(isExcludedConsumerFile('pkgs/a/lib/src/fixtures/data.dart', undefined, pub)).toBe(false);
+    expect(isExcludedConsumerFile('pkgs/a/lib/src/fixtures/data.dart', undefined)).toBe(true); // no package: globs only
+    expect(isExcludedConsumerFile('pkgs/a/test/data.dart', undefined, pub)).toBe(true);
+    expect(isExcludedConsumerFile('lib/test/x.ts', undefined, { manager: 'npm', path: '.' })).toBe(true);
   });
 
   it('detects generated files from header comments of any comment syntax, and tool-output dirs', () => {
