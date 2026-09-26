@@ -7,6 +7,11 @@ export function dualUsed(): string {
   return 'used';
 }
 
+// Expected: alive, no finding (imported only by the nameless unnamed-demo app).
+export function dualUsedByUnnamed(): string {
+  return 'unnamed';
+}
+
 // Expected: deletion_candidate, reasons ["no_refs"] (not blocked: the entry points resolve, so the package is not opaque).
 export function dualUnused(): string {
   return 'unused';

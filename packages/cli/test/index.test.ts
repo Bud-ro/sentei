@@ -7,9 +7,10 @@ import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
+import { statusReason } from '../../core/src/ingest.ts';
 import { failureInputHash, isCached, toolchainVersion } from '../src/indexers/cache.ts';
 import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, installArgs, noFilesIndexed, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, prepareLine, progressStep, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
 
@@ -2222,6 +2223,147 @@ describe('deep build-output imports of org packages (supabase dist/module/lib/ty
       '@acme/dual': ['dist/a', 'dist/c'],
       '@acme/built': ['dist/b'],
     });
+  });
+});
+
+describe('fix round 3 (runtime entries are not surface, cause lines, empty tsconfigs)', () => {
+  let root: string;
+  let rwork: string;
+  const TSCONFIG = {
+    compilerOptions: { strict: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler', noEmit: true, skipLibCheck: true, types: [] },
+    include: ['src'],
+  };
+  function write(repo: string, files: Record<string, string | object>): void {
+    for (const [f, body] of Object.entries(files)) {
+      const abs = path.join(root, 'repos', repo, ...f.split('/'));
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+    }
+  }
+  const result = (repo: string, slug = `npm__${repo}__acme__${repo}`) => ({
+    index: readJson<RepoIndex>(rwork, 'index', `acme__${repo}`, 'index.json'),
+    sidecar: readJson<ExportsSidecar>(rwork, 'index', `acme__${repo}`, `${slug}.exports.json`),
+  });
+
+  beforeAll(async () => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-round3-')));
+    // D1: runtime entries outside the program (a `node scripts/serve.mjs` script, a TS
+    // script, next.config.mjs, a bin) next to a surface in src/. supabase: middleware,
+    // pg-topo (`scripts/run-tests.ts`), dbdev-website (`next.config.mjs`).
+    write('runtime', {
+      'package.json': { name: '@acme/runtime', version: '1.0.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': `export const surface = 1;\n`,
+      'src/helper.ts': `export function onlyForScripts(): number { return 2; }\n`,
+      'scripts/serve.mjs': `import { onlyForScripts } from '../src/helper.js';\nconsole.log(onlyForScripts());\n`,
+      'scripts/run-tests.ts': `import { onlyForScripts } from '../src/helper.js';\nexport const ran = onlyForScripts();\n`,
+      'next.config.mjs': `export default { reactStrictMode: true };\nexport { nope } from './gone.mjs';\n`,
+      'bin/cli': `#!/usr/bin/env node\nconsole.log('cli');\n`,
+    });
+    // A genuine SURFACE entry outside the program stays partial, and its cause line
+    // names it (not the type error that comes first).
+    write('surface', {
+      'package.json': { name: '@acme/surface', version: '1.0.0', type: 'module' },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': `export const typeError: number = 'x';\n`,
+      'lib/extra.mjs': `export const extra = 1;\n`,
+    });
+    // D4: a workspace root whose `include: ["src"]` matches nothing; its sources live in
+    // a member package (orb-sync-engine).
+    write('wsroot', {
+      'package.json': { name: '@acme/wsroot', version: '0.0.0', private: true, workspaces: ['packages/*'] },
+      'tsconfig.json': TSCONFIG,
+      'packages/member/package.json': { name: '@acme/member', version: '1.0.0', main: 'src/index.ts' },
+      'packages/member/tsconfig.json': TSCONFIG,
+      'packages/member/src/index.ts': `export const member = 1;\n`,
+      // Own code of the root outside every program: still text-scanned.
+      'tools/release.mjs': `import { surface } from '@acme/surface';\nconsole.log(surface);\n`,
+    });
+    const repos: DiscoverFile['repos'] = [
+      {
+        repo: 'acme/runtime', localPath: path.join(root, 'repos', 'runtime'), headSha: null,
+        packages: [{
+          packageId: 'npm:acme/runtime:@acme/runtime', path: '.', manager: 'npm', name: '@acme/runtime', version: '1.0.0',
+          entryPoints: ['next.config.mjs', 'scripts/run-tests.ts', 'scripts/serve.mjs', 'src/index.ts'],
+          runtimeEntryPoints: ['bin/cli', 'next.config.mjs', 'scripts/run-tests.ts', 'scripts/serve.mjs'],
+          deps: [],
+        } as DiscoveredRepo['packages'][number]],
+      },
+      {
+        repo: 'acme/surface', localPath: path.join(root, 'repos', 'surface'), headSha: null,
+        packages: [{
+          packageId: 'npm:acme/surface:@acme/surface', path: '.', manager: 'npm', name: '@acme/surface', version: '1.0.0',
+          entryPoints: ['lib/extra.mjs', 'src/index.ts'], deps: [],
+        }],
+      },
+      {
+        repo: 'acme/wsroot', localPath: path.join(root, 'repos', 'wsroot'), headSha: null,
+        packages: [
+          { packageId: 'npm:acme/wsroot:@acme/wsroot', path: '.', manager: 'npm', name: '@acme/wsroot', version: '0.0.0', entryPoints: [], deps: [] },
+          { packageId: 'npm:acme/wsroot:@acme/member', path: 'packages/member', manager: 'npm', name: '@acme/member', version: '1.0.0', entryPoints: ['packages/member/src/index.ts'], deps: [] },
+        ],
+      },
+    ];
+    rwork = path.join(root, 'work');
+    mkdirSync(rwork);
+    writeFileSync(path.join(rwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
+    await index({ work: rwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+  }, 180_000);
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('D1: runtime entries outside the program are indexed through the runtime tsconfig and never make the package partial', () => {
+    const { index: ix, sidecar } = result('runtime');
+    const diags = ix.packages[0]!.diagnostics;
+    expect(ix.packages[0]!.status).toBe('ok');
+    expect(diags).toContain(
+      'info: 3 runtime entry point(s) outside the tsconfig program indexed through tsconfig.sentei-runtime.json: next.config.mjs, scripts/run-tests.ts, scripts/serve.mjs',
+    );
+    expect(diags.some((d) => d.startsWith('cause: '))).toBe(false);
+    // Read from the runtime program: every entry found, the unresolved re-export of a
+    // runtime entry is a diagnostic only.
+    expect(sidecar.missingEntryPoints).toEqual([]);
+    expect(sidecar.unresolved).toEqual([]);
+    expect(diags.some((d) => d.startsWith('warn: unresolved re-exports of runtime entry points (not export surface; status unaffected): ') && d.includes('./gone.mjs'))).toBe(true);
+    expect(sidecar.exports.map((e) => `${e.entry}#${e.exportedAs}`).sort()).toEqual([
+      'next.config.mjs#default', 'scripts/run-tests.ts#ran', 'src/index.ts#surface',
+    ]);
+    // scip-typescript indexed the scripts: their references to src/helper.ts are there.
+    const docs = readScipIndex(path.join(rwork, 'index', 'acme__runtime', 'npm__runtime__acme__runtime.scip')).documents;
+    const serve = docs.find((d) => d.relativePath === 'scripts/serve.mjs');
+    expect(serve?.occurrences.some((o) => o.symbol.endsWith('src/`helper.ts`/onlyForScripts().'))).toBe(true);
+    expect(docs.some((d) => d.relativePath === 'scripts/run-tests.ts')).toBe(true);
+    // The runtime tsconfig is removed after the run.
+    expect(existsSync(path.join(root, 'repos/runtime/tsconfig.sentei-runtime.json'))).toBe(false);
+  });
+
+  it('D1: a surface entry outside the program stays partial; D2: the cause line names it, not the first warning', () => {
+    const ix = result('surface').index;
+    const diags = ix.packages[0]!.diagnostics;
+    expect(ix.packages[0]!.status).toBe('partial');
+    const firstWarn = diags.find((d) => d.startsWith('warn:'));
+    expect(firstWarn).toBe('warn: 1 TypeScript error diagnostic(s) in the package (status unaffected)');
+    expect(diags.filter((d) => d.startsWith('cause: '))).toEqual([
+      'cause: warn: entry lib/extra.mjs is JavaScript outside the tsconfig program; add it to include (exports: extra)',
+    ]);
+    expect(statusReason(diags)).toBe('warn: entry lib/extra.mjs is JavaScript outside the tsconfig program; add it to include (exports: extra)');
+  });
+
+  it('D4: a tsconfig that matches no file is an empty index, not a failure; own files outside it are still scanned', () => {
+    const { index: ix, sidecar } = result('wsroot', 'npm__wsroot__acme__wsroot');
+    const root0 = ix.packages.find((p) => p.packageId === 'npm:acme/wsroot:@acme/wsroot')!;
+    expect(root0.status).toBe('ok');
+    expect(root0.diagnostics).toContain('warn: tsconfig has no input files (scip-typescript: no files got indexed); wrote an empty index');
+    expect(root0.diagnostics.some((d) => d.startsWith('error:'))).toBe(false);
+    expect(readScipIndex(path.join(rwork, 'index', 'acme__wsroot', 'npm__wsroot__acme__wsroot.scip')).documents).toEqual([]);
+    expect(sidecar.unindexedImports).toEqual([{ file: 'tools/release.mjs', module: '@acme/surface', targetPackage: '@acme/surface', scope: 'script' }]);
+    expect(ix.packages.find((p) => p.packageId === 'npm:acme/wsroot:@acme/member')!.status).toBe('ok');
+  });
+
+  it('D4: "no files got indexed" after a tsconfig error is a failure, not an empty package', () => {
+    const orb = { stdout: 'error: no files got indexed. To fix this problem, make sure that the TypeScript projects ["/r"] contain input files or reference other projects.\n', stderr: '' };
+    // A config error before "no files got indexed" is a failure, not an empty package.
+    expect(noFilesIndexed(orb)).toBe(true);
+    expect(noFilesIndexed({ stdout: "tsconfig.json(3,5): error TS5023: Unknown compiler option 'x'.\n\n" + orb.stdout, stderr: '' })).toBe(false);
   });
 });
 

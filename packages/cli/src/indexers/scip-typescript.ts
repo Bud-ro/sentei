@@ -280,7 +280,13 @@ export const scipTypescript: Indexer = {
   //   the shadow package (sourceForBuildOutput); `deepImportExports` (the
   //   exports of every deep-imported org module); a deep dist import with no
   //   source is a targeted `opaque_consumer` flag.
-  version: '0.4.0+sentei.7',
+  // +sentei.8: runtime entry points (discover `runtimeEntryPoints`: scripts,
+  //   Dockerfile CMD, next.config.*, bins) are no export surface: outside the
+  //   program they no longer make the sidecar `unresolved` / the package partial,
+  //   and they are indexed through a runtime tsconfig (RUNTIME_TSCONFIG);
+  //   a tsconfig matching no file is an empty index, not a failure; `cause:`
+  //   diagnostics.
+  version: '0.4.0+sentei.8',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
@@ -298,7 +304,12 @@ export const scipTypescript: Indexer = {
     // 1. Install third-party deps (before source-linking: links create node_modules).
     if (options.install) {
       const installed = await install(realpathSync(repo.localPath), dir, diagnostics, log, exec, options.workDir);
-      if (!installed) status = 'partial';
+      if (!installed) {
+        status = 'partial';
+        // The install's own error line (the last `error:`): the reason ingest gives the flag.
+        const why = diagnostics.findLast((d) => d.startsWith('error:'));
+        diagnostics.push(`cause: ${why ?? 'error: install failed'}`);
+      }
       // 1b. Nuxt apps: their tsconfig extends the generated `.nuxt/tsconfig.json`.
       else await nuxtPrepare(dir, diagnostics, log, exec, options.workDir);
     } else {
@@ -358,87 +369,175 @@ export const scipTypescript: Indexer = {
     const inferred = ensureTsconfig(dir, scan);
     if (inferred !== undefined) diagnostics.push(inferred);
 
-    // 3. Index (1–2 are `prepare`).
-    const args = [scipTypescriptBin(), 'index', '--output', scipFile, '--no-progress-bar'];
-    const proc = await runNode({
-      what: 'scip-typescript',
-      args,
-      cwd: dir,
-      maxOldSpaceMb: options.maxOldSpaceMb,
-      log,
-      diagnostics,
-      beforeRetry: () => rmSync(scipFile, { force: true }),
-      retry: SCIP_NODOCS_RETRY,
-      nodeArgs: TS_OPTION_COMPAT,
-    });
-    diagnostics.push(...tsCompatNotes(proc.stderr));
-    if (proc.code !== 0) {
-      status = 'failed';
-      diagnostics.push(`error: scip-typescript ${describeExit(proc)}${stderrTail(proc)}`);
-    }
-    const errorLines = [
-      ...proc.stderr.split(/\r?\n/).filter((l) => /error TS\d+|\berror\b/i.test(l)),
-      // scip-typescript prints tsconfig diagnostics on stdout.
-      ...proc.stdout.split(/\r?\n/).filter((l) => /error TS\d+/i.test(l)),
-    ];
-    if (errorLines.length > 0) {
-      status = worstStatus(status, 'partial');
-      for (const l of errorLines.slice(0, 20)) diagnostics.push(`error: ${l.trim()}`);
-    }
-    if (!existsSync(scipFile) || statSync(scipFile).size === 0) {
-      status = worstStatus(status, 'partial');
-      diagnostics.push(`error: ${path.basename(scipFile)} missing or empty`);
-    }
+    const nested = repo.packages
+      .map((p) => packageDir(repo, p))
+      .filter((d) => d !== packageDir(repo, pkg))
+      .map((d) => (existsSync(d) ? realpathSync(d) : d))
+      .filter((d) => d.startsWith(dir + path.sep));
+    // Runtime entries (scripts, Dockerfile CMD, next.config.*, bins) that no program of
+    // the package has: indexed as one more scip-typescript project so their references
+    // keep what they use reachable (they are not export surface either way).
+    const runtimeTsconfig = await writeRuntimeTsconfig(repoRoot, dir, tsconfig, pkg, nested, diagnostics);
 
-    // 4. Export-surface sidecar, computed in a child process (surface-worker.ts).
     try {
-      const nested = repo.packages
-        .map((p) => packageDir(repo, p))
-        .filter((d) => d !== packageDir(repo, pkg))
-        .map((d) => (existsSync(d) ? realpathSync(d) : d))
-        .filter((d) => d.startsWith(dir + path.sep));
-      // Ignored manifests (examples, templates) strictly inside this package.
-      const ignoredDirs = (repo.ignoredManifests ?? [])
-        .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
-        .map((d) => (existsSync(d) ? realpathSync(d) : d))
-        .filter((d) => d.startsWith(dir + path.sep));
-      const job: SurfaceJob = {
-        sidecarFile: exportsFile,
-        input: {
-          packageId: pkg.packageId,
-          repoRoot,
-          pkgDir: dir,
-          nestedPackageDirs: nested,
-          ignoredDirs,
-          entryPoints: pkg.entryPoints,
-          tsconfig: existsSync(tsconfig) ? tsconfig : undefined,
-          orgPackageNames: input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'npm' && p.name !== null ? [p.name] : [])),
-          orgPackageDirs: input.orgPackages.flatMap(({ repo: r, pkg: p }) => {
-            const d = packageDir(r, p);
-            return p.manager === 'npm' && p.name !== null && existsSync(d) ? [{ name: p.name, dir: realpathSync(d) }] : [];
-          }),
-          packageName: pkg.name,
-          ...(input.policy !== undefined ? { policy: input.policy } : {}),
-        },
+      // 3. Index (1–2 are `prepare`).
+      const args = [scipTypescriptBin(), 'index', '--output', scipFile, '--no-progress-bar',
+        ...(runtimeTsconfig !== undefined ? [dir, runtimeTsconfig] : [])];
+      const proc = await runNode({
+        what: 'scip-typescript',
+        args,
+        cwd: dir,
+        maxOldSpaceMb: options.maxOldSpaceMb,
+        log,
+        diagnostics,
+        beforeRetry: () => rmSync(scipFile, { force: true }),
+        retry: SCIP_NODOCS_RETRY,
+        nodeArgs: TS_OPTION_COMPAT,
+      });
+      diagnostics.push(...tsCompatNotes(proc.stderr));
+      /** The first diagnostic that made the status worse: repeated as `cause: …` for ingest. */
+      let cause: string | undefined;
+      const worsen = (to: IndexStatus, diag: string): void => {
+        if (worstStatus(status, to) !== status) cause = diag;
+        status = worstStatus(status, to);
       };
-      rmSync(exportsFile, { force: true }); // never leave a previous run's sidecar behind a failure
-      const surface = await runSurfaceWorker(job, dir, options.maxOldSpaceMb, log, diagnostics);
-      if (surface === undefined) {
-        status = 'failed';
-      } else {
-        diagnostics.push(...surface.diagnostics);
-        if (surface.partial) status = worstStatus(status, 'partial');
+      if (proc.code !== 0 && noFilesIndexed(proc)) {
+        // The tsconfig matches no file (a workspace root whose `include: ["src"]` has no
+        // src/, every source in member packages): nothing to index, like a package with
+        // no sources at all. Not a failure: an empty index, and the export surface below
+        // still text-scans every own file outside the programs for org imports.
+        diagnostics.push('warn: tsconfig has no input files (scip-typescript: no files got indexed); wrote an empty index');
+        writeFileSync(scipFile, emptyScipIndex(pathToFileURL(dir).href));
+      } else if (proc.code !== 0) {
+        const diag = `error: scip-typescript ${describeExit(proc)}${stderrTail(proc)}`;
+        worsen('failed', diag);
+        diagnostics.push(diag);
       }
-    } catch (err) {
-      status = 'failed';
-      diagnostics.push(`error: export surface failed: ${(err as Error).stack ?? String(err)}`);
-    }
+      const errorLines = [
+        ...proc.stderr.split(/\r?\n/).filter((l) => /error TS\d+|\berror\b/i.test(l)),
+        // scip-typescript prints tsconfig diagnostics on stdout.
+        ...proc.stdout.split(/\r?\n/).filter((l) => /error TS\d+/i.test(l)),
+      ];
+      if (errorLines.length > 0) {
+        for (const l of errorLines.slice(0, 20)) diagnostics.push(`error: ${l.trim()}`);
+        worsen('partial', `error: ${errorLines[0]!.trim()}`);
+      }
+      if (!existsSync(scipFile) || statSync(scipFile).size === 0) {
+        const diag = `error: ${path.basename(scipFile)} missing or empty`;
+        worsen('partial', diag);
+        diagnostics.push(diag);
+      }
 
-    log.push('--- diagnostics', ...diagnostics);
-    writeFileSync(logFile, `${log.join('\n')}\n`);
-    return result();
+      // 4. Export-surface sidecar, computed in a child process (surface-worker.ts).
+      try {
+        // Ignored manifests (examples, templates) strictly inside this package.
+        const ignoredDirs = (repo.ignoredManifests ?? [])
+          .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
+          .map((d) => (existsSync(d) ? realpathSync(d) : d))
+          .filter((d) => d.startsWith(dir + path.sep));
+        const job: SurfaceJob = {
+          sidecarFile: exportsFile,
+          input: {
+            packageId: pkg.packageId,
+            repoRoot,
+            pkgDir: dir,
+            nestedPackageDirs: nested,
+            ignoredDirs,
+            entryPoints: pkg.entryPoints,
+            runtimeEntryPoints: runtimeEntryPointsOf(pkg),
+            ...(runtimeTsconfig !== undefined ? { runtimeTsconfig } : {}),
+            tsconfig: existsSync(tsconfig) ? tsconfig : undefined,
+            orgPackageNames: input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'npm' && p.name !== null ? [p.name] : [])),
+            orgPackageDirs: input.orgPackages.flatMap(({ repo: r, pkg: p }) => {
+              const d = packageDir(r, p);
+              return p.manager === 'npm' && p.name !== null && existsSync(d) ? [{ name: p.name, dir: realpathSync(d) }] : [];
+            }),
+            packageName: pkg.name,
+            ...(input.policy !== undefined ? { policy: input.policy } : {}),
+          },
+        };
+        rmSync(exportsFile, { force: true }); // never leave a previous run's sidecar behind a failure
+        const before = diagnostics.length;
+        const surface = await runSurfaceWorker(job, dir, options.maxOldSpaceMb, log, diagnostics);
+        if (surface === undefined) {
+          worsen('failed', diagnostics.slice(before).find((d) => d.startsWith('error:')) ?? 'error: export surface failed');
+        } else {
+          // The worker's own `cause:` line names why it is partial; it becomes ours
+          // unless something earlier already made the status worse.
+          const own = surface.diagnostics.find((d) => d.startsWith('cause: '));
+          diagnostics.push(...surface.diagnostics.filter((d) => !d.startsWith('cause: ')));
+          if (surface.partial) worsen('partial', own?.slice('cause: '.length) ?? 'warn: export surface partial');
+        }
+      } catch (err) {
+        const diag = `error: export surface failed: ${(err as Error).stack ?? String(err)}`;
+        worsen('failed', diag.split('\n')[0]!);
+        diagnostics.push(diag);
+      }
+      if (cause !== undefined) diagnostics.push(`cause: ${cause}`);
+
+      log.push('--- diagnostics', ...diagnostics);
+      writeFileSync(logFile, `${log.join('\n')}\n`);
+      return result();
+    } finally {
+      if (runtimeTsconfig !== undefined) rmSync(runtimeTsconfig, { force: true });
+    }
   },
 };
+
+/**
+ * Name of the tsconfig the adapter writes into a package dir (next to its
+ * tsconfig.json, removed after the run) for runtime entries that no program of the
+ * package has (writeRuntimeTsconfig).
+ */
+export const RUNTIME_TSCONFIG = 'tsconfig.sentei-runtime.json';
+
+/** discover.json `runtimeEntryPoints` (not in the index stage's DiscoveredPackage type; [] when absent). */
+function runtimeEntryPointsOf(pkg: DiscoveredPackage): string[] {
+  const v = (pkg as DiscoveredPackage & { runtimeEntryPoints?: unknown }).runtimeEntryPoints;
+  return Array.isArray(v) ? v.filter((f): f is string => typeof f === 'string') : [];
+}
+
+/**
+ * Writes `<dir>/RUNTIME_TSCONFIG` when some runtime entry of the package (discover's
+ * `runtimeEntryPoints`: `node|tsx <file>` scripts, Dockerfile CMD, Next.js
+ * `next.config.*` / middleware, `bin`, `imports` arms, client entries) is a file
+ * TypeScript can load that no program of the package's tsconfig has (a
+ * `scripts/serve.mjs` beside `include: ["src"]`). It `extends` the package tsconfig
+ * (same paths, module resolution, typings), sets `allowJs`, and lists exactly those
+ * files (`include: []`), so scip-typescript indexes them as one more project and their
+ * references to the package's own code count. Returns its absolute path, or undefined
+ * when there is nothing to add. Entries inside nested packages or node_modules are
+ * not this package's. The caller removes the file after the run.
+ */
+async function writeRuntimeTsconfig(
+  repoRoot: string, dir: string, tsconfig: string, pkg: DiscoveredPackage, nested: readonly string[], diagnostics: string[],
+): Promise<string | undefined> {
+  const file = path.join(dir, RUNTIME_TSCONFIG);
+  rmSync(file, { force: true }); // never a previous run's leftover
+  if (!existsSync(tsconfig)) return undefined;
+  const inside = (abs: string, d: string): boolean => abs.startsWith(d + path.sep);
+  const candidates = runtimeEntryPointsOf(pkg)
+    .map((f) => path.resolve(repoRoot, ...f.split('/')))
+    .filter((abs) => inside(abs, dir) && !nested.some((d) => inside(abs, d)) && !abs.split(path.sep).includes('node_modules'));
+  if (candidates.length === 0) return undefined;
+  // Loaded only here: the orchestrator otherwise never holds the compiler.
+  const { filesOutsidePrograms } = await import('./export-surface.ts');
+  const outside = filesOutsidePrograms(tsconfig, dir, candidates);
+  if (outside.length === 0) return undefined;
+  const rel = (abs: string): string => `./${path.relative(dir, abs).split(path.sep).join('/')}`;
+  const config = { extends: './tsconfig.json', compilerOptions: { allowJs: true }, include: [], files: outside.map(rel) };
+  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+  diagnostics.push(`info: ${outside.length} runtime entry point(s) outside the tsconfig program indexed through ${RUNTIME_TSCONFIG}: ${outside.map((f) => rel(f).slice(2)).join(', ')}`);
+  return file;
+}
+
+/** scip-typescript's "no files got indexed" (printed on stdout, exit code 1): the projects have no input files. */
+export function noFilesIndexed(proc: Pick<ExecResult, 'stdout' | 'stderr'>): boolean {
+  const out = `${proc.stdout}\n${proc.stderr}`;
+  // A tsconfig that does not parse also ends in "no files got indexed", after its
+  // `error TSnnnn` lines: that is a failure, not an empty package.
+  return /^error: no files got indexed\b/m.test(out) && !/error TS\d+/.test(out);
+}
 
 /**
  * A serialized `scip.Index` with metadata only (tool scip-typescript, the

@@ -10,7 +10,7 @@
       "entry": "packages/dual/src/index.ts",
       "exportedAs": "dualUnused",
       "file": "packages/dual/src/index.ts",
-      "line": 10,
+      "line": 15,
       "name": "dualUnused",
       "sites": []
     },
@@ -21,6 +21,15 @@
       "file": "packages/dual/src/index.ts",
       "line": 5,
       "name": "dualUsed",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual/src/index.ts",
+      "exportedAs": "dualUsedByUnnamed",
+      "file": "packages/dual/src/index.ts",
+      "line": 10,
+      "name": "dualUsedByUnnamed",
       "sites": []
     }
   ],

@@ -1,0 +1,13 @@
+{
+  "name": "@acme/dual-script",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "start": "node scripts/serve.mjs"
+  },
+  "dependencies": {
+    "next": "16.0.0"
+  }
+}

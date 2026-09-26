@@ -1,0 +1,16 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.ts
+  // A demo app whose package.json has no "name" (supabase multiplayer.dev,
+//^ definition scip-typescript npm . . src/`main.ts`/ enclosing [3:0-6:0]
+  // realtime/assets): nothing imports it, but it uses @acme/dual. sentei indexes it as
+  // the consumer-only package `_unnamed/unnamed-demo`.
+  import { dualUsedByUnnamed } from '@acme/dual';
+//         ^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsedByUnnamed().
+//                                  ^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/
+
+  console.log(dualUsedByUnnamed());
+//^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//        ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//            ^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsedByUnnamed().

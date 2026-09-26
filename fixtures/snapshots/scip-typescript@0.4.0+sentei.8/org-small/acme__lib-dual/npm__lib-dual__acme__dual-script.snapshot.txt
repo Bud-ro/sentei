@@ -1,0 +1,55 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## next.config.mjs
+  // Next.js config (the package depends on `next`): loaded by name, a runtime entry
+//^ definition scip-typescript npm @acme/dual-script . `next.config.mjs`/ enclosing [4:0-5:0]
+  // outside the tsconfig program.
+
+  // Expected: alive, no finding (Next reads it).
+  export default { reactStrictMode: true };
+//                 ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-script . `next.config.mjs`/reactStrictMode0:
+
+## scripts/serve.mjs
+  // Started by `npm start` (`node scripts/serve.mjs`): a runtime entry outside the
+//^ definition scip-typescript npm @acme/dual-script . scripts/`serve.mjs`/ enclosing [2:0-5:0]
+  // tsconfig program. sentei indexes it through its runtime tsconfig.
+  import { serveBanner } from '../src/banner.js';
+//         ^^^^^^^^^^^ reference scip-typescript npm @acme/dual-script . src/`banner.ts`/serveBanner().
+//                            ^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-script . src/`banner.ts`/
+
+  console.log(serveBanner(8080));
+//^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//        ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//            ^^^^^^^^^^^ reference scip-typescript npm @acme/dual-script . src/`banner.ts`/serveBanner().
+
+## src/banner.ts
+  // Not on the export surface: used only by the start script.
+//^ definition scip-typescript npm @acme/dual-script . src/`banner.ts`/ enclosing [3:0-11:0]
+
+  // Expected: alive, no finding (used only by scripts/serve.mjs, a runtime entry outside the tsconfig program).
+  export function serveBanner(port: number): string {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-script . src/`banner.ts`/serveBanner(). enclosing [3:0-5:1]
+//                            ^^^^ definition scip-typescript npm @acme/dual-script . src/`banner.ts`/serveBanner().(port)
+    return `listening on ${port}`;
+//                         ^^^^ reference scip-typescript npm @acme/dual-script . src/`banner.ts`/serveBanner().(port)
+  }
+
+  // Expected: private_dead already_unreachable (the package is transparent, so eligible).
+  function scriptDeadHelper(): number {
+//         ^^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-script . src/`banner.ts`/scriptDeadHelper(). enclosing [8:0-10:1]
+    return 3;
+  }
+
+## src/index.ts
+  // Export surface of @acme/dual-script (`exports`). The package also has runtime
+//^ definition scip-typescript npm @acme/dual-script . src/`index.ts`/ enclosing [6:0-9:0]
+  // entries outside its tsconfig program (`include: ["src"]`, no allowJs): the
+  // `node scripts/serve.mjs` start script and Next.js `next.config.mjs`. They seed
+  // reachability but are no surface, so the package is not opaque.
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (not blocked, and the package is not opaque).
+  export function scriptLibUnused(): number {
+//                ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-script . src/`index.ts`/scriptLibUnused(). enclosing [6:0-8:1]
+    return 1;
+  }

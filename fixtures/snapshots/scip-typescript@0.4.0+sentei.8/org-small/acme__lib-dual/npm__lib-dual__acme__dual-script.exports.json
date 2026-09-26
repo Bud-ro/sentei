@@ -1,0 +1,40 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-script/next.config.mjs",
+    "packages/dual-script/scripts/serve.mjs",
+    "packages/dual-script/src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/dual-script/src/index.ts",
+      "exportedAs": "scriptLibUnused",
+      "file": "packages/dual-script/src/index.ts",
+      "line": 6,
+      "name": "scriptLibUnused",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/dual-script/next.config.mjs",
+      "exportedAs": "default",
+      "file": "packages/dual-script/next.config.mjs",
+      "line": 4,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-script",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

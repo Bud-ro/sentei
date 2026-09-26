@@ -3,7 +3,7 @@
 
 ## src/index.ts
   // Package entry point for @acme/dual. package.json points at build output only
-//^ definition scip-typescript npm @acme/dual . src/`index.ts`/ enclosing [5:0-13:0]
+//^ definition scip-typescript npm @acme/dual . src/`index.ts`/ enclosing [5:0-18:0]
   // (main dist/main/index.js, module/types under dist/module/), which exists in no
   // checkout; the two tsconfig outDirs map both back to src/.
 
@@ -13,9 +13,15 @@
     return 'used';
   }
 
+  // Expected: alive, no finding (imported only by the nameless unnamed-demo app).
+  export function dualUsedByUnnamed(): string {
+//                ^^^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/dualUsedByUnnamed(). enclosing [10:0-12:1]
+    return 'unnamed';
+  }
+
   // Expected: deletion_candidate, reasons ["no_refs"] (not blocked: the entry points resolve, so the package is not opaque).
   export function dualUnused(): string {
-//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/dualUnused(). enclosing [10:0-12:1]
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/dualUnused(). enclosing [15:0-17:1]
     return 'unused';
   }
 

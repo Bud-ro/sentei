@@ -120,6 +120,24 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(r.warnings.some((w) => w.includes('assumeClosedWorld'))).toBe(false);
     expect(rows).toEqual(expected('expected-findings.json'));
 
+    // Fix round 3. @acme/dual-script's runtime entries outside its tsconfig program
+    // (a `node scripts/serve.mjs` start script, next.config.mjs) are
+    // indexed through the runtime tsconfig and never make it opaque; the nameless
+    // unnamed-demo manifest is a consumer-only package (a bare nameless marker is
+    // not: manifests.test.ts).
+    await withCtx(org, async (ctx) => {
+      const flags = ctx.db.prepare(`SELECT flag, reason FROM package_flags WHERE package_id = 'npm:acme/lib-dual:@acme/dual-script'`).all();
+      expect(flags).toEqual([]);
+      const docs = ctx.db.prepare(`SELECT file, is_entry FROM documents WHERE package_id = 'npm:acme/lib-dual:@acme/dual-script' ORDER BY file`).all();
+      expect(docs).toEqual(expect.arrayContaining([
+        { file: 'packages/dual-script/scripts/serve.mjs', is_entry: 1 },
+        { file: 'packages/dual-script/next.config.mjs', is_entry: 1 },
+      ]));
+      expect(ctx.db.prepare(`SELECT package_id, name, visibility, is_library FROM packages WHERE repo = 'acme/lib-dual' AND name LIKE '\\_unnamed/%' ESCAPE '\\'`).all())
+        .toEqual([{ package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo', name: '_unnamed/unnamed-demo', visibility: 'private', is_library: 0 }]);
+    });
+    expect(existsSync(path.join(org, 'repos/lib-dual/packages/dual-script/tsconfig.sentei-runtime.json'))).toBe(false);
+
     // Views: filters over the base findings.
     const names = (xs: Array<{ package_id: string; symbol: string }>): string[] => xs.map((f) => `${f.package_id}#${f.symbol}`);
     const widgets = 'npm:acme/lib-widgets:@acme/widgets';

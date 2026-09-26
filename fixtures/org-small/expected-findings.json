@@ -11,6 +11,8 @@
   {"package_id": "npm:acme/lib-dual:@acme/dual", "symbol": "dualUnused", "file": "packages/dual/src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual", "symbol": "UnusedSchema", "file": "packages/dual/src/lib/types.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-legacy", "symbol": "legacyUnused", "file": "packages/dual-legacy/src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:acme/lib-dual:@acme/dual-app:opaque_consumer"]},
+  {"package_id": "npm:acme/lib-dual:@acme/dual-script", "symbol": "scriptDeadHelper", "file": "packages/dual-script/src/banner.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "npm:acme/lib-dual:@acme/dual-script", "symbol": "scriptLibUnused", "file": "packages/dual-script/src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-server", "symbol": "neverCalled", "file": "packages/dual-server/src/server.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-server", "symbol": "unusedRoute", "file": "packages/dual-server/src/routes.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-web", "symbol": "middleware", "file": "packages/dual-web/middleware.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},

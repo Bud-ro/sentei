@@ -1,6 +1,15 @@
 # sentei scip snapshot: scip-typescript 0.4.0
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
+## bin/cli.mjs
+  #!/usr/bin/env node
+//^ definition scip-typescript npm @acme/worker . bin/`cli.mjs`/ enclosing [3:0-4:0]
+  // A package.json `bin`, outside the tsconfig program: a runtime entry point only, never
+  // surface, so its absence from the index does not make the package partial.
+  console.log('worker-cli');
+//^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//        ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+
 ## functions/api/hello.ts
   // Cloudflare Pages Function (functions/ next to a wrangler config): loaded by path.
 //^ definition scip-typescript npm @acme/worker . functions/api/`hello.ts`/ enclosing [3:0-9:0]

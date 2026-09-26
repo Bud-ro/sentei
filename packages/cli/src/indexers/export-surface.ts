@@ -32,6 +32,23 @@ export interface ExportSurfaceInput {
   ignoredDirs?: string[];
   /** Entry points, repo-relative POSIX (from discover.json). */
   entryPoints: string[];
+  /**
+   * discover.json `runtimeEntryPoints` (repo-relative POSIX): files the runtime or a
+   * tool loads (`node scripts/x.mjs` scripts, Dockerfile CMD, Next.js
+   * `next.config.*`, `bin`, `imports` arms, client entries). They seed reachability
+   * but are never export surface: one outside the TypeScript program is not a
+   * missing surface (never `partial`), and an unresolved re-export in one is a
+   * diagnostic only. The entries of `entryPoints` that are not in this list are the
+   * package's surface.
+   */
+  runtimeEntryPoints?: string[];
+  /**
+   * Absolute path of the sentei-written runtime tsconfig (scip-typescript.ts
+   * RUNTIME_TSCONFIG): runtime
+   * entries outside the package's own programs, indexed by scip-typescript as an
+   * extra project. Read as one more program; absent when there is none.
+   */
+  runtimeTsconfig?: string;
   /** Absolute tsconfig path, or undefined to build a program from the entry files. */
   tsconfig: string | undefined;
   /** npm names of all org packages (imports of these are checked for resolution). */
@@ -57,12 +74,26 @@ const MAX_REPORTED_DIAGNOSTICS = 20;
 export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceResult {
   const diagnostics: string[] = [];
   let partial = false;
+  /**
+   * The diagnostic that made the result partial (the first one), repeated at the end
+   * as a `cause: <diagnostic>` line: ingest uses it as the `opaque_consumer` reason
+   * instead of whatever diagnostic happens to come first.
+   */
+  let cause: string | undefined;
+  const markPartial = (diag: string): void => {
+    partial = true;
+    cause ??= diag;
+  };
   const unresolved = new Set<string>();
+  /** Unresolved re-exports of runtime entries: not surface, so diagnostics only. */
+  const runtimeUnresolved = new Set<string>();
+  const runtimeEntries = new Set(input.runtimeEntryPoints ?? []);
   const toRepoRel = (abs: string): string =>
     path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
 
   const specs = createPrograms(input, diagnostics);
   if (specs === undefined) {
+    const why = diagnostics.find((d) => d.startsWith('error:')) ?? 'error: the tsconfig cannot be read';
     return {
       sidecar: {
         packageId: input.packageId,
@@ -79,7 +110,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
         generatedFiles: [],
         entrySymbols: [],
       },
-      diagnostics,
+      diagnostics: [...diagnostics, `cause: ${why}`],
       partial: true,
     };
   }
@@ -103,7 +134,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   const external = new Set<string>();
 
   const exports: ExportRecord[] = [];
-  const readEntry = (entry: string, sf: ts.SourceFile, checker: ts.TypeChecker): void => {
+  const readEntry = (entry: string, sf: ts.SourceFile, checker: ts.TypeChecker, unresolved: Set<string>): void => {
   const moduleSymbol = checker.getSymbolAtLocation(sf);
   if (moduleSymbol === undefined) return; // a script file, not a module: it exports nothing
 
@@ -259,7 +290,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       if (sf === undefined) continue;
       pending.delete(entry);
       found.add(entry);
-      readEntry(entry, sf, checker);
+      readEntry(entry, sf, checker, runtimeEntries.has(entry) ? runtimeUnresolved : unresolved);
     }
   }
   if (specs.length > 1) {
@@ -307,8 +338,9 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       }
       diagnostics.push(`warn: unresolved deep dist import ${where} (private build-output path with no source; recorded as unresolved import '*' and a targeted opaque_consumer flag)`);
     } else {
-      partial = true;
-      diagnostics.push(`error: unresolved org module ${where}`);
+      const diag = `error: unresolved org module ${where}`;
+      markPartial(diag);
+      diagnostics.push(diag);
     }
   }
   for (const u of consumer.unresolvedImports) {
@@ -384,14 +416,26 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
 
   const entryPoints = input.entryPoints.filter((e) => found.has(e));
   const missingEntryPoints = input.entryPoints.filter((e) => !found.has(e));
+  // A runtime entry (a `node scripts/x.mjs` script, `next.config.mjs`, a Dockerfile
+  // CMD) is run, never imported: it seeds reachability but is no export surface. One
+  // outside every program (the runtime tsconfig could not take it) is text-scanned for
+  // org imports like any unindexed file (unindexedImports below); nothing about the
+  // package's surface is unknown, so it never makes the result partial.
+  const missingRuntime = missingEntryPoints.filter((e) => runtimeEntries.has(e));
+  const missingSurface = missingEntryPoints.filter((e) => !runtimeEntries.has(e));
+  if (missingRuntime.length > 0) {
+    diagnostics.push(`info: runtime entry point(s) not in any TypeScript program (not export surface; their imports are text-scanned, status unaffected): ${missingRuntime.join(', ')}`);
+  }
+  if (runtimeUnresolved.size > 0) {
+    diagnostics.push(`warn: unresolved re-exports of runtime entry points (not export surface; status unaffected): ${[...runtimeUnresolved].join(', ')}`);
+  }
 
-  if (missingEntryPoints.length > 0) {
-    partial = true;
+  if (missingSurface.length > 0) {
     // A plain JavaScript entry (`lib/mock.cjs`, a `.mjs` bin) the program excludes:
     // its exports are read by a text scan and recorded as unresolved surface (SCIP
     // has no symbol for them). Declaration entries (`.d.cts`) stay unknown.
     const other: string[] = [];
-    for (const entry of missingEntryPoints) {
+    for (const entry of missingSurface) {
       const abs = path.resolve(input.repoRoot, ...entry.split('/'));
       const names = PLAIN_JS_ENTRY.test(entry) && existsSync(abs) ? scanJsExportNames(abs) : undefined;
       if (names === undefined) {
@@ -401,16 +445,22 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       const why = 'JavaScript entry outside the tsconfig program';
       if (names.length === 0) unresolved.add(`${entry} (${why}; no exports found by text scan)`);
       for (const name of names) unresolved.add(`${entry}#${name} (${why})`);
-      diagnostics.push(`warn: entry ${entry} is JavaScript outside the tsconfig program; add it to include (exports: ${names.length > 0 ? names.join(', ') : 'none found'})`);
+      const diag = `warn: entry ${entry} is JavaScript outside the tsconfig program; add it to include (exports: ${names.length > 0 ? names.join(', ') : 'none found'})`;
+      markPartial(diag);
+      diagnostics.push(diag);
     }
     if (other.length > 0) {
-      diagnostics.push(`warn: entry point(s) not in the TypeScript program, export surface unknown: ${other.join(', ')}`);
+      const diag = `warn: entry point(s) not in the TypeScript program, export surface unknown: ${other.join(', ')}`;
+      markPartial(diag);
+      diagnostics.push(diag);
     }
   }
   if (unresolved.size > 0) {
-    partial = true;
-    diagnostics.push(`warn: unresolved re-exports: ${[...unresolved].join(', ')}`);
+    const diag = `warn: unresolved re-exports: ${[...unresolved].join(', ')}`;
+    markPartial(diag);
+    diagnostics.push(diag);
   }
+  if (cause !== undefined) diagnostics.push(`cause: ${cause}`);
 
   exports.sort(
     (a, b) =>
@@ -501,7 +551,10 @@ interface ProgramSpec {
   create: () => ts.Program;
 }
 
-function createPrograms(input: ExportSurfaceInput, diagnostics: string[]): ProgramSpec[] | undefined {
+function createPrograms(
+  input: Pick<ExportSurfaceInput, 'tsconfig' | 'pkgDir' | 'repoRoot' | 'entryPoints' | 'runtimeTsconfig'>,
+  diagnostics: string[],
+): ProgramSpec[] | undefined {
   if (input.tsconfig !== undefined && existsSync(input.tsconfig)) {
     const programs: ProgramSpec[] = [];
     const seen = new Set<string>();
@@ -536,6 +589,9 @@ function createPrograms(input: ExportSurfaceInput, diagnostics: string[]): Progr
       return true;
     };
     if (!visit(input.tsconfig, true)) return undefined;
+    // The runtime tsconfig (scip-typescript indexes it as one more project, after the
+    // package's own): last, so an entry file in both is read from the package's program.
+    if (input.runtimeTsconfig !== undefined && existsSync(input.runtimeTsconfig)) visit(input.runtimeTsconfig, false);
     return programs;
   }
   // No tsconfig: default options from the entry files (allowJs so JS entries load).
@@ -543,6 +599,24 @@ function createPrograms(input: ExportSurfaceInput, diagnostics: string[]): Progr
   diagnostics.push('info: export surface computed from entry files with default compiler options');
   const options = { ...ts.getDefaultCompilerOptions(), allowJs: true, noEmit: true };
   return [{ rootNames, create: () => ts.createProgram({ rootNames, options }) }];
+}
+
+/** A file extension TypeScript can take as a program root with allowJs (no declaration files). */
+const PROGRAM_EXT = /(?<!\.d)\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+/**
+ * The absolute files of `candidates` (absolute) that the programs of `tsconfig` (and
+ * its project references) do not have as root files, that exist, and that TypeScript
+ * can load (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`, not `.d.ts`).
+ * These are the runtime entries scip-typescript would otherwise not index. Sorted.
+ */
+export function filesOutsidePrograms(tsconfig: string, pkgDir: string, candidates: readonly string[]): string[] {
+  const specs = createPrograms({ tsconfig, pkgDir, repoRoot: pkgDir, entryPoints: [] }, []);
+  if (specs === undefined) return []; // an unreadable tsconfig: scip-typescript reports it
+  const roots = new Set(specs.flatMap((s) => s.rootNames.map((f) => path.resolve(f))));
+  return [...new Set(candidates.map((f) => path.resolve(f)))]
+    .filter((f) => PROGRAM_EXT.test(f) && !roots.has(f) && existsSync(f))
+    .sort(cmp);
 }
 
 /**
