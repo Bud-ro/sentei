@@ -1,102 +1,407 @@
 {
+  "version": 3,
   "org": "honojs",
-  "generatedAt": "2026-09-24T06:18:36.000Z",
+  "generatedAt": "2026-09-26T07:34:02.816Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
   "repos": [
     {
       "name": ".github",
       "defaultBranch": "main",
       "headSha": "a5818c4b3602d50dce4386ea04c473502a55ebe0",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 2,
+      "headTreeKb": 1,
+      "pushedAt": "2024-09-19T11:06:18Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "agent-dx",
       "defaultBranch": "main",
       "headSha": "8e85e3c3e8a91b0de55882671e09aea0c4e4ec7c",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 407,
+      "headTreeKb": 364,
+      "pushedAt": "2026-09-10T08:28:34Z",
+      "probe": "tree",
+      "manifests": [
+        "apps/web/package.json",
+        "package.json",
+        "packages/agent-dx/fixtures/hono-fresh/package.json",
+        "packages/agent-dx/fixtures/hono-shop-flat/package.json",
+        "packages/agent-dx/fixtures/hono-shop/package.json",
+        "packages/agent-dx/fixtures/hono-todos/package.json",
+        "packages/agent-dx/fixtures/hono-workers/package.json",
+        "packages/agent-dx/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "cli",
       "defaultBranch": "main",
       "headSha": "c1b6028d8ea9bacaa1f08eed9345fb4301e9215c",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 514,
+      "headTreeKb": 336,
+      "pushedAt": "2026-09-20T07:43:27Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "create-hono",
       "defaultBranch": "main",
       "headSha": "f0aa3af1beb0f76a96064bf28ab157549cfce1d5",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 277,
+      "headTreeKb": 187,
+      "pushedAt": "2026-08-30T05:27:15Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "examples",
       "defaultBranch": "main",
       "headSha": "3b0b62875a0e1265763fea1c6388866d5697ef81",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1058,
+      "headTreeKb": 338,
+      "pushedAt": "2026-03-21T11:10:22Z",
+      "probe": "tree",
+      "manifests": [
+        "basic/package.json",
+        "blog/package.json",
+        "bun/package.json",
+        "durable-objects/package.json",
+        "env-vars/package.json",
+        "hono-vite-jsx/package.json",
+        "jsx-ssr/package.json",
+        "nextjs-stack/package.json",
+        "package.json",
+        "pages-stack/package.json",
+        "serve-static/package.json",
+        "stytch-auth/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "hono",
       "defaultBranch": "main",
       "headSha": "8dcd52b92beada28962e818bdca8a137a6beb656",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 9877,
+      "headTreeKb": 4741,
+      "pushedAt": "2026-09-26T06:14:55Z",
+      "probe": "tree",
+      "manifests": [
+        "benchmarks/fetch/package.json",
+        "benchmarks/jsx/package.json",
+        "benchmarks/query-param/package.json",
+        "benchmarks/routers/package.json",
+        "benchmarks/utils/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "honoconf",
       "defaultBranch": "main",
       "headSha": "08b0ddd768acb4eccd0fbf0d5aa1c898a288f74d",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 1,
+      "headTreeKb": 5,
+      "pushedAt": "2026-02-16T08:29:24Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "honox",
       "defaultBranch": "main",
       "headSha": "ac84cded80f56d4b7e0913b7884ca225c9c4292f",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2877,
+      "headTreeKb": 405,
+      "pushedAt": "2026-08-18T11:00:27Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "honox-website",
       "defaultBranch": "main",
       "headSha": "13ea697385480644b56898a6c9faf50a97a6bab8",
-      "fork": false
+      "fork": false,
+      "language": "MDX",
+      "sizeKb": 114,
+      "headTreeKb": 304,
+      "pushedAt": "2025-03-06T23:56:58Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language MDX, but package.json"
+      ]
     },
     {
       "name": "middleware",
       "defaultBranch": "main",
       "headSha": "3c8656ee5112361387dac130b1325859592c2650",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 16356,
+      "headTreeKb": 2595,
+      "pushedAt": "2026-09-26T05:54:25Z",
+      "probe": "tree",
+      "manifests": [
+        ".github/actions/what-changed/package.json",
+        "package.json",
+        "packages/ajv-validator/package.json",
+        "packages/arktype-validator/package.json",
+        "packages/auth-js/package.json",
+        "packages/bun-compress/package.json",
+        "packages/bun-transpiler/package.json",
+        "packages/capnweb/package.json",
+        "packages/casbin/package.json",
+        "packages/class-validator/package.json",
+        "packages/clerk-auth/package.json",
+        "packages/cloudflare-access/package.json",
+        "packages/conform-validator/package.json",
+        "packages/effect-validator/package.json",
+        "packages/esbuild-transpiler/package.json",
+        "packages/eslint-config/package.json",
+        "packages/event-emitter/package.json",
+        "packages/firebase-auth/package.json",
+        "packages/graphql-server/package.json",
+        "packages/hello/package.json",
+        "packages/inertia/package.json",
+        "packages/mcp/package.json",
+        "packages/medley-router/package.json",
+        "packages/node-ws/package.json",
+        "packages/oauth-providers/package.json",
+        "packages/oidc-auth/package.json",
+        "packages/otel/package.json",
+        "packages/prometheus/package.json",
+        "packages/qwik-city/package.json",
+        "packages/react-compat/package.json",
+        "packages/react-renderer/package.json",
+        "packages/sentry/package.json",
+        "packages/session/package.json",
+        "packages/ssg-plugins-essential/package.json",
+        "packages/standard-validator/package.json",
+        "packages/structured-logger/package.json",
+        "packages/stytch-auth/package.json",
+        "packages/swagger-editor/package.json",
+        "packages/swagger-ui/package.json",
+        "packages/trpc-server/package.json",
+        "packages/tsyringe/package.json",
+        "packages/typebox-validator/package.json",
+        "packages/typedriver-validator/package.json",
+        "packages/typia-validator/package.json",
+        "packages/ua-blocker/package.json",
+        "packages/valibot-validator/package.json",
+        "packages/zod-openapi/package.json",
+        "packages/zod-validator/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "node-server",
       "defaultBranch": "main",
       "headSha": "64dc09e0c37eab30b51d33d61a3a2bae3fdee263",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 626,
+      "headTreeKb": 524,
+      "pushedAt": "2026-08-18T11:31:25Z",
+      "probe": "tree",
+      "manifests": [
+        "benchmarks/fetch/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "skills",
       "defaultBranch": "main",
       "headSha": "8b1938be37331c68a02c3b75896b2ea3839d7d09",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 32,
+      "headTreeKb": 31,
+      "pushedAt": "2026-09-20T09:25:43Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "starter",
       "defaultBranch": "main",
       "headSha": "cd2f95cb145d27ee9c5905b057e749491f2b4a12",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1491,
+      "headTreeKb": 57,
+      "pushedAt": "2026-09-24T01:33:30Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "templates/aws-lambda/package.json",
+        "templates/bun/package.json",
+        "templates/cloudflare-pages/package.json",
+        "templates/cloudflare-workers+vite/package.json",
+        "templates/cloudflare-workers/package.json",
+        "templates/fastly/package.json",
+        "templates/lambda-edge/package.json",
+        "templates/nextjs/package.json",
+        "templates/nodejs/package.json",
+        "templates/vercel/package.json",
+        "templates/x-basic/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "vite-plugins",
       "defaultBranch": "main",
       "headSha": "93b0840360ab250c096bf8493e284c3904603a9f",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2801,
+      "headTreeKb": 3350,
+      "pushedAt": "2026-07-11T04:05:02Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/cloudflare-pages/package.json",
+        "packages/dev-server/package.json",
+        "packages/ssg/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "vscode",
       "defaultBranch": "main",
       "headSha": "9c926b6560ed604ea01005f54f31125ad9b7b4ab",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 563,
+      "headTreeKb": 769,
+      "pushedAt": "2026-01-22T07:49:41Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "website",
       "defaultBranch": "main",
       "headSha": "f607a0f037581b538332c65d1634cbf9a31c292a",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 18364,
+      "headTreeKb": 14588,
+      "pushedAt": "2026-09-20T09:30:20Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "repo": ".github",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "honoconf",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "skills",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
     }
   ]
 }

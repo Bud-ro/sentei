@@ -1,510 +1,1685 @@
 {
+  "version": 3,
   "org": "unjs",
-  "generatedAt": "2026-09-24T06:50:52.000Z",
+  "generatedAt": "2026-09-26T07:34:25.103Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
   "repos": [
     {
       "name": ".github",
       "defaultBranch": "main",
       "headSha": "7bb508fe5803b50e9726cf201f388f948bdf049d",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 20,
+      "headTreeKb": 6,
+      "pushedAt": "2024-06-26T13:19:42Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "automd",
       "defaultBranch": "main",
       "headSha": "011db560dcf369e72c84fde59e341717af471915",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1745,
+      "headTreeKb": 512,
+      "pushedAt": "2026-09-25T21:05:04Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "c12",
       "defaultBranch": "main",
       "headSha": "9f8e54ccb1d959bf8a41aeadba955ab97b797cda",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1674,
+      "headTreeKb": 298,
+      "pushedAt": "2026-09-25T21:07:44Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/bench/package.json",
+        "test/fixture/_github/package.json",
+        "test/fixture/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "capnp-es",
       "defaultBranch": "main",
       "headSha": "4ae67dce5ed5f4a5c78b2dcc52d5ca4f6b75140c",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 966,
+      "headTreeKb": 1489,
+      "pushedAt": "2026-09-25T21:07:55Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "changelogen",
       "defaultBranch": "main",
       "headSha": "3717bb3d214a111c3c8d2e72da16799cef64f4ba",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 851,
+      "headTreeKb": 236,
+      "pushedAt": "2026-09-26T00:21:36Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "citty",
       "defaultBranch": "main",
       "headSha": "3e342fe7b3f67575faf51df8361d502be6fe32e8",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 679,
+      "headTreeKb": 237,
+      "pushedAt": "2026-09-25T21:04:20Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "codeup",
       "defaultBranch": "main",
       "headSha": "d0dc2b214a67d759b227dee4c34486dbbf9962a1",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 512,
+      "headTreeKb": 97,
+      "pushedAt": "2026-09-25T21:02:07Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "community",
       "defaultBranch": "main",
       "headSha": "f26b5423436fda2f46c5db7356a42b08238e40b6",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 3,
+      "headTreeKb": 2,
+      "pushedAt": "2024-04-01T14:34:45Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "compatx",
       "defaultBranch": "main",
       "headSha": "ce0058c9de9d9b8b0f757da3bc14e637937d5e89",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 277,
+      "headTreeKb": 177,
+      "pushedAt": "2026-09-25T22:38:49Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "confbox",
       "defaultBranch": "main",
       "headSha": "eebbd541d90915589359b776d0ad6d90c75379bb",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 579,
+      "headTreeKb": 130,
+      "pushedAt": "2026-09-25T21:05:23Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "consola",
       "defaultBranch": "main",
       "headSha": "c47faac1738b7383971c6c20b5a34ffa15e7cc3b",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2866,
+      "headTreeKb": 841,
+      "pushedAt": "2026-09-25T21:01:11Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "cookie-es",
       "defaultBranch": "main",
       "headSha": "f89ede8b60204adfa84a97fb833e0cbae75d0478",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 796,
+      "headTreeKb": 353,
+      "pushedAt": "2026-09-25T21:06:26Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "db0",
       "defaultBranch": "main",
       "headSha": "be03a5173df0eef15df286f0f296195ed7a0fc56",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2146,
+      "headTreeKb": 681,
+      "pushedAt": "2026-09-26T04:27:52Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "examples/drizzle/package.json",
+        "examples/tracing/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "defu",
       "defaultBranch": "main",
       "headSha": "82632b66f5914e9946edce300e10633a3d5c0cb7",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1098,
+      "headTreeKb": 388,
+      "pushedAt": "2026-09-25T21:07:49Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "destr",
       "defaultBranch": "main",
       "headSha": "541b6f9aeada9fc30de9c5a7e086dbfc1c6fcdc7",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 920,
+      "headTreeKb": 187,
+      "pushedAt": "2026-09-25T22:37:11Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "env-runner",
       "defaultBranch": "main",
       "headSha": "30f8fa1d8a99e1527c0447ddbffa338533fec97a",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1307,
+      "headTreeKb": 636,
+      "pushedAt": "2026-09-25T21:19:57Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "eslint-config",
       "defaultBranch": "main",
       "headSha": "5e000cafe1399aa0565f7758a2e93bdb43abf53c",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 576,
+      "headTreeKb": 142,
+      "pushedAt": "2026-09-25T21:05:07Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "exsolve",
       "defaultBranch": "main",
       "headSha": "4d138a899b37e341e12c6a43040ebd21d6ffff9c",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 313,
+      "headTreeKb": 270,
+      "pushedAt": "2026-09-25T21:02:03Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/fixture/exports-pkg/package.json",
+        "test/fixture/imports-pkg/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "fetchdts",
       "defaultBranch": "main",
       "headSha": "f930a0dfe866677a935cdfdbbe254699369120b9",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1539,
+      "headTreeKb": 484,
+      "pushedAt": "2026-09-23T02:28:47Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "fontaine",
       "defaultBranch": "main",
       "headSha": "121a6e1a8e8d0f30b794eeb93e092b9e2624a210",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 7842,
+      "headTreeKb": 2234,
+      "pushedAt": "2026-09-24T22:29:52Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/fontaine/package.json",
+        "packages/fontaine/playground/package.json",
+        "packages/fontless/docs/package.json",
+        "packages/fontless/examples/analog-app/package.json",
+        "packages/fontless/examples/qwik-app/package.json",
+        "packages/fontless/examples/react-app/package.json",
+        "packages/fontless/examples/react-router-app/package.json",
+        "packages/fontless/examples/rsc-app/package.json",
+        "packages/fontless/examples/solid-app/package.json",
+        "packages/fontless/examples/svelte-app/package.json",
+        "packages/fontless/examples/sveltekit-app/package.json",
+        "packages/fontless/examples/tailwind/package.json",
+        "packages/fontless/examples/vanilla-app/package.json",
+        "packages/fontless/examples/vue-app/package.json",
+        "packages/fontless/package.json",
+        "packages/fontless/src/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "get-port-please",
       "defaultBranch": "main",
       "headSha": "32a2f925b3f3c93e641ac2f554b646b60638cf4e",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 930,
+      "headTreeKb": 173,
+      "pushedAt": "2026-09-25T21:07:41Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "giget",
       "defaultBranch": "main",
       "headSha": "f1dad453055b97a81d5227edce7262c8dcaf53d2",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 974,
+      "headTreeKb": 224,
+      "pushedAt": "2026-09-25T21:02:18Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "governance",
       "defaultBranch": "main",
       "headSha": "a9270dfbc941cd1cc994c19017a5bc43f3fabd52",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 6,
+      "headTreeKb": 4,
+      "pushedAt": "2023-11-01T20:55:37Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "hookable",
       "defaultBranch": "main",
       "headSha": "6815e4fed0411f3e2f91a31bdb107d8aeac0a266",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1460,
+      "headTreeKb": 191,
+      "pushedAt": "2026-09-24T20:56:21Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "httpxy",
       "defaultBranch": "main",
       "headSha": "360ea8a6c0730dfc94761bac54b6a978b90e0a8c",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 714,
+      "headTreeKb": 543,
+      "pushedAt": "2026-09-25T13:42:00Z",
+      "probe": "tree",
+      "manifests": [
+        "bench/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "image-meta",
       "defaultBranch": "main",
       "headSha": "3e97b7bf643d01ff5f3e329265532674baf29dc2",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 4490,
+      "headTreeKb": 8153,
+      "pushedAt": "2026-09-25T21:22:36Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "impound",
       "defaultBranch": "main",
       "headSha": "4f09c3f86c87a8210b8e11cf6c3dee4f20495232",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1975,
+      "headTreeKb": 295,
+      "pushedAt": "2026-09-26T00:32:40Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "ipx",
       "defaultBranch": "main",
       "headSha": "962eb831fbde512bc77e4eccede4a5c2ee816c8b",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 5340,
+      "headTreeKb": 3862,
+      "pushedAt": "2026-09-26T04:24:11Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "jiti",
       "defaultBranch": "main",
       "headSha": "fd3bb289b75ed207edfb686d671ed50144f7e90f",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2780,
+      "headTreeKb": 365,
+      "pushedAt": "2026-09-25T22:38:13Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/fixtures/import-map/package.json",
+        "test/fixtures/import-meta/package.json",
+        "test/fixtures/package.json",
+        "test/fixtures/require-esm/package.json",
+        "test/fixtures/require-json/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "jup",
       "defaultBranch": "main",
       "headSha": "21e4a27e1866f5191bb513e95810ad391e540d4f",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 3696,
+      "headTreeKb": 3414,
+      "pushedAt": "2026-09-21T12:22:05Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "knitwork",
       "defaultBranch": "main",
       "headSha": "a95f4d421ffa602723cb5ac2606bd854e1dfc49a",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 665,
+      "headTreeKb": 166,
+      "pushedAt": "2026-09-25T21:00:55Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "listhen",
       "defaultBranch": "main",
       "headSha": "2466b698997f6d5006c22f36ab54379df277cf5f",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1720,
+      "headTreeKb": 705,
+      "pushedAt": "2026-09-25T21:06:09Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "magic-regexp",
       "defaultBranch": "main",
       "headSha": "c9e7b8feee2d09b724259730f1fe9ba5d0dabcc1",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 7005,
+      "headTreeKb": 742,
+      "pushedAt": "2026-09-24T20:54:20Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "magicast",
       "defaultBranch": "main",
       "headSha": "1804bf72b3e9cf6224a9e81ddd9771b074c41fdd",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1210,
+      "headTreeKb": 1782,
+      "pushedAt": "2026-09-25T20:59:35Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "md4x",
       "defaultBranch": "main",
       "headSha": "adc9733320f3e994261c8851dedefb76dabed74d",
-      "fork": false
+      "fork": false,
+      "language": "Zig",
+      "sizeKb": 3057,
+      "headTreeKb": 3164,
+      "pushedAt": "2026-09-13T16:46:00Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/md4x/package.json",
+        "website/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Zig, but 3 manifests (package.json, packages/md4x/package.json, website/package.json)"
+      ]
     },
     {
       "name": "mdbox",
       "defaultBranch": "main",
       "headSha": "853ab433d52a80d2cdb9b3834a3e9f51f502d30a",
-      "fork": false
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 459,
+      "headTreeKb": 716,
+      "pushedAt": "2026-09-25T22:38:53Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ]
     },
     {
       "name": "mkdist",
       "defaultBranch": "main",
       "headSha": "01ce4680730c8e45d40f977fbdf371474f2511e0",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1831,
+      "headTreeKb": 299,
+      "pushedAt": "2026-09-23T08:21:15Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/fixture/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "mlly",
       "defaultBranch": "main",
       "headSha": "beece9be0a98bd170bfef6a4dca4cc84eb84cf74",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1324,
+      "headTreeKb": 280,
+      "pushedAt": "2026-09-25T21:03:44Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/fixture/imports/cjs/package.json",
+        "test/fixture/imports/esm-module/package.json",
+        "test/fixture/imports/esm/package.json",
+        "test/fixture/imports/js-cjs/package.json",
+        "test/fixture/imports/js-esm/package.json",
+        "test/fixture/imports/mixed/package.json",
+        "test/fixture/package/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "mocked-exports",
       "defaultBranch": "main",
       "headSha": "6382827f4fc7eac6d443c0e333fd4459e4d089c4",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 141,
+      "headTreeKb": 126,
+      "pushedAt": "2026-09-20T02:21:06Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "nanotar",
       "defaultBranch": "main",
       "headSha": "c70386b215bc76e7cab066eb9552ac2815743da8",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 356,
+      "headTreeKb": 166,
+      "pushedAt": "2026-09-25T21:07:41Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "nf3",
       "defaultBranch": "main",
       "headSha": "bd103ce08bae8361a79b146e262fb82e33464e9f",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 948,
+      "headTreeKb": 366,
+      "pushedAt": "2026-09-25T21:02:04Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "node-fetch-native",
       "defaultBranch": "main",
       "headSha": "2b5fbd5ec56d5f417b9be690604db9f12e7360f9",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 696,
+      "headTreeKb": 182,
+      "pushedAt": "2026-09-25T13:05:29Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "node-mock-http",
       "defaultBranch": "main",
       "headSha": "84897e45fcc67169858b86272235257f2e73f521",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 210,
+      "headTreeKb": 289,
+      "pushedAt": "2026-09-25T21:03:21Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "nypm",
       "defaultBranch": "main",
       "headSha": "5ba5a9970073a2acb9d369b0fb4a6eeeede67139",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2028,
+      "headTreeKb": 6970,
+      "pushedAt": "2026-09-24T21:10:17Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/fixtures/aube/package.json",
+        "test/fixtures/bun-workspace/package.json",
+        "test/fixtures/bun-workspace/packages/workspace-a/package.json",
+        "test/fixtures/bun/package.json",
+        "test/fixtures/deno-workspace/package.json",
+        "test/fixtures/deno-workspace/packages/workspace-a/package.json",
+        "test/fixtures/deno/package.json",
+        "test/fixtures/npm-workspace/package.json",
+        "test/fixtures/npm-workspace/packages/workspace-a/package.json",
+        "test/fixtures/npm/package.json",
+        "test/fixtures/nub/package.json",
+        "test/fixtures/pnpm-workspace/package.json",
+        "test/fixtures/pnpm-workspace/packages/workspace-a/package.json",
+        "test/fixtures/pnpm-workspace/workspace-a/package.json",
+        "test/fixtures/pnpm/package.json",
+        "test/fixtures/yarn-berry-v4/package.json",
+        "test/fixtures/yarn-berry-workspace/package.json",
+        "test/fixtures/yarn-berry-workspace/packages/workspace-a/package.json",
+        "test/fixtures/yarn-berry/package.json",
+        "test/fixtures/yarn-classic-workspace/package.json",
+        "test/fixtures/yarn-classic-workspace/packages/workspace-a/package.json",
+        "test/fixtures/yarn-classic/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "obuild",
       "defaultBranch": "main",
       "headSha": "471c00aa6af04696d95e12d9c78c004b48ed6f23",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1850,
+      "headTreeKb": 232,
+      "pushedAt": "2026-09-26T00:25:53Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/fixture/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "ocache",
       "defaultBranch": "main",
       "headSha": "68cb669ee3478246d2b61c8b4e9bb8ce39686c96",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1411,
+      "headTreeKb": 1440,
+      "pushedAt": "2026-09-25T22:38:48Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "ofetch",
       "defaultBranch": "main",
       "headSha": "1dbc37fd1ceab832fc7c90cad81b1091c95ba563",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1632,
+      "headTreeKb": 474,
+      "pushedAt": "2026-09-25T21:01:11Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "ohash",
       "defaultBranch": "main",
       "headSha": "764b0a3203308956ef07597612af5ad59f36c791",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2094,
+      "headTreeKb": 204,
+      "pushedAt": "2026-09-25T22:38:00Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "openapi-renderer",
       "defaultBranch": "main",
       "headSha": "a4f823631f59d3e477974222b41a71ac2bb1fa7d",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 192,
+      "headTreeKb": 290,
+      "pushedAt": "2026-09-20T02:28:59Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "pathe",
       "defaultBranch": "main",
       "headSha": "bc7477a01f0bd60ada017add8142c9f9d69ccdc5",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 988,
+      "headTreeKb": 255,
+      "pushedAt": "2026-09-25T21:04:57Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "perfect-debounce",
       "defaultBranch": "main",
       "headSha": "430686fdcb590b838909eac66fbd99997c09ef12",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 397,
+      "headTreeKb": 146,
+      "pushedAt": "2026-09-25T21:03:22Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "pkg-types",
       "defaultBranch": "main",
       "headSha": "1991804cd31873054184b70feccc60ff562cff41",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1166,
+      "headTreeKb": 222,
+      "pushedAt": "2026-09-25T21:05:07Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/fixture/jsonc/package.json",
+        "test/fixture/package.json",
+        "test/fixture/sub/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "rc9",
       "defaultBranch": "main",
       "headSha": "b95fe6a022713e008d075c6ced7dbce8aa917d53",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1069,
+      "headTreeKb": 123,
+      "pushedAt": "2026-09-25T21:03:29Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "renovate-config",
       "defaultBranch": "main",
       "headSha": "47da27ca6fb163f0f9f14b6f2c06d69612d27a80",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 346,
+      "headTreeKb": 171,
+      "pushedAt": "2026-09-26T04:24:20Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "no language detected, but package.json"
+      ]
     },
     {
       "name": "runtime-compat",
       "defaultBranch": "main",
       "headSha": "34e6b291fdbe38d5c761e0f342a4d879d89504dc",
-      "fork": false
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 52896,
+      "headTreeKb": 41894,
+      "pushedAt": "2026-09-26T04:26:33Z",
+      "probe": "tree",
+      "manifests": [
+        "apps/website/package.json",
+        "generator/runtimes/bun/package.json",
+        "generator/runtimes/deno/package.json",
+        "generator/runtimes/edge-light/package.json",
+        "generator/runtimes/fastly/package.json",
+        "generator/runtimes/llrt/package.json",
+        "generator/runtimes/netlify/package.json",
+        "generator/runtimes/node/package.json",
+        "generator/runtimes/wasmer/package.json",
+        "generator/runtimes/workerd/package.json",
+        "package.json",
+        "packages/runtime-compat-data/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but 12 manifests (apps/website/package.json, generator/runtimes/bun/package.json, generator/runtimes/deno/package.json, …)"
+      ]
     },
     {
       "name": "scule",
       "defaultBranch": "main",
       "headSha": "5bc68048caad7c0e7de35842c83a510e8e1a7c4f",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 569,
+      "headTreeKb": 196,
+      "pushedAt": "2026-09-25T21:07:44Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "serve-placeholder",
       "defaultBranch": "main",
       "headSha": "4ff950f0feff24c8d1f68dd9d2c3f8ef87cfcb76",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 632,
+      "headTreeKb": 191,
+      "pushedAt": "2026-09-25T22:39:41Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "setup-jup",
       "defaultBranch": "main",
       "headSha": "2c58625c8923f0bde3c38c9d4091ef50b292abca",
-      "fork": false
+      "fork": false,
+      "language": "Shell",
+      "sizeKb": 30,
+      "headTreeKb": 43,
+      "pushedAt": "2026-09-20T02:25:09Z",
+      "probe": "tree",
+      "manifests": [
+        ".github/fixtures/npm/package.json",
+        ".github/fixtures/pnpm/package.json",
+        ".github/fixtures/yarn/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Shell, but 3 manifests (.github/fixtures/npm/package.json, .github/fixtures/pnpm/package.json, .github/fixtures/yarn/package.json)"
+      ]
     },
     {
       "name": "std-env",
       "defaultBranch": "main",
       "headSha": "99ba786711f4f2d1bb3fbf5bfd23c64c3cd432d7",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1143,
+      "headTreeKb": 134,
+      "pushedAt": "2026-09-25T00:41:06Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "template",
       "defaultBranch": "main",
       "headSha": "476b00cfc0f33066a0db79ccb81f4930891fb6a5",
-      "fork": false
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 157,
+      "pushedAt": "2026-09-25T22:36:10Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
     },
     {
       "name": "theme-colors",
       "defaultBranch": "main",
       "headSha": "0008bcccaa4ec8462caeccd4d1e2c4e4340caf18",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 356,
+      "headTreeKb": 171,
+      "pushedAt": "2026-09-25T00:44:10Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "ufo",
       "defaultBranch": "main",
       "headSha": "f06c800d0c59f2a4a1b9ba65eb6cb61a84419be6",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1403,
+      "headTreeKb": 623,
+      "pushedAt": "2026-09-25T22:37:07Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unbuild",
       "defaultBranch": "main",
       "headSha": "cf1c30333df2d6b19e6208f67157024975bdba82",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2007,
+      "headTreeKb": 292,
+      "pushedAt": "2026-09-24T20:48:54Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/1.zero-config/package.json",
+        "examples/2.mkdist/package.json",
+        "examples/3.untyped/package.json",
+        "package.json",
+        "test/fixture/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "uncrypto",
       "defaultBranch": "main",
       "headSha": "a99f620f03aaa4c24b4fed5f4396222e9b5b9fe4",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 321,
+      "headTreeKb": 149,
+      "pushedAt": "2026-09-25T21:05:08Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unctx",
       "defaultBranch": "main",
       "headSha": "6586739a70bd43a67437f72f00c186dd762b5125",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 812,
+      "headTreeKb": 181,
+      "pushedAt": "2026-09-25T21:02:23Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "undio",
       "defaultBranch": "main",
       "headSha": "7d3f730950e828aaa3d3f39e22e9efc4b8c962d7",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 286,
+      "headTreeKb": 213,
+      "pushedAt": "2026-09-25T22:39:50Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "undocs",
       "defaultBranch": "main",
       "headSha": "10f5034d56f88f9dd78c89e13fca3a1e7b428e71",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 8968,
+      "headTreeKb": 1421,
+      "pushedAt": "2026-09-26T00:25:07Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json",
+        "template/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unenv",
       "defaultBranch": "main",
       "headSha": "f89b7ccb5c05da70b946319783acf1fa1f113e22",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2642,
+      "headTreeKb": 836,
+      "pushedAt": "2026-09-25T21:01:10Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "src/runtime/polyfill/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "ungh",
       "defaultBranch": "main",
       "headSha": "d47299dbc15e393b4dc3f97e90fdc39bc3079e66",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 742,
+      "headTreeKb": 208,
+      "pushedAt": "2026-09-25T21:00:12Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unhead",
       "defaultBranch": "main",
       "headSha": "d706e59ed1dc10468dca002a3dbdcad81c4e0398",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 24422,
+      "headTreeKb": 5105,
+      "pushedAt": "2026-09-21T22:48:18Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/angular/package.json",
+        "examples/vite-ssr-react-streaming/package.json",
+        "examples/vite-ssr-react-ts/package.json",
+        "examples/vite-ssr-solidjs-streaming/package.json",
+        "examples/vite-ssr-svelte-streaming/package.json",
+        "examples/vite-ssr-svelte/package.json",
+        "examples/vite-ssr-ts/package.json",
+        "examples/vite-ssr-vue-prerender/package.json",
+        "examples/vite-ssr-vue-streaming/package.json",
+        "examples/vite-ssr-vue/package.json",
+        "package.json",
+        "packages-aliased/addons/package.json",
+        "packages-aliased/dom/package.json",
+        "packages-aliased/schema/package.json",
+        "packages-aliased/shared/package.json",
+        "packages-aliased/ssr/package.json",
+        "packages/angular/package.json",
+        "packages/bundler/package.json",
+        "packages/cli/package.json",
+        "packages/devtools-app/package.json",
+        "packages/eslint-plugin/package.json",
+        "packages/react/package.json",
+        "packages/schema-org/package.json",
+        "packages/solid-js/package.json",
+        "packages/svelte/package.json",
+        "packages/unhead/package.json",
+        "packages/vue/package.json",
+        "test/fixtures/nuxt-cloudflare-module/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unifont",
       "defaultBranch": "main",
       "headSha": "4a7157c5e81201b0428714076ff48422ca364772",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2768,
+      "headTreeKb": 1289,
+      "pushedAt": "2026-09-24T13:51:10Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json",
+        "playground/package.json",
+        "proxy/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unimport",
       "defaultBranch": "main",
       "headSha": "bbd07768ddb4919205bcb5a3cbc06c3a2791981a",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 3490,
+      "headTreeKb": 862,
+      "pushedAt": "2026-09-10T01:26:23Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unjs.github.io",
       "defaultBranch": "main",
       "headSha": "91b2f5d6ea867e0f5e681c7b1230759de381f7c8",
-      "fork": false
+      "fork": false,
+      "language": "HTML",
+      "sizeKb": 5,
+      "headTreeKb": 1,
+      "pushedAt": "2024-04-01T14:19:00Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "unpdf",
       "defaultBranch": "main",
       "headSha": "19ff34df642828a6467725f4c99499aa4cf2c0c6",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1283,
+      "headTreeKb": 446,
+      "pushedAt": "2026-08-14T10:42:44Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/cloudflare/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unplugin",
       "defaultBranch": "main",
       "headSha": "f2acf00e1f8e4fbeaa28f6660545c70c43cb2d73",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 4639,
+      "headTreeKb": 867,
+      "pushedAt": "2026-09-18T20:29:23Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json",
+        "test/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unrouting",
       "defaultBranch": "main",
       "headSha": "ff4815401fa83f2a72b48c3aca7fd160b29ebad5",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1311,
+      "headTreeKb": 362,
+      "pushedAt": "2026-09-23T02:26:13Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unstorage",
       "defaultBranch": "main",
       "headSha": "0dfd172efbe8d4375ee749b7a528b174111f7881",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 6015,
+      "headTreeKb": 1023,
+      "pushedAt": "2026-09-26T04:24:29Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "untracing",
       "defaultBranch": "main",
       "headSha": "d1e6dafca6c3855995d7680e345b9ac9e290a956",
-      "fork": false
+      "fork": false,
+      "language": null,
+      "sizeKb": 7,
+      "headTreeKb": 4,
+      "pushedAt": "2026-03-18T15:27:58Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
     },
     {
       "name": "untun",
       "defaultBranch": "main",
       "headSha": "dfd84231c740a514120e4d7c0efd622822908798",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 319,
+      "headTreeKb": 161,
+      "pushedAt": "2026-09-25T21:01:11Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "untyped",
       "defaultBranch": "main",
       "headSha": "882328428be43ef8bbe1493f105a46f104d44dcf",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1896,
+      "headTreeKb": 291,
+      "pushedAt": "2026-09-25T21:09:14Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "unwasm",
       "defaultBranch": "main",
       "headSha": "d97383b4f66616e9bf0407df9c14462f9023bd46",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 728,
+      "headTreeKb": 266,
+      "pushedAt": "2026-09-25T21:07:13Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "uqr",
       "defaultBranch": "main",
       "headSha": "00691ca1209783eedc72adde7ddb29e2e4971382",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 331,
+      "headTreeKb": 259,
+      "pushedAt": "2026-04-03T01:58:38Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "webpackbar",
       "defaultBranch": "main",
       "headSha": "c7d3c8118bb92628224ec8fe5b554b5b9826e7a6",
-      "fork": false
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2563,
+      "headTreeKb": 494,
+      "pushedAt": "2026-09-25T00:42:18Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ]
     },
     {
       "name": "website",
       "defaultBranch": "main",
       "headSha": "fe51311e828fe1a2ce6ecc8ebffa72f7190d44f8",
-      "fork": false
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 7712,
+      "headTreeKb": 6639,
+      "pushedAt": "2026-09-26T04:27:54Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but package.json"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "repo": ".github",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "community",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "governance",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "template",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "unjs.github.io",
+      "reason": "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "untracing",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
     }
   ]
 }
