@@ -38,6 +38,20 @@ export function headSha(dir: string): Promise<string> {
   return git(['rev-parse', 'HEAD'], { cwd: dir });
 }
 
+/**
+ * Size of the object store at `dir` in KB (`git count-objects -v`: packs plus
+ * loose objects): for a fresh shallow clone, about what was downloaded.
+ */
+export async function objectStoreKb(dir: string): Promise<number> {
+  const out = await git(['count-objects', '-v'], { cwd: dir });
+  let kb = 0;
+  for (const line of out.split('\n')) {
+    const m = /^(size|size-pack): (\d+)$/.exec(line.trim());
+    if (m) kb += Number(m[2]);
+  }
+  return kb;
+}
+
 /** True if the checkout at `dir` is shallow. */
 export async function isShallow(dir: string): Promise<boolean> {
   return (await git(['rev-parse', '--is-shallow-repository'], { cwd: dir })) === 'true';
@@ -86,10 +100,12 @@ function authEnv(cloneUrl: string, token: string | null | undefined): Record<str
 export async function ensureClone(opts: EnsureCloneOptions): Promise<EnsureCloneResult> {
   // The sha may come from a lockfile: never let it reach argv as an option.
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(opts.sha)) throw new Error(`sentei: ${opts.dir}: invalid commit sha ${JSON.stringify(opts.sha)}`);
-  const env = authEnv(opts.cloneUrl, opts.token);
+  // LFS: a smudge filter (if git-lfs is installed) would download every LFS object
+  // at checkout; analysis never needs them, and hardware repos can hold gigabytes.
+  const env = { ...authEnv(opts.cloneUrl, opts.token), GIT_LFS_SKIP_SMUDGE: '1' };
   const pin = async (): Promise<void> => {
     await git(['fetch', '--depth=1', '--no-tags', 'origin', opts.sha], { cwd: opts.dir, env });
-    await git(['checkout', '--force', '--detach', opts.sha], { cwd: opts.dir });
+    await git(['checkout', '--force', '--detach', opts.sha], { cwd: opts.dir, env: { GIT_LFS_SKIP_SMUDGE: '1' } });
   };
   const verify = async (): Promise<void> => {
     const head = await headSha(opts.dir);
@@ -105,7 +121,7 @@ export async function ensureClone(opts: EnsureCloneOptions): Promise<EnsureClone
   }
   if (existsSync(opts.dir)) throw new Error(`sentei: ${opts.dir} exists but is not a git checkout; move it away and rerun`);
 
-  await git(['clone', '--depth=1', '--branch', opts.defaultBranch, '--no-tags', '--', opts.cloneUrl, opts.dir], { env });
+  await git(['clone', '--depth=1', '--single-branch', '--branch', opts.defaultBranch, '--no-tags', '--', opts.cloneUrl, opts.dir], { env });
   if ((await headSha(opts.dir)) !== opts.sha) {
     opts.log?.(`${opts.dir}: ${opts.defaultBranch} moved since listing, fetching pinned ${opts.sha}`);
     await pin();

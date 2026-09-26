@@ -21,17 +21,29 @@ export interface StageContext {
   log: (line: string) => void;
 }
 
-/** `discover --org` options (see main.ts USAGE). */
+/** `discover --org` / `repos` options (see main.ts USAGE). */
 export interface GithubDiscoverOptions {
+  /** Default <work>/<org>.lock.json. */
   lockfile?: string;
   updateLockfile: boolean;
+  /** --include / --exclude (override the org sentei.json repos.include/exclude). */
   include: string[];
   exclude: string[];
-  includeForks: boolean;
+  /** undefined = not given (the org sentei.json or the default decides). */
+  includeForks?: boolean;
+  includeArchived?: boolean;
+  /** --clone-concurrency (validated); undefined = repos.cloneConcurrency or 8. */
+  cloneConcurrency?: number;
+  /** Skip repos that fail to clone instead of failing discover. */
+  allowCloneFailures?: boolean;
   /** Default <work>/repos. */
   clonesDir?: string;
   /** Holds the org-level sentei.json; default cwd if it has one. */
   configDir?: string;
+  /** Injectable for tests (GitHub REST calls). */
+  fetchImpl?: typeof fetch;
+  /** Injectable for tests: undefined = GITHUB_TOKEN / GH_TOKEN / `gh auth token`. */
+  token?: string | null;
 }
 
 export type Stage = (ctx: StageContext) => Promise<void>;
