@@ -310,8 +310,29 @@ class ScipVisitor extends GeneralizingAstVisitor {
         symbol: symbol,
         symbolRoles: SymbolRole.Definition.value,
         diagnostics: meta.diagnostics,
-        enclosingRange: _lineInfo.getRange(node.offset, node.length),
+        enclosingRange: _enclosingRange(node),
       ),
     );
+  }
+
+  /// The source range a definition encloses: the declaration node, except
+  /// that a top-level variable or field (a [VariableDeclaration], which
+  /// starts at its name) also covers what precedes it in its declaration:
+  /// doc comment, metadata, modifiers and the type annotation. A reference
+  /// in `final Map<K, V> _x = ...;`'s type is a use by `_x`, not by the file
+  /// or class around it (sentei patch 12). With several variables in one
+  /// declaration (`int a = 1, b = 2;`) each range starts at the declaration;
+  /// the first variable gets the type (the innermost range wins).
+  List<int> _enclosingRange(AstNode node) {
+    var start = node.offset;
+    if (node is VariableDeclaration) {
+      final list = node.parent;
+      final decl = list?.parent;
+      if (list is VariableDeclarationList &&
+          (decl is TopLevelVariableDeclaration || decl is FieldDeclaration)) {
+        start = decl!.offset;
+      }
+    }
+    return _lineInfo.getRange(start, node.end - start);
   }
 }

@@ -18,7 +18,7 @@
 
     final String label;
 //        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-//               ^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#label. enclosing [7:15-7:20]
+//               ^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#label. enclosing [7:2-7:20]
 
     @override
 //   ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`annotations.dart`/override.

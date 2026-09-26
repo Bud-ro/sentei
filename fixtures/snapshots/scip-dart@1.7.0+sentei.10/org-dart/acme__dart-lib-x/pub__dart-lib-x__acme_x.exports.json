@@ -162,7 +162,7 @@
       "entry": "lib/extras/extras.dart",
       "exportedAs": "extrasUnused",
       "file": "lib/extras/extras.dart",
-      "line": 9,
+      "line": 10,
       "name": "extrasUnused",
       "sites": []
     },
@@ -171,7 +171,7 @@
       "entry": "lib/extras/extras.dart",
       "exportedAs": "extrasUsed",
       "file": "lib/extras/extras.dart",
-      "line": 5,
+      "line": 6,
       "name": "extrasUsed",
       "sites": []
     },

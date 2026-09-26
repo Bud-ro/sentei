@@ -101,11 +101,11 @@
     // Expected: alive, no finding.
     final int x;
 //        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x. enclosing [7:12-7:13]
+//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x. enclosing [7:2-7:13]
     // Expected: alive, no finding.
     final int y;
 //        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y. enclosing [9:12-9:13]
+//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y. enclosing [9:2-9:13]
     const Vec2(this.x, this.y);
 //        ^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`(). enclosing [10:2-10:29]
 //                  ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.

@@ -123,17 +123,19 @@
 //^ definition scip-dart pub acme_x . lib/extras/`extras.dart`/
   // `package:acme_x/extras/extras.dart`, so a discover entry point of its own
   // (dart-lang/sse has only lib/client/ and lib/server/). Phase 2 fix round 3.
+  import '../src/builders.dart';
 
   // Expected: alive, no finding (external ref from acme_app bin/clock.dart).
-  int extrasUsed() => 7;
+  int extrasUsed() => buildDouble(7);
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/extras/`extras.dart`/extrasUsed(). enclosing [5:0-5:22]
+//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/extras/`extras.dart`/extrasUsed(). enclosing [6:0-6:35]
+//                    ^^^^^^^^^^^ reference scip-dart pub acme_x . lib/src/`builders.dart`/buildDouble().
 
   // Expected: deletion_candidate ["no_refs"] (exported by the entry; before round 3
   // the file was no entry and this was private_dead already_unreachable).
   int extrasUnused() => 8;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/extras/`extras.dart`/extrasUnused(). enclosing [9:0-9:24]
+//    ^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/extras/`extras.dart`/extrasUnused(). enclosing [10:0-10:24]
 
 ## lib/mocks/fake_clock.dart
   // Test-support code under lib/ (`lib/mocks/`): library surface of acme_x, which
@@ -160,6 +162,37 @@
   int bindingsBackend() => 3;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`bindings_backend.dart`/bindingsBackend(). enclosing [4:0-4:27]
+
+## lib/src/builders.dart
+  // A private typedef used only in the type annotation of a top-level variable
+//^ definition scip-dart pub acme_x . lib/src/`builders.dart`/
+  // (flame-engine jenny `operators/_common.dart`: `final Map<…, BinaryOperatorBuilder>
+  // _builders = …`). Phase 2 fix round 3 (fork patch 12).
+
+  // Expected: alive, no finding (the type of _builders; the reference used to be
+  // credited to this file, not to _builders, and this came out private_dead).
+  typedef _Doubler = int Function(int value);
+//        ^^^^^^^^ definition scip-dart pub acme_x . lib/src/`builders.dart`/_Doubler# enclosing [6:0-6:43]
+//                   ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                                ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+
+  // Expected: alive, no finding (read by buildDouble).
+  final Map<String, _Doubler> _builders = {'double': (value) => value * 2};
+//      ^^^ reference scip-dart pub dart:core . dart:core/`map.dart`/Map#
+//          ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                  ^^^^^^^^ reference scip-dart pub acme_x . lib/src/`builders.dart`/_Doubler#
+//                            ^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`builders.dart`/_builders. enclosing [9:0-9:72]
+//                                                    ^^^^^ definition local 0 enclosing [9:52-9:57]
+//                                                              ^^^^^ reference local 0
+
+  // Expected: alive, no finding (called by extrasUsed in lib/extras/extras.dart).
+  int buildDouble(int value) => _builders['double']!(value);
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`builders.dart`/buildDouble(). enclosing [12:0-12:58]
+//                ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                    ^^^^^ definition local 1 enclosing [12:16-12:25]
+//                              ^^^^^^^^^ reference scip-dart pub acme_x . lib/src/`builders.dart`/_builders.
+//                                                   ^^^^^ reference local 1
 
 ## lib/src/excluded/bindings_gen.dart
   // Generated-style bindings, excluded from analysis by analysis_options.yaml.
@@ -220,7 +253,7 @@
     // Expected: alive, no finding (member of a live class).
     final String label = 'shown';
 //        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-//               ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Shown#label. enclosing [5:15-5:30]
+//               ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Shown#label. enclosing [5:2-5:30]
   }
 
   // Expected: private_dead, reasons ["already_unreachable"]. Public name in lib/src/, but
@@ -231,7 +264,7 @@
     // Expected: no finding (member of Hidden; only the outermost dead declaration is reported).
     final String label = 'hidden';
 //        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-//               ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Hidden#label. enclosing [13:15-13:31]
+//               ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Hidden#label. enclosing [13:2-13:31]
   }
 
 ## lib/src/wire_test.dart
@@ -293,7 +326,7 @@
     // Expected: alive, no finding (member of a live class).
     final int x;
 //        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//            ^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#x. enclosing [11:12-11:13]
+//            ^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#x. enclosing [11:2-11:13]
 
     const Vec(this.x);
 //        ^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Vec#`<constructor>`(). enclosing [13:2-13:20]
@@ -384,6 +417,6 @@
 
   // Expected: alive, no finding (entry symbol: dart_dev reads it by name).
   final config = <String, Object>{'format': 'dart format .'};
-//      ^^^^^^ definition scip-dart pub acme_x . tool/dart_dev/`config.dart`/config. enclosing [5:6-5:58]
+//      ^^^^^^ definition scip-dart pub acme_x . tool/dart_dev/`config.dart`/config. enclosing [5:0-5:58]
 //                ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
 //                        ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#

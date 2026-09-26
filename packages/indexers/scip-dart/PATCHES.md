@@ -1300,6 +1300,64 @@ Upstreamable: a crash on valid code.
 +}
 ```
 
+## 12. A variable's enclosing range covers its type annotation (`lib/src/scip_visitor.dart`)
+
+The `enclosing_range` of a definition is its declaration node. For a
+top-level variable or a field that node is the `VariableDeclaration`,
+which starts at the variable's name: the type annotation, modifiers and
+metadata belong to the surrounding `TopLevelVariableDeclaration` /
+`FieldDeclaration`. sentei attributes a reference to the innermost
+definition whose enclosing range contains it, so the type in
+`final Map<String, BinaryOperatorBuilder> _builders = …;` was a use by the
+file (or class), not by `_builders`: in flame-engine's jenny
+(`operators/_common.dart:39`) the reachable `_builders` did not keep its
+private typedef alive, which came out private_dead (the file is under
+`lib/src/`, not a seed). The enclosing range of such a variable now starts
+at its declaration (doc comment, metadata, `static`/`final`/`late`, type);
+with several variables in one declaration each range starts there and the
+first, innermost by position, gets the type. Local variables are unchanged
+(document-local symbols). Snapshots: every field and top-level variable's
+`enclosing` starts earlier; nothing else changes.
+
+Upstreamable: SCIP defines `enclosing_range` as the range of the whole
+definition, type included.
+
+```diff
+--- a/lib/src/scip_visitor.dart
++++ b/lib/src/scip_visitor.dart
+@@ -310,8 +310,29 @@ class ScipVisitor extends GeneralizingAstVisitor {
+         symbol: symbol,
+         symbolRoles: SymbolRole.Definition.value,
+         diagnostics: meta.diagnostics,
+-        enclosingRange: _lineInfo.getRange(node.offset, node.length),
++        enclosingRange: _enclosingRange(node),
+       ),
+     );
+   }
++
++  /// The source range a definition encloses: the declaration node, except
++  /// that a top-level variable or field (a [VariableDeclaration], which
++  /// starts at its name) also covers what precedes it in its declaration:
++  /// doc comment, metadata, modifiers and the type annotation. A reference
++  /// in `final Map<K, V> _x = ...;`'s type is a use by `_x`, not by the file
++  /// or class around it (sentei patch 12). With several variables in one
++  /// declaration (`int a = 1, b = 2;`) each range starts at the declaration;
++  /// the first variable gets the type (the innermost range wins).
++  List<int> _enclosingRange(AstNode node) {
++    var start = node.offset;
++    if (node is VariableDeclaration) {
++      final list = node.parent;
++      final decl = list?.parent;
++      if (list is VariableDeclarationList &&
++          (decl is TopLevelVariableDeclaration || decl is FieldDeclaration)) {
++        start = decl!.offset;
++      }
++    }
++    return _lineInfo.getRange(start, node.end - start);
++  }
+ }
+```
+
 ## Trim: no dev dependencies (`pubspec.yaml`)
 
 Not a behaviour change. The dev dependencies serve upstream's tests and CI,
