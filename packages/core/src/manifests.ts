@@ -108,8 +108,120 @@ export function inIgnoredDir(file: string, dirs: ReadonlySet<string>): boolean {
   return false;
 }
 
+/**
+ * Parent dirs whose children are monorepo members by convention (JS and Dart
+ * layouts): `pkgs/test`, `packages/example` are packages named like an ignored dir.
+ */
+export const PACKAGES_PARENT_DIRS: ReadonlySet<string> = new Set(['pkgs', 'packages', 'apps', 'libs', 'modules']);
+
+/**
+ * The manifest dir-name rule: is the repo-relative `manifest` (package.json /
+ * pubspec.yaml) under an ignored dir of `dirs`, i.e. not an org package?
+ *
+ * - An ANCESTOR of the manifest's own dir named in `dirs` ignores it, always,
+ *   workspace member or not: `foo/test/fixtures/pubspec.yaml`,
+ *   `pkgs/x/test_data/y/pubspec.yaml` (dart-lang/native lists ~90 example and
+ *   test_data packages in its pub workspace; they are fixtures all the same).
+ * - The manifest's OWN dir (the leaf) named in `dirs` ignores it too, unless the
+ *   leaf is a monorepo member:
+ *   (a) its parent dir is a packages dir (PACKAGES_PARENT_DIRS): `pkgs/test`,
+ *       `packages/example`; or
+ *   (b) it is a workspace member (`isWorkspaceMember`: named by a pub `workspace:`
+ *       or npm `workspaces` entry, or a pubspec with `resolution: workspace`) AND
+ *       its parent dir holds no manifest (`hasManifestAt`). The second condition
+ *       keeps a package's own example app ignored when the workspace lists it
+ *       (`pkgs/<pkg>/example`, a root `example/` beside the workspace pubspec).
+ * So a pub package's `example/pubspec.yaml` stays ignored and `pkgs/test/pubspec.yaml`
+ * (the `test` package itself) is kept.
+ */
+export function isIgnoredManifestPath(
+  manifest: string, dirs: ReadonlySet<string>,
+  isWorkspaceMember: (dir: string) => boolean = () => false,
+  hasManifestAt: (dir: string) => boolean = () => false,
+): boolean {
+  const segs = manifest.split('/').slice(0, -1);
+  if (segs.length === 0) return false;
+  for (let i = 0; i < segs.length - 1; i++) if (dirs.has(segs[i]!)) return true;
+  if (!dirs.has(segs[segs.length - 1]!)) return false;
+  if (segs.length >= 2 && PACKAGES_PARENT_DIRS.has(segs[segs.length - 2]!)) return false;
+  const parent = segs.length >= 2 ? segs.slice(0, -1).join('/') : '.';
+  return !(isWorkspaceMember(segs.join('/')) && !hasManifestAt(parent));
+}
+
+/**
+ * Workspace membership of dirs in a repo, from every manifest in `files`: pub
+ * `workspace:` entries and npm `workspaces` entries (array or `{ packages: [...] }`),
+ * relative to the declaring manifest's dir, globs allowed (glob.ts; npm negations
+ * `!x` are skipped, so membership errs toward "member"), plus the dirs of pubspecs
+ * that declare `resolution: workspace`. Unreadable manifests add nothing (the
+ * manifest readers report them). Returns a predicate over repo-relative dirs.
+ */
+export function workspaceMembership(repoRoot: string, files: readonly string[]): (dir: string) => boolean {
+  const patterns: string[] = [];
+  const members = new Set<string>();
+  for (const file of files) {
+    const base = posix.basename(file);
+    if (!MANIFEST_NAMES.includes(base)) continue;
+    const dir = posix.dirname(file);
+    let text: string;
+    try {
+      text = readFileSync(join(repoRoot, file), 'utf8');
+    } catch {
+      continue;
+    }
+    let entries: string[] = [];
+    if (base === 'pubspec.yaml') {
+      entries = pubWorkspaceEntries(text);
+      if (/^resolution:\s*['"]?workspace['"]?\s*(?:#.*)?$/m.test(text)) members.add(dir);
+    } else {
+      let json: unknown;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      const ws = isObject(json) ? json['workspaces'] : undefined;
+      const list: unknown[] = Array.isArray(ws) ? ws : isObject(ws) && Array.isArray(ws['packages']) ? ws['packages'] : [];
+      entries = list.filter((e): e is string => typeof e === 'string');
+    }
+    for (const e of entries) {
+      if (e.startsWith('!')) continue;
+      const rel = normalizeRel(e);
+      if (rel === null || rel === '') continue;
+      patterns.push(joinRel(dir, rel));
+    }
+  }
+  return (dir) => members.has(dir) || patterns.some((p) => matchGlob(p, dir));
+}
+
+/**
+ * The entries of a pubspec's top-level `workspace:` list (block `- path` items or a
+ * one-line flow list), unquoted, comments dropped (parsePubspecYaml skips sequences).
+ */
+export function pubWorkspaceEntries(text: string): string[] {
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+  const at = lines.findIndex((l) => /^workspace\s*:/.test(l));
+  if (at < 0) return [];
+  const inline = stripComment(lines[at]!).replace(/^workspace\s*:/, '').trim();
+  if (inline.startsWith('[') && inline.endsWith(']')) {
+    return inline.slice(1, -1).split(',').map((s) => unquote(s.trim())).filter((s) => s !== '');
+  }
+  const out: string[] = [];
+  for (const raw of lines.slice(at + 1)) {
+    const line = stripComment(raw);
+    if (line.trim() === '') continue;
+    if (!/^\s/.test(line) && !line.startsWith('-')) break; // the next top-level key
+    const m = /^\s*-\s+(.+)$/.exec(line);
+    if (m) out.push(unquote(m[1]!.trim()));
+  }
+  return out;
+}
+
 export interface ManifestOptions {
-  /** Dir names whose manifests are not org packages; default DEFAULT_IGNORE_MANIFEST_DIRS. */
+  /**
+   * Dir names whose manifests are not org packages (see isIgnoredManifestPath);
+   * default DEFAULT_IGNORE_MANIFEST_DIRS.
+   */
   ignoreDirs?: readonly string[];
   /** Extra per-manifest exclusion (repo-relative manifest path), e.g. org `ignoreManifests` globs. */
   ignoreManifest?: (manifest: string) => boolean;
@@ -225,7 +337,7 @@ export interface RepoManifests {
 
 /**
  * Find and parse every manifest in a repo. Packages without a name are skipped with
- * a warning. Manifests under an ignored dir (`opts.ignoreDirs`) or rejected by
+ * a warning. Manifests under an ignored dir (`opts.ignoreDirs`, isIgnoredManifestPath) or rejected by
  * `opts.ignoreManifest` are skipped as packages, reported in one `opts.log` line.
  */
 export function readRepoManifests(
@@ -243,6 +355,9 @@ export function readRepoManifestsWithIgnored(
   repoRoot: string, warn: Warn = () => {}, files: readonly string[] = listFiles(repoRoot), opts: ManifestOptions = {},
 ): RepoManifests {
   const ignoreDirs = new Set(opts.ignoreDirs ?? DEFAULT_IGNORE_MANIFEST_DIRS);
+  const manifestDirs = new Set(files.filter((f) => MANIFEST_NAMES.includes(posix.basename(f))).map((f) => posix.dirname(f)));
+  let member: ((dir: string) => boolean) | null = null; // read lazily: only a leaf-named manifest needs it
+  const isMember = (dir: string): boolean => (member ??= workspaceMembership(repoRoot, files))(dir);
   const pkgs: ManifestPackage[] = [];
   const ignored: IgnoredManifest[] = [];
   const skipped: string[] = [];
@@ -251,7 +366,7 @@ export function readRepoManifestsWithIgnored(
     const base = posix.basename(file);
     if (base !== 'package.json' && base !== 'pubspec.yaml') continue;
     const dir = posix.dirname(file); // '.' for the root
-    if (inIgnoredDir(file, ignoreDirs) || opts.ignoreManifest?.(file)) {
+    if (isIgnoredManifestPath(file, ignoreDirs, isMember, (d) => manifestDirs.has(d)) || opts.ignoreManifest?.(file)) {
       skipped.push(file);
       ignored.push(readIgnoredManifest(repoRoot, dir, base === 'package.json' ? 'npm' : 'pub', warn));
       continue;

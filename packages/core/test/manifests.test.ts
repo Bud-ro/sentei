@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_IGNORE_MANIFEST_DIRS, listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
+  DEFAULT_IGNORE_MANIFEST_DIRS, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
   dockerfileTargets, runnerTargets, sourceForBuildOutput, stripJsonc, tsconfigOutDirs,
 } from '../src/manifests.ts';
 
@@ -140,6 +140,69 @@ describe('ignored manifest dirs', () => {
     pkgJson('test/package.json', { name: 't' });
     pkgJson('example/package.json', { name: 'e' });
     expect(readRepoManifests(root, warn)).toEqual([]);
+  });
+
+  it('a package dir named like an ignore dir is kept when it is a monorepo member (pkgs/test, npm workspace packages/example)', () => {
+    write('pubspec.yaml', 'name: _\npublish_to: none\nworkspace:\n  - pkgs/test\n  - pkgs/checks\n');
+    write('pkgs/test/pubspec.yaml', 'name: test\nresolution: workspace\n');
+    write('pkgs/test/lib/test.dart');
+    write('pkgs/checks/pubspec.yaml', 'name: checks\nresolution: workspace\n');
+    write('pkgs/checks/lib/checks.dart');
+    write('pkgs/checks/example/pubspec.yaml', 'name: checks_example\n'); // a package's example app
+    write('pkgs/checks/test/fixtures/pubspec.yaml', 'name: fx\n'); // ancestor `test`
+    write('foo/test/fixtures/pubspec.yaml', 'name: fx2\n');
+    pkgJson('js/package.json', { name: 'js-root', private: true, workspaces: ['packages/*'] });
+    pkgJson('js/packages/example/package.json', { name: 'js-example', main: 'index.js' });
+    write('js/packages/example/index.js');
+    const r = readRepoManifestsWithIgnored(root, warn, listFiles(root));
+    expect(r.packages.map((p) => p.manifest)).toEqual([
+      'pubspec.yaml', 'js/package.json', 'js/packages/example/package.json', 'pkgs/checks/pubspec.yaml', 'pkgs/test/pubspec.yaml',
+    ]);
+    expect(r.ignored.map((m) => m.manifest)).toEqual([
+      'foo/test/fixtures/pubspec.yaml', 'pkgs/checks/example/pubspec.yaml', 'pkgs/checks/test/fixtures/pubspec.yaml',
+    ]);
+  });
+
+  it('a pub example app stays ignored even when the workspace lists it; a workspace member outside a package dir is kept', () => {
+    write('pubspec.yaml', 'name: real\nworkspace:\n  - example # the example app\n  - "tools/*"\n  - pkgs/a/example\n');
+    write('lib/real.dart');
+    write('example/pubspec.yaml', 'name: real_example\nresolution: workspace\n');
+    write('pkgs/a/pubspec.yaml', 'name: a\n');
+    write('pkgs/a/example/pubspec.yaml', 'name: a_example\nresolution: workspace\n');
+    write('pkgs/a/example/test_data/x/pubspec.yaml', 'name: data\nresolution: workspace\n'); // ancestor wins over membership
+    write('tools/test/pubspec.yaml', 'name: test_tool\nresolution: workspace\n');
+    write('tools/bench/pubspec.yaml', 'name: bench_tool\n'); // member by the `tools/*` glob alone
+    write('other/example/pubspec.yaml', 'name: not_member\n'); // leaf match, not a member
+    const r = readRepoManifestsWithIgnored(root, warn, listFiles(root));
+    expect(r.packages.map((p) => p.manifest)).toEqual(['pubspec.yaml', 'pkgs/a/pubspec.yaml', 'tools/bench/pubspec.yaml', 'tools/test/pubspec.yaml']);
+    expect(r.ignored.map((m) => m.manifest)).toEqual([
+      'example/pubspec.yaml', 'other/example/pubspec.yaml', 'pkgs/a/example/pubspec.yaml', 'pkgs/a/example/test_data/x/pubspec.yaml',
+    ]);
+  });
+
+  it('isIgnoredManifestPath: ancestors always, the leaf unless a monorepo member', () => {
+    const dirs = new Set(DEFAULT_IGNORE_MANIFEST_DIRS);
+    expect(isIgnoredManifestPath('pubspec.yaml', dirs)).toBe(false);
+    expect(isIgnoredManifestPath('example/pubspec.yaml', dirs)).toBe(true);
+    expect(isIgnoredManifestPath('foo/test/fixtures/pubspec.yaml', dirs)).toBe(true);
+    expect(isIgnoredManifestPath('pkgs/test/pubspec.yaml', dirs)).toBe(false);
+    expect(isIgnoredManifestPath('packages/example/package.json', dirs)).toBe(false);
+    expect(isIgnoredManifestPath('pkgs/test/x/pubspec.yaml', dirs)).toBe(true);
+    expect(isIgnoredManifestPath('tool/test/pubspec.yaml', dirs, () => true, () => false)).toBe(false);
+    expect(isIgnoredManifestPath('tool/test/pubspec.yaml', dirs, () => true, () => true)).toBe(true);
+    expect(isIgnoredManifestPath('pkgs/x/test/y/pubspec.yaml', dirs, () => true, () => false)).toBe(true);
+  });
+
+  it('pubWorkspaceEntries reads block and flow lists; workspaceMembership resolves them relative to the declaring manifest', () => {
+    expect(pubWorkspaceEntries('name: x\nworkspace:\n  - a # c\n  - \'b/*\'\n\n  # gap\n  - "c"\ndev_dependencies:\n  - z\n')).toEqual(['a', 'b/*', 'c']);
+    expect(pubWorkspaceEntries('workspace: [a, "b"]\n')).toEqual(['a', 'b']);
+    expect(pubWorkspaceEntries('name: x\n')).toEqual([]);
+    write('sub/pubspec.yaml', 'name: s\nworkspace:\n  - pkgs/*\n');
+    pkgJson('web/package.json', { name: 'w', workspaces: { packages: ['apps/*', '!apps/skip'] } });
+    write('lone/pubspec.yaml', 'name: l\nresolution: workspace\n');
+    const member = workspaceMembership(root, listFiles(root));
+    expect(['sub/pkgs/a', 'web/apps/b', 'lone'].map(member)).toEqual([true, true, true]);
+    expect(['pkgs/a', 'sub/pkgs/a/b', 'web/apps', 'sub'].map(member)).toEqual([false, false, false, false]);
   });
 
   it('ignoreDirs replaces the default list; ignoreManifest rejects single manifests', () => {

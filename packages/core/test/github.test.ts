@@ -279,6 +279,12 @@ describe('probeRepoTree', () => {
       .toEqual({ probe: 'root', manifests: ['package.json'], headTreeKb: null, headSha: sha('8') });
   });
 
+  it('readTree keeps manifests in dirs named like ignored manifest dirs (pkgs/test is a package; selection errs toward cloning)', () => {
+    const body = { tree: ['pkgs/test/pubspec.yaml', 'pkgs/a/test/fixtures/pubspec.yaml', 'example/package.json', 'third_party/t/pubspec.yaml']
+      .map((path) => ({ path, type: 'blob', size: 1 })) };
+    expect(readTree(body).manifests).toEqual(['example/package.json', 'pkgs/a/test/fixtures/pubspec.yaml', 'pkgs/test/pubspec.yaml']);
+  });
+
   it('other errors propagate; readTree rejects a body without a tree', async () => {
     const { fetchImpl } = fakeFetch({ [treeUrl('x')]: { status: 500, body: { message: 'boom' } } });
     await expect(probeRepoTree(api(fetchImpl), 'acme', 'x', { branch: 'main' })).rejects.toThrow(/500.*boom/);

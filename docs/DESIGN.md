@@ -1830,3 +1830,34 @@ private duplicates) in a new `ignored_manifests (repo, manifest, glob)` table
 stdout). Not verified end to end on Workiva: no rerun with the suggested
 `ignoreManifests` entry (the hints and the witness were checked on a copy of
 the dog-workiva2 DB and its checkouts).
+
+### Phase 2 fix round 2: manifest ignore rule; native code; testing fixtures
+
+Found on the dart-lang run (31 repos; numbers below are a discover-only rerun
+over the run's checkouts, at main d334f86 before and after each change).
+
+**A package dir named like an ignored dir is kept when it is a monorepo member**
+(manifests.ts `isIgnoredManifestPath`). The old rule ignored a manifest when ANY
+dir segment was in `ignoreManifestDirs`, so dart-lang/test's
+`pkgs/test/pubspec.yaml`, the `test` package itself (217 org packages depend on
+it, 202 as a dev dep), was skipped as a fixture. Now:
+- an ancestor of the manifest's own dir in the list ignores it, always;
+- the manifest's own dir (the leaf) in the list ignores it unless it is a
+  monorepo member: (a) its parent dir is `pkgs`, `packages`, `apps`, `libs` or
+  `modules` (`PACKAGES_PARENT_DIRS`), or (b) it is a workspace member (a pub
+  `workspace:` entry or npm `workspaces` entry, globs allowed, relative to the
+  declaring manifest; or a pubspec with `resolution: workspace`) whose parent dir
+  holds no manifest.
+**Deviation from the brief:** workspace membership alone does not keep a
+manifest. dart-lang/native's root workspace lists ~90 `pkgs/*/example/*` and
+`pkgs/hooks_runner/test_data/*` packages, so membership cannot override an
+ancestor match; and `source_gen/example`, `build/example`,
+`test/pkgs/checks_codegen/example`, `dart-pad/pkgs/dartpad_preview/examples` are
+workspace members (`resolution: workspace`) that are a package's example app, so
+the leaf exception also needs "the parent is not itself a package". The unindexed
+consumer scan now tests ignored dirs on package-relative paths, so a kept
+`pkgs/test` still has its own code scanned. The git-tree probe (github.ts
+`readTree`) never applied the ignore list (selection errs toward cloning), so
+`pkgs/test/pubspec.yaml` was and is counted there; a test pins that. dart-lang:
+packages 264 → 265 (+`pub:dart-lang/test:test`, published-public, 217
+resolved consumers), ignored manifests 202 → 201; no other manifest changed side.

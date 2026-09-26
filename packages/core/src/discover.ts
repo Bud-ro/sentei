@@ -615,8 +615,10 @@ function unindexedConsumerFlag(
   for (const f of files) {
     const ext = posix.extname(f).toLowerCase();
     if (!UNINDEXED_LANGUAGE_EXTS.has(ext)) continue;
-    if (inIgnoredDir(f, ignoreDirs)) continue;
     if (owningPackage(repoPkgs, f) !== pkg) continue;
+    // Package-relative, so a kept package named like an ignored dir (`pkgs/test`,
+    // isIgnoredManifestPath) still has its own code scanned.
+    if (inIgnoredDir(pkg.path === '.' ? f : f.slice(pkg.path.length + 1), ignoreDirs)) continue;
     if (pkg.manager === 'pub' && isPubPlatformFile(pkg.path, f)) continue;
     hits.push(f);
     byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
