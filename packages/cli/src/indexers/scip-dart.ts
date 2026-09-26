@@ -1193,7 +1193,8 @@ export function writeOverridesFor(
     } else if (own.overrides !== undefined && Object.keys(own.overrides).length > 0) {
       doc['dependency_overrides'] = { ...own.overrides };
       fromPubspec = new Set(Object.keys(own.overrides));
-      diagnostics.push(`info: carried pubspec.yaml dependency_overrides into ${OVERRIDES} (pub reads only one of the two): ${Object.keys(own.overrides).join(', ')}`);
+      const carried = `info: carried pubspec.yaml dependency_overrides into ${OVERRIDES} (pub reads only one of the two): ${Object.keys(own.overrides).join(', ')}`;
+      if (!diagnostics.includes(carried)) diagnostics.push(carried); // once, not per conflict retry
     }
   }
   let overrides = doc['dependency_overrides'];
@@ -1444,8 +1445,9 @@ export function parseOverrideConflicts(output: string, overridden: ReadonlySet<s
     const direct = new RegExp(`\\b([a-z0-9_]+)${ver} depends on ${esc(dep)} from path`).exec(text);
     const other = new RegExp(`\\band ([a-z0-9_]+)${ver} depends on`).exec(sentence);
     const pkg = direct?.[1] ?? other?.[1];
+    // (pub chains derivations: `So, because …` / `And because …`.)
     const detail = sentence
-      .replace(/^(So, )?because /i, '')
+      .replace(/^(?:So, |And )?because /i, '')
       .replace(new RegExp(`, ${esc(dep)} from path is forbidden\\.?$`), '')
       .replace(/[.,]$/, '');
     out.push({ dep, ...(pkg !== undefined ? { pkg } : {}), detail });

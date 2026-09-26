@@ -1146,6 +1146,22 @@ describe('pub get conflict with a source link', () => {
     }
   });
 
+  it("drops pub's `And because` lead-in from the reason (dart-lang/pub-dev's coverage)", () => {
+    const COVERAGE = [
+      'Resolving dependencies...',
+      'Because web_css depends on sass ^1.81.1 which depends on cli_pkg ^2.11.0, sass >=1.87.0 requires cli_util ^0.4.0.',
+      'And because every version of coverage from path depends on cli_util ^0.6.0 and sass >=1.87.0 depends on cli_pkg ^2.11.0, coverage from path is incompatible with sass >=1.87.0.',
+      'So, because web_css depends on sass ^1.81.1 and workspace depends on coverage from path, version solving failed.',
+    ].join('\n');
+    expect(parseOverrideConflicts(COVERAGE, new Set(['coverage']))).toEqual([
+      {
+        dep: 'coverage',
+        pkg: 'workspace',
+        detail: 'every version of coverage from path depends on cli_util ^0.6.0 and sass >=1.87.0 depends on cli_pkg ^2.11.0, coverage from path is incompatible with sass >=1.87.0',
+      },
+    ]);
+  });
+
   it('finds nothing when no overridden dep is named, or when solving did not fail', () => {
     expect(parseOverrideConflicts(W_FLUX_CODEMOD, new Set(['workiva_analysis_options']))).toEqual([]);
     expect(parseOverrideConflicts('Because codemod requires SDK version ^3.13.0, version solving failed.', new Set(['codemod']))).toEqual([]);
