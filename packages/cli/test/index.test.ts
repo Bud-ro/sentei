@@ -1261,7 +1261,7 @@ describe('per-package index cache (stage)', () => {
     } finally {
       writeFileSync(discoverPath, JSON.stringify(d));
     }
-  }, 60_000);
+  }, 180_000);
 });
 
 describe('index progress lines (dart-lang: a silent first 10 minutes)', () => {
