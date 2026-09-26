@@ -67,12 +67,13 @@ export interface DiscoveredDep {
   constraint?: string | null;
   /**
    * Set when the dep is an org package discover could pick (by name: the only one, the
-   * one in this repo, or the only published one; see `resolution`). Link / override
+   * one in this repo, the only published one, or the only one whose version satisfies
+   * the constraint; see `resolution`). Link / override
    * only this one, never by bare name: several org packages may share the name.
    */
   resolvedPackageId: string | null;
   /** How resolvedPackageId was picked (discover DepResolution). Optional. */
-  resolution?: 'name' | 'same-repo' | 'published';
+  resolution?: 'name' | 'same-repo' | 'published' | 'constraint';
   /** true: several org packages have this name and none could be preferred; resolvedPackageId is null. */
   ambiguous?: true;
   /** Every org package of this name, when there is more than one. */
