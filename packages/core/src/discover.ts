@@ -127,6 +127,30 @@ export const UNINDEXED_LANGUAGE_EXTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * For a pub package, the only unindexed files that could consume another pub package:
+ * JS-family code and pages (Dart compiled to JS exposes exports to them, `@JSExport`;
+ * gated by DART_TO_JS_EXPORT).
+ * C, C++, Objective-C, Swift, Java, Kotlin, Go, Rust, Python, Ruby… cannot import a
+ * Dart library; they reach Dart over FFI or method channels, so for pub packages they
+ * are never consumers, wherever they sit (ffigen's vendored cJSON, cupertino_http's
+ * `src/*.m`, jnigen's `java/`, a Go tool beside a Dart workspace). Dart itself is
+ * indexed. The npm side keeps UNINDEXED_LANGUAGE_EXTS.
+ */
+export const PUB_CONSUMER_EXTS: ReadonlySet<string> = new Set([
+  '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.vue', '.svelte', '.html',
+]);
+
+/**
+ * Dart that makes its members callable from JS by name (dart:js_interop `@JSExport`,
+ * `createJSInteropWrapper`; package:js `createDartExport`). Only through such code can
+ * JS use a Dart member without an indexed Dart reference, so a pub package's JS-family
+ * files flag it `unindexed_consumer` only when an org dependency has it (the same gate
+ * as witness.ts's cross-manager pass; the same pattern as its DART_JS_EXPORT_RE).
+ * Fail closed: an unreadable Dart file counts as exporting.
+ */
+export const DART_TO_JS_EXPORT = /@JSExport\b|\bcreateJSInteropWrapper\b|\bcreateDartExport\b/;
+
+/**
  * A manifest skipped as "not an org package" (ignoreManifestDirs / ignoreManifests),
  * with its deps resolved against org packages. Recorded in discover.json only (never
  * in the DB): its code is not indexed, so it adds no edges; the witness scans its dir
@@ -491,6 +515,34 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       log(`${repo}: ${who} dep ${d.name} matches ${cands.length} org packages; resolved to ${d.resolvedPackageId} (${d.resolution})`);
     }
   };
+  // Pub package id -> the first of its lib/ Dart files that exports Dart to JS, or null
+  // (the gate on JS-family unindexed consumers of pub packages, PUB_CONSUMER_EXTS).
+  const homes = new Map<string, { r: (typeof repos)[number]; m: ManifestPackage }>();
+  for (const r of repos) for (const m of r.manifests) homes.set(packageIdOf(m.manager, r.repo, m.name), { r, m });
+  const jsExports = new Map<string, string | null>();
+  const dartToJsExport = (id: string): string | null => {
+    if (jsExports.has(id)) return jsExports.get(id)!;
+    const home = homes.get(id);
+    let hit: string | null = null;
+    if (home && home.m.manager === 'pub') {
+      const lib = home.m.path === '.' ? 'lib/' : `${home.m.path}/lib/`;
+      for (const f of home.r.files) {
+        if (!f.startsWith(lib) || !f.endsWith('.dart') || owningPackage(home.r.manifests, f) !== home.m) continue;
+        let text: string | null = null;
+        try {
+          text = readFileSync(join(home.r.localPath, f), 'utf8');
+        } catch {
+          /* unreadable: assume it exports (fail closed) */
+        }
+        if (text === null || DART_TO_JS_EXPORT.test(text)) {
+          hit = f;
+          break;
+        }
+      }
+    }
+    jsExports.set(id, hit);
+    return hit;
+  };
   for (const r of repos) {
     r.ignoredManifests = r.ignored.map((m): DiscoverIgnoredManifest => ({
       path: m.path,
@@ -553,6 +605,19 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     for (const p of r.packages) {
       if (!p.deps.some((d) => d.resolvedPackageId !== null || d.ambiguous === true)) continue;
       const flag = unindexedConsumerFlag(p, r.packages, r.files, ignoreDirs);
+      if (flag && p.manager === 'pub') {
+        // JS reaches a dependency's Dart only through that dependency's JS exports.
+        const exporter = p.deps
+          .flatMap((d) => d.resolvedPackageId !== null ? [d.resolvedPackageId] : d.candidates ?? [])
+          .filter((id) => id !== p.packageId)
+          .map((id) => [id, dartToJsExport(id)] as const)
+          .find(([, file]) => file !== null);
+        if (!exporter) {
+          log(`${r.repo}: ${p.packageId} not flagged unindexed_consumer: ${flag.reason}, but no org dependency exports Dart to JS`);
+          continue;
+        }
+        flag.reason += `; ${exporter[0]} exports Dart to JS (${exporter[1]})`;
+      }
       if (flag) {
         p.flags.push(flag);
         log(`${r.repo}: ${p.packageId} flagged unindexed_consumer (${flag.reason})`);
@@ -602,10 +667,12 @@ function isPubPlatformFile(pkgPath: string, file: string): boolean {
 }
 
 /**
- * First-file summary of files in unindexed languages owned by `pkg`: files under its
- * dir, minus nested packages' dirs, skipped dirs (already absent from `files`, see listFiles),
- * ignored manifest dirs and, for pub packages, platform / native code (PUB_PLATFORM_DIRS).
- * null if there are none.
+ * First-file summary of files in unindexed languages owned by `pkg` (npm:
+ * UNINDEXED_LANGUAGE_EXTS; pub: PUB_CONSUMER_EXTS, the caller then applies the
+ * DART_TO_JS_EXPORT gate): files under its dir, minus nested packages' dirs, skipped
+ * dirs (already absent from `files`, see listFiles), ignored manifest dirs (package-
+ * relative) and, for pub packages, platform code (PUB_PLATFORM_DIRS: `web/index.html`
+ * of a Flutter app is its runner). null if there are none.
  */
 function unindexedConsumerFlag(
   pkg: DiscoverPackage, repoPkgs: readonly DiscoverPackage[], files: readonly string[], ignoreDirs: ReadonlySet<string>,
@@ -614,7 +681,7 @@ function unindexedConsumerFlag(
   const byExt = new Map<string, number>();
   for (const f of files) {
     const ext = posix.extname(f).toLowerCase();
-    if (!UNINDEXED_LANGUAGE_EXTS.has(ext)) continue;
+    if (!(pkg.manager === 'pub' ? PUB_CONSUMER_EXTS : UNINDEXED_LANGUAGE_EXTS).has(ext)) continue;
     if (owningPackage(repoPkgs, f) !== pkg) continue;
     // Package-relative, so a kept package named like an ignored dir (`pkgs/test`,
     // isIgnoredManifestPath) still has its own code scanned.

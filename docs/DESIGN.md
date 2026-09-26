@@ -1871,3 +1871,41 @@ rows, 2 `needs_review` and 1 `blocked` row, and `test_package_bad` (an
 intentionally broken import) a blocker. The rule above still applies: a
 `pkgs/testing` or a workspace member named `testing` stays a package. dart-lang:
 packages 265 → 259 (the six dartdoc fixtures), ignored manifests 201 → 207.
+
+**Native code in a pub package is never an unindexed consumer**
+(discover.ts `PUB_CONSUMER_EXTS`, `DART_TO_JS_EXPORT`). The platform-dir rule
+(fix round 1) missed native sources elsewhere: ffigen's vendored
+`third_party/cjson_library/*.c`, cupertino_http's `src/*.m`, objective_c and
+unix_api `src/*`, jni / jnigen `java/`, pub-dev's `pkg/signature_verifier/main.go`,
+homebrew-dart's Ruby formulae. C, C++, Objective-C, Swift, Java, Kotlin, Go, Rust,
+Python and Ruby cannot import a Dart library, so for pub packages the scan now
+looks only at JS-family files (`.js .mjs .cjs .ts .tsx .jsx .vue .svelte .html`),
+wherever the others sit; the platform dirs stay excluded (a Flutter
+`web/index.html` is the runner). In the run's report 572 blocked rows cite one of
+the twelve pub `unindexed_consumer` flags (ffigen 348, cupertino_http 325,
+objective_c 292, jni 172, jnigen 133, unix_api 44, grpc_cronet 42,
+update_homebrew 22, the three FFI samples 6 each; a row can cite several), 78 of
+them blocked by nothing else; the rerun flags none of the twelve.
+**Deviation from the brief (a gate on the JS side):** JS-family files alone
+would have flagged twelve other pub packages in dart-lang instead (test via
+`lib/dart.js`, dartdoc via its compiled `docs.dart.js`, markdown via
+`benchmark/output.html`, build_runner's live-reload client, dart_style's
+`dist/*.d.ts`, dart_ci's AngularDart templates, pub-dev's static JS, …), whose
+dependencies carry up to 4,138 finding rows of the run (summed per package,
+overlaps counted twice; dartdoc's alone 1,667). None of
+those files can name another package's Dart: JS reaches Dart members by name
+only through Dart that exports them (`@JSExport`, `createJSInteropWrapper`,
+`createDartExport`); any other hand-off goes through Dart code the index sees.
+So a pub package's JS-family files flag it only when one of its resolved (or
+ambiguous-candidate) org dependencies has such a marker in a `lib/` Dart file
+(text match, fail closed on an unreadable file), the gate witness.ts already
+uses for cross-manager hits; the reason names the dependency and file, and a
+package passed over gets a log line (`not flagged unindexed_consumer: …, but
+no org dependency exports Dart to JS`). dart-lang has no such export in `lib/`
+except mockito's builder, which only names the annotation (a harmless false
+positive, fail-closed direction). **npm is unchanged:** the same reasoning
+would drop Python / Go / Rust / C too, but JS-family consumers npm cannot index
+(`.vue`, `.svelte`, `.astro`, `.mdx`) are already handled by the TS indexer's
+consumer checks, so removing the rest would leave the npm flag with no input;
+that is a policy change for the npm orgs (honojs, unjs) this run gives no
+evidence on.

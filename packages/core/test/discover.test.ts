@@ -463,19 +463,58 @@ describe('discoverLocal on a synthetic org', () => {
       write('org/repos/box2d/pubspec.yaml', `name: box2d\n${dep}`);
       write('org/repos/box2d/lib/box2d.dart', '');
       write('org/repos/box2d/native/wasm/shim.c', '');
-      // Outside those dirs, unindexed code in a pub package still flags it.
+      // Outside those dirs too: no non-JS language can import Dart (ffigen's vendored C,
+      // cupertino_http's src/*.m, jnigen's java/, a Go tool beside a workspace).
       write('org/repos/tooling/pubspec.yaml', `name: tooling\n${dep}`);
       write('org/repos/tooling/lib/tooling.dart', '');
-      write('org/repos/tooling/tool/gen.py', '');
-      write('org/repos/tooling/android_notes/x.kt', '');
+      for (const f of ['tool/gen.py', 'android_notes/x.kt', 'src/bindings.m', 'src/ffi.h', 'cpp/x.cc', 'java/Foo.java',
+        'swift/A.swift', 'objc/B.mm', 'pkg/verifier/main.go', 'rust/lib.rs', 'Formula/x.rb']) write(`org/repos/tooling/${f}`, '');
       const m = discoverLocal({ orgDir: join(tmp, 'org') });
       expect(Object.fromEntries(m.repos.flatMap((r) => r.packages.map((p) => [p.packageId, p.flags])))).toEqual({
         'pub:acme/app:app': [],
         'pub:acme/box2d:box2d': [],
         'pub:acme/pads:pads_darwin': [],
-        'pub:acme/tooling:tooling': [{ flag: 'unindexed_consumer', reason: '1 .kt, 1 .py file(s), e.g. android_notes/x.kt', file: 'android_notes/x.kt' }],
+        'pub:acme/tooling:tooling': [],
         'pub:acme/widgets:acme_widgets': [],
       });
+    });
+
+    it('pub: JS-family files flag a consumer only when an org dependency exports Dart to JS; npm keeps its language list', () => {
+      org(['widgets', 'bridge', 'web', 'site', 'npmlib', 'npmapp']);
+      write('org/repos/widgets/pubspec.yaml', 'name: acme_widgets\n');
+      write('org/repos/widgets/lib/acme_widgets.dart', 'class W {}\n');
+      write('org/repos/bridge/pubspec.yaml', 'name: acme_bridge\n');
+      write('org/repos/bridge/lib/acme_bridge.dart', "export 'src/api.dart';\n");
+      write('org/repos/bridge/lib/src/api.dart', "import 'dart:js_interop';\n@JSExport()\nclass Api { void start() {} }\n");
+      const dep = (n: string): string => `dependencies:\n  ${n}:\n    path: ../${n === 'acme_widgets' ? 'widgets' : 'bridge'}\n`;
+      // Only acme_widgets (no JS exports): its JS and C are not consumers (templates/ is an ignored dir).
+      write('org/repos/web/pubspec.yaml', `name: web_app\n${dep('acme_widgets')}`);
+      write('org/repos/web/lib/main.dart', '');
+      for (const f of ['lib/resources/docs.dart.js', 'lib/templates/index.html', 'tool/x.ts', 'src/x.c']) write(`org/repos/web/${f}`, '');
+      // A dependency with @JSExport: the JS-family files (not the C) flag it.
+      write('org/repos/site/pubspec.yaml', `name: site\n${dep('acme_widgets')}  acme_bridge:\n    path: ../bridge\n`);
+      write('org/repos/site/lib/main.dart', '');
+      for (const f of ['assets/app.js', 'assets/page.html', 'src/native.c', 'web/index.html']) write(`org/repos/site/${f}`, '');
+      // npm: unchanged, a .go file still flags; .vue / .html are not in its list.
+      write('org/repos/npmlib/package.json', { name: '@acme/npmlib' });
+      write('org/repos/npmapp/package.json', { name: 'npmapp', dependencies: { '@acme/npmlib': '^1' } });
+      for (const f of ['src/i.ts', 'src/App.vue', 'index.html', 'cmd/main.go']) write(`org/repos/npmapp/${f}`, '');
+      const logs: string[] = [];
+      const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+      expect(Object.fromEntries(m.repos.flatMap((r) => r.packages.map((p) => [p.packageId, p.flags])))).toEqual({
+        'pub:acme/bridge:acme_bridge': [],
+        'npm:acme/npmapp:npmapp': [{ flag: 'unindexed_consumer', reason: '1 .go file(s), e.g. cmd/main.go', file: 'cmd/main.go' }],
+        'npm:acme/npmlib:@acme/npmlib': [],
+        'pub:acme/site:site': [{
+          flag: 'unindexed_consumer',
+          reason: '1 .html, 1 .js file(s), e.g. assets/app.js; pub:acme/bridge:acme_bridge exports Dart to JS (lib/src/api.dart)',
+          file: 'assets/app.js',
+        }],
+        'pub:acme/web:web_app': [],
+        'pub:acme/widgets:acme_widgets': [],
+      });
+      expect(logs).toContain('acme/web: pub:acme/web:web_app not flagged unindexed_consumer: '
+        + '1 .js, 1 .ts file(s), e.g. lib/resources/docs.dart.js, but no org dependency exports Dart to JS');
     });
 
     it('fixtures/org-dart: the Flutter app\'s Android/iOS runner stubs do not make it an unindexed consumer', () => {

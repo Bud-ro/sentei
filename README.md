@@ -339,6 +339,12 @@ published package), `already_unreachable` (an existing private island),
 `unlocked_by:<symbol>` (dead once that candidate goes). `blocked_by` entries are
 `<package id>:<flag>`, with flags `opaque_consumer`, `index_failed`,
 `dynamic_access`, `namespace_dynamic`, `unindexed_consumer`, `ambiguous_dep`.
+`unindexed_consumer` marks a package that depends on org packages and holds code
+no indexer reads: for npm, Python, Go, Rust, Java, C, … files; for pub, only
+JS-family files (`.js`, `.ts`, `.html`, `.vue`, …) outside the platform dirs,
+and only when an org dependency exports Dart to JS (`@JSExport`,
+`createJSInteropWrapper`, `createDartExport`), since no other language can
+name a Dart symbol.
 Version skew (a consumer referencing a symbol missing at HEAD) is reported
 separately, never as a finding. Only references that can be skew count
 (analyze.sql `unresolved_ref_classes`): a reference into a package of the same
