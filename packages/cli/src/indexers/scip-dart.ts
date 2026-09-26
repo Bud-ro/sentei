@@ -95,7 +95,8 @@ export const scipDart: Indexer = {
   // of every library is an entry symbol; fork patch 10 (files the analyzer
   // excludes are indexed; an unresolvable file makes the package partial),
   // fork patch 11 (no crash on a file outside the package config), fork
-  // patch 12 (a variable's enclosing range covers its type annotation).
+  // patch 12 (a variable's enclosing range covers its type annotation);
+  // dart-surface: Flutter plugin classes named in pubspec.yaml are entry symbols.
   version: '1.7.0+sentei.10',
 
   detect({ repo, pkg }) {

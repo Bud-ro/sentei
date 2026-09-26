@@ -1,0 +1,27 @@
+name: acme_plugin
+description: "Org-private federated Flutter plugin implementation (flame-engine gamepads_web)."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+# Flutter's generated plugin registrant instantiates these by name
+# (`AcmePluginWeb.registerWith(registrar)`, `AcmePluginLinux.registerWith()`);
+# no Dart code references them.
+flutter:
+  plugin:
+    platforms:
+      web:
+        pluginClass: AcmePluginWeb
+        fileName: acme_plugin.dart
+      linux:
+        dartPluginClass: AcmePluginLinux
+      android:
+        package: com.acme.plugin
+        pluginClass: AcmePluginAndroid

@@ -21,5 +21,6 @@
   {"package_id": "pub:acme/dart-testkit:acme_kit", "symbol": "kitRealOnlyInTests", "file": "lib/acme_kit.dart", "verdict": "deletion_candidate", "reasons": ["only_test_refs"]},
   {"package_id": "pub:acme/dart-testkit:acme_kit", "symbol": "ownTestOnlyFake", "file": "lib/src/fakes.dart", "verdict": "deletion_candidate", "reasons": ["only_test_refs"]},
   {"package_id": "pub:acme/dart-testkit:acme_kit", "symbol": "unusedFakeServer", "file": "lib/src/fakes.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "pub:acme/flutter-plugin:acme_plugin", "symbol": "AcmePluginHelper", "file": "lib/acme_plugin.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "pub:acme/flutter-widgets:acme_widgets", "symbol": "AcmeBanner", "file": "lib/acme_widgets.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]}
 ]

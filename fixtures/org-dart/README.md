@@ -16,6 +16,7 @@ over them).
 | `dart-testkit` | `acme_kit` | private (`publish_to: none`) | test-support library: `lib/testing.dart` entry, `lib/src/test_utils/` |
 | `flutter-widgets` | `acme_widgets` | private (`publish_to: none`) | Flutter lib (`environment.flutter`, `flutter: {sdk: flutter}`): `AcmeButton` (used), `AcmeBanner` (unused) |
 | `flutter-app` | `acme_flutter_app` | private (`publish_to: none`) | Flutter app: `lib/main.dart` `main` calls `runApp` with an `AcmeButton`; `path:` dep on `acme_widgets` |
+| `flutter-plugin` | `acme_plugin` | private (`publish_to: none`) | Flutter plugin implementation (like flame-engine's gamepads_web): pubspec `flutter.plugin.platforms` names `AcmePluginWeb` (web `pluginClass`, `fileName: acme_plugin.dart`), `AcmePluginLinux` (`dartPluginClass`) and a native Android `pluginClass`; no org package depends on it |
 | `dart-workspace` | `acme_ws` (root), `acme_core`, `acme_tools` | private (`publish_to: none`) | pub workspace, members listed by path; `acme_tools` depends on its sibling `acme_core` and (hosted `^1.0.0`) on `acme_x` |
 
 No `pubspec.lock` / `.dart_tool` is checked in. To build or index, copy the repos
@@ -32,7 +33,7 @@ dependency_overrides:
 
 This is the Dart equivalent of the npm `node_modules` symlinks. With it in place,
 the three Dart packages pass `dart analyze` with no issues (Dart 3.11.3 and 3.13.4).
-The two Flutter packages need `flutter pub get` instead (then `dart analyze` is
+The three Flutter packages need `flutter pub get` instead (then `dart analyze` is
 clean, Flutter 3.47.5). Without `flutter` on PATH the indexer reports them
 `partial` and the tests that need them skip (see `packages/cli/test/index-dart.test.ts`).
 
@@ -160,3 +161,4 @@ docs / example files: a use there makes them needs_review with a note.
 | `main` anywhere in the package (js_interop_gen `lib/src/dart_main.dart`, compiled by path) | `dart-lib-x/lib/src/worker_main.dart`: `main` calls `_workerHelper`; nothing imports the file | both alive (sidecar `entrySymbols`: the `main` of every library of the package; before, only outside `lib/` and in `lib/*.dart` entries, so both were private_dead) |
 | Files the analyzer excludes (`analysis_options.yaml` `analyzer: exclude:`; dart-lang: 199 files, e.g. cronet_http `lib/src/jni/jni_bindings.dart`) | `dart-lib-x/analysis_options.yaml` excludes `lib/src/excluded/**`; the entry `lib/bindings.dart` re-exports `lib/src/excluded/bindings_gen.dart`, whose `bindingsCall` (used by `dart-app/bin/clock.dart`) calls the unexported `bindingsBackend` in `lib/src/bindings_backend.dart` | both alive; the excluded file is a document of acme_x's index (fork patch 10) and the adapter says so in an `info:` diagnostic (without it `bindingsBackend` was private_dead) |
 | Private typedef used only in the type annotation of a reachable top-level variable (flame-engine jenny `operators/_common.dart`) | `dart-lib-x/lib/src/builders.dart`: `final Map<String, _Doubler> _builders`, read by `buildDouble` (called by `extrasUsed`) | `_Doubler` alive: the variable's enclosing range covers its type (fork patch 12; the type reference was the file's, and `_Doubler` private_dead) |
+| Flutter plugin classes (flame-engine gamepads_web `GamepadsWeb`: DEPRECATE / ORG-DEAD) | `flutter-plugin/pubspec.yaml` `flutter.plugin.platforms`: web `pluginClass: AcmePluginWeb` (declared in `lib/src/web_impl.dart`, re-exported by the `fileName` library), linux `dartPluginClass: AcmePluginLinux`, android `pluginClass: AcmePluginAndroid` (Kotlin: no Dart class, skipped quietly) | `AcmePluginWeb`, `AcmePluginLinux` and what `registerWith` reaches alive (sidecar `entrySymbols`: Flutter's generated registrant instantiates them by name); `AcmePluginHelper`, exported and named nowhere, deletion_candidate `["no_refs"]` (negative) |

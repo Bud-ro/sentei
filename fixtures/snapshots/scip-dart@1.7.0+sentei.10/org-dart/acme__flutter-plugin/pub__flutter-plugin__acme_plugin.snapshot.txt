@@ -1,0 +1,45 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/acme_plugin.dart
+  // Entry library of acme_plugin (pubspec `fileName: acme_plugin.dart` for web).
+//^ definition scip-dart pub acme_plugin . lib/`acme_plugin.dart`/
+  // Phase 2 fix round 3: plugin classes named in pubspec.yaml are runtime entries.
+  export 'src/web_impl.dart';
+
+  // Expected: alive, no finding (pubspec `flutter.plugin.platforms.linux.dartPluginClass`).
+  class AcmePluginLinux {
+//      ^^^^^^^^^^^^^^^ definition scip-dart pub acme_plugin . lib/`acme_plugin.dart`/AcmePluginLinux# enclosing [5:0-8:1]
+    // Expected: alive, no finding (member of a live class).
+    static void registerWith() {}
+//              ^^^^^^^^^^^^ definition scip-dart pub acme_plugin . lib/`acme_plugin.dart`/AcmePluginLinux#registerWith(). enclosing [7:2-7:31]
+  }
+
+  // Expected: deletion_candidate ["no_refs"] (exported, not a plugin class: negative).
+  class AcmePluginHelper {}
+//      ^^^^^^^^^^^^^^^^ definition scip-dart pub acme_plugin . lib/`acme_plugin.dart`/AcmePluginHelper# enclosing [11:0-11:25]
+
+## lib/src/web_impl.dart
+  // The web implementation, re-exported by lib/acme_plugin.dart (the pubspec's
+//^ definition scip-dart pub acme_plugin . lib/src/`web_impl.dart`/
+  // `fileName`), like flame-engine gamepads_web's `GamepadsWeb`.
+
+  // Expected: alive, no finding (pubspec `flutter.plugin.platforms.web.pluginClass`;
+  // was DEPRECATE / ORG-DEAD in the flame-engine run).
+  class AcmePluginWeb {
+//      ^^^^^^^^^^^^^ definition scip-dart pub acme_plugin . lib/src/`web_impl.dart`/AcmePluginWeb# enclosing [5:0-8:1]
+    // Expected: alive, no finding (member of a live class).
+    static void registerWith(Object registrar) => _log('web');
+//              ^^^^^^^^^^^^ definition scip-dart pub acme_plugin . lib/src/`web_impl.dart`/AcmePluginWeb#registerWith(). enclosing [7:2-7:60]
+//                           ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                                  ^^^^^^^^^ definition local 0 enclosing [7:27-7:43]
+//                                                ^^^^ reference scip-dart pub acme_plugin . lib/src/`web_impl.dart`/_log().
+  }
+
+  // Expected: alive, no finding (reached from registerWith).
+  void _log(String platform) => print('acme_plugin: $platform');
+//     ^^^^ definition scip-dart pub acme_plugin . lib/src/`web_impl.dart`/_log(). enclosing [11:0-11:62]
+//          ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                 ^^^^^^^^ definition local 1 enclosing [11:10-11:25]
+//                              ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//                                                   ^^^^^^^^ reference local 1

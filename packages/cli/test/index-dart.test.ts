@@ -309,7 +309,7 @@ describe.skipIf(!HAS_DART || !HAS_FLUTTER)(`index stage with scip-dart on the Fl
 
   beforeAll(async () => {
     tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-index-flutter-')));
-    for (const r of ['flutter-widgets', 'flutter-app']) cpSync(path.join(FIXTURE, 'repos', r), path.join(tmp, 'repos', r), NO_PUB_STATE);
+    for (const r of ['flutter-widgets', 'flutter-app', 'flutter-plugin']) cpSync(path.join(FIXTURE, 'repos', r), path.join(tmp, 'repos', r), NO_PUB_STATE);
     work = path.join(tmp, 'work');
     mkdirSync(work);
     const discover: DiscoverFile = {
@@ -317,6 +317,7 @@ describe.skipIf(!HAS_DART || !HAS_FLUTTER)(`index stage with scip-dart on the Fl
       repos: [
         repoOf(tmp, 'flutter-app', pubPackage('acme_flutter_app', ['lib/main.dart'], [flutterDep, orgDep('acme_widgets', 'path:../flutter-widgets')])),
         repoOf(tmp, 'flutter-widgets', pubPackage('acme_widgets', ['lib/acme_widgets.dart'], [flutterDep])),
+        repoOf(tmp, 'flutter-plugin', pubPackage('acme_plugin', ['lib/acme_plugin.dart'], [flutterDep])),
       ],
     };
     writeFileSync(path.join(work, 'discover.json'), JSON.stringify(discover, null, 2));
@@ -355,6 +356,18 @@ describe.skipIf(!HAS_DART || !HAS_FLUTTER)(`index stage with scip-dart on the Fl
     const app = sidecar('flutter-app', 'acme_flutter_app');
     expect(app.exports.map((e) => e.exportedAs)).toEqual(['main']);
     expect(app.entrySymbols).toEqual([{ name: 'main', file: 'lib/main.dart', line: 5, col: 5, kind: 'runtime' }]);
+  });
+
+  it('records the Dart plugin classes named in pubspec.yaml as runtime entry symbols, not the native one', () => {
+    const p = ix('flutter-plugin').packages[0]!;
+    expect(p.status, JSON.stringify(p.diagnostics)).toBe('ok');
+    expect(p.diagnostics.filter((d) => d.startsWith('warn:') || d.startsWith('error:'))).toEqual([]);
+    // web pluginClass (declared in lib/src/, found through the fileName library) and
+    // linux dartPluginClass; android's pluginClass is Kotlin, no Dart class.
+    expect(sidecar('flutter-plugin', 'acme_plugin').entrySymbols).toEqual([
+      { name: 'AcmePluginLinux', file: 'lib/acme_plugin.dart', line: 5, col: 6, kind: 'runtime' },
+      { name: 'AcmePluginWeb', file: 'lib/src/web_impl.dart', line: 5, col: 6, kind: 'runtime' },
+    ]);
   });
 
   it('consumer references carry acme_widgets symbols and resolve into the Flutter framework', () => {

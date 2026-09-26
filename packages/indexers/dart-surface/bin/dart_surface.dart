@@ -221,6 +221,7 @@ class Surface {
   ///     Declared there or re-exported (its export namespace). Test files
   ///     are dropped by the adapter;
   ///   - build.yaml builder factories (see [_buildYamlFactories]);
+  ///   - Flutter plugin classes named in pubspec.yaml (see [_flutterPluginClasses]);
   ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
   final entrySymbols = <String, Map<String, Object>>{};
 
@@ -316,6 +317,7 @@ class Surface {
 
     await _checkOwnFiles();
     await _buildYamlFactories();
+    await _flutterPluginClasses();
     await _dartDevConfig();
 
     if (missingEntryPoints.isNotEmpty) {
@@ -459,18 +461,21 @@ class Surface {
     return slash <= 0 ? null : rest.substring(0, slash);
   }
 
+  /// Every own Dart file, sorted. Every context's files: in a batch the
+  /// package's files need not all be in the context of its root (see
+  /// [sessionFor]). Plus the files the analyzer excludes (analysis_options.yaml
+  /// `analyzer: exclude:`) in the package's conventional dirs, which scip-dart
+  /// indexes too (fork patch 10).
+  late final List<String> ownFiles = <String>{
+    for (final c in collection.contexts)
+      ...c.contextRoot.analyzedFiles().where((f) => f.endsWith('.dart') && isOwnFile(f)),
+    ..._conventionDartFiles().where(isOwnFile),
+  }.toList()
+    ..sort();
+
   /// Consumer checks over every own file (libraries and parts), plus analyzer errors.
   Future<void> _checkOwnFiles() async {
-    // Every context's files: in a batch the package's files need not all be
-    // in the context of its root (see [sessionFor]). Plus the files the
-    // analyzer excludes (analysis_options.yaml `analyzer: exclude:`) in the
-    // package's conventional dirs, which scip-dart indexes too (fork patch 10).
-    final files = <String>{
-      for (final c in collection.contexts)
-        ...c.contextRoot.analyzedFiles().where((f) => f.endsWith('.dart') && isOwnFile(f)),
-      ..._conventionDartFiles().where(isOwnFile),
-    }.toList()
-      ..sort();
+    final files = ownFiles;
     var errorCount = 0;
     final reported = <String>[];
     for (final file in files) {
@@ -686,6 +691,77 @@ class Surface {
         }
       }
     }
+  }
+
+  /// Flutter's generated plugin registrant instantiates the classes a plugin
+  /// names in its pubspec.yaml (`GamepadsWeb.registerWith(registrar)`), so
+  /// nothing in code references them: every `pluginClass` and
+  /// `dartPluginClass` under `flutter.plugin.platforms.<platform>` (and the
+  /// legacy `flutter.plugin.pluginClass`) that is a Dart class of this package
+  /// is an entry symbol. It is looked up in the platform's `fileName` library
+  /// (`lib/<fileName>`, default `lib/<package>.dart`), then, failing that, in
+  /// every own library under lib/. A `pluginClass` of a native platform
+  /// (Kotlin, Swift, C++) is no Dart class and is skipped quietly; a web
+  /// `pluginClass` or a `dartPluginClass` that is not found is a warning.
+  Future<void> _flutterPluginClasses() async {
+    final file = File(p.join(packageRoot, 'pubspec.yaml'));
+    if (!file.existsSync()) return;
+    Object? doc;
+    try {
+      doc = loadYaml(file.readAsStringSync());
+    } on Exception catch (e) {
+      diagnostics.add('warn: pubspec.yaml does not parse, Flutter plugin classes unknown: ${e.toString().split('\n').first}');
+      return;
+    }
+    if (doc is! Map) return;
+    final flutter = doc['flutter'];
+    if (flutter is! Map) return;
+    final plugin = flutter['plugin'];
+    if (plugin is! Map) return;
+    final specs = <({String name, String? fileName, String where, bool dart})>[];
+    void collect(Map m, String where, {required bool web}) {
+      final fileName = m['fileName'] is String ? m['fileName'] as String : null;
+      for (final key in ['pluginClass', 'dartPluginClass']) {
+        final name = m[key];
+        if (name is! String || name.isEmpty || name == 'none') continue;
+        specs.add((name: name, fileName: fileName, where: '$where.$key', dart: key == 'dartPluginClass' || web));
+      }
+    }
+
+    collect(plugin, 'flutter.plugin', web: false);
+    final platforms = plugin['platforms'];
+    if (platforms is Map) {
+      for (final MapEntry(key: platform, value: spec) in platforms.entries) {
+        if (spec is Map) collect(spec, 'flutter.plugin.platforms.$platform', web: platform == 'web');
+      }
+    }
+    for (final spec in specs) {
+      Element? element;
+      final uri = 'package:$packageName/${spec.fileName ?? '$packageName.dart'}';
+      final lib = await context.currentSession.getLibraryByUri(uri);
+      if (lib is LibraryElementResult) element = lib.element.exportNamespace.get2(spec.name);
+      element ??= await _ownLibClass(spec.name);
+      if (element == null) {
+        if (spec.dart) diagnostics.add('warn: pubspec.yaml ${spec.where}: ${spec.name} is not a class of this package');
+        continue;
+      }
+      addEntrySymbol(element, spec.name);
+    }
+  }
+
+  /// A top-level class named [name] declared in one of the package's own
+  /// libraries under lib/, else null.
+  Future<Element?> _ownLibClass(String name) async {
+    final lib = p.join(packageRoot, 'lib');
+    for (final file in ownFiles) {
+      if (!p.isWithin(lib, file)) continue;
+      final unit = await sessionFor(file).getUnitElement(file);
+      if (unit is! UnitElementResult) continue;
+      for (final c in unit.fragment.classes) {
+        if (c.element.name == name) return c.element;
+      }
+    }
+    return null;
   }
 
   /// A top-level function or variable named [name] declared in [library].

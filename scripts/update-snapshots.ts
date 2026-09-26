@@ -45,7 +45,7 @@ export function hasFlutter(): boolean {
 
 /** Fixture repos that need the Flutter SDK (repo name -> pub package name), per org. */
 export const FLUTTER_REPOS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  'org-dart': { 'flutter-app': 'acme_flutter_app', 'flutter-widgets': 'acme_widgets' },
+  'org-dart': { 'flutter-app': 'acme_flutter_app', 'flutter-plugin': 'acme_plugin', 'flutter-widgets': 'acme_widgets' },
 };
 
 /**

@@ -8,6 +8,7 @@
     { "name": "dart-testkit", "default_branch": "main" },
     { "name": "dart-workspace", "default_branch": "main" },
     { "name": "flutter-app", "default_branch": "main" },
+    { "name": "flutter-plugin", "default_branch": "main" },
     { "name": "flutter-widgets", "default_branch": "main" }
   ]
 }

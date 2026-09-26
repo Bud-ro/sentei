@@ -1,0 +1,60 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [
+    "lib/acme_plugin.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 6,
+      "file": "lib/acme_plugin.dart",
+      "kind": "runtime",
+      "line": 5,
+      "name": "AcmePluginLinux"
+    },
+    {
+      "col": 6,
+      "file": "lib/src/web_impl.dart",
+      "kind": "runtime",
+      "line": 5,
+      "name": "AcmePluginWeb"
+    }
+  ],
+  "exports": [
+    {
+      "col": 6,
+      "entry": "lib/acme_plugin.dart",
+      "exportedAs": "AcmePluginHelper",
+      "file": "lib/acme_plugin.dart",
+      "line": 11,
+      "name": "AcmePluginHelper",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "lib/acme_plugin.dart",
+      "exportedAs": "AcmePluginLinux",
+      "file": "lib/acme_plugin.dart",
+      "line": 5,
+      "name": "AcmePluginLinux",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "lib/acme_plugin.dart",
+      "exportedAs": "AcmePluginWeb",
+      "file": "lib/src/web_impl.dart",
+      "line": 5,
+      "name": "AcmePluginWeb",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/flutter-plugin:acme_plugin",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}
