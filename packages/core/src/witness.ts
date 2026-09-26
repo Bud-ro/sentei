@@ -127,10 +127,14 @@
 // Exception, mirroring analyze.sql `external_refs`: a consumer whose dependency on P is
 // dev-only (package_deps.dev = 1) has its test files scanned too, whatever
 // countTestsAsConsumers says (a test-support library is consumed by tests).
-// No hit → witness_ok row and a deletion_candidate (the schema triggers still guard
+// No hit → witness_ok row and a deletion_candidate when P is private (schema view
+// private_packages: nobody outside the org can depend on it), a deprecation_candidate
+// when P is published: the same evidence either way, so the report's delete, deprecate
+// and org_dead views all rest on a passed witness (the schema triggers still guard
 // that insert).
 // Then, in the same transaction, the outcomes propagate (analyze.ts): dead islands
-// whose users the witness downgraded revert to unexport_candidate
+// whose users the witness downgraded revert to an unexport (unexport_candidate, or
+// deprecation_candidate [internal_refs_only] when published)
 // (reconcileDeadIslands), and the private_dead cascade is recomputed from the new
 // findings (insertPrivateDead), so a downgraded candidate no longer unlocks helpers.
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -561,6 +565,8 @@ interface PendingRow {
   package_id: string;
   manager: 'npm' | 'pub';
   pkg_name: string;
+  /** 1 = P is private (schema view private_packages): a pass is a deletion_candidate, else a deprecation_candidate. */
+  priv: number;
 }
 
 /** What to search for one pending symbol. */
@@ -1073,7 +1079,8 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   const pending = db
     .prepare(
       `SELECT f.symbol_id, f.reasons, f.blocked_by, s.name, s.file, s.line, s.package_id,
-              p.manager, p.name AS pkg_name
+              p.manager, p.name AS pkg_name,
+              p.package_id IN (SELECT package_id FROM private_packages) AS priv
        FROM findings f
        JOIN symbols s ON s.symbol_id = f.symbol_id
        JOIN packages p ON p.package_id = s.package_id
@@ -1179,7 +1186,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         log(`[witness] mismatch ${row.package_id}#${row.name} (${row.file}): ${reasons.join(', ')}${hits.length > MAX_HITS ? ` (+${hits.length - MAX_HITS} more)` : ''}`);
       } else {
         insOk.run(row.symbol_id, now);
-        insFinding.run(row.symbol_id, 'deletion_candidate', JSON.stringify(base), row.blocked_by);
+        insFinding.run(row.symbol_id, row.priv === 1 ? 'deletion_candidate' : 'deprecation_candidate', JSON.stringify(base), row.blocked_by);
         counts.passed += 1;
       }
     }

@@ -18,11 +18,15 @@ expected verdict.
 
 Current contents: `lib-core` (`@acme/core`) and `app` (`@acme/app`) from M0, plus
 the PLAN.md §8 TypeScript/General cases below. `expected-findings.json` is the
-exact output for `sentei.json` as checked in (`assumeClosedWorld: true`,
-`minAgeDays: 0`); `expected-findings.open-world.json` is the exact output for the
-same org with `assumeClosedWorld: false` (published-public `@acme/widgets` gets
-`deprecation_candidate` instead of deletion/unexport, and the helper its deletion
-would unlock is no longer `private_dead`).
+exact output (base verdicts) for `sentei.json` as checked in (`minAgeDays: 0`).
+There is one expected file per org: the report views (`delete`, `deprecate`,
+`org_dead`, `unexport`, ...) are filters over these rows, and
+`packages/cli/test/pipeline.test.ts` checks them on the same run.
+Published-public `@acme/widgets` gets `deprecation_candidate` where a private
+package gets `deletion_candidate` (same evidence, witness included); its
+`unusedHelper` is `private_dead` `unlocked_by:internalUnused` and shows in the
+`org_dead` view (dead only if the org is widgets' only consumer), not in
+`private_dead`.
 
 Findings rows: `package_id` (`<manager>:<repo>:<name>`, e.g.
 `npm:acme/lib-core:@acme/core`), `symbol`, `file` (repo-relative), `verdict`,
@@ -55,29 +59,29 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | §8 item | Where | Expected |
 | --- | --- | --- |
 | Named import `import { a } from '@acme/x'` | `app-consumer/src/main.ts` → `@acme/widgets#internalUsed` | alive |
-| `import * as X; X.a()` counts as ref to `a` | `app-consumer/src/main.ts` `W.namespaceUsed()`; `namespaceUnused` never accessed | `namespaceUsed` alive; `namespaceUnused` deletion_candidate |
+| `import * as X; X.a()` counts as ref to `a` | `app-consumer/src/main.ts` `W.namespaceUsed()`; `namespaceUnused` never accessed | `namespaceUsed` alive; `namespaceUnused` deprecation_candidate (widgets is published) |
 | `import * as X; X[key]` → `namespace_dynamic` | `app-dynamic/src/main.ts` | `@acme/dyn#dynA`, `dynB` blocked |
-| `export * from './internal'` in entry file | `lib-widgets/src/index.ts` → `src/internal.ts` | `internalUsed` alive; `internalUnused` deletion_candidate |
+| `export * from './internal'` in entry file | `lib-widgets/src/index.ts` → `src/internal.ts` | `internalUsed` alive; `internalUnused` deprecation_candidate |
 | `export { a as b } from '@acme/y'` | `lib-widgets/src/index.ts` (`yThing as widgetY`), used as `widgetY` in `app-consumer` | `@acme/y#yThing` alive |
-| `export default` anonymous → symbol `default` | `lib-widgets/src/anon.ts` (imported), `src/unused-anon.ts` (not) | anon alive; unused-anon `default` deletion_candidate |
+| `export default` anonymous → symbol `default` | `lib-widgets/src/anon.ts` (imported), `src/unused-anon.ts` (not) | anon alive; unused-anon `default` deprecation_candidate |
 | `import('@acme/x')` with static string | `app-consumer/src/main.ts` → `@acme/widgets/lazy` | `lazyWidget` alive |
 | `require('@acme/' + name)` → `dynamic_access` | `app-dynamic/src/load.cts` | `@acme/dyn` verdicts blocked |
 | Subpath import against `exports` `*` pattern | `app-consumer/src/main.ts` → `@acme/widgets/deep/thing` (`"./deep/*"`) | `deepThing` alive |
 | `import type` counts as a ref | `app-consumer/src/main.ts` → `WidgetOptions` | alive |
 | JSX `<Foo />` | `app-consumer/src/view.tsx` → `Widget` | alive |
-| Used only in `*.test.ts` of another repo → `only_test_refs` | `app-consumer/src/widgets.test.ts` → `testOnlyFn` | deletion_candidate `["only_test_refs"]` |
+| Used only in `*.test.ts` of another repo → `only_test_refs` | `app-consumer/src/widgets.test.ts` → `testOnlyFn` | deprecation_candidate `["only_test_refs"]` (widgets is published) |
 | Used only in a test file of a consumer that declares the package only in `devDependencies` → counts | `app-consumer/src/widgets.test.ts` → `@acme/testkit#renderHelper`; `unusedKitHelper` never used | `renderHelper` alive; `unusedKitHelper` deletion_candidate `["no_refs"]` (the witness scans the test file too) |
 | Same package name in two repos | `fixtures/org-dup` (`one` publishes `@acme/dup`, `two` has a private `@acme/dup`, `three` depends on `@acme/dup`) | both are packages (`npm:acme/one:@acme/dup`, `npm:acme/two:@acme/dup`); `three` resolves to `one` (the only published candidate) and the report warns which one it picked; see [`org-dup/README.md`](org-dup/README.md). The ambiguous case (no candidate preferred: every one `blocked`, `ambiguous_dep`) and same-repo duplicates (private ones auto-ignored, public ones an error) are unit tests in `packages/core/test/discover.test.ts` / `ingest.test.ts` |
 | Consumer pinned to old P, refs symbol gone at HEAD → `version_skew` | `app-skew/src/main.ts` → `removedFn` | version_skew row on `@acme/app-skew`; `internalUsed` still alive |
 | Private circular island | `lib-core/src/fns.ts` `islandA`/`islandB` | private_dead `already_unreachable` |
-| Private helper unlocked by a candidate | `lib-widgets/src/internal.ts` `unusedHelper` | private_dead `unlocked_by:internalUnused` (closed world only) |
+| Private helper unlocked by a candidate | `lib-widgets/src/internal.ts` `unusedHelper` | private_dead `unlocked_by:internalUnused`; in the `org_dead` view (its unlocker is a published deprecation), not in `private_dead` |
 | Export used internally only → `unexport_candidate` | `lib-core/src/fns.ts` `internalOnlyFn` | unexport_candidate |
-| `"private": true` vs published-public → verdict differs | `@acme/core` (private) vs `@acme/widgets` (public); compare the two expected files | public ones become deprecation_candidate in open world |
+| `"private": true` vs published-public → verdict differs | `@acme/core` (private) vs `@acme/widgets` (public) | private: deletion_candidate / unexport_candidate; public: deprecation_candidate (the report's `org_dead` view reads them as deletions under a stated assertion) |
 | Repo whose index fails → dependents' verdicts blocked naming it | `repo-broken` (invalid `tsconfig.json`) → `@acme/y#yUnused` | blocked, `blocked_by` includes `"npm:acme/repo-broken:@acme/broken:index_failed"` (see `unindexed_consumer` below for the second blocker) |
 | Symbol younger than `minAgeDays` | — | TODO (M2: needs git history / blame) |
 | `keep` list suppresses a finding | `sentei.json` keep `npm:@acme/widgets#keptFn` (name-only form: every package of that name; `npm:acme/lib-widgets:@acme/widgets#keptFn` would name just this one) (`lib-widgets/src/misc.ts`) | no row |
 | Non-indexed-language consumer → `unindexed_consumer` | `tool-py/scripts/build.py` (flag set by discover; `.sh`/YAML/JSON/Markdown do not count) → `@acme/y#yUnused` | blocked, `blocked_by ["npm:acme/repo-broken:@acme/broken:index_failed", "npm:acme/tool-py:@acme/tool-py:unindexed_consumer"]` |
-| Witness: corrupted `.scip` drops a ref → `needs_review` / `witness_mismatch` | — | TODO (needs checked-in `.scip` snapshots) |
+| Witness: corrupted `.scip` drops a ref → `needs_review` / `witness_mismatch` | `packages/cli/test/witness-corruption.test.ts` drops `usedFn` (private `@acme/core`) and `deepThing` (published `@acme/widgets`) references from the consumers' `.scip` | both needs_review with `witness_mismatch` (the witness runs for deprecations too) |
 | Witness downgrade propagates: a candidate kept by the witness stops unlocking its helpers, and the dead island it alone used reverts to an unexport | `lib-cascade/src/index.ts`: `viewer` (named by the unindexed `bin/viewer.mjs`, which imports the package by name) uses `initParams`, `helperC`; `initParams` uses `helperA` | `viewer` needs_review `witness_mismatch:self:bin/viewer.mjs:*`; `initParams` unexport_candidate (a dead island at analyze time); `helperA`/`helperC` alive; control `dropped` deletion_candidate + `helperB` private_dead `unlocked_by:dropped` |
 | `exports` entry with one unresolvable condition | `lib-cascade/package.json` `"."`: `import` → `src/index.ts`, `require` → unbuilt `dist/cjs/index.cjs` | not `opaque_consumer` (one condition resolves) |
 | `imports` map arms are runtime entries | `lib-cascade/package.json` `#impl` → `src/impl.node.ts` (never picked by tsc) / `src/impl.ts` | both `digest`s alive (entry_symbols), no private_dead |
@@ -85,7 +89,7 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | Runtime entries by convention: wrangler `main`, Pages Functions | `app-worker/wrangler.jsonc` `main` → `src/worker.ts`; `functions/api/hello.ts` (a wrangler config exists) | both entry points; `default` / `onRequest` alive (entry_symbols), `handle` / `greet` alive; the package is eligible for private_dead: `neverCalled` private_dead |
 | TS namespace members are owned by their namespace | `app-worker/src/worker.ts`: `Routes` (used) with `unusedRoute`; `Legacy` (unused) with `oldHandler` | `unusedRoute` alive (owner edge); only `Legacy` private_dead (its member is nested) |
 | `bin` is a runtime entry, never surface | `app-worker/package.json` `bin` → `bin/cli.mjs` (outside the program) | not in the adapter's entry points: repo index `ok`, not `partial` |
-| An import vouches only for what its specifier reaches | `app-worker/src/worker.ts` imports only `@acme/widgets/lazy` and has a local `internalUnused` | `@acme/widgets#internalUnused` stays deletion_candidate (the `./lazy` entry does not export it) |
+| An import vouches only for what its specifier reaches | `app-worker/src/worker.ts` imports only `@acme/widgets/lazy` and has a local `internalUnused` | `@acme/widgets#internalUnused` stays deprecation_candidate (the `./lazy` entry does not export it) |
 | Dart items | `fixtures/org-dart` (see [`org-dart/README.md`](org-dart/README.md) for the §8 Dart checklist) | `org-dart/expected-findings*.json` |
 
 Consumer files that import `@acme/widgets` deliberately never mention the names

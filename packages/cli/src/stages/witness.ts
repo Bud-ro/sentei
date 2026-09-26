@@ -6,7 +6,8 @@ import type { StageContext } from '../context.ts';
 /**
  * `witness` stage (PLAN.md §9). Reads <work>/discover.json for consumer checkouts and
  * text-searches them for every witness_pending finding: pass → witness_ok +
- * deletion_candidate, hit → needs_review with witness_mismatch reasons.
+ * deletion_candidate (private package) or deprecation_candidate (published package),
+ * hit → needs_review with witness_mismatch reasons.
  */
 export async function witness(ctx: StageContext): Promise<void> {
   const file = join(ctx.work, 'discover.json');

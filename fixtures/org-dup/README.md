@@ -18,11 +18,11 @@ ingest attributes `three`'s references to `@acme/dup` symbols to `one` (its
 resolved dependency), even though `one` and `two` both define
 `src/index.ts/shared()`.
 
-`expected-findings.json` is the exact output (`sentei.json`: `assumeClosedWorld:
-true`, `minAgeDays: 0`): `onlyInOne` is alive (only `one` defines it, so a wrong
-resolution would make it a deletion candidate and add a version-skew row),
-`unusedInOne` is a deletion candidate, and both of `two`'s exports are deletion
-candidates (it has no consumer; `three`'s `shared` is `one`'s).
+`expected-findings.json` is the exact output (`sentei.json`: `minAgeDays: 0`):
+`onlyInOne` is alive (only `one` defines it, so a wrong resolution would make it a
+candidate and add a version-skew row), `unusedInOne` is a deprecation candidate
+(`one` is published), and both of `two`'s exports are deletion candidates (it is
+private and has no consumer; `three`'s `shared` is `one`'s).
 
 When no candidate can be preferred (two published packages of one name in other
 repos), the dependency is ambiguous: nothing is resolved, the consumer is flagged

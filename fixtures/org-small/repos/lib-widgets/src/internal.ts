@@ -5,12 +5,12 @@ export function internalUsed(): number {
   return 1;
 }
 
-// Expected: deletion_candidate, reasons ["no_refs"] (exported via `export *`, referenced nowhere). Open world: deprecation_candidate.
+// Expected: deprecation_candidate, reasons ["no_refs"] (exported via `export *`, referenced nowhere; published package).
 export function internalUnused(): number {
   return unusedHelper() + 1;
 }
 
-// Expected: private_dead, reasons ["unlocked_by:internalUnused"] (reachable only through internalUnused). Open world: no finding.
+// Expected: private_dead, reasons ["unlocked_by:internalUnused"] (reachable only through internalUnused).
 function unusedHelper(): number {
   return 2;
 }

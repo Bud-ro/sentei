@@ -2,10 +2,10 @@
 
 Dart fixture org (`acme`) for M3, kept separate from `org-small` so the TypeScript
 acceptance test is unaffected. Same layout and conventions as `org-small`
-(see `../README.md`): `org.json`, `sentei.json` (`assumeClosedWorld: true`,
-`minAgeDays: 0`), `repos/<name>/` as plain directories, one `// Expected:` comment
-per symbol, `expected-findings.json` (closed world, as checked in) and
-`expected-findings.open-world.json` (same org with `assumeClosedWorld: false`).
+(see `../README.md`): `org.json`, `sentei.json` (`minAgeDays: 0`),
+`repos/<name>/` as plain directories, one `// Expected:` comment per symbol, and
+`expected-findings.json`, the exact base verdicts (the report views are filters
+over them).
 
 | Repo | Package | Visibility | Role |
 | --- | --- | --- | --- |
@@ -48,7 +48,7 @@ through `3.doubled`, so the witness cannot hide a missing reference to it.
 | Extension method usage (implicit) | `acme_x.dart` `extension IntTimes on int { get doubled }`, used as `3.doubled` | `IntTimes` and `doubled` alive |
 | Unqualified use of an imported top-level function | `main.dart` `usedFn()` | `usedFn` alive |
 | `_private` top-level in `lib/x.dart`, never exported | `acme_x.dart` `_privateFn` (used by `usedFn`), `_islandA`/`_islandB` (private cycle) | `_privateFn` no finding; `_islandA`/`_islandB` private_dead `already_unreachable` |
-| `pubspec.yaml` `publish_to: none` | `acme_x`, `acme_app` (private) vs `acme_pub` (published-public) | `pub:acme_pub#pubUnused` deletion_candidate in closed world, deprecation_candidate `["no_refs","open_world"]` in open world |
+| `pubspec.yaml` `publish_to: none` | `acme_x`, `acme_app` (private) vs `acme_pub` (published-public) | `pub:acme_pub#pubUnused` deprecation_candidate `["no_refs"]` (witnessed; in the report's `deprecate` and `org_dead` views); the same symbol in a private package would be a deletion_candidate |
 | Path dependency (`path: ../y`) resolves to an org package | `dart-app/pubspec.yaml` `acme_x: {path: ../dart-lib-x}` | discover resolves it to `pub:acme_x` (constraint `path:../dart-lib-x`); consumer refs link to acme_x's own symbols |
 
 Also covered, beyond the checklist: a class used only through its implicit default

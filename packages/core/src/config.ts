@@ -9,7 +9,6 @@ import { join } from 'node:path';
 export interface Policy {
   minAgeDays: number;
   trustPrivateRegistry: boolean;
-  assumeClosedWorld: boolean;
   countTestsAsConsumers: boolean;
   countDocsAsConsumers: boolean;
 }
@@ -18,7 +17,6 @@ export interface Policy {
 export const DEFAULT_POLICY: Readonly<Policy> = Object.freeze({
   minAgeDays: 180,
   trustPrivateRegistry: true,
-  assumeClosedWorld: false,
   countTestsAsConsumers: false,
   countDocsAsConsumers: false,
 });
@@ -41,11 +39,37 @@ export interface OrgConfig {
    * (repo name without the org), e.g. "vscode/package.json"; matches are not org packages.
    */
   ignoreManifests: string[];
+  /** `repos`: which GitHub repos discover clones (see RepoSelectConfig); {} = defaults. */
+  repos: RepoSelectConfig;
+}
+
+/**
+ * Org sentei.json `repos` section: repo selection before cloning (repo-select.ts)
+ * and clone parallelism. Every key is optional (absent = the repo-select default);
+ * CLI flags override these.
+ */
+export interface RepoSelectConfig {
+  /** Repo-name globs forced in (past every automatic rule). */
+  include?: string[];
+  /** Repo-name globs skipped. */
+  exclude?: string[];
+  /** GitHub primary languages that select a repo (default TypeScript, JavaScript, Dart); [] disables. */
+  languages?: string[];
+  /** Skip repos whose API size is over this (MB, default 500); null disables. */
+  maxSizeMb?: number | null;
+  /** Skip repos last pushed before this: ISO date or "<n>d". */
+  minPushed?: string | null;
+  includeForks?: boolean;
+  includeArchived?: boolean;
+  /** Probe package.json / pubspec.yaml when the language does not match (default true). */
+  probe?: boolean;
+  /** Parallel clones (default 8). */
+  cloneConcurrency?: number;
 }
 
 /** An org config with every default (no sentei.json). */
 export function defaultOrgConfig(): OrgConfig {
-  return { policy: { ...DEFAULT_POLICY }, keep: [], ignoreManifestDirs: null, ignoreManifests: [] };
+  return { policy: { ...DEFAULT_POLICY }, keep: [], ignoreManifestDirs: null, ignoreManifests: [], repos: {} };
 }
 
 export interface ExtraEdge {
@@ -190,7 +214,6 @@ export function readOrgConfig(orgDir: string): OrgConfig {
     switch (key) {
       case 'minAgeDays':
       case 'trustPrivateRegistry':
-      case 'assumeClosedWorld':
       case 'countTestsAsConsumers':
       case 'countDocsAsConsumers':
         setPolicyValue(policy, key, value, file);
@@ -214,11 +237,63 @@ export function readOrgConfig(orgDir: string): OrgConfig {
           }
         }
         break;
+      case 'repos':
+        cfg.repos = readRepoSelectConfig(file, value);
+        break;
+      case 'assumeClosedWorld':
+        throw new Error(`sentei: ${file}: "assumeClosedWorld" was removed: verdicts no longer depend on it; `
+          + 'published packages get deprecation_candidate, and `sentei report --view org_dead` lists them as deletions '
+          + 'under the stated assertion that the org is their only consumer');
       default:
         throw new Error(`sentei: ${file}: unknown key "${key}"`);
     }
   }
   return cfg;
+}
+
+const MIN_PUSHED_RE = /^(?:\d+d|\d{4}-\d{2}-\d{2}(?:T[\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)?)$/;
+
+/** Validate the org sentei.json `repos` object (unknown keys are errors). */
+export function readRepoSelectConfig(file: string, value: unknown): RepoSelectConfig {
+  if (!isObject(value)) throw new Error(`sentei: ${file}: "repos" must be an object`);
+  const out: RepoSelectConfig = {};
+  for (const [key, v] of Object.entries(value)) {
+    const where = `repos.${key}`;
+    switch (key) {
+      case 'include':
+      case 'exclude':
+      case 'languages':
+        out[key] = stringArray(file, where, v);
+        break;
+      case 'maxSizeMb':
+        if (v !== null && (typeof v !== 'number' || !Number.isFinite(v) || v <= 0)) {
+          throw new Error(`sentei: ${file}: "${where}" must be a positive number of MB (or null for no limit)`);
+        }
+        out.maxSizeMb = v as number | null;
+        break;
+      case 'minPushed':
+        if (v !== null && (typeof v !== 'string' || !MIN_PUSHED_RE.test(v) || (!v.endsWith('d') && Number.isNaN(Date.parse(v))))) {
+          throw new Error(`sentei: ${file}: "${where}" must be an ISO date ("2025-01-01") or "<n>d" ("365d"), or null`);
+        }
+        out.minPushed = v as string | null;
+        break;
+      case 'includeForks':
+      case 'includeArchived':
+      case 'probe':
+        if (typeof v !== 'boolean') throw new Error(`sentei: ${file}: "${where}" must be a boolean`);
+        out[key] = v;
+        break;
+      case 'cloneConcurrency':
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 32) {
+          throw new Error(`sentei: ${file}: "${where}" must be an integer from 1 to 32`);
+        }
+        out.cloneConcurrency = v;
+        break;
+      default:
+        throw new Error(`sentei: ${file}: unknown key "${where}"`);
+    }
+  }
+  return out;
 }
 
 /** Read `<repoDir>/sentei.json` (optional): overlays (PLAN §7). */
@@ -251,4 +326,9 @@ export function readRepoConfig(repoDir: string): RepoConfig {
     }
   }
   return cfg;
+}
+
+/** The `repos` section of `<orgDir>/sentei.json` (the whole file is validated). */
+export function readOrgConfigRepos(orgDir: string): RepoSelectConfig {
+  return readOrgConfig(orgDir).repos;
 }

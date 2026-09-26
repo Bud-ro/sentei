@@ -30,6 +30,8 @@ interface OrgSpec {
   devDep?: boolean;
   /** Leave out the analyze marker (run_params analyzed_at). */
   notAnalyzed?: boolean;
+  /** P's visibility (default private). */
+  visibility?: 'private' | 'published-private' | 'published-public';
 }
 
 interface Org {
@@ -75,7 +77,7 @@ function buildOrg(spec: OrgSpec): Org {
     db.prepare(sql).run(...p);
   };
   run("INSERT INTO repos (repo, index_status) VALUES ('acme/lib', 'ok'), ('acme/app', 'ok')");
-  run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/lib', '.', ?, ?, 'private')", P, manager, libName);
+  run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/lib', '.', ?, ?, ?)", P, manager, libName, spec.visibility ?? 'private');
   run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/app', 'pkg', ?, ?, 'private')", C, manager, appName);
   // Another org package nested inside the consumer's dir: its files must be skipped.
   const nestedName = manager === 'npm' ? '@acme/nested' : 'nested_pub';
@@ -151,6 +153,26 @@ describe('runWitness', () => {
     expect(witness(org)).toEqual({ checked: 1, passed: 1, mismatched: 0 });
     expectPass(org, org.ids['deadFn']!);
     expect(org.db.prepare('SELECT checked_at FROM witness_ok').get()).toEqual({ checked_at: 1_800_000_000 });
+  });
+
+  it('a published P passes as deprecation_candidate (same evidence), and a hit downgrades it like a deletion', () => {
+    const org = buildOrg({
+      visibility: 'published-public',
+      symbols: [{ name: 'deadFn' }, { name: 'namedFn' }],
+      files: { 'src/main.ts': "import { liveFn } from '@acme/lib';\nliveFn(namedFn);\n" },
+    });
+    expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+    expect(findings(org, org.ids['deadFn']!)).toEqual([{ verdict: 'deprecation_candidate', reasons: ['no_refs'] }]);
+    expect(witnessOk(org, org.ids['deadFn']!)).toBe(true);
+    expectMismatch(org, org.ids['namedFn']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:2']);
+  });
+
+  it('published-private is private (deletion) only with trustPrivateRegistry', () => {
+    for (const [trust, verdict] of [[true, 'deletion_candidate'], [false, 'deprecation_candidate']] as const) {
+      const org = buildOrg({ visibility: 'published-private', policy: { trustPrivateRegistry: trust }, symbols: [{ name: 'deadFn' }] });
+      witness(org);
+      expect(findings(org, org.ids['deadFn']!)).toEqual([{ verdict, reasons: ['no_refs'] }]);
+    }
   });
 
   it('keeps blocked_by and the base reasons, dropping witness_pending', () => {

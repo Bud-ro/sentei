@@ -5,6 +5,7 @@ import path from 'node:path';
 import { openDb } from '@sentei/core/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { formatError, main, parsePolicyOverrides, redactSecrets } from '../src/main.ts';
+import { makeBareRepo } from '../../core/test/helpers/gitRepo.ts';
 
 const FIXTURES = path.resolve(import.meta.dirname, '../../../fixtures');
 const tmpRoot = mkdtempSync(path.join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-main-'));
@@ -78,9 +79,9 @@ describe('--policy', () => {
   it.each([
     ['minAgeDays=-1', /"minAgeDays" must be a non-negative integer/],
     ['minAgeDays="7"', /"minAgeDays" must be a non-negative integer/],
-    ['assumeClosedWorld=yes', /is not JSON/],
-    ['assumeClosedWorld=1', /"assumeClosedWorld" must be a boolean/],
-    ['assumeClosedWorld', /expected <key>=<json value>/],
+    ['countTestsAsConsumers=yes', /is not JSON/],
+    ['countTestsAsConsumers=1', /"countTestsAsConsumers" must be a boolean/],
+    ['countTestsAsConsumers', /expected <key>=<json value>/],
     ['=true', /expected <key>=<json value>/],
   ])('%s exits 2', async (spec, msg) => {
     const r = await run('run', '--policy', spec, '--work', freshWork());
@@ -95,8 +96,8 @@ describe('--policy', () => {
   });
 
   it('parses JSON values, last one wins', () => {
-    expect(parsePolicyOverrides(['assumeClosedWorld=false', 'minAgeDays=0', 'minAgeDays=30']))
-      .toEqual({ assumeClosedWorld: false, minAgeDays: 30 });
+    expect(parsePolicyOverrides(['countTestsAsConsumers=false', 'minAgeDays=0', 'minAgeDays=30']))
+      .toEqual({ countTestsAsConsumers: false, minAgeDays: 30 });
     expect(parsePolicyOverrides([])).toEqual({});
   });
 
@@ -104,7 +105,7 @@ describe('--policy', () => {
     const orgDir = path.join(tmpRoot, 'org-policy');
     mkdirSync(path.join(orgDir, 'repos', 'lib'), { recursive: true });
     writeFileSync(path.join(orgDir, 'org.json'), JSON.stringify({ org: 'acme', repos: [{ name: 'lib' }] }));
-    writeFileSync(path.join(orgDir, 'sentei.json'), JSON.stringify({ assumeClosedWorld: true, minAgeDays: 90 }));
+    writeFileSync(path.join(orgDir, 'sentei.json'), JSON.stringify({ countTestsAsConsumers: true, minAgeDays: 90 }));
     writeFileSync(path.join(orgDir, 'repos', 'lib', 'package.json'), JSON.stringify({ name: '@acme/lib', version: '1.0.0' }));
     const work = freshWork();
     const r = await run('discover', '--org-dir', orgDir, '--work', work, '--policy', 'minAgeDays=0');
@@ -112,11 +113,11 @@ describe('--policy', () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain('[discover] policy override minAgeDays=0 (was 90)');
     const model = JSON.parse(readFileSync(path.join(work, 'discover.json'), 'utf8'));
-    expect(model.policy).toMatchObject({ assumeClosedWorld: true, minAgeDays: 0 });
+    expect(model.policy).toMatchObject({ countTestsAsConsumers: true, minAgeDays: 0 });
     const db = openDb(path.join(work, 'sentei.db'));
     try {
-      const rows = db.prepare("SELECT key, value FROM policy WHERE key IN ('assumeClosedWorld', 'minAgeDays') ORDER BY key").all();
-      expect(rows).toEqual([{ key: 'assumeClosedWorld', value: 'true' }, { key: 'minAgeDays', value: '0' }]);
+      const rows = db.prepare("SELECT key, value FROM policy WHERE key IN ('countTestsAsConsumers', 'minAgeDays') ORDER BY key").all();
+      expect(rows).toEqual([{ key: 'countTestsAsConsumers', value: 'true' }, { key: 'minAgeDays', value: '0' }]);
     } finally {
       db.close();
     }
@@ -206,4 +207,105 @@ describe('timings and --quiet', () => {
     expect(quiet.out).toContain('Top blockers');
     expect(quiet.out).toMatch(/^sentei .* report, generated/m);
   }, 300_000);
+});
+
+describe('repos and GitHub discover (fake API)', () => {
+  const API = 'https://api.github.com';
+  const LIST = `${API}/orgs/acme/repos?type=all&per_page=100`;
+  const apiRepo = (name: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    name, full_name: `acme/${name}`, default_branch: 'main', archived: false, fork: false,
+    clone_url: `https://github.com/acme/${name}.git`, pushed_at: '2026-08-01T00:00:00Z', size: 2048, language: 'TypeScript', ...extra,
+  });
+  function fakeFetch(routes: Record<string, unknown>): { fetchImpl: typeof fetch; urls: string[] } {
+    const urls: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = String(input);
+      urls.push(url);
+      return url in routes
+        ? new Response(JSON.stringify(routes[url]), { status: 200 })
+        : new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+    }) as typeof fetch;
+    return { fetchImpl, urls };
+  }
+  async function runGh(fetchImpl: typeof fetch, ...argv: string[]): Promise<{ code: number; out: string; err: string }> {
+    let out = '';
+    let err = '';
+    const code = await main(argv, { stdout: (t) => void (out += t), stderr: (t) => void (err += t), github: { fetchImpl, token: 'tok' } });
+    return { code, out, err };
+  }
+  const sha = (c: string): string => c.repeat(40);
+
+  it('repos lists every repo with its decision (fresh listing → lockfile), then reads the lockfile with no API calls', async () => {
+    const { fetchImpl, urls } = fakeFetch({
+      [LIST]: [apiRepo('lib'), apiRepo('hw', { language: 'C' }), apiRepo('old', { archived: true }), apiRepo('tools', { language: 'Shell' })],
+      [`${API}/repos/acme/lib/branches/main`]: { commit: { sha: sha('a') } },
+      [`${API}/repos/acme/tools/branches/main`]: { commit: { sha: sha('b') } },
+      [`${API}/repos/acme/tools/contents/package.json`]: { type: 'file' },
+    });
+    const work = freshWork();
+    const r = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work);
+    expect(r.err).toContain('[repos] listed 4 repo(s) for acme');
+    expect(r.code).toBe(0);
+    expect(r.out.split('\n')).toEqual([
+      'REPO   LANGUAGE      SIZE  PUSHED      SELECTED  REASONS',
+      'hw     C           2.0 MB  2026-08-01  no        language C not in repos.languages; no package.json or pubspec.yaml at the root',
+      'lib    TypeScript  2.0 MB  2026-08-01  yes       language TypeScript',
+      'old    TypeScript  2.0 MB  2026-08-01  no        archived (--include-archived to keep)',
+      'tools  Shell       2.0 MB  2026-08-01  yes       language Shell, but package.json at the root',
+      '',
+      '2 of 4 repo(s) selected',
+      '',
+    ]);
+    const lock = JSON.parse(readFileSync(path.join(work, 'acme.lock.json'), 'utf8'));
+    expect(lock.repos.map((x: { name: string; selected: boolean }) => [x.name, x.selected])).toEqual([['hw', false], ['lib', true], ['old', false], ['tools', true]]);
+    const calls = urls.length;
+
+    // --json, from the lockfile; flags override config and re-decide without API calls.
+    const j = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work, '--json', '--exclude', 'tools');
+    expect(j.code).toBe(0);
+    expect(urls).toHaveLength(calls);
+    const rows = JSON.parse(j.out);
+    expect(rows.find((x: { name: string }) => x.name === 'tools')).toMatchObject({
+      selected: false, reasons: ['excluded by --exclude "tools"'], language: 'Shell', sizeKb: 2048, manifests: { 'package.json': true }, headSha: sha('b'),
+    });
+    expect(j.err).toMatch(/selection settings changed since the lockfile was written \(cliExclude \[\] → \["tools"\]\)/);
+  });
+
+  it('repos needs --org; --json and --clone-concurrency are validated', async () => {
+    const r = await run('repos', '--org-dir', 'x', '--work', freshWork());
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/^sentei repos: --org <name> is required \(repos lists GitHub repos/);
+    expect((await run('discover', '--json', '--work', freshWork())).err).toMatch(/^--json only applies to repos/);
+    for (const v of ['0', '33', 'x']) {
+      const c = await run('discover', '--clone-concurrency', v, '--work', freshWork());
+      expect(c.code).toBe(2);
+      expect(c.err).toMatch(/^--clone-concurrency must be an integer from 1 to 32/);
+    }
+  });
+
+  it('discover fails listing uncloneable repos (exit 1) unless --allow-clone-failures', async () => {
+    const root = path.join(tmpRoot, 'gh-bare');
+    mkdirSync(root, { recursive: true });
+    const lib = makeBareRepo(root, 'lib');
+    const { fetchImpl } = fakeFetch({
+      [LIST]: [apiRepo('lib', { clone_url: lib.url }), apiRepo('gone', { clone_url: lib.url.replace(/lib\.git$/, 'gone.git') })],
+      [`${API}/repos/acme/lib/branches/main`]: { commit: { sha: lib.shas[1] } },
+      [`${API}/repos/acme/gone/branches/main`]: { commit: { sha: sha('c') } },
+    });
+    const work = freshWork();
+    const r = await runGh(fetchImpl, 'discover', '--org', 'acme', '--work', work, '--config-dir', work, '--clone-concurrency', '2');
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/^sentei discover: 1 of 2 repo\(s\) could not be cloned: gone \(/);
+    expect(r.out).toMatch(/^\[discover\] cloned 2\/2 \(0 cached, 1 failed\)/m);
+
+    const ok = await runGh(fetchImpl, 'discover', '--org', 'acme', '--work', work, '--config-dir', work, '--allow-clone-failures');
+    expect(ok.code).toBe(0);
+    expect(ok.out).toMatch(/^\[discover\] warning: skipping 1 repo\(s\) that could not be cloned .*: gone\. Every org package they contain is unknown/m);
+    const model = JSON.parse(readFileSync(path.join(work, 'discover.json'), 'utf8'));
+    expect(model.repos.map((x: { repo: string }) => x.repo)).toEqual(['acme/lib']);
+    expect(model.source.cloneFailures).toEqual([{ repo: 'acme/gone', error: expect.stringMatching(/^git clone/) }]);
+
+    const listed = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work);
+    expect(listed.out).toMatch(/^gone .* yes +language TypeScript; last clone failed: git clone/m);
+  });
 });

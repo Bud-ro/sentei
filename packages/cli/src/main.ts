@@ -4,15 +4,16 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
-import { DEFAULT_POLICY, isPolicyKey, setPolicyValue, type Policy } from '@sentei/core';
+import { DEFAULT_POLICY, isPolicyKey, parseViews, setPolicyValue, type Policy, type ReportViewName } from '@sentei/core';
 import { openDb } from '@sentei/core/db';
-import type { Stage, StageContext } from './context.ts';
+import type { GithubDiscoverOptions, Stage, StageContext } from './context.ts';
 import { analyze } from './stages/analyze.ts';
 import { blame } from './stages/blame.ts';
 import { discover } from './stages/discover.ts';
 import { index } from './stages/index.ts';
 import { ingest } from './stages/ingest.ts';
 import { report } from './stages/report.ts';
+import { repos } from './stages/repos.ts';
 import { witness } from './stages/witness.ts';
 
 /** Pipeline order; `run` executes these in sequence. */
@@ -29,6 +30,8 @@ const STAGES: ReadonlyArray<readonly [string, Stage]> = [
 const USAGE = `Usage: sentei <command> [options]
 
 Commands:
+  repos      List an org's GitHub repos and whether discover would clone
+             each one, with reasons (no cloning; --json for machine output)
   discover   List org repos and record packages + manifest deps
   index      Run SCIP indexers per package
   ingest     Load .scip files into the database
@@ -47,23 +50,37 @@ Options:
                    ignores HTTPS_PROXY by default)
   --org-dir <dir>  discover: local org directory (org.json + repos/<name>/)
                    (exactly one of --org / --org-dir)
-  --lockfile <file>     discover --org: pin repo head shas; read if it exists
-                        (no API calls), else written after listing
-  --update-lockfile     discover --org: relist and rewrite the lockfile
-  --include <glob>      discover --org: only repos whose name matches (repeatable)
-  --exclude <glob>      discover --org: skip repos whose name matches (repeatable)
-  --include-forks       discover --org: keep forks (skipped by default: they are
-                        usually other people's code and duplicate package names)
+  --lockfile <file>     discover/repos --org: listing, selection and pinned head
+                        shas; read if it exists (no API calls), else written
+                        after listing (default: <work>/<org>.lock.json)
+  --update-lockfile     discover/repos --org: relist and rewrite the lockfile
+  --include <glob>      discover/repos --org: always clone repos whose name
+                        matches, past every other rule (repeatable)
+  --exclude <glob>      discover/repos --org: never clone repos whose name
+                        matches (repeatable; --include wins)
+  --include-forks       discover/repos --org: keep forks (skipped by default:
+                        usually other people's code, duplicate package names)
+  --include-archived    discover/repos --org: keep archived repos
+                        (org sentei.json "repos" holds the other selection
+                        rules: languages, maxSizeMb, minPushed, probe)
+  --clone-concurrency <n>  discover --org: parallel clones (default 8)
+  --allow-clone-failures   discover --org: skip repos that fail to clone
+                        (their packages are unknown) instead of failing
   --clones-dir <dir>    discover --org: where clones live (default: <work>/repos)
-  --config-dir <dir>    discover --org: dir with the org sentei.json
+  --config-dir <dir>    discover/repos --org: dir with the org sentei.json
                         (default: cwd if it has one, else defaults)
+  --json         repos: print JSON instead of a table
   --force        index: re-index repos even when cached for the same headSha
   --no-install   index: do not run npm ci / pnpm / yarn install
   --max-old-space-mb <n>  index: heap limit in MB of each indexer and export-surface
                           child process, doubled once on heap exhaustion (default: 8192)
   --policy <key>=<json>   discover/run: override one org sentei.json policy key
-                          (repeatable), e.g. --policy assumeClosedWorld=true
+                          (repeatable), e.g. --policy countTestsAsConsumers=true
                           --policy minAgeDays=0
+  --view <name>[,name]    report/run: views printed and emitted in SARIF (repeatable):
+                          delete, deprecate, org_dead, unexport, private_dead,
+                          needs_review, blocked, version_skew (default: all on
+                          stdout, all but org_dead in SARIF; report.json has all)
   -q, --quiet    Print only warnings, errors and the report summary
   -v, --verbose  On error, print the full stack trace
   -h, --help     Show this help
@@ -75,6 +92,8 @@ Exit codes: 0 success, 1 a stage failed, 2 usage error.
 export interface MainIo {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
+  /** Tests only: GitHub fetch/token injection for discover and repos. */
+  github?: Pick<GithubDiscoverOptions, 'fetchImpl' | 'token'>;
 }
 
 const PROCESS_IO: MainIo = {
@@ -158,13 +177,18 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
         'update-lockfile': { type: 'boolean', default: false },
         include: { type: 'string', multiple: true, default: [] },
         exclude: { type: 'string', multiple: true, default: [] },
-        'include-forks': { type: 'boolean', default: false },
+        'include-forks': { type: 'boolean' },
+        'include-archived': { type: 'boolean' },
+        'clone-concurrency': { type: 'string' },
+        'allow-clone-failures': { type: 'boolean', default: false },
+        json: { type: 'boolean', default: false },
         'clones-dir': { type: 'string' },
         'config-dir': { type: 'string' },
         force: { type: 'boolean', default: false },
         install: { type: 'boolean', default: true },
         'max-old-space-mb': { type: 'string', default: '8192' },
         policy: { type: 'string', multiple: true, default: [] },
+        view: { type: 'string', multiple: true, default: [] },
         quiet: { type: 'boolean', short: 'q', default: false },
         verbose: { type: 'boolean', short: 'v', default: false },
         help: { type: 'boolean', short: 'h', default: false },
@@ -193,13 +217,67 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
   if (positionals.length > 1) return usageError(`unexpected arguments: ${positionals.slice(1).join(' ')}`);
 
   const selected = command === 'run' ? STAGES : STAGES.filter(([name]) => name === command);
-  if (selected.length === 0) return usageError(`unknown command: ${command}`);
+  if (selected.length === 0 && command !== 'repos') return usageError(`unknown command: ${command}`);
+
+  let cloneConcurrency: number | undefined;
+  if (values['clone-concurrency'] !== undefined) {
+    cloneConcurrency = Number(values['clone-concurrency']);
+    if (!Number.isInteger(cloneConcurrency) || cloneConcurrency < 1 || cloneConcurrency > 32) {
+      return usageError('--clone-concurrency must be an integer from 1 to 32');
+    }
+  }
+  if (values.json && command !== 'repos') return usageError('--json only applies to repos');
+  const github: GithubDiscoverOptions = {
+    updateLockfile: values['update-lockfile'],
+    include: values.include,
+    exclude: values.exclude,
+    ...(values['include-forks'] !== undefined ? { includeForks: values['include-forks'] } : {}),
+    ...(values['include-archived'] !== undefined ? { includeArchived: values['include-archived'] } : {}),
+    ...(cloneConcurrency !== undefined ? { cloneConcurrency } : {}),
+    ...(values['allow-clone-failures'] ? { allowCloneFailures: true } : {}),
+    ...(values.lockfile !== undefined ? { lockfile: values.lockfile } : {}),
+    ...(values['clones-dir'] !== undefined ? { clonesDir: values['clones-dir'] } : {}),
+    ...(values['config-dir'] !== undefined ? { configDir: values['config-dir'] } : {}),
+    ...io.github,
+  };
+
+  if (command === 'repos') {
+    // No database: listing and selection only.
+    if (values.policy.length > 0) return usageError('--policy only applies to discover (and run): policy is recorded in the DB at discover');
+    try {
+      await repos({
+        work: values.work,
+        json: values.json,
+        github,
+        ...(values.org !== undefined ? { org: values.org } : {}),
+        ...(values['org-dir'] !== undefined ? { orgDir: values['org-dir'] } : {}),
+        out: io.stdout,
+        log: (line) => {
+          if (!values.quiet || keepWhenQuiet('repos', line)) io.stderr(`${line}\n`);
+        },
+      });
+    } catch (err) {
+      io.stderr(formatError('repos', err, values.verbose));
+      return 1;
+    }
+    return 0;
+  }
 
   const maxOldSpaceMb = Number(values['max-old-space-mb']);
   if (!Number.isInteger(maxOldSpaceMb) || maxOldSpaceMb <= 0) {
     return usageError('--max-old-space-mb must be a positive integer');
   }
   const indexOptions = { force: values.force, install: values.install, maxOldSpaceMb };
+  let views: ReportViewName[] | undefined;
+  try {
+    views = values.view.length > 0 ? parseViews(values.view) : undefined;
+  } catch (err) {
+    return usageError((err as Error).message);
+  }
+  if (views !== undefined && views.length === 0) return usageError('--view: no view named');
+  if (views !== undefined && !selected.some(([name]) => name === 'report')) {
+    return usageError('--view only applies to report (and run): views filter the report, never the analysis');
+  }
 
   let policyOverrides: Partial<Policy>;
   try {
@@ -236,21 +314,15 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
     if (values['org-dir'] !== undefined) ctx.orgDir = values['org-dir'];
     if (values.org !== undefined) ctx.org = values.org;
     if (values.policy.length > 0) ctx.policyOverrides = policyOverrides;
-    ctx.github = {
-      updateLockfile: values['update-lockfile'],
-      include: values.include,
-      exclude: values.exclude,
-      includeForks: values['include-forks'],
-      ...(values.lockfile !== undefined ? { lockfile: values.lockfile } : {}),
-      ...(values['clones-dir'] !== undefined ? { clonesDir: values['clones-dir'] } : {}),
-      ...(values['config-dir'] !== undefined ? { configDir: values['config-dir'] } : {}),
-    };
+    ctx.github = github;
     const t0 = performance.now();
     const took: string[] = [];
     for (const [name, stage] of selected) {
       current = name;
       const start = performance.now();
-      await (name === 'index' ? index(ctx, indexOptions) : stage(ctx));
+      await (name === 'index' ? index(ctx, indexOptions)
+        : name === 'report' ? report(ctx, views !== undefined ? { views } : {})
+        : stage(ctx));
       const ms = performance.now() - start;
       took.push(`${name} ${seconds(ms)}`);
       if (!quiet) io.stdout(`[${name}] done in ${seconds(ms)}\n`);

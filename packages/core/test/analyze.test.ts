@@ -388,7 +388,7 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(db.prepare("SELECT count(*) AS n FROM run_params WHERE key = 'analyzed_at'").get()).toEqual({ n: 1 });
   });
 
-  it('applies minAgeDays to closed-world verdicts, failing closed on unknown age', () => {
+  it('applies minAgeDays to every verdict, failing closed on unknown age', () => {
     sym(lib, 'src/fns.ts', 'unknownAge', { exported: true, firstSeenAt: null });
     sym(lib, 'src/fns.ts', 'old', { exported: true, firstSeenAt: NOW - 181 * DAY });
     sym(lib, 'src/fns.ts', 'young', { exported: true, firstSeenAt: NOW - 10 * DAY });
@@ -436,7 +436,7 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([]);
   });
 
-  it('gives open-world packages deprecation_candidate + open_world, and assumeClosedWorld flips them', () => {
+  it('gives published packages the same evidence as private ones, as deprecations; no closed-world knob exists', () => {
     const pub = pkg('@acme/pub', 'published-public');
     dep(app, pub);
     doc(pub, 'src/index.ts', true);
@@ -451,30 +451,29 @@ describe('analyzeOrg on hand-built rows', () => {
     setPolicy('minAgeDays', 180);
 
     analyze();
-    // The age rule gates only closed-world verdicts (PLAN.md §6.5 tree); deprecations
-    // are not candidates, so pubHelper stays reachable.
-    expect(findings()).toEqual([
-      f('pubInternal', 'deprecation_candidate', ['internal_refs_only', 'open_world']),
-      f('pubUnused', 'deprecation_candidate', ['no_refs', 'open_world']),
-      f('pubYoung', 'deprecation_candidate', ['no_refs', 'open_world']),
-    ]);
+    // No refs: witness_pending like a private deletion (the witness makes it a
+    // deprecation_candidate). Internal-only: the published form of an unexport. The age
+    // rule gates every verdict (pubYoung: no row), and a deprecation is a candidate, so
+    // the helper only it uses is private_dead (the report shows it under org_dead).
+    const published = [
+      f('pubHelper', 'private_dead', ['unlocked_by:pubUnused']),
+      f('pubInternal', 'deprecation_candidate', ['internal_refs_only']),
+      f('pubUnused', 'needs_review', DELETE),
+    ];
+    expect(findings()).toEqual(published);
 
+    // The removed key is dropped on insert and changes nothing.
     setPolicy('assumeClosedWorld', true);
     analyze();
-    expect(findings()).toEqual([
-      f('pubHelper', 'private_dead', ['unlocked_by:pubUnused']),
-      f('pubInternal', 'unexport_candidate', ['internal_refs_only']),
-      f('pubUnused', 'needs_review', DELETE),
-    ]);
+    expect(findings()).toEqual(published);
 
-    // published-private is closed-world only with trustPrivateRegistry.
-    setPolicy('assumeClosedWorld', false);
+    // published-private is private only with trustPrivateRegistry.
     run("UPDATE packages SET visibility = 'published-private' WHERE package_id = ?", pub);
     analyze();
     expect(findings().map((r) => r.verdict)).toEqual(['private_dead', 'unexport_candidate', 'needs_review']);
     setPolicy('trustPrivateRegistry', false);
     analyze();
-    expect(findings().map((r) => r.verdict)).toEqual(['deprecation_candidate', 'deprecation_candidate', 'deprecation_candidate']);
+    expect(findings().map((r) => r.verdict)).toEqual(['private_dead', 'deprecation_candidate', 'needs_review']);
   });
 
   it('turns would-be verdicts of a package with opaque consumers into blocked, with sorted blocked_by', () => {
@@ -751,6 +750,30 @@ describe('analyzeOrg on hand-built rows', () => {
     ]);
   });
 
+  it('a published dead island whose only user the witness downgrades reverts to deprecation_candidate [internal_refs_only]', () => {
+    aliveExport('live');
+    run("UPDATE packages SET visibility = 'published-public' WHERE package_id = ?", lib);
+    const pdfjs = sym(lib, 'src/fns.ts', 'PDFJS', { exported: true });
+    const params = sym(lib, 'src/fns.ts', 'DocumentInitParameters', { exported: true });
+    use(pdfjs, params, 'src/fns.ts');
+    analyze();
+    expect(findings()).toEqual([
+      f('DocumentInitParameters', 'needs_review', ['internal_refs_only', 'dead_island', 'witness_pending']),
+      f('PDFJS', 'needs_review', DELETE),
+    ]);
+    // Witness: DocumentInitParameters passes (a published would-be deletion: deprecation), PDFJS is downgraded.
+    db.exec('BEGIN');
+    run('DELETE FROM findings WHERE symbol_id = ?', params);
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, 0)', params);
+    run(`INSERT INTO findings (symbol_id, verdict, reasons) VALUES (?, 'deprecation_candidate', '["internal_refs_only","dead_island"]')`, params);
+    db.exec('COMMIT');
+    downgradeAndPropagate('PDFJS');
+    expect(findings()).toEqual([
+      f('DocumentInitParameters', 'deprecation_candidate', ['internal_refs_only']),
+      f('PDFJS', 'needs_review', ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']),
+    ]);
+  });
+
   it('a witness-mismatched dead island whose user is downgraded stays needs_review, minus dead_island', () => {
     aliveExport('live');
     const a = sym(lib, 'src/fns.ts', 'A', { exported: true });
@@ -988,14 +1011,14 @@ describe.skipIf(!scipTs)('analyzeOrg on fixtures/org-small lib-core + app (scip-
     expect(unreachable).toEqual([{ name: 'islandA' }, { name: 'islandB' }]);
   });
 
-  it('keeps unusedFn alive when the org is not closed-world, as a deprecation', () => {
+  it('gives a published lib-core the same evidence, as deprecations (unusedFn still goes to the witness)', () => {
     run("UPDATE packages SET visibility = 'published-public' WHERE package_id = 'npm:acme/lib-core:@acme/core'");
     analyze();
     const rows = db.prepare(`SELECT s.name, f.verdict, f.reasons FROM findings f JOIN symbols s USING (symbol_id)
       WHERE s.is_exported = 1 ORDER BY s.name`).all();
     expect(rows).toEqual([
-      { name: 'internalOnlyFn', verdict: 'deprecation_candidate', reasons: '["internal_refs_only","open_world"]' },
-      { name: 'unusedFn', verdict: 'deprecation_candidate', reasons: '["no_refs","open_world"]' },
+      { name: 'internalOnlyFn', verdict: 'deprecation_candidate', reasons: '["internal_refs_only"]' },
+      { name: 'unusedFn', verdict: 'needs_review', reasons: '["no_refs","witness_pending"]' },
     ]);
     run("UPDATE packages SET visibility = 'private' WHERE package_id = 'npm:acme/lib-core:@acme/core'");
   });

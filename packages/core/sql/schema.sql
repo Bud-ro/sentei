@@ -197,18 +197,30 @@ CREATE TABLE IF NOT EXISTS package_flags (
 CREATE INDEX IF NOT EXISTS package_flags_package ON package_flags (package_id);
 
 -- Org-level policy knobs (sentei.json), values JSON-encoded; read only by views.
+-- Every key only changes analyze / witness / report, never what index produced
+-- (DESIGN.md Phase 2 decision 2: no option requires a re-index).
 CREATE TABLE IF NOT EXISTS policy (
   key   TEXT PRIMARY KEY CHECK (key IN (
-          'minAgeDays', 'trustPrivateRegistry', 'assumeClosedWorld',
+          'minAgeDays', 'trustPrivateRegistry',
           'countTestsAsConsumers', 'countDocsAsConsumers')),
   value TEXT NOT NULL CHECK (json_valid(value))
 ) STRICT;
+
+-- Removed policy keys are dropped on insert rather than rejected, so a sentei.json (or
+-- a Policy object) that still carries one does not abort discover. `assumeClosedWorld`
+-- (removed in Phase 2): the verdicts no longer depend on it; the report's `org_dead`
+-- view states the assertion it used to make silently.
+CREATE TRIGGER IF NOT EXISTS policy_drop_removed_keys
+BEFORE INSERT ON policy
+WHEN NEW.key IN ('assumeClosedWorld')
+BEGIN
+  SELECT RAISE(IGNORE);
+END;
 
 -- Policy defaults (PLAN.md §6.5). OR IGNORE so an existing DB keeps its settings.
 INSERT OR IGNORE INTO policy (key, value) VALUES
   ('minAgeDays', '180'),
   ('trustPrivateRegistry', 'true'),
-  ('assumeClosedWorld', 'false'),
   ('countTestsAsConsumers', 'false'),
   ('countDocsAsConsumers', 'false');
 
@@ -258,14 +270,17 @@ CREATE TABLE IF NOT EXISTS findings (
 -- Policy views (rules that read a config value)
 -- ---------------------------------------------------------------------------
 
--- Packages whose full consumer set is visible to us. Missing/false policy keys mean "no".
-CREATE VIEW IF NOT EXISTS closed_world_packages (package_id) AS
+-- Private packages: nobody outside the org can depend on them, so the org's code is
+-- their whole consumer set. `private`, or `published-private` with trustPrivateRegistry
+-- (an org-internal registry). Every other package is "published": external consumers
+-- may exist, so its unused exports are deprecation_candidate, not deletion_candidate.
+-- A missing / false policy key means "no".
+CREATE VIEW IF NOT EXISTS private_packages (package_id) AS
 SELECT p.package_id
 FROM packages p
 WHERE p.visibility = 'private'
    OR (p.visibility = 'published-private'
-       AND coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'trustPrivateRegistry'), 0) = 1)
-   OR coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'assumeClosedWorld'), 0) = 1;
+       AND coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'trustPrivateRegistry'), 0) = 1);
 
 -- Packages we cannot see into: any untargeted package_flags row. A targeted flag is
 -- about the consumer's use of one other package, not about the consumer's own code.
@@ -366,45 +381,67 @@ BEGIN
   SELECT RAISE(ABORT, 'sentei: findings are insert-only; delete and re-insert');
 END;
 
--- §5.1: no deletion_candidate while any consumer of the symbol's package is opaque.
-CREATE TRIGGER IF NOT EXISTS findings_deletion_requires_transparent_consumers
+-- The "would-be deletion" verdicts: deletion_candidate (private package) and a
+-- deprecation_candidate that is not an internal-only export (reasons no_refs /
+-- only_test_refs, or dead_island: published package, the same evidence as a deletion;
+-- the report's org_dead view reads these as deletions). A deprecation_candidate with
+-- reason internal_refs_only and no dead_island is the published form of an unexport.
+
+-- §5.1: no deletion/deprecation candidate while any consumer of the symbol's package is opaque.
+CREATE TRIGGER IF NOT EXISTS findings_candidate_requires_transparent_consumers
 BEFORE INSERT ON findings
-WHEN NEW.verdict = 'deletion_candidate'
+WHEN NEW.verdict IN ('deletion_candidate', 'deprecation_candidate')
  AND EXISTS (SELECT 1 FROM symbols s
              JOIN blocked_packages b ON b.package_id = s.package_id
              WHERE s.symbol_id = NEW.symbol_id)
 BEGIN
-  SELECT RAISE(ABORT, 'sentei: deletion_candidate blocked by opaque consumer');
+  SELECT RAISE(ABORT, 'sentei: deletion/deprecation candidate blocked by opaque consumer');
 END;
 
--- §5.1: deletion/unexport verdicts only for closed-world packages.
-CREATE TRIGGER IF NOT EXISTS findings_requires_closed_world
+-- §5.1: deletion/unexport verdicts only for private packages (nobody outside the org
+-- can depend on them).
+CREATE TRIGGER IF NOT EXISTS findings_requires_private_package
 BEFORE INSERT ON findings
 WHEN NEW.verdict IN ('deletion_candidate', 'unexport_candidate')
  AND NOT EXISTS (SELECT 1 FROM symbols s
-                 JOIN closed_world_packages c ON c.package_id = s.package_id
+                 JOIN private_packages c ON c.package_id = s.package_id
                  WHERE s.symbol_id = NEW.symbol_id)
 BEGIN
-  SELECT RAISE(ABORT, 'sentei: deletion/unexport candidate requires closed-world package');
+  SELECT RAISE(ABORT, 'sentei: deletion/unexport candidate requires a private package');
 END;
 
--- §5.1: keep list suppresses deletion (exact symbol name or '*').
-CREATE TRIGGER IF NOT EXISTS findings_deletion_respects_keep
+-- ... and deprecation verdicts only for published ones.
+CREATE TRIGGER IF NOT EXISTS findings_deprecation_requires_published_package
 BEFORE INSERT ON findings
-WHEN NEW.verdict = 'deletion_candidate'
+WHEN NEW.verdict = 'deprecation_candidate'
+ AND EXISTS (SELECT 1 FROM symbols s
+             JOIN private_packages c ON c.package_id = s.package_id
+             WHERE s.symbol_id = NEW.symbol_id)
+BEGIN
+  SELECT RAISE(ABORT, 'sentei: deprecation_candidate requires a published package');
+END;
+
+-- §5.1: keep list suppresses deletion and deprecation (exact symbol name or '*').
+CREATE TRIGGER IF NOT EXISTS findings_candidate_respects_keep
+BEFORE INSERT ON findings
+WHEN NEW.verdict IN ('deletion_candidate', 'deprecation_candidate')
  AND EXISTS (SELECT 1 FROM symbols s
              JOIN keep_rules k ON k.package_id = s.package_id
              WHERE s.symbol_id = NEW.symbol_id
                AND (k.symbol_name = '*' OR k.symbol_name = s.name))
 BEGIN
-  SELECT RAISE(ABORT, 'sentei: deletion_candidate matches keep rule');
+  SELECT RAISE(ABORT, 'sentei: deletion/deprecation candidate matches keep rule');
 END;
 
--- §5.1/§9: deletion_candidate requires the text witness to have passed.
-CREATE TRIGGER IF NOT EXISTS findings_deletion_requires_witness
+-- §5.1/§9: a would-be deletion (deletion_candidate, or a deprecation_candidate that is
+-- not internal-only) requires the text witness to have passed.
+CREATE TRIGGER IF NOT EXISTS findings_candidate_requires_witness
 BEFORE INSERT ON findings
-WHEN NEW.verdict = 'deletion_candidate'
+WHEN (NEW.verdict = 'deletion_candidate'
+      OR (NEW.verdict = 'deprecation_candidate'
+          AND (NOT EXISTS (SELECT 1 FROM json_each(NEW.reasons) j WHERE j.value = 'internal_refs_only')
+               OR EXISTS (SELECT 1 FROM json_each(NEW.reasons) j WHERE j.value = 'dead_island'))))
  AND NOT EXISTS (SELECT 1 FROM witness_ok w WHERE w.symbol_id = NEW.symbol_id)
 BEGIN
-  SELECT RAISE(ABORT, 'sentei: deletion_candidate requires witness_ok');
+  SELECT RAISE(ABORT, 'sentei: deletion/deprecation candidate requires witness_ok');
 END;

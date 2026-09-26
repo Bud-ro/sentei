@@ -163,6 +163,11 @@ export type DiscoverSource =
     /** Lockfile read or written for this run, or null when none was given. */
     lockfile: string | null;
     clonesDir: string;
+    /**
+     * Selected repos that could not be cloned and were skipped (--allow-clone-failures);
+     * absent when every clone succeeded. Their packages are unknown to this run.
+     */
+    cloneFailures?: Array<{ repo: string; error: string }>;
   };
 
 export interface DiscoverModel {

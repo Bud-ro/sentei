@@ -1,6 +1,6 @@
 // Non-entry module: re-exported by name from index.ts.
 
-// Expected: deletion_candidate, reasons ["only_test_refs"] (only reference is @acme/consumer src/widgets.test.ts). Open world: deprecation_candidate.
+// Expected: deprecation_candidate, reasons ["only_test_refs"] (only reference is @acme/consumer src/widgets.test.ts; published package).
 export function testOnlyFn(): number {
   return 3;
 }
@@ -15,7 +15,7 @@ export function namespaceUsed(): number {
   return 5;
 }
 
-// Expected: deletion_candidate, reasons ["no_refs"] (namespace-imported package, but never accessed). Open world: deprecation_candidate.
+// Expected: deprecation_candidate, reasons ["no_refs"] (namespace-imported package, but never accessed; published package).
 export function namespaceUnused(): number {
   return 6;
 }

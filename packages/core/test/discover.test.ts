@@ -81,8 +81,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       { consumer_package_id: 'npm:acme/repo-broken:@acme/broken', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-y:@acme/y', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/tool-py:@acme/tool-py', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-y:@acme/y', dev: 0, resolution: 'name', ambiguous: 0 },
     ]);
+    // assumeClosedWorld is removed (DESIGN Phase 2 decision 3): the schema drops the row.
     expect(all('SELECT key, value FROM policy ORDER BY key')).toEqual([
-      { key: 'assumeClosedWorld', value: 'true' },
       { key: 'countDocsAsConsumers', value: 'false' },
       { key: 'countTestsAsConsumers', value: 'false' },
       { key: 'minAgeDays', value: '0' },
@@ -533,8 +533,8 @@ describe('setPolicyValue / isPolicyKey (shared by org sentei.json and --policy)'
     const { DEFAULT_POLICY, isPolicyKey, setPolicyValue } = await import('../src/config.ts');
     const p = { ...DEFAULT_POLICY };
     setPolicyValue(p, 'minAgeDays', 0, 'x');
-    setPolicyValue(p, 'assumeClosedWorld', true, 'x');
-    expect(p).toMatchObject({ minAgeDays: 0, assumeClosedWorld: true });
+    setPolicyValue(p, 'countTestsAsConsumers', true, 'x');
+    expect(p).toMatchObject({ minAgeDays: 0, countTestsAsConsumers: true });
     expect(() => setPolicyValue(p, 'minAgeDays', 1.5, 'where')).toThrow('sentei: where: "minAgeDays" must be a non-negative integer');
     expect(() => setPolicyValue(p, 'countTestsAsConsumers', 'true', 'where')).toThrow('"countTestsAsConsumers" must be a boolean');
     expect(isPolicyKey('trustPrivateRegistry')).toBe(true);

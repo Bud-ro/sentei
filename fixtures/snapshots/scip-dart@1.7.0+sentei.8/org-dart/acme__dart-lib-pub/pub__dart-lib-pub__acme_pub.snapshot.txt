@@ -10,8 +10,7 @@
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^ definition scip-dart pub acme_pub . lib/`acme_pub.dart`/pubUsed(). enclosing [3:0-3:19]
 
-  // Expected: deletion_candidate ["no_refs"] with assumeClosedWorld: true;
-  // deprecation_candidate ["no_refs", "open_world"] with assumeClosedWorld: false.
+  // Expected: deprecation_candidate ["no_refs"] (published package; the org_dead view reads it as a deletion).
   int pubUnused() => 8;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^ definition scip-dart pub acme_pub . lib/`acme_pub.dart`/pubUnused(). enclosing [7:0-7:21]
+//    ^^^^^^^^^ definition scip-dart pub acme_pub . lib/`acme_pub.dart`/pubUnused(). enclosing [6:0-6:21]

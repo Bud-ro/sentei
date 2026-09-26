@@ -1,2 +1,2 @@
-{ "minAgeDays": 180, "trustPrivateRegistry": true, "assumeClosedWorld": true, "countTestsAsConsumers": false, "countDocsAsConsumers": false, "keep": [],
+{ "minAgeDays": 180, "trustPrivateRegistry": true, "countTestsAsConsumers": false, "countDocsAsConsumers": false, "keep": [],
   "ignoreManifests": ["fontaine/packages/fontless/src/package.json", "magic-regexp/docs/package.json", "md4x/package.json", "runtime-compat/apps/website/package.json"] }

@@ -15,8 +15,23 @@
 //   * partialFingerprints["senteiSymbol/v1"] is sha256 of `<package_id>#<symbol>#<file>`
 //     (never the line), so moving code within a file keeps the alert's identity.
 //   * Results are sorted by ruleId, uri, line, symbol: byte-stable output.
+//   * One rule per report view (REPORT_VIEWS); a run carries the results of the
+//     selected views only (BuildSarifOptions.views, default defaultSarifViews(): every
+//     view except org_dead, which asserts something about the world the index cannot
+//     see). Every run declares every rule, so ruleIndex is stable across selections.
+//     The assertions of the selected views are in run.properties.assertions, and each
+//     org-dead result message repeats it.
 import { createHash } from 'node:crypto';
-import type { Report, ReportFinding, ReportVersionSkew } from './report.ts';
+import {
+  defaultSarifViews,
+  ORG_DEAD_ASSERTION,
+  REPORT_VERDICTS,
+  REPORT_VIEWS,
+  type Report,
+  type ReportFinding,
+  type ReportVersionSkew,
+  type ReportViewName,
+} from './report.ts';
 
 export const SARIF_SCHEMA_URI = 'https://json.schemastore.org/sarif-2.1.0.json';
 export const SARIF_SRCROOT = '%SRCROOT%';
@@ -69,7 +84,17 @@ export interface SarifRun {
   originalUriBaseIds: Record<string, { uri?: string; description?: SarifMessage }>;
   columnKind: 'utf16CodeUnits' | 'unicodeCodePoints';
   results: SarifResult[];
-  properties: { repo: string; headSha: string | null; indexStatus: string | null; policy: Report['policy']; warnings: string[] };
+  properties: {
+    repo: string;
+    headSha: string | null;
+    indexStatus: string | null;
+    policy: Report['policy'];
+    warnings: string[];
+    /** The report views this run carries results for. */
+    views: ReportViewName[];
+    /** What the selected views assume beyond the index (empty unless org_dead is selected). */
+    assertions: Array<{ view: ReportViewName; text: string }>;
+  };
 }
 
 export interface SarifLog {
@@ -81,14 +106,16 @@ export interface SarifLog {
 export interface BuildSarifOptions {
   /** tool.driver.informationUri; omitted when unset (sentei has no canonical URL yet). */
   informationUri?: string;
+  /** Views to emit results for (default defaultSarifViews(): all but org_dead). */
+  views?: readonly ReportViewName[];
 }
 
 // ---- rules ---------------------------------------------------------------------------
 
 interface RuleSpec {
   rule: SarifRule;
-  /** Report verdict this rule reports; null for version skew (not a finding). */
-  verdict: string | null;
+  /** The report view this rule reports. */
+  view: ReportViewName;
   /** Human phrase for the message: "<symbol> ... is <phrase>". */
   phrase: string;
 }
@@ -107,43 +134,52 @@ function rule(id: string, name: string, level: SarifLevel, short: string, full: 
 
 const RULE_SPECS: readonly RuleSpec[] = [
   {
-    verdict: 'deletion_candidate',
+    view: 'delete',
     phrase: 'a deletion candidate',
-    rule: rule('sentei/deletion', 'DeletionCandidate', 'warning',
-      'Exported symbol is unused across the whole org',
-      'No precise-indexer reference to this exported symbol exists anywhere in the org (or only test references, per policy), the package is closed-world, no consumer is opaque, and a text witness search found no mention. It can be deleted.',
-      'Delete the symbol. sentei only emits this when every consumer of the package was indexed cleanly and the package is closed-world; if the package is published to a public registry, confirm there are no external consumers first (see run.properties.warnings for assumeClosedWorld).',
+    rule: rule('sentei/delete', 'Delete', 'warning',
+      'Exported symbol of a private package is unused across the whole org',
+      'No precise-indexer reference to this exported symbol exists anywhere in the org (or only test references, per policy), the package is private (nobody outside the org can depend on it), no consumer is opaque, and a text witness search found no mention. It can be deleted.',
+      'Delete the symbol (reason dead_island: together with the other candidates that use it). sentei only emits this when every consumer of the package was indexed cleanly and the package is private.',
       ['maintainability']),
   },
   {
-    verdict: 'unexport_candidate',
+    view: 'deprecate',
+    phrase: 'a deprecation candidate',
+    rule: rule('sentei/deprecate', 'Deprecate', 'note',
+      'Exported symbol of a published package has no org consumers',
+      'No org package references this exported symbol (or only tests, per policy), no consumer is opaque, and a text witness search found no mention, but the package is published, so consumers outside the org may exist. Deprecate before deleting.',
+      'Mark the symbol deprecated and remove it in a later major version. If the org is the only consumer of the package, see the org-dead rule (report --view org_dead).',
+      ['maintainability', 'api-surface']),
+  },
+  {
+    view: 'org_dead',
+    phrase: 'dead code as far as the org can see',
+    rule: rule('sentei/org-dead', 'OrgDead', 'warning',
+      'Exported symbol of a published package is unused by the org, which is asserted to be its only consumer',
+      `The same evidence as a deprecation candidate (no org reference, witness passed), reported as a deletion under an assertion sentei cannot check: ${ORG_DEAD_ASSERTION} Also private helpers that only such symbols keep alive. Emitted only when the org_dead view is selected.`,
+      'Delete the symbol if the assertion holds (see run.properties.assertions); otherwise treat it as a deprecation candidate.',
+      ['maintainability', 'assertion']),
+  },
+  {
+    view: 'unexport',
     phrase: 'an unexport candidate',
-    rule: rule('sentei/unexport', 'UnexportCandidate', 'note',
+    rule: rule('sentei/unexport', 'Unexport', 'note',
       'Exported symbol is only used inside its own package',
       'This exported symbol has references only from within its own package; no other org package uses it. It can stay but does not need to be part of the public surface.',
-      'Remove the export (keep the declaration). This shrinks the package API; it is a breaking change for any consumer outside the org.',
+      'Remove the export (keep the declaration). In a published package this is a breaking change: deprecate the export first.',
       ['maintainability', 'api-surface']),
   },
   {
-    verdict: 'deprecation_candidate',
-    phrase: 'a deprecation candidate',
-    rule: rule('sentei/deprecation', 'DeprecationCandidate', 'note',
-      'Exported symbol of an open-world package has no org consumers',
-      'No org package references this exported symbol, but the package is published publicly (open world), so external consumers may exist. Deprecate before deleting.',
-      'Mark the symbol deprecated and remove it in a later major version.',
-      ['maintainability', 'api-surface']),
-  },
-  {
-    verdict: 'private_dead',
+    view: 'private_dead',
     phrase: 'dead private code',
     rule: rule('sentei/private-dead', 'PrivateDead', 'note',
       'Non-exported symbol is unreachable from any live code',
-      'This non-exported symbol is not reachable from any live export or entry point of its package (already unreachable, or only reachable from deletion candidates).',
+      'This non-exported symbol is not reachable from any live export or entry point of its package (already unreachable, or only reachable from deletion / unexport candidates).',
       'Delete the symbol together with the candidates that unlock it (see reasons: unlocked_by:<symbol>).',
       ['maintainability']),
   },
   {
-    verdict: 'needs_review',
+    view: 'needs_review',
     phrase: 'in need of human review',
     rule: rule('sentei/needs-review', 'NeedsReview', 'note',
       'Symbol looks unused but the evidence is inconclusive',
@@ -152,7 +188,7 @@ const RULE_SPECS: readonly RuleSpec[] = [
       ['review']),
   },
   {
-    verdict: 'blocked',
+    view: 'blocked',
     phrase: 'blocked from a verdict',
     rule: rule('sentei/blocked', 'Blocked', 'note',
       'No verdict: an opaque consumer prevents analysis',
@@ -161,7 +197,7 @@ const RULE_SPECS: readonly RuleSpec[] = [
       ['blocked']),
   },
   {
-    verdict: null,
+    view: 'version_skew',
     phrase: 'version skew',
     rule: rule('sentei/version-skew', 'VersionSkew', 'note',
       'Reference to a symbol that no longer exists at the target package HEAD',
@@ -172,8 +208,7 @@ const RULE_SPECS: readonly RuleSpec[] = [
 ];
 
 const RULES: readonly SarifRule[] = RULE_SPECS.map((s) => s.rule);
-const SPEC_BY_VERDICT = new Map(RULE_SPECS.filter((s) => s.verdict !== null).map((s) => [s.verdict!, s]));
-const SKEW_SPEC = RULE_SPECS.find((s) => s.verdict === null)!;
+const SPEC_BY_VIEW = new Map(RULE_SPECS.map((s) => [s.view, s]));
 const RULE_INDEX = new Map(RULES.map((r, i) => [r.id, i]));
 
 /** The rules every sentei SARIF run declares, in ruleIndex order. */
@@ -223,9 +258,12 @@ function list(xs: string[]): string {
 
 function findingMessage(f: ReportFinding, spec: RuleSpec): string {
   let s = `\`${f.symbol}\` in ${f.package_id} is ${spec.phrase}`;
+  if (spec.view === 'unexport' && f.verdict === 'deprecation_candidate') s += ' (published package: deprecate the export first)';
   s += f.reasons.length > 0 ? ` (reasons: ${list(f.reasons)})` : '';
   s += f.blocked_by.length > 0 ? `; blocked by ${list(f.blocked_by)}` : '';
-  return `${s}.`;
+  s += '.';
+  if (spec.view === 'org_dead') s += ` Assertion: ${ORG_DEAD_ASSERTION}`;
+  return s;
 }
 
 function skewMessage(v: ReportVersionSkew): string {
@@ -239,9 +277,8 @@ interface Pending {
   fingerprintKey: string;
 }
 
-function findingResult(f: ReportFinding): Pending {
-  const spec = SPEC_BY_VERDICT.get(f.verdict);
-  if (spec === undefined) throw new Error(`sarif: no SARIF rule for verdict ${JSON.stringify(f.verdict)} (${f.package_id}#${f.symbol})`);
+function findingResult(f: ReportFinding, view: ReportViewName): Pending {
+  const spec = SPEC_BY_VIEW.get(view)!;
   return {
     symbol: f.symbol,
     line: f.line ?? 0,
@@ -258,6 +295,7 @@ function findingResult(f: ReportFinding): Pending {
         symbol: f.symbol,
         kind: f.kind,
         verdict: f.verdict,
+        view,
         reasons: f.reasons,
         blockedBy: f.blocked_by,
       },
@@ -266,7 +304,7 @@ function findingResult(f: ReportFinding): Pending {
 }
 
 function skewResult(v: ReportVersionSkew): Pending {
-  const r = SKEW_SPEC.rule;
+  const r = SPEC_BY_VIEW.get('version_skew')!.rule;
   return {
     symbol: v.symbol,
     line: v.line ?? 0,
@@ -284,6 +322,7 @@ function skewResult(v: ReportVersionSkew): Pending {
         packageId: v.package_id,
         symbol: v.symbol,
         verdict: 'version_skew',
+        view: 'version_skew',
         reasons: [`target:${v.target_package_id}`],
         blockedBy: [],
         targetPackageId: v.target_package_id,
@@ -306,10 +345,13 @@ function finish(pending: Pending[]): SarifResult[] {
     || cmp(a.result.message.text, b.result.message.text));
   const seen = new Map<string, number>();
   return pending.map((p) => {
-    // Same key twice (e.g. overloads, or a skewed symbol referenced on several lines):
-    // the first keeps the plain hash, later ones get `#<n>` in sort order.
-    const n = seen.get(p.fingerprintKey) ?? 0;
-    seen.set(p.fingerprintKey, n + 1);
+    // Same key twice under one rule (e.g. overloads, or a skewed symbol referenced on
+    // several lines): the first keeps the plain hash, later ones get `#<n>` in sort
+    // order. Counted per rule, so selecting org_dead next to deprecate (the same rows)
+    // does not change either rule's fingerprints.
+    const seenKey = `${p.result.ruleId}\0${p.fingerprintKey}`;
+    const n = seen.get(seenKey) ?? 0;
+    seen.set(seenKey, n + 1);
     p.result.partialFingerprints[SARIF_FINGERPRINT_KEY] = sha256(n === 0 ? p.fingerprintKey : `${p.fingerprintKey}#${n}`);
     return p.result;
   });
@@ -318,11 +360,23 @@ function finish(pending: Pending[]): SarifResult[] {
 // ---- build ---------------------------------------------------------------------------
 
 /**
- * One SARIF 2.1.0 log per repo (keys sorted). Covers every repo in report.repos plus
- * any repo that only appears on a finding/skew row. Throws on a verdict with no rule
- * (a new verdict must get a rule, not vanish from the upload).
+ * One SARIF 2.1.0 log per repo (keys sorted), with the results of the selected views
+ * (opts.views, default defaultSarifViews()). Covers every repo in report.repos plus
+ * any repo that only appears on a finding/skew row. Throws on a finding verdict no
+ * view places (a new verdict must get a view and a rule, not vanish from the upload).
  */
 export function buildSarif(report: Report, opts: BuildSarifOptions = {}): Map<string, SarifLog> {
+  for (const f of report.findings) {
+    if (!(REPORT_VERDICTS as readonly string[]).includes(f.verdict)) {
+      throw new Error(`sarif: no SARIF rule for verdict ${JSON.stringify(f.verdict)} (${f.package_id}#${f.symbol})`);
+    }
+  }
+  const selected = new Set<ReportViewName>(opts.views ?? defaultSarifViews());
+  const views = REPORT_VIEWS.filter((v) => selected.has(v));
+  const assertions = views.flatMap((v) => {
+    const a = v === 'version_skew' ? undefined : report.views[v].assertion;
+    return a === undefined ? [] : [{ view: v, text: a }];
+  });
   const repoInfo = new Map(report.repos.map((r) => [r.repo, r]));
   const byRepo = new Map<string, Pending[]>();
   const add = (repo: string, p: Pending): void => {
@@ -330,8 +384,20 @@ export function buildSarif(report: Report, opts: BuildSarifOptions = {}): Map<st
     if (xs) xs.push(p);
     else byRepo.set(repo, [p]);
   };
-  for (const f of report.findings) add(f.repo, findingResult(f));
-  for (const v of report.versionSkew) add(v.repo, skewResult(v));
+  const rv = report.views;
+  const findingsOf: Record<Exclude<ReportViewName, 'version_skew'>, ReportFinding[]> = {
+    delete: rv.delete.rows,
+    deprecate: rv.deprecate.rows,
+    org_dead: [...rv.org_dead.rows, ...rv.org_dead.private_dead],
+    unexport: [...rv.unexport.rows, ...rv.unexport.published],
+    private_dead: rv.private_dead.rows,
+    needs_review: rv.needs_review.rows,
+    blocked: rv.blocked.rows,
+  };
+  for (const v of views) {
+    if (v === 'version_skew') for (const x of rv.version_skew.rows) add(x.repo, skewResult(x));
+    else for (const f of findingsOf[v]) add(f.repo, findingResult(f, v));
+  }
 
   const repos = [...new Set([...repoInfo.keys(), ...byRepo.keys()])].sort(cmp);
   const out = new Map<string, SarifLog>();
@@ -361,6 +427,8 @@ export function buildSarif(report: Report, opts: BuildSarifOptions = {}): Map<st
             indexStatus: info?.index_status ?? null,
             policy: report.policy,
             warnings: report.warnings,
+            views,
+            assertions,
           },
         },
       ],

@@ -1,6 +1,7 @@
 // PLAN.md §8 witness check acceptance: hand-corrupt a `.scip` index so it loses the
 // consumer's reference to a symbol, and prove the independent text witness catches it
-// (the would-be deletion is downgraded to needs_review with witness_mismatch reasons).
+// (the would-be deletion is downgraded to needs_review with witness_mismatch reasons),
+// for a private package (deletion) and a published one (deprecation).
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -26,7 +27,7 @@ afterAll(() => {
 });
 
 describe('witness check (PLAN.md §8): a reference dropped from the SCIP index is caught', () => {
-  it('downgrades usedFn to needs_review with witness_mismatch reasons', async () => {
+  it('downgrades usedFn (private) and deepThing (published) to needs_review with witness_mismatch reasons', async () => {
     const tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-witness-')));
     tmps.push(tmp);
     const orgDir = path.join(tmp, 'org-small');
@@ -55,6 +56,17 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
       // The module reference ('@acme/core') survives, so the index is otherwise intact.
       expect(doc!.occurrences.some((o) => o.symbol.includes('@acme/core'))).toBe(true);
       writeFileSync(scipPath, toBinary(IndexSchema, idx));
+
+      // Same corruption for a PUBLISHED package (@acme/widgets): drop the consumer's
+      // deepThing references. The witness runs for would-be deprecations too, so the
+      // deprecate / org_dead views rest on the same second opinion as delete.
+      const consumerScip = path.join(work, 'index', 'acme__app-consumer', 'npm__app-consumer__acme__consumer.scip');
+      const cidx = readScipIndex(consumerScip);
+      const cdoc = cidx.documents.find((d) => d.relativePath === 'src/main.ts')!;
+      const cbefore = cdoc.occurrences.length;
+      cdoc.occurrences = cdoc.occurrences.filter((o) => !o.symbol.endsWith('deepThing().'));
+      expect(cbefore - cdoc.occurrences.length).toBeGreaterThan(0);
+      writeFileSync(consumerScip, toBinary(IndexSchema, cidx));
 
       await ingest(ctx);
       await analyze(ctx);
@@ -97,6 +109,23 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
         { verdict: 'deletion_candidate', reasons: ['no_refs'] },
       ]);
       expect(lines.some((l) => l.includes('[witness] mismatch npm:acme/lib-core:@acme/core#usedFn'))).toBe(true);
+
+      const deep = r.findings.filter((f) => f.package_id === 'npm:acme/lib-widgets:@acme/widgets' && f.symbol === 'deepThing');
+      expect(deep.map((f) => ({ verdict: f.verdict, reasons: f.reasons }))).toEqual([
+        {
+          verdict: 'needs_review',
+          reasons: [
+            'no_refs',
+            'witness_mismatch:npm:acme/app-consumer:@acme/consumer:src/main.ts:5',
+            'witness_mismatch:npm:acme/app-consumer:@acme/consumer:src/main.ts:14',
+          ],
+        },
+      ]);
+      expect(r.views.deprecate.rows.some((f) => f.symbol === 'deepThing')).toBe(false);
+      expect(r.views.org_dead.rows.some((f) => f.symbol === 'deepThing')).toBe(false);
+      // Control: widgets' genuinely unused export still passes, as a deprecation.
+      expect(r.findings.filter((f) => f.package_id === 'npm:acme/lib-widgets:@acme/widgets' && f.symbol === 'namespaceUnused')
+        .map((f) => f.verdict)).toEqual(['deprecation_candidate']);
     } finally {
       db.close();
     }

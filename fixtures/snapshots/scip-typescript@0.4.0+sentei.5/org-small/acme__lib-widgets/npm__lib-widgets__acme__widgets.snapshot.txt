@@ -52,14 +52,14 @@
     return 1;
   }
 
-  // Expected: deletion_candidate, reasons ["no_refs"] (exported via `export *`, referenced nowhere). Open world: deprecation_candidate.
+  // Expected: deprecation_candidate, reasons ["no_refs"] (exported via `export *`, referenced nowhere; published package).
   export function internalUnused(): number {
 //                ^^^^^^^^^^^^^^ definition scip-typescript npm @acme/widgets . src/`internal.ts`/internalUnused(). enclosing [8:0-10:1]
     return unusedHelper() + 1;
 //         ^^^^^^^^^^^^ reference scip-typescript npm @acme/widgets . src/`internal.ts`/unusedHelper().
   }
 
-  // Expected: private_dead, reasons ["unlocked_by:internalUnused"] (reachable only through internalUnused). Open world: no finding.
+  // Expected: private_dead, reasons ["unlocked_by:internalUnused"] (reachable only through internalUnused).
   function unusedHelper(): number {
 //         ^^^^^^^^^^^^ definition scip-typescript npm @acme/widgets . src/`internal.ts`/unusedHelper(). enclosing [13:0-15:1]
     return 2;
@@ -92,7 +92,7 @@
   // Non-entry module: re-exported by name from index.ts.
 //^ definition scip-typescript npm @acme/widgets . src/`misc.ts`/ enclosing [3:0-21:0]
 
-  // Expected: deletion_candidate, reasons ["only_test_refs"] (only reference is @acme/consumer src/widgets.test.ts). Open world: deprecation_candidate.
+  // Expected: deprecation_candidate, reasons ["only_test_refs"] (only reference is @acme/consumer src/widgets.test.ts; published package).
   export function testOnlyFn(): number {
 //                ^^^^^^^^^^ definition scip-typescript npm @acme/widgets . src/`misc.ts`/testOnlyFn(). enclosing [3:0-5:1]
     return 3;
@@ -110,7 +110,7 @@
     return 5;
   }
 
-  // Expected: deletion_candidate, reasons ["no_refs"] (namespace-imported package, but never accessed). Open world: deprecation_candidate.
+  // Expected: deprecation_candidate, reasons ["no_refs"] (namespace-imported package, but never accessed; published package).
   export function namespaceUnused(): number {
 //                ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/widgets . src/`misc.ts`/namespaceUnused(). enclosing [18:0-20:1]
     return 6;
@@ -120,7 +120,7 @@
   // Entry point via exports "./unused-anon".
 //^ definition scip-typescript npm @acme/widgets . src/`unused-anon.ts`/ enclosing [3:0-6:0]
 
-  // Expected: deletion_candidate, reasons ["no_refs"] (anonymous default export, symbol name `default`; imported by nobody). Open world: deprecation_candidate.
+  // Expected: deprecation_candidate, reasons ["no_refs"] (anonymous default export, symbol name `default`; imported by nobody; published package).
   export default function () {
     return 1;
   }

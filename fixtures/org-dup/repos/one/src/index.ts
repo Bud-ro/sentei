@@ -10,7 +10,7 @@ export function shared(): string {
   return 'shared from one';
 }
 
-// deletion_candidate: no consumer
+// deprecation_candidate: no consumer
 export function unusedInOne(): number {
   return 1;
 }

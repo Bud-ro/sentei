@@ -1,11 +1,13 @@
 // M1 acceptance test (PLAN.md §10): the whole pipeline on a temp copy of
-// fixtures/org-small must reproduce expected-findings*.json EXACTLY.
+// fixtures/org-small must reproduce expected-findings.json EXACTLY. The expected file
+// holds the base verdicts; the report views (delete / deprecate / org_dead / …) are
+// filters over them, checked here on the same run (no second analysis).
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '@sentei/core/db';
-import type { Report, SarifLog } from '@sentei/core';
+import { ORG_DEAD_ASSERTION, type Report, type SarifLog } from '@sentei/core';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { analyze } from '../src/stages/analyze.ts';
@@ -101,35 +103,76 @@ function expected(file: string): ExpectedRow[] {
   return sortRows(JSON.parse(readFileSync(path.join(FIXTURES, 'org-small', file), 'utf8')) as ExpectedRow[]);
 }
 
+/** Every SARIF result of every repo log in <work>/sarif. */
+function allSarifResults(work: string): Array<{ ruleId: string; symbol: unknown; message: string; log: SarifLog }> {
+  const dir = path.join(work, 'sarif');
+  return readdirSync(dir).sort().flatMap((f) => {
+    const log = JSON.parse(readFileSync(path.join(dir, f), 'utf8')) as SarifLog;
+    return log.runs[0]!.results.map((x) => ({ ruleId: x.ruleId, symbol: x.properties.symbol, message: x.message.text, log }));
+  });
+}
+
 describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
-  it('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
+  it('matches expected-findings.json exactly; views filter the same findings; --view limits stdout and SARIF', async () => {
     const org = copyFixture('org-small');
     const { rows, report: r, lines, work } = await runPipeline(org);
-    expect(r.policy.assumeClosedWorld).toBe(true);
-    expect(r.warnings[0]).toMatch(/^assumeClosedWorld is ON/);
-    expect(lines.some((l) => l.includes('WARNING: assumeClosedWorld is ON'))).toBe(true);
+    expect(r.policy).not.toHaveProperty('assumeClosedWorld');
+    expect(r.warnings.some((w) => w.includes('assumeClosedWorld'))).toBe(false);
     expect(rows).toEqual(expected('expected-findings.json'));
 
-    // M5: one SARIF log per repo, schema-valid, carrying the deletion candidate.
+    // Views: filters over the base findings.
+    const names = (xs: Array<{ package_id: string; symbol: string }>): string[] => xs.map((f) => `${f.package_id}#${f.symbol}`);
+    const widgets = 'npm:acme/lib-widgets:@acme/widgets';
+    expect(r.views.delete.rows.every((f) => f.verdict === 'deletion_candidate')).toBe(true);
+    expect(names(r.views.delete.rows)).toContain('npm:acme/lib-core:@acme/core#unusedFn');
+    expect(names(r.views.deprecate.rows)).toEqual([
+      `${widgets}#default`, `${widgets}#internalUnused`, `${widgets}#namespaceUnused`, `${widgets}#testOnlyFn`,
+    ]);
+    expect(r.views.org_dead.rows).toEqual(r.views.deprecate.rows);
+    expect(r.views.org_dead.assertion).toBe(ORG_DEAD_ASSERTION);
+    expect(r.views.deprecate.assertion).toBeUndefined();
+    // widgets' unusedHelper is dead only once internalUnused is deleted: org_dead only.
+    expect(names(r.views.org_dead.private_dead)).toEqual([`${widgets}#unusedHelper`]);
+    expect(names(r.views.private_dead.rows)).not.toContain(`${widgets}#unusedHelper`);
+    expect(names(r.views.unexport.rows)).toContain('npm:acme/lib-core:@acme/core#internalOnlyFn');
+    expect(r.packages.find((p) => p.package_id === widgets)).toMatchObject({ private: false, counts: { delete: 0, deprecate: 4 } });
+
+    // Default stdout: every view, ORG-DEAD once with its footnote.
+    expect(lines.some((l) => /^ {2}ORG-DEAD +4\*/.test(l))).toBe(true);
+    expect(lines).toContain(`* ORG-DEAD lists the DEPRECATE rows as deletions, asserting: ${ORG_DEAD_ASSERTION}`);
+
+    // M5: one SARIF log per repo, schema-valid; default views: all but org_dead.
     for (const { repo } of r.repos) {
       expect(existsSync(path.join(work, 'sarif', `${repo.replaceAll('/', '__')}.sarif`)), repo).toBe(true);
     }
     const sarif = JSON.parse(readFileSync(path.join(work, 'sarif', 'acme__lib-core.sarif'), 'utf8')) as SarifLog;
     expect(sarifSchemaErrors(sarif)).toEqual([]);
-    expect(sarif.runs[0]!.properties.warnings[0]).toMatch(/^assumeClosedWorld is ON/);
-    expect(sarif.runs[0]!.results.some((x) => x.ruleId === 'sentei/deletion' && x.properties.symbol === 'unusedFn'
+    expect(sarif.runs[0]!.properties.assertions).toEqual([]);
+    expect(sarif.runs[0]!.results.some((x) => x.ruleId === 'sentei/delete' && x.properties.symbol === 'unusedFn'
       && x.locations[0]!.physicalLocation.artifactLocation.uri === 'src/fns.ts')).toBe(true);
-  }, 180_000);
+    const byDefault = allSarifResults(work);
+    expect(byDefault.some((x) => x.ruleId === 'sentei/org-dead')).toBe(false);
+    expect(byDefault.filter((x) => x.ruleId === 'sentei/deprecate').map((x) => x.symbol).sort())
+      .toEqual(['default', 'internalUnused', 'namespaceUnused', 'testOnlyFn']);
 
-  it('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
-    const org = copyFixture('org-small');
-    const cfgPath = path.join(org, 'sentei.json');
-    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
-    writeFileSync(cfgPath, JSON.stringify({ ...cfg, assumeClosedWorld: false }, null, 2));
-    const { rows, report: r } = await runPipeline(org);
-    expect(r.policy.assumeClosedWorld).toBe(false);
-    expect(r.warnings.some((w) => w.includes('assumeClosedWorld'))).toBe(false);
-    expect(rows).toEqual(expected('expected-findings.open-world.json'));
+    // report --view org_dead: the same DB, no re-analysis; only org-dead results.
+    const filtered = await withCtx(org, async (ctx, out) => {
+      await report(ctx, { views: ['org_dead'] });
+      return out;
+    });
+    const orgDead = allSarifResults(work);
+    expect(orgDead.map((x) => x.ruleId).every((id) => id === 'sentei/org-dead')).toBe(true);
+    expect(orgDead.map((x) => x.symbol).sort()).toEqual(['default', 'internalUnused', 'namespaceUnused', 'testOnlyFn', 'unusedHelper']);
+    expect(orgDead.every((x) => x.message.endsWith(`Assertion: ${ORG_DEAD_ASSERTION}`))).toBe(true);
+    const widgetsLog = orgDead[0]!.log;
+    expect(sarifSchemaErrors(widgetsLog)).toEqual([]);
+    expect(widgetsLog.runs[0]!.properties.views).toEqual(['org_dead']);
+    expect(widgetsLog.runs[0]!.properties.assertions).toEqual([{ view: 'org_dead', text: ORG_DEAD_ASSERTION }]);
+    expect(filtered).toContain('views: org_dead');
+    expect(filtered.some((l) => l.startsWith('PACKAGE ') && !l.includes('DELETE'))).toBe(true);
+    expect(filtered.some((l) => /^ {2}ORG-DEAD/.test(l))).toBe(true);
+    expect(filtered.some((l) => /^ {2}(DELETE|DEPRECATE|UNEXPORT)\b/.test(l))).toBe(false);
+    expect(filtered.some((l) => l.startsWith('Top blockers') || l.startsWith('Version skew'))).toBe(false);
   }, 180_000);
 });
 
@@ -179,10 +222,10 @@ function expectedDart(file: string): ExpectedRow[] {
 }
 
 describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
-  it.skipIf(!HAS_DART)('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
+  it.skipIf(!HAS_DART)('matches expected-findings.json exactly', async () => {
     const org = copyDartFixture();
     const { rows, report: r } = await runPipeline(org);
-    expect(r.policy.assumeClosedWorld).toBe(true);
+    expect(r.policy).not.toHaveProperty('assumeClosedWorld');
     expect(r.repos.map((x) => [x.repo, x.index_status]).sort()).toEqual([
       ['acme/dart-app', 'ok'],
       ['acme/dart-lib-pub', 'ok'],
@@ -190,15 +233,8 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
       ...(HAS_FLUTTER ? Object.keys(DART_FLUTTER).sort().map((n) => [`acme/${n}`, 'ok']) : []),
     ]);
     expect(rows).toEqual(expectedDart('expected-findings.json'));
-  }, 600_000);
-
-  it.skipIf(!HAS_DART)('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
-    const org = copyDartFixture();
-    const cfgPath = path.join(org, 'sentei.json');
-    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
-    writeFileSync(cfgPath, JSON.stringify({ ...cfg, assumeClosedWorld: false }, null, 2));
-    const { rows, report: r } = await runPipeline(org);
-    expect(r.policy.assumeClosedWorld).toBe(false);
-    expect(rows).toEqual(expectedDart('expected-findings.open-world.json'));
+    // acme_pub is published-public: its unused export is a deprecation, and org_dead reads it as a deletion.
+    expect(r.views.deprecate.rows.map((f) => `${f.package_id}#${f.symbol}`)).toContain('pub:acme/dart-lib-pub:acme_pub#pubUnused');
+    expect(r.views.org_dead.rows).toEqual(r.views.deprecate.rows);
   }, 600_000);
 });

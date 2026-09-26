@@ -1,6 +1,6 @@
 // Entry point via exports "./unused-anon".
 
-// Expected: deletion_candidate, reasons ["no_refs"] (anonymous default export, symbol name `default`; imported by nobody). Open world: deprecation_candidate.
+// Expected: deprecation_candidate, reasons ["no_refs"] (anonymous default export, symbol name `default`; imported by nobody; published package).
 export default function () {
   return 1;
 }

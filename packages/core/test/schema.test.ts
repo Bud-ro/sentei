@@ -87,15 +87,17 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(10);
+    expect(SCHEMA_VERSION).toBe(11);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
     const path = join(process.env['TMPDIR'] ?? '.', `sentei-schema-version-${process.pid}.db`);
+    // Sandboxed runs reuse pids: a file left by an aborted run must not decide this test.
+    for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 10/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 11/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -500,7 +502,7 @@ describe('targeted package_flags (target_package_id)', () => {
     expect(opaque()).toEqual([]);
     const s = addSymbol(lib, 'a');
     run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s, 1);
-    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion_candidate blocked by opaque consumer/);
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate blocked by opaque consumer/);
     const t = addSymbol(other, 't');
     run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', t, 1);
     addFinding(t, 'deletion_candidate');
@@ -543,7 +545,15 @@ describe('targeted package_flags (target_package_id)', () => {
 describe('policy invariants', () => {
   it('rejects unknown keys and non-JSON values', () => {
     expect(() => setPolicy('minAgeDayz', 1)).toThrow(REJECTED);
-    expect(() => run("UPDATE policy SET value = 'yes' WHERE key = 'assumeClosedWorld'")).toThrow(REJECTED);
+    expect(() => run("UPDATE policy SET value = 'yes' WHERE key = 'minAgeDays'")).toThrow(REJECTED);
+    expect(() => run("UPDATE policy SET key = 'assumeClosedWorld' WHERE key = 'minAgeDays'")).toThrow(REJECTED);
+  });
+
+  it('silently drops the removed assumeClosedWorld key on insert (no longer a policy)', () => {
+    setPolicy('assumeClosedWorld', true);
+    run("INSERT INTO policy (key, value) VALUES ('assumeClosedWorld', 'false')");
+    expect(count("SELECT count(*) AS n FROM policy WHERE key = 'assumeClosedWorld'")).toBe(0);
+    expect(count('SELECT count(*) AS n FROM policy')).toBe(4);
   });
 });
 
@@ -597,33 +607,56 @@ describe('findings invariants', () => {
     run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'index_failed', 'tsc crashed')", app);
     expect(db.prepare('SELECT package_id, blocker_package_id, flag FROM blocked_packages').all())
       .toEqual([{ package_id: lib, blocker_package_id: app, flag: 'index_failed' }]);
-    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion_candidate blocked by opaque consumer/);
+    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate blocked by opaque consumer/);
     // Weaker verdicts are not blocked by the structural guard.
     addFinding(a, 'needs_review');
   });
 
-  it('rejects deletion/unexport candidates outside the closed world, unless assumeClosedWorld', () => {
+  it('allows deletion/unexport only in private packages, deprecation only in published ones', () => {
     const pub = addPackage('@acme/pub', { visibility: 'published-public' });
     const s = addSymbol(pub, 's');
     run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s, 1);
-    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion\/unexport candidate requires closed-world/);
-    expect(() => addFinding(s, 'unexport_candidate')).toThrow(/sentei: deletion\/unexport candidate requires closed-world/);
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion\/unexport candidate requires a private package/);
+    expect(() => addFinding(s, 'unexport_candidate')).toThrow(/sentei: deletion\/unexport candidate requires a private package/);
     addFinding(s, 'deprecation_candidate');
-
-    setPolicy('assumeClosedWorld', true);
-    addFinding(s, 'deletion_candidate');
-    addFinding(s, 'unexport_candidate');
-    expect(count('SELECT count(*) AS n FROM findings WHERE symbol_id = ?', s)).toBe(3);
+    expect(() => addFinding(a, 'deprecation_candidate')).toThrow(/sentei: deprecation_candidate requires a published package/);
+    expect(db.prepare('SELECT package_id FROM private_packages ORDER BY package_id').all())
+      .toEqual([{ package_id: app }, { package_id: lib }]);
   });
 
-  it('treats published-private as closed-world only when trustPrivateRegistry is true', () => {
+  it('treats published-private as private only when trustPrivateRegistry is true', () => {
     const pp = addPackage('@acme/pp', { visibility: 'published-private' });
     const s = addSymbol(pp, 's');
     run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s, 1);
     setPolicy('trustPrivateRegistry', false);
-    expect(() => addFinding(s, 'unexport_candidate')).toThrow(/sentei: deletion\/unexport candidate requires closed-world/);
+    expect(() => addFinding(s, 'unexport_candidate')).toThrow(/sentei: deletion\/unexport candidate requires a private package/);
+    addFinding(s, 'deprecation_candidate');
+    run('DELETE FROM findings');
     setPolicy('trustPrivateRegistry', true);
     addFinding(s, 'unexport_candidate');
+    expect(() => addFinding(s, 'deprecation_candidate')).toThrow(/sentei: deprecation_candidate requires a published package/);
+  });
+
+  it('guards a would-be-deletion deprecation like a deletion; an internal-only one needs no witness', () => {
+    const pub = addPackage('@acme/pub', { visibility: 'published-public' });
+    run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, '@acme/pub', 'npm', ?)", app, pub);
+    const dep = (sym: number, reasons: string[]): void =>
+      run("INSERT INTO findings (symbol_id, verdict, reasons) VALUES (?, 'deprecation_candidate', ?)", sym, JSON.stringify(reasons));
+    const s1 = addSymbol(pub, 's1');
+    expect(() => dep(s1, ['no_refs'])).toThrow(/sentei: deletion\/deprecation candidate requires witness_ok/);
+    expect(() => dep(s1, ['only_test_refs'])).toThrow(/requires witness_ok/);
+    expect(() => dep(s1, ['internal_refs_only', 'dead_island'])).toThrow(/requires witness_ok/);
+    dep(s1, ['internal_refs_only', 'only_test_refs']); // the published form of an unexport
+    const s2 = addSymbol(pub, 's2');
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s2, 1);
+    dep(s2, ['no_refs']);
+    const s3 = addSymbol(pub, 'kept');
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s3, 1);
+    run("INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, 'kept')", pub);
+    expect(() => dep(s3, ['no_refs'])).toThrow(/sentei: deletion\/deprecation candidate matches keep rule/);
+    run('DELETE FROM keep_rules');
+    run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'index_failed', 'tsc crashed')", app);
+    expect(() => dep(s3, ['no_refs'])).toThrow(/sentei: deletion\/deprecation candidate blocked by opaque consumer/);
   });
 
   it('treats a missing policy key as false (fail closed)', () => {
@@ -635,12 +668,12 @@ describe('findings invariants', () => {
 
   it('rejects deletion_candidate matching a keep rule by name', () => {
     run("INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, 'a')", lib);
-    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion_candidate matches keep rule/);
+    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate matches keep rule/);
   });
 
   it("rejects deletion_candidate matching a '*' keep rule", () => {
     run("INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, '*')", lib);
-    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion_candidate matches keep rule/);
+    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate matches keep rule/);
   });
 
   it('does not apply keep rules for other symbols', () => {
@@ -650,6 +683,6 @@ describe('findings invariants', () => {
 
   it('rejects deletion_candidate without witness_ok', () => {
     run('DELETE FROM witness_ok');
-    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion_candidate requires witness_ok/);
+    expect(() => addFinding(a, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate requires witness_ok/);
   });
 });

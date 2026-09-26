@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { ASSUME_CLOSED_WORLD_WARNING, buildReport, formatSummary, formatTable, skewSymbolName } from '../src/report.ts';
+import { buildReport, formatSummary, formatTable, ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS } from '../src/report.ts';
 
 const NOW = 1_700_000_000;
 const VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
@@ -51,7 +51,9 @@ function addModule(pkg: string, file: string): void {
 }
 
 function addFinding(symbolId: number, verdict: string, reasons: string[], blockedBy: string[] = []): void {
-  if (verdict === 'deletion_candidate') run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', symbolId, NOW);
+  const wouldDelete = verdict === 'deletion_candidate'
+    || (verdict === 'deprecation_candidate' && (!reasons.includes('internal_refs_only') || reasons.includes('dead_island')));
+  if (wouldDelete) run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', symbolId, NOW);
   run('INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, ?, ?, ?)',
     symbolId, verdict, JSON.stringify(reasons), JSON.stringify(blockedBy));
 }
@@ -70,6 +72,7 @@ function addSkew(consumer: string, target: string, symbolStr: string, file: stri
  *   acme/lib-core   ok       npm:acme/lib-core:@acme/util (private; deletion/unexport/private_dead)
  *                            npm:acme/lib-core:@acme/core (private; consumed by app + broken -> blocked by broken)
  *   acme/lib-pub    ok       npm:acme/lib-pub:@acme/pub (published-public; consumed by dyn -> blocked by dyn)
+ *                            npm:acme/lib-pub:@acme/open (published-public, no consumer; deprecations)
  *   acme/app        ok       npm:acme/app:@acme/app (consumer of util + core; version skew rows)
  *   acme/repo-broken failed  npm:acme/repo-broken:@acme/broken (index_failed; consumer of core)
  *   acme/app-dyn    partial  npm:acme/app-dyn:@acme/dyn (namespace_dynamic + dynamic_access; consumer of pub)
@@ -83,7 +86,6 @@ function markAnalyzed(d: DatabaseSync): void {
 function seed(): void {
   markAnalyzed(db);
   setPolicy('minAgeDays', 0);
-  setPolicy('assumeClosedWorld', true);
   addRepo('acme/lib-core', 'sha-core', 'ok');
   addRepo('acme/lib-pub', 'sha-pub', 'ok');
   addRepo('acme/app', 'sha-app', 'ok');
@@ -92,6 +94,7 @@ function seed(): void {
   const util = addPackage('@acme/util', 'acme/lib-core');
   const core = addPackage('@acme/core', 'acme/lib-core');
   const pub = addPackage('@acme/pub', 'acme/lib-pub', 'published-public');
+  const open = addPackage('@acme/open', 'acme/lib-pub', 'published-public');
   const app = addPackage('@acme/app', 'acme/app', 'private', [util, core]);
   const broken = addPackage('@acme/broken', 'acme/repo-broken', 'private', [core]);
   const dyn = addPackage('@acme/dyn', 'acme/app-dyn', 'private', [pub]);
@@ -112,6 +115,13 @@ function seed(): void {
 
   addFinding(addSymbol(pub, 'pubB'), BLOCKED, ['no_refs'], [`${dyn}:dynamic_access`, `${dyn}:namespace_dynamic`]);
   addFinding(addSymbol(pub, 'pubA'), BLOCKED, ['only_test_refs'], [`${dyn}:dynamic_access`, `${dyn}:namespace_dynamic`]);
+
+  addFinding(addSymbol(open, 'openDead', { line: 4, col: 16 }), 'deprecation_candidate', ['no_refs']);
+  addFinding(addSymbol(open, 'openTested', { line: 5, col: 16 }), 'deprecation_candidate', ['only_test_refs']);
+  addFinding(addSymbol(open, 'openIsland', { line: 6, col: 16 }), 'deprecation_candidate', ['internal_refs_only', 'dead_island']);
+  addFinding(addSymbol(open, 'openInternal', { line: 7, col: 16 }), 'deprecation_candidate', ['internal_refs_only']);
+  addFinding(addSymbol(open, 'openHelper', { line: 8, col: 9, exported: false }), 'private_dead', ['unlocked_by:openDead']);
+  addFinding(addSymbol(open, 'openOld', { line: 9, col: 9, exported: false }), 'private_dead', ['already_unreachable']);
 
   // Bare sidecar name, the same reference again as a SCIP symbol (deduped), and a SCIP-only one.
   addSkew(app, util, 'removedFn', 'src/main.ts', 3, 9);
@@ -136,65 +146,102 @@ describe('buildReport', () => {
   it('produces the exact report JSON', () => {
     const report = buildReport({ db, now: NOW });
     const counts = (o: Partial<Record<string, number>>): Record<string, number> => ({
-      deletion_candidate: 0, dead_island: 0, unexport_candidate: 0, deprecation_candidate: 0, private_dead: 0, needs_review: 0, blocked: 0, ...o,
+      delete: 0, deprecate: 0, unexport: 0, private_dead: 0, needs_review: 0, blocked: 0, ...o,
     });
     const blockedCounts = (n: number, review = 0): Record<string, number> =>
       BLOCKED === 'blocked' ? counts({ blocked: n, needs_review: review }) : counts({ needs_review: n + review });
+    const core = { package_id: 'npm:acme/lib-core:@acme/core', name: '@acme/core', repo: 'acme/lib-core' };
+    const util = { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core' };
+    const open = { package_id: 'npm:acme/lib-pub:@acme/open', name: '@acme/open', repo: 'acme/lib-pub' };
+    const pub = { package_id: 'npm:acme/lib-pub:@acme/pub', name: '@acme/pub', repo: 'acme/lib-pub' };
+    const dynBlockers = ['npm:acme/app-dyn:@acme/dyn:dynamic_access', 'npm:acme/app-dyn:@acme/dyn:namespace_dynamic'];
+    const findings = [
+      { ...core, symbol: 'coreDead', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+        verdict: BLOCKED, reasons: ['no_refs'], blocked_by: ['npm:acme/repo-broken:@acme/broken:index_failed'] },
+      { ...core, symbol: 'coreMentioned', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+        verdict: 'needs_review', reasons: ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:3'], blocked_by: [] },
+      { ...util, symbol: '_island', file: 'src/fns.ts', line: null, col: null, kind: 'Function',
+        verdict: 'private_dead', reasons: ['already_unreachable'], blocked_by: [] },
+      { ...util, symbol: 'helper', file: 'src/fns.ts', line: 21, col: 10, kind: 'Function',
+        verdict: 'private_dead', reasons: ['unlocked_by:unusedFn'], blocked_by: [] },
+      { ...util, symbol: 'internalOnly', file: 'src/index.ts', line: 3, col: 17, kind: '',
+        verdict: 'unexport_candidate', reasons: ['internal_refs_only'], blocked_by: [] },
+      { ...util, symbol: 'islandFn', file: 'src/fns.ts', line: 31, col: 17, kind: 'Function',
+        verdict: 'deletion_candidate', reasons: ['internal_refs_only', 'dead_island'], blocked_by: [] },
+      { ...util, symbol: 'unusedFn', file: 'src/fns.ts', line: 9, col: 17, kind: 'Function',
+        verdict: 'deletion_candidate', reasons: ['no_refs'], blocked_by: [] },
+      { ...open, symbol: 'openDead', file: 'src/index.ts', line: 5, col: 17, kind: 'Function',
+        verdict: 'deprecation_candidate', reasons: ['no_refs'], blocked_by: [] },
+      { ...open, symbol: 'openHelper', file: 'src/index.ts', line: 9, col: 10, kind: 'Function',
+        verdict: 'private_dead', reasons: ['unlocked_by:openDead'], blocked_by: [] },
+      { ...open, symbol: 'openInternal', file: 'src/index.ts', line: 8, col: 17, kind: 'Function',
+        verdict: 'deprecation_candidate', reasons: ['internal_refs_only'], blocked_by: [] },
+      { ...open, symbol: 'openIsland', file: 'src/index.ts', line: 7, col: 17, kind: 'Function',
+        verdict: 'deprecation_candidate', reasons: ['internal_refs_only', 'dead_island'], blocked_by: [] },
+      { ...open, symbol: 'openOld', file: 'src/index.ts', line: 10, col: 10, kind: 'Function',
+        verdict: 'private_dead', reasons: ['already_unreachable'], blocked_by: [] },
+      { ...open, symbol: 'openTested', file: 'src/index.ts', line: 6, col: 17, kind: 'Function',
+        verdict: 'deprecation_candidate', reasons: ['only_test_refs'], blocked_by: [] },
+      { ...pub, symbol: 'pubA', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+        verdict: BLOCKED, reasons: ['only_test_refs'], blocked_by: dynBlockers },
+      { ...pub, symbol: 'pubB', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+        verdict: BLOCKED, reasons: ['no_refs'], blocked_by: dynBlockers },
+    ];
+    const pick = (...keys: string[]): typeof findings => keys.map((k) => findings.find((f) => `${f.name}#${f.symbol}` === k)!);
+    const versionSkew = [
+      { package_id: 'npm:acme/app-dyn:@acme/dyn', repo: 'acme/app-dyn', symbol: 'oldPub', file: 'src/main.ts', line: null, col: null, target_package_id: 'npm:acme/lib-pub:@acme/pub' },
+      { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'method', file: 'src/other.ts', line: 11, col: 1, target_package_id: 'npm:acme/lib-core:@acme/util' },
+      { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 4, col: 10, target_package_id: 'npm:acme/lib-core:@acme/util' },
+    ];
+    const deprecate = pick('@acme/open#openDead', '@acme/open#openIsland', '@acme/open#openTested');
+    const blockedRows = pick('@acme/core#coreDead', '@acme/pub#pubA', '@acme/pub#pubB');
+    const reviewRows = pick('@acme/core#coreMentioned');
     expect(report).toEqual({
       tool: { name: 'sentei', version: VERSION },
       generatedAt: NOW,
       generatedAtIso: new Date(NOW * 1000).toISOString(),
-      policy: { minAgeDays: 0, trustPrivateRegistry: true, assumeClosedWorld: true, countTestsAsConsumers: false, countDocsAsConsumers: false },
+      policy: { minAgeDays: 0, trustPrivateRegistry: true, countTestsAsConsumers: false, countDocsAsConsumers: false },
       warnings: [
-        ASSUME_CLOSED_WORLD_WARNING,
         'minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates',
         'repo acme/app-dyn: index partial; its packages are opaque and block verdicts for every org package they depend on',
         'repo acme/repo-broken: index failed for npm:acme/repo-broken:@acme/broken; it is opaque and blocks verdicts for every org package it depends on',
       ],
-      findings: [
-        { package_id: 'npm:acme/lib-core:@acme/core', name: '@acme/core', repo: 'acme/lib-core', symbol: 'coreDead', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: BLOCKED, reasons: ['no_refs'], blocked_by: ['npm:acme/repo-broken:@acme/broken:index_failed'] },
-        { package_id: 'npm:acme/lib-core:@acme/core', name: '@acme/core', repo: 'acme/lib-core', symbol: 'coreMentioned', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: 'needs_review', reasons: ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:3'], blocked_by: [] },
-        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: '_island', file: 'src/fns.ts', line: null, col: null, kind: 'Function',
-          verdict: 'private_dead', reasons: ['already_unreachable'], blocked_by: [] },
-        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'helper', file: 'src/fns.ts', line: 21, col: 10, kind: 'Function',
-          verdict: 'private_dead', reasons: ['unlocked_by:unusedFn'], blocked_by: [] },
-        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'internalOnly', file: 'src/index.ts', line: 3, col: 17, kind: '',
-          verdict: 'unexport_candidate', reasons: ['internal_refs_only'], blocked_by: [] },
-        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'islandFn', file: 'src/fns.ts', line: 31, col: 17, kind: 'Function',
-          verdict: 'deletion_candidate', reasons: ['internal_refs_only', 'dead_island'], blocked_by: [] },
-        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'unusedFn', file: 'src/fns.ts', line: 9, col: 17, kind: 'Function',
-          verdict: 'deletion_candidate', reasons: ['no_refs'], blocked_by: [] },
-        { package_id: 'npm:acme/lib-pub:@acme/pub', name: '@acme/pub', repo: 'acme/lib-pub', symbol: 'pubA', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: BLOCKED, reasons: ['only_test_refs'], blocked_by: ['npm:acme/app-dyn:@acme/dyn:dynamic_access', 'npm:acme/app-dyn:@acme/dyn:namespace_dynamic'] },
-        { package_id: 'npm:acme/lib-pub:@acme/pub', name: '@acme/pub', repo: 'acme/lib-pub', symbol: 'pubB', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: BLOCKED, reasons: ['no_refs'], blocked_by: ['npm:acme/app-dyn:@acme/dyn:dynamic_access', 'npm:acme/app-dyn:@acme/dyn:namespace_dynamic'] },
-      ],
-      versionSkew: [
-        { package_id: 'npm:acme/app-dyn:@acme/dyn', repo: 'acme/app-dyn', symbol: 'oldPub', file: 'src/main.ts', line: null, col: null, target_package_id: 'npm:acme/lib-pub:@acme/pub' },
-        { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'method', file: 'src/other.ts', line: 11, col: 1, target_package_id: 'npm:acme/lib-core:@acme/util' },
-        { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 4, col: 10, target_package_id: 'npm:acme/lib-core:@acme/util' },
-      ],
+      findings,
+      versionSkew,
+      views: {
+        delete: { description: VIEW_DESCRIPTIONS.delete, rows: pick('@acme/util#islandFn', '@acme/util#unusedFn') },
+        deprecate: { description: VIEW_DESCRIPTIONS.deprecate, rows: deprecate },
+        // The same rows as deprecate, under the assertion; openHelper (unlocked only by a
+        // deprecation) is dead only if the assertion holds, openOld is dead regardless.
+        org_dead: { description: VIEW_DESCRIPTIONS.org_dead, assertion: ORG_DEAD_ASSERTION, rows: deprecate,
+          private_dead: pick('@acme/open#openHelper') },
+        unexport: { description: VIEW_DESCRIPTIONS.unexport, rows: pick('@acme/util#internalOnly'), published: pick('@acme/open#openInternal') },
+        private_dead: { description: VIEW_DESCRIPTIONS.private_dead, rows: pick('@acme/util#_island', '@acme/util#helper', '@acme/open#openOld') },
+        needs_review: { description: VIEW_DESCRIPTIONS.needs_review, rows: BLOCKED === 'blocked' ? reviewRows : pick('@acme/core#coreDead', '@acme/core#coreMentioned', '@acme/pub#pubA', '@acme/pub#pubB') },
+        blocked: { description: VIEW_DESCRIPTIONS.blocked, rows: BLOCKED === 'blocked' ? blockedRows : [] },
+        version_skew: { description: VIEW_DESCRIPTIONS.version_skew, rows: versionSkew },
+      },
       packages: [
-        { package_id: 'npm:acme/app-dyn:@acme/dyn', name: '@acme/dyn', repo: 'acme/app-dyn', visibility: 'private', closed_world: true, opaque: true,
+        { package_id: 'npm:acme/app-dyn:@acme/dyn', name: '@acme/dyn', repo: 'acme/app-dyn', visibility: 'private', private: true, opaque: true,
           flags: [
             { flag: 'dynamic_access', reason: "require('@acme/' + name)", file: 'src/load.cts' },
             { flag: 'namespace_dynamic', reason: 'P[key]', file: 'src/main.ts' },
           ],
           consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
-        { package_id: 'npm:acme/app:@acme/app', name: '@acme/app', repo: 'acme/app', visibility: 'private', closed_world: true, opaque: false, flags: [],
+        { package_id: 'npm:acme/app:@acme/app', name: '@acme/app', repo: 'acme/app', visibility: 'private', private: true, opaque: false, flags: [],
           consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
-        { package_id: 'npm:acme/lib-core:@acme/core', name: '@acme/core', repo: 'acme/lib-core', visibility: 'private', closed_world: true, opaque: false, flags: [],
+        { ...core, visibility: 'private', private: true, opaque: false, flags: [],
           consumers: ['npm:acme/app:@acme/app', 'npm:acme/repo-broken:@acme/broken'], blocked_by: ['npm:acme/repo-broken:@acme/broken:index_failed'],
           counts: blockedCounts(1, 1), exported: 2, symbols: 2 },
-        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', visibility: 'private', closed_world: true, opaque: false, flags: [],
+        { ...util, visibility: 'private', private: true, opaque: false, flags: [],
           consumers: ['npm:acme/app:@acme/app'], blocked_by: [],
-          counts: counts({ deletion_candidate: 1, dead_island: 1, unexport_candidate: 1, private_dead: 2 }), exported: 4, symbols: 6 },
-        { package_id: 'npm:acme/lib-pub:@acme/pub', name: '@acme/pub', repo: 'acme/lib-pub', visibility: 'published-public', closed_world: true, opaque: false, flags: [],
-          consumers: ['npm:acme/app-dyn:@acme/dyn'], blocked_by: ['npm:acme/app-dyn:@acme/dyn:dynamic_access', 'npm:acme/app-dyn:@acme/dyn:namespace_dynamic'],
+          counts: counts({ delete: 2, unexport: 1, private_dead: 2 }), exported: 4, symbols: 6 },
+        { ...open, visibility: 'published-public', private: false, opaque: false, flags: [], consumers: [], blocked_by: [],
+          counts: counts({ deprecate: 3, unexport: 1, private_dead: 1 }), exported: 4, symbols: 6 },
+        { ...pub, visibility: 'published-public', private: false, opaque: false, flags: [],
+          consumers: ['npm:acme/app-dyn:@acme/dyn'], blocked_by: dynBlockers,
           counts: blockedCounts(2), exported: 2, symbols: 2 },
-        { package_id: 'npm:acme/repo-broken:@acme/broken', name: '@acme/broken', repo: 'acme/repo-broken', visibility: 'private', closed_world: true, opaque: true,
+        { package_id: 'npm:acme/repo-broken:@acme/broken', name: '@acme/broken', repo: 'acme/repo-broken', visibility: 'private', private: true, opaque: true,
           flags: [{ flag: 'index_failed', reason: 'tsconfig.json: invalid JSON', file: null }],
           consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
       ],
@@ -214,16 +261,33 @@ describe('buildReport', () => {
     });
   });
 
-  it('omits the closed-world and age warnings when those policies are off, and survives JSON round-trip', () => {
-    setPolicy('assumeClosedWorld', false);
+  it('omits the age warning when the policy is on, reports trustPrivateRegistry in `private`, and survives JSON round-trip', () => {
     setPolicy('minAgeDays', 180);
-    const report = buildReport({ db, now: NOW });
-    expect(report.warnings.some((w) => w.includes('assumeClosedWorld'))).toBe(false);
+    let report = buildReport({ db, now: NOW });
     expect(report.warnings.some((w) => w.includes('minAgeDays'))).toBe(false);
-    expect(report.policy).toMatchObject({ assumeClosedWorld: false, minAgeDays: 180 });
-    // published-public @acme/pub is open-world without the override.
-    expect(report.packages.find((p) => p.package_id === 'npm:acme/lib-pub:@acme/pub')?.closed_world).toBe(false);
+    expect(report.policy).toMatchObject({ minAgeDays: 180 });
+    expect(report.policy).not.toHaveProperty('assumeClosedWorld');
     expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+    run("UPDATE packages SET visibility = 'published-private' WHERE package_id = 'npm:acme/lib-core:@acme/util'");
+    report = buildReport({ db, now: NOW });
+    expect(report.packages.find((p) => p.package_id === 'npm:acme/lib-core:@acme/util')?.private).toBe(true);
+    setPolicy('trustPrivateRegistry', false);
+    report = buildReport({ db, now: NOW });
+    expect(report.packages.find((p) => p.package_id === 'npm:acme/lib-core:@acme/util')?.private).toBe(false);
+  });
+
+  it('throws on a verdict no view places', () => {
+    const d = openDb(':memory:');
+    try {
+      markAnalyzed(d);
+      d.exec("PRAGMA ignore_check_constraints = ON");
+      d.exec("INSERT INTO repos (repo) VALUES ('acme/x'); INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/x:x', 'acme/x', '.', 'npm', 'x', 'private')");
+      d.exec("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:acme/x:x', 'f', 's')");
+      d.exec("INSERT INTO findings (symbol_id, verdict) VALUES (last_insert_rowid(), 'something_new')");
+      expect(() => buildReport({ db: d, now: NOW })).toThrow(/no view for verdict "something_new"/);
+    } finally {
+      d.close();
+    }
   });
 
   it('reports a missing policy key as null (the views read it as false)', () => {
@@ -250,40 +314,79 @@ describe('skewSymbolName', () => {
   });
 });
 
+describe('parseViews', () => {
+  it('splits commas, accepts hyphens, dedupes into REPORT_VIEWS order, rejects unknown names', () => {
+    expect(parseViews(['org-dead,delete', 'delete', ' private_dead '])).toEqual(['delete', 'org_dead', 'private_dead']);
+    expect(parseViews([])).toEqual([]);
+    expect(() => parseViews(['closed_world'])).toThrow(/--view: unknown view "closed_world" \(known: delete, deprecate, org_dead, /);
+  });
+});
+
 describe('formatSummary', () => {
-  it('shouts the warnings first, then packages, top blockers and version skew', () => {
+  it('shouts the warnings first, then packages, view totals, top blockers and version skew', () => {
     const text = formatSummary(buildReport({ db, now: NOW }));
     const lines = text.split('\n');
     expect(lines[0]).toBe(`sentei ${VERSION} report, generated 2023-11-14T22:13:20Z`);
-    expect(lines[1]).toBe('policy: minAgeDays=0 trustPrivateRegistry=true assumeClosedWorld=true countTestsAsConsumers=false countDocsAsConsumers=false');
+    expect(lines[1]).toBe('policy: minAgeDays=0 trustPrivateRegistry=true countTestsAsConsumers=false countDocsAsConsumers=false');
     expect(lines[3]).toMatch(/^!{78}$/);
-    expect(lines[4]).toBe(`!! WARNING: ${ASSUME_CLOSED_WORLD_WARNING}`);
-    expect(lines[8]).toMatch(/^!{78}$/);
+    expect(lines[4]).toMatch(/^!! WARNING: minAgeDays is 0/);
+    expect(lines[7]).toMatch(/^!{78}$/);
     // eslint-disable-next-line no-control-regex
     expect(text).toMatch(/^[\x20-\x7e\n]*$/);
 
-    const header = lines.indexOf('Packages (6), 9 finding(s)');
-    expect(header).toBeGreaterThan(8);
-    expect(lines[header + 1]).toMatch(/^PACKAGE +REPO +VISIBILITY +WORLD +OPAQUE +DELETE +ISLAND +UNEXPORT +DEPRECATE +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
+    const header = lines.indexOf('Packages (7), 15 finding(s)');
+    expect(header).toBeGreaterThan(7);
+    expect(lines[header + 1]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +DEPRECATE +UNEXPORT +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
     // PACKAGE is the name, REPO the repo: together the package id, readable.
     const util = lines.find((l) => l.startsWith('@acme/util '));
-    expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +closed +1 +1 +1 +0 +2 +0 +0$/);
+    expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +yes +2 +0 +1 +2 +0 +0$/);
+    expect(lines.find((l) => l.startsWith('@acme/open '))).toMatch(/^@acme\/open +acme\/lib-pub +published-public +0 +3 +1 +1 +0 +0$/);
     const pub = lines.find((l) => l.startsWith('@acme/pub '));
-    expect(pub).toMatch(/^@acme\/pub +acme\/lib-pub +published-public +closed .*npm:acme\/app-dyn:@acme\/dyn:dynamic_access, npm:acme\/app-dyn:@acme\/dyn:namespace_dynamic$/);
-    expect(lines.find((l) => l.startsWith('@acme/broken '))).toMatch(/acme\/repo-broken +private +closed +yes +0/);
-    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(BLOCKED === 'blocked' ? /^TOTAL +1 +1 +1 +0 +2 +1 +3$/ : /^TOTAL +1 +1 +1 +0 +2 +4 +0$/);
-    const total = lines.findIndex((l) => l.startsWith('TOTAL '));
-    expect(lines[total + 1]).toBe('DELETE: exports with no counted use; ISLAND: exports used only by other candidates (delete them together).');
+    expect(pub).toMatch(/^@acme\/pub +acme\/lib-pub +published-public +0 .*npm:acme\/app-dyn:@acme\/dyn:dynamic_access, npm:acme\/app-dyn:@acme\/dyn:namespace_dynamic$/);
+    expect(lines.find((l) => l.startsWith('@acme/broken '))).toMatch(/acme\/repo-broken +private +yes +yes +0/);
+    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(/^TOTAL +2 +3 +2 +3 +1 +3$/);
     // Every row of the package table has its BLOCKED BY column at the same offset.
     const col = lines[header + 1]!.indexOf('BLOCKED BY');
     expect(pub!.indexOf('npm:acme/app-dyn:@acme/dyn:')).toBe(col);
 
+    // View totals: ORG-DEAD once, as the DEPRECATE count with a footnote; islands are a reason.
+    const views = lines.indexOf('Views');
+    expect(views).toBeGreaterThan(header);
+    expect(lines.slice(views + 1, views + 9)).toEqual([
+      '  DELETE            2  (no_refs 1, dead_island 1)',
+      '  DEPRECATE         3  (no_refs 1, only_test_refs 1, dead_island 1)',
+      '  ORG-DEAD          3*  (= DEPRECATE, + 1 private helper(s) they unlock)',
+      '  UNEXPORT          2  (1 in published packages: deprecate the export first)',
+      '  PRIV-DEAD         3',
+      '  REVIEW            1',
+      '  BLOCKED           3',
+      '  VERSION-SKEW      3',
+    ]);
+    expect(lines[views + 9]).toBe('dead_island: exports used only by other candidates (delete / deprecate them together).');
+    expect(lines[views + 10]).toBe(`* ORG-DEAD lists the DEPRECATE rows as deletions, asserting: ${ORG_DEAD_ASSERTION}`);
+
     const top = lines.indexOf('Top blockers (opaque consumers preventing verdicts; fix these first)');
-    expect(top).toBeGreaterThan(header);
+    expect(top).toBeGreaterThan(views);
     expect(lines[top + 1]).toMatch(/^BLOCKER +REPO +FLAGS +FINDINGS +BLOCKS PACKAGES$/);
     expect(lines[top + 3]).toMatch(/^npm:acme\/app-dyn:@acme\/dyn +acme\/app-dyn +dynamic_access,namespace_dynamic +2 +npm:acme\/lib-pub:@acme\/pub$/);
     expect(lines[top + 4]).toMatch(/^npm:acme\/repo-broken:@acme\/broken +acme\/repo-broken +index_failed +1 +npm:acme\/lib-core:@acme\/core$/);
     expect(text.trimEnd().split('\n').at(-1)).toBe('Version skew: 3 reference(s) from 2 package(s) to symbols missing at HEAD');
+  });
+
+  it('prints only the selected views (report --view)', () => {
+    const lines = formatSummary(buildReport({ db, now: NOW }), { views: parseViews(['org-dead,delete']) }).split('\n');
+    expect(lines[2]).toBe('views: delete, org_dead');
+    const header = lines.findIndex((l) => l.startsWith('PACKAGE '));
+    expect(lines[header]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +BLOCKED BY$/);
+    const views = lines.indexOf('Views');
+    expect(lines.slice(views + 1, views + 3).map((l) => l.trim().split(/ +/)[0])).toEqual(['DELETE', 'ORG-DEAD']);
+    expect(lines[views + 3]).toMatch(/^dead_island:/);
+    expect(lines[views + 4]).toMatch(/^\* ORG-DEAD lists the DEPRECATE rows as deletions/);
+    expect(lines.some((l) => l.startsWith('Top blockers') || l.startsWith('Version skew'))).toBe(false);
+    // Without org_dead, no footnote.
+    const plain = formatSummary(buildReport({ db, now: NOW }), { views: ['deprecate'] });
+    expect(plain).not.toContain('ORG-DEAD');
+    expect(plain).toContain('  DEPRECATE         3');
   });
 
   it('says so when nothing blocks and prints no warning banner when there are no warnings', () => {

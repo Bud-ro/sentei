@@ -3,8 +3,10 @@
 // All policy is SQL in packages/core/sql/analyze.sql (views, loaded verbatim); this
 // module only sets the run parameters and copies the views into `findings` inside one
 // transaction. The findings triggers in schema.sql guard every insert; analyze never
-// inserts `deletion_candidate` (that needs witness_ok, which the witness stage writes):
-// a would-be deletion is `needs_review` with reason `witness_pending`.
+// inserts a would-be deletion (`deletion_candidate`, or a `deprecation_candidate` that
+// is not internal-only: both need witness_ok, which the witness stage writes): it is
+// `needs_review` with reason `witness_pending`, and the witness decides the verdict
+// from the package (private -> deletion, published -> deprecation).
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -69,15 +71,17 @@ export function insertPrivateDead(db: DatabaseSync): void {
 const MAX_ISLAND_PASSES = 10;
 
 /**
- * Dead islands that are no longer islands revert to unexport_candidate. A dead island
- * (reason `dead_island`) is an unexport_candidate whose internal users were all
- * candidates when analyze ran. When the witness downgrades such a user to needs_review
+ * Dead islands that are no longer islands revert to an unexport: unexport_candidate in
+ * a private package, deprecation_candidate [internal_refs_only(, only_test_refs)] in a
+ * published one (schema view private_packages). A dead island (reason `dead_island`)
+ * is an internal-only export whose internal users were all candidates when analyze ran. When the witness downgrades such a user to needs_review
  * (witness_mismatch: it is not a candidate any more, so it is a seed again), the island
  * becomes reachable in the recomputed mat_reachable_after and is really an unexport:
  * pdfjs `DocumentInitParameters`, used only by `PDFJS`, stayed a deletion after `PDFJS`
  * was downgraded. Per pass: refill mat_reachable_after from the current `findings`;
- * every candidate finding (deletion_candidate, or needs_review + witness_pending) with
- * reason dead_island whose symbol is now in it is replaced by unexport_candidate with
+ * every candidate finding (deletion_candidate / deprecation_candidate, or needs_review +
+ * witness_pending) with reason dead_island whose symbol is now in it is replaced by the
+ * unexport verdict with
  * reasons minus dead_island / witness_pending; a witness-mismatched dead island
  * (needs_review without witness_pending) stays needs_review and only loses the
  * dead_island reason (the witness saw the name somewhere: fail closed). Repeats until a
@@ -89,9 +93,11 @@ const MAX_ISLAND_PASSES = 10;
  */
 export function reconcileDeadIslands(db: DatabaseSync): number {
   const select = db.prepare(
-    `SELECT f.symbol_id, f.verdict, f.reasons, f.blocked_by
+    `SELECT f.symbol_id, f.verdict, f.reasons, f.blocked_by,
+            EXISTS (SELECT 1 FROM symbols s JOIN private_packages p ON p.package_id = s.package_id
+                    WHERE s.symbol_id = f.symbol_id) AS priv
      FROM findings f
-     WHERE f.verdict IN ('deletion_candidate', 'needs_review')
+     WHERE f.verdict IN ('deletion_candidate', 'deprecation_candidate', 'needs_review')
        AND EXISTS (SELECT 1 FROM json_each(f.reasons) j WHERE j.value = 'dead_island')
        AND f.symbol_id IN (SELECT symbol_id FROM mat_reachable_after)
      ORDER BY f.symbol_id`,
@@ -101,14 +107,15 @@ export function reconcileDeadIslands(db: DatabaseSync): number {
   let changed = 0;
   for (let pass = 0; pass < MAX_ISLAND_PASSES; pass += 1) {
     fillReachableAfter(db);
-    const rows = select.all() as Array<{ symbol_id: number; verdict: string; reasons: string; blocked_by: string }>;
+    const rows = select.all() as Array<{ symbol_id: number; verdict: string; reasons: string; blocked_by: string; priv: number }>;
     if (rows.length === 0) break;
     for (const r of rows) {
       const reasons = JSON.parse(r.reasons) as string[];
-      const candidate = r.verdict === 'deletion_candidate' || reasons.includes('witness_pending');
+      const candidate = r.verdict !== 'needs_review' || reasons.includes('witness_pending');
       const kept = reasons.filter((x) => x !== 'dead_island' && (!candidate || x !== 'witness_pending'));
+      const unexport = r.priv === 1 ? 'unexport_candidate' : 'deprecation_candidate';
       del.run(r.symbol_id, r.verdict);
-      ins.run(r.symbol_id, candidate ? 'unexport_candidate' : r.verdict, JSON.stringify(kept), r.blocked_by);
+      ins.run(r.symbol_id, candidate ? unexport : r.verdict, JSON.stringify(kept), r.blocked_by);
     }
     changed += rows.length;
   }

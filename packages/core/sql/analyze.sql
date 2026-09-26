@@ -444,21 +444,22 @@ WHERE x.exported_as = 'default'
 -- S of package P not kept, not a runtime entry default (runtime_entry_defaults), not a
 -- runtime-invoked entry symbol (entry_symbols), not defined in a generated file
 -- (generated_files: regenerated, never reported) or a script file (script_files:
--- runnable code, not library surface) and with no counted external reference (those
--- are alive: no row):
---   internal refs > 0:  closed_world & age ok -> unexport_candidate [internal_refs_only]
---                       not closed_world      -> deprecation_candidate [internal_refs_only, open_world]
---                       closed_world, young   -> no row
---   no refs:            closed_world & age ok -> needs_review [no_refs, witness_pending]
---                                                (the witness stage turns it into deletion_candidate)
---                       not closed_world      -> deprecation_candidate [no_refs, open_world]
---                       closed_world, young   -> no row
+-- runnable code, not library surface), with no counted external reference (those are
+-- alive: no row) and old enough (symbol_age_ok; a younger symbol gets no row):
+--   internal refs > 0:  P private   -> unexport_candidate    [internal_refs_only]
+--                       P published -> deprecation_candidate [internal_refs_only]
+--   no refs:            either      -> needs_review [no_refs, witness_pending]
+--                                      (the witness stage turns it into deletion_candidate
+--                                      for a private P, deprecation_candidate for a
+--                                      published one, or leaves needs_review on a hit)
+-- "Private" is the schema view private_packages (nobody outside the org can depend on
+-- P); the verdict depends on nothing else about the world, so every report view
+-- (delete / deprecate / org_dead / unexport) is a filter over the same findings.
 -- no_refs becomes only_test_refs when the only uses (same-package or cross-package) are
 -- in excluded test files (and only_test_refs is appended after internal_refs_only in the
 -- first branch when there are also excluded test uses).
 -- Any would-be verdict in a package with a verdict_blockers row becomes `blocked`,
 -- keeping the base reasons, with blocked_by = sorted distinct '<blocker>:<flag>'.
--- The age rule gates only closed-world verdicts, exactly as in the §6.5 tree.
 CREATE VIEW base_verdicts (symbol_id, verdict, reasons, blocked_by) AS
 -- (`base` is MATERIALIZED and uses uncorrelated `IN (SELECT …)`: otherwise SQLite
 -- inlines each flag at every use below and recomputes the ref views per use and per row.)
@@ -466,10 +467,10 @@ WITH base AS MATERIALIZED (
   SELECT s.symbol_id, s.package_id,
          s.symbol_id IN (SELECT symbol_id FROM internal_refs) AS has_internal,
          s.symbol_id IN (SELECT symbol_id FROM test_only_refs) AS test_only,
-         s.package_id IN (SELECT package_id FROM closed_world_packages) AS closed,
-         s.symbol_id IN (SELECT symbol_id FROM symbol_age_ok) AS age_ok
+         s.package_id IN (SELECT package_id FROM private_packages) AS priv
   FROM symbols s
   WHERE s.is_exported = 1
+    AND s.symbol_id IN (SELECT symbol_id FROM symbol_age_ok)
     AND s.symbol_id NOT IN (SELECT symbol_id FROM external_refs)
     AND s.symbol_id NOT IN (SELECT symbol_id FROM kept_symbols)
     AND s.symbol_id NOT IN (SELECT symbol_id FROM runtime_entry_defaults)
@@ -480,9 +481,9 @@ WITH base AS MATERIALIZED (
 classified AS (
   SELECT symbol_id, package_id,
          CASE
-           WHEN closed AND age_ok AND has_internal THEN 'unexport_candidate'
-           WHEN closed AND age_ok THEN 'needs_review'
-           WHEN NOT closed THEN 'deprecation_candidate'
+           WHEN has_internal AND priv THEN 'unexport_candidate'
+           WHEN has_internal THEN 'deprecation_candidate'
+           ELSE 'needs_review'
          END AS verdict,
          CASE
            WHEN has_internal AND test_only THEN json_array('internal_refs_only', 'only_test_refs')
@@ -502,19 +503,22 @@ SELECT c.symbol_id,
        CASE
          WHEN b.package_id IS NOT NULL THEN c.base_reasons
          WHEN c.verdict = 'needs_review' THEN json_insert(c.base_reasons, '$[#]', 'witness_pending')
-         WHEN c.verdict = 'deprecation_candidate' THEN json_insert(c.base_reasons, '$[#]', 'open_world')
          ELSE c.base_reasons
        END,
        coalesce(b.blocked_by, json_array())
 FROM classified c
-LEFT JOIN blockers b ON b.package_id = c.package_id
-WHERE c.verdict IS NOT NULL;
+LEFT JOIN blockers b ON b.package_id = c.package_id;
 
 -- ---------------------------------------------------------------------------
 -- Private dead code (PLAN.md §6.5, second half)
 -- ---------------------------------------------------------------------------
 
--- Exports that the findings propose to delete or unexport: they stop being seeds.
+-- Exports that the findings propose to delete, unexport or deprecate: they stop being
+-- seeds. A deprecation is a deletion (or an unexport) of a published symbol deferred to
+-- a major version, so it is a candidate too: the private helpers it unlocks are
+-- private_dead with unlocked_by:<it> (the report shows those, in a published package,
+-- only in the org_dead view). Package-local: reach_edges never cross packages, so a
+-- published package's candidates never unlock a private package's code.
 -- Read from `findings` (not from base_verdicts) so that the witness stage's outcome
 -- propagates: a candidate the witness downgrades to needs_review (witness_mismatch, no
 -- witness_pending) is no longer a candidate, stays a seed, and so no longer unlocks
@@ -526,7 +530,7 @@ FROM symbols s
 WHERE EXISTS (
   SELECT 1 FROM findings f
   WHERE f.symbol_id = s.symbol_id
-    AND (f.verdict IN ('deletion_candidate', 'unexport_candidate')
+    AND (f.verdict IN ('deletion_candidate', 'unexport_candidate', 'deprecation_candidate')
          OR (f.verdict = 'needs_review'
              AND EXISTS (SELECT 1 FROM json_each(f.reasons) j WHERE j.value = 'witness_pending')))
 );
@@ -544,21 +548,26 @@ WITH RECURSIVE reach (symbol_id) AS (
 )
 SELECT symbol_id FROM reach;
 
--- The verdicts (PLAN.md §6.5), with dead islands: an unexport_candidate that is not in
--- reachable_after has internal references only from other candidates (nanotar's
--- createTar / createTarGzip / createTarGzipStream calling each other, nothing else
--- calling them). Unexporting them all would leave an unreachable island, so each is a
--- deletion instead: needs_review with reasons [internal_refs_only(, only_test_refs),
--- dead_island, witness_pending], which the witness promotes or downgrades like any
+-- The verdicts (PLAN.md §6.5), with dead islands: an internal-only export
+-- (unexport_candidate, or its published form deprecation_candidate [internal_refs_only])
+-- that is not in reachable_after has internal references only from other candidates
+-- (nanotar's createTar / createTarGzip / createTarGzipStream calling each other, nothing
+-- else calling them). Unexporting them all would leave an unreachable island, so each is
+-- a would-be deletion instead: needs_review with reasons [internal_refs_only(,
+-- only_test_refs), dead_island, witness_pending], which the witness promotes (to
+-- deletion_candidate or, published, deprecation_candidate) or downgrades like any
 -- other would-be deletion. candidate_symbols is the same set either way, so the
 -- private_dead cascade (unlocked_by) already agrees. Reads mat_base_verdicts and
 -- mat_reachable_after, which analyze.ts fills after staging the base verdicts in
 -- `findings` (same candidate set).
 CREATE VIEW verdicts (symbol_id, verdict, reasons, blocked_by) AS
 SELECT v.symbol_id,
-       CASE WHEN v.verdict = 'unexport_candidate' AND r.symbol_id IS NULL THEN 'needs_review' ELSE v.verdict END,
        CASE
-         WHEN v.verdict = 'unexport_candidate' AND r.symbol_id IS NULL
+         WHEN v.verdict IN ('unexport_candidate', 'deprecation_candidate') AND r.symbol_id IS NULL THEN 'needs_review'
+         ELSE v.verdict
+       END,
+       CASE
+         WHEN v.verdict IN ('unexport_candidate', 'deprecation_candidate') AND r.symbol_id IS NULL
            THEN json_insert(json_insert(v.reasons, '$[#]', 'dead_island'), '$[#]', 'witness_pending')
          ELSE v.reasons
        END,
