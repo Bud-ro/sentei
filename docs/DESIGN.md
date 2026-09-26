@@ -2288,3 +2288,236 @@ every index run.
 `fixtures/org-dart/repos/dart-workspace` covers each case (README table);
 snapshots were regenerated with Dart 3.13.4 / Flutter 3.47.5 (byte identity on
 3.11.3 not re-checked).
+### Phase 2 fix round 3: runtime entries are not surface; nameless consumers; index error text
+
+From the supabase verification rerun after fix rounds 1–2 (`dog-supabase2`:
+`work/report.json`, `work/sentei.db`, the per-package index logs). Adapter
+version `0.4.0+sentei.8` (snapshots regenerated: the sidecar changed for
+`app-worker`, whose `bin/cli.mjs` is now indexed, and the new fixture packages).
+
+**Runtime entries are not export surface (regression from round 1).** Round 1
+added runtime entry points by convention (`node|tsx <file>` scripts, Dockerfile
+`CMD`, Next.js `next.config.*` / `middleware` / …) and discover already kept them
+apart (`runtimeEntryPoints`), but the TS adapter received only the flat
+`entryPoints` list. Every entry outside the tsconfig program was treated as a
+missing *surface*: a JS file was text-scanned into `unresolved`
+(`scripts/smoke-load.mjs (JavaScript entry outside the tsconfig program; no
+exports found by text scan)` → `dynamic_access`), a TS file (`pg-topo`
+`scripts/run-tests.ts`) made the surface "unknown", and both set `partial`
+(`opaque_consumer`). Now:
+
+- The adapter passes discover's `runtimeEntryPoints` to the export surface (read
+  from discover.json with a local cast: the index stage's `DiscoveredPackage` type
+  in `indexers/types.ts` does not declare the field). An entry of `entryPoints`
+  that is also a runtime entry is read like before when a program has it (its
+  exports become `entry_symbols` in ingest, never verdicts), but when no program
+  has it, it is an `info:` line only; an unresolved re-export inside one is a
+  `warn:` only. Neither makes the result partial. `main` / `module` / `types` /
+  `exports` entries outside the program keep the old behaviour (partial,
+  `unresolved`), which is what fails closed for a surface.
+- Runtime entries that no program of the package has are indexed: before
+  scip-typescript runs, the adapter parses the package tsconfig (and its project
+  references) and writes `tsconfig.sentei-runtime.json` next to it (`extends:
+  "./tsconfig.json"`, `allowJs`, `include: []`, `files` = those entries; `.ts` /
+  `.tsx` / `.mts` / `.cts` / `.js` / `.jsx` / `.mjs` / `.cjs`, not `.d.ts`,
+  inside the package and outside nested packages). scip-typescript gets it as a
+  second project (`index <pkgDir> <runtime tsconfig>`), the export surface reads
+  it as one more program (last, so a file in both is read from the package's
+  own), and the file is deleted when the run ends (it is also deleted before, in
+  case a crashed run left one). Extending the package tsconfig keeps paths,
+  module resolution and typings; its relative paths still resolve against the
+  base file. **Deviation:** the brief pointed at "the sentei-generated tsconfig
+  like the config-files-outside-tsconfig rule", but that rule is a text scan and
+  the only tsconfig sentei wrote before is the `{}` / `allowJs` one for packages
+  with none, which cannot take extra files without changing the package's own
+  program. A second project changes nothing in the package's program. Files that
+  still are not in a program (extension-less bins, files outside the package)
+  are text-scanned for org imports like any unindexed file (`unindexedImports`,
+  scoped `script` under `scripts/` etc.) and never make the package partial.
+- Consequence: a newly indexed script goes through the same consumer checks as
+  any program file. A computed `import(pathToFileURL(file).href)` in a smoke
+  script is `dynamic_access` (untargeted), exactly as it would be if the repo's
+  tsconfig included the script. That is what keeps `@supabase/middleware` and
+  `@supabase/server` opaque below; see "Open" at the end.
+- The `imports`-map arms, client entries, bins and wrangler conventions were
+  runtime entries already; they benefit the same way (`app-worker`'s
+  `bin/cli.mjs` is now in its `.scip`).
+
+Fixture: `lib-dual/packages/dual-script` (`@acme/dual-script`: `exports` →
+`src/index.ts`, `scripts.start` = `node scripts/serve.mjs`, a `next` dependency
+with `next.config.mjs`, a CommonJS `bin/cli.cjs`; tsconfig `include: ["src"]`
+without allowJs). `scriptLibUnused` is a `deletion_candidate` (was `blocked` by
+the package's own `dynamic_access` + `opaque_consumer`), `serveBanner` (used only
+by the start script) has no finding, `scriptDeadHelper` is `private_dead`
+`already_unreachable` (the package was ineligible while opaque). The pipeline
+test also asserts the package has no flags, the three runtime files are entry
+documents, and no `tsconfig.sentei-runtime.json` is left behind. Unit tests
+(`index.test.ts`, "fix round 3"): a TS script, a JS script, `next.config.mjs`
+with an unresolved re-export and an extension-less bin give status `ok`; a
+surface `.mjs` entry outside the program stays `partial`.
+
+*supabase numbers* (reasoned from the rerun's DB and logs, plus a real rerun of
+discover → report on a scratch org of four of the repos: iceberg-js,
+middleware, middleware-openfeature, server, `--no-install` with their existing
+`node_modules`, minAgeDays 0, old code at `main` vs this branch). All 15
+packages whose `unresolved` / missing entries came from runtime files were
+checked against discover's `runtimeEntryPoints`: every such file is a runtime
+entry.
+
+- Transparent with the fix (12): iceberg-js, `@supabase/pg-topo`,
+  `@supabase/postgrest-js`, `@supabase-js/source`,
+  `@supabase/mcp-server-supabase`, `@supabase-evals/platform-lite`,
+  `@supabase-labs/middleware-openfeature`, dbdev-website, `@supabase/etl-docs`,
+  supabase-embedded-dashboard, ts-to-rls-demo, and evals' my-app (not in the
+  brief's list; its reason was "10 TypeScript error diagnostic(s)", the cause
+  was `next.config.mjs`). Rerun: iceberg-js and middleware-openfeature went from
+  partial to ok. For the other ten this is reasoned: their only partial causes
+  in the old logs are runtime entries, and none of those files has a computed
+  `import()` / `require()`; an org import in them that does not resolve would
+  still make them partial (not checked without a full rerun).
+- Still opaque (3), each for a reason that is not a runtime entry:
+  `@supabase/server` (`exports` names `src/adapters/nestjs/index.ts`, which its
+  tsconfig excludes: a genuine surface entry outside the program; also the
+  computed imports of `scripts/smoke-load.mjs` / `smoke-pack.mjs`),
+  `@supabase/middleware` (the computed `import()` / `require()` in
+  `scripts/smoke-load.mjs`, visible now that the script is indexed; rerun:
+  `dynamic_access` at `scripts/smoke-load.mjs:38:33` and `:39:10`), supa-storage
+  (discover: `main: index.js` resolves to nothing). cli-monorepo-sandbox also
+  stays opaque (an unresolved org module besides its `postinstall.js`).
+- Blocked verdicts: of the 203 `blocked` findings, 136 had one of these 15
+  packages among their blockers and 113 lose every blocker: 99 of the packages'
+  own (iceberg-js 35, mcp-server-supabase 54, pg-topo 8, postgrest-js 2) and 14
+  of their dependencies (`@supabase/mcp-utils` 12, `@supabase/bun-istanbul-coverage`
+  2). The private_dead rows that the 12 packages' opacity suppressed were not
+  counted (that needs a full re-analysis); in the four-repo rerun iceberg-js gained
+  2 (`unlocked_by` its own deprecation candidates) and no `already_unreachable`
+  row appeared in iceberg-js or middleware-openfeature.
+
+**The cause of `partial`, not the first warning (`cause:` lines).** Ingest gave
+`opaque_consumer` / `index_failed` the first `error:` diagnostic, else the first
+`warn:`, so blockers read "index partial: 1 TypeScript error diagnostic(s) (status
+unaffected)" (iceberg-js, dbdev-website, etl-docs, embedded-dashboard, my-app) or
+cited a test file's witness-only import (platform-lite, mcp-server-supabase,
+middleware-openfeature, server). `indexers/types.ts` has no field for it, so the
+diagnostics convention gained a fourth prefix: `cause: <diagnostic>`, the
+diagnostic (with its own `error:` / `warn:` prefix) that made the status worse.
+The TS adapter adds one each time the status gets worse: in `prepare` for a
+failed install (the install's last `error:` line), in `run` for a scip-typescript
+exit, its first `error TSnnnn` line, a missing `.scip`, a failed export-surface
+worker, and the export surface's own first cause (the worker emits one `cause:`
+line; the adapter drops it from the list and re-emits it only if it worsens the
+status). Ingest (`statusReason`) uses the LAST `cause:` line, which explains the
+final status (a partial install followed by a failed scip-typescript names the
+failure), and falls back to the old order without one (the Dart adapter, older
+index.json files). The index summary (`stages/index.ts`) still shows its own
+"first meaningful error"; it was not changed. Tests: `statusReason` in
+`ingest.test.ts`; a package with a type error before its missing surface entry
+names the entry (`index.test.ts`).
+
+**Nameless manifests with dependencies are consumers.** `readNpmPackage` skipped
+any package.json without `"name"`. supabase's multiplayer.dev (root),
+hack-the-base `dec-24/` and realtime `assets/` have none, and they import
+`@supabase/ssr` (`createServerClient`, `createBrowserClient`),
+`@supabase/supabase-js` and `@supabase/realtime-js`: those uses were invisible,
+which would give false deprecations on ssr once its ambiguity block lifts. A
+nameless package.json that declares any dependency is now a package named
+`_unnamed/<dir>` (`_unnamed/.` at the root): npm names never start with `_`, dirs
+are unique within a repo, and the name holds no `:` (package ids and
+`splitPackageId` rely on that). It is `private`, `is_library = 0`, has no entry
+points (no export surface, so no findings of its own), and is indexed like any
+app; discover logs `<manifest>: no "name"; indexed as the consumer-only package
+…`. scip-typescript names its own symbols with the anonymous package (`npm . .`),
+which ingest never interns, so only its references to org packages land. A
+nameless manifest with no dependencies (a `{"private": true}` / `{"type":
+"module"}` marker) is still skipped with a warning (negative test). Checked on
+the clones: the three packages above are found with their `@supabase/*` deps.
+Pubspecs without `name` are still skipped: `pub get` rejects them, so no Dart
+consumer can hide behind one. Fixture: `lib-dual/unnamed-demo` imports
+`dualUsedByUnnamed` from `@acme/dual`, which has no finding (it would be a
+`deletion_candidate` if the manifest were skipped).
+
+**`test_cases` is an ignored manifest dir.** supabase/edge-runtime's
+`crates/base/test_cases/*/package.json` (19 manifests; 5 were indexed as org
+packages: `cat`, `dog`, `say`, `js_with_pkg_json`, `meow`) are Rust test
+fixtures. `test_cases` joins DEFAULT_IGNORE_MANIFEST_DIRS; the monorepo-member
+rule still keeps a `packages/test_cases` package (test).
+
+**CommonJS require bindings.** The brief suspected entry documents were not
+seeds. They are (`reach_seeds_before` seeds every `documents.is_entry` module
+symbol, and edge-runtime's `say/index.js` had `is_entry = 1`). The cause is a
+scip-typescript 0.4.0 gap: in a JavaScript file TypeScript binds `const cat =
+require("cat")` as an alias of the required module, and scip-typescript resolves
+every use (`cat.say`) through the alias to the module symbol, so the variable
+`index.js/cat.` has a definition and no reference, and nothing reaches it. No
+analyze.sql change is needed, and seeding every top-level declaration of every
+entry document would hide real dead code in entry files (a non-exported, unused
+function in `src/index.ts`). Workaround at the indexer boundary
+(`collectRequireAliasRefs`, consumer-checks.ts): for each top-level `const x =
+require('m')` (or `require('m').y…`) whose symbol is an alias, every identifier
+the checker resolves to that alias becomes a checker reference to the variable's
+declaration. They travel in the sidecar's `shorthandRefs` (same shape and ingest
+path: an occurrence + edge where SCIP has none), because `indexers/types.ts` is
+not ours to extend; its doc comment for `shorthandRefs` should mention them.
+Destructured bindings are SCIP locals (never subjects) and are skipped. Fixture:
+`dual-script/bin/cli.cjs` `banner` has no finding (it is `private_dead`
+`already_unreachable` without the refs). On supabase the case itself is gone
+with `test_cases` ignored (2 rows).
+
+**Index error text.** A failed scip-typescript run showed the stderr head/tail,
+which for orb-sync-engine's root was two `sentei-ts-compat:` notes, while the
+cause (`error: no files got indexed`) was on stdout. `stderrTail` now drops
+`sentei-ts-compat:` lines (they are `info:` diagnostics already) and, when neither
+the head nor the tail shows it, puts the first error-looking line of stderr, else
+stdout, first (`: <error> | … | <head> | … | <tail>`). Error-looking: an
+`error`/`Error` word, `ERR_*`, `XxxError`, an npm `E<CODE>` errno. The install and
+export-surface messages use the same helper; outputs of up to 8 lines, where the
+line is already shown, are unchanged.
+
+**A tsconfig that matches no file is not a failure.** orb-sync-engine's root
+package has `include: ["./src/**/*"]` and no `src/`: every source is in its
+workspace members. The "no TS/JS sources at all" check walks the whole dir
+(members included), so it did not catch it; scip-typescript exited 1 with "no
+files got indexed" and the package was `failed` (`index_failed` blocks
+everything it depends on). Now that exit (without an `error TSnnnn` line: a
+tsconfig that does not parse ends in the same message and stays `failed`) writes
+an empty index with `warn: tsconfig has no input files (scip-typescript: no files
+got indexed); wrote an empty index`, like the no-sources case, whose status is
+`ok`: it cannot hide a reference that SCIP would have linked. Unlike the
+no-sources case, the export surface still runs, so the package's own files
+outside every program (a root `tools/release.mjs`) are text-scanned for org
+imports as usual (fail closed for its consumers' targets). Test: a workspace root
+with a member package.
+
+**pnpm pin older than the lockfile.** auth-helpers pins `packageManager:
+pnpm@7.1.7` but its `pnpm-lock.yaml` is `lockfileVersion: '6.0'` (pnpm 8):
+`ERR_PNPM_LOCKFILE_BREAKING_CHANGE`, all nine packages partial. The install now
+reads the lockfile's major (`pinnedVersion`) for pnpm; when the version it would
+run through `npm exec` has an older major, it runs the lockfile's major instead
+(`info: pnpm 7.1.7 (from packageManager in package.json) is older than the major
+that wrote pnpm-lock.yaml (8, …); a fallback runs pnpm@8`). A pnpm on PATH is
+still run as is, but when any pnpm run fails with
+`ERR_PNPM_LOCKFILE_BREAKING_CHANGE` the install is retried once through `npm
+exec --package=pnpm@<lockfile major>` (not when that exact version already
+failed), with an `info:` line. Tests use the fake runner. Not verified against
+the real auth-helpers install (needs the registry).
+
+**Dart unresolved imports named no org package.** Ingest's `barePackageName`
+returned `package:flame` for `package:flame/components.dart`, so every Dart
+sidecar `unresolvedImports` entry was dropped ("does not name another org
+package"), and a name removed from a `show` clause (flame-engine defend_the_donut:
+`show HasGameReference`) never became a version-skew row. The `package:` scheme is
+now stripped and the first path segment is the pub name (npm names unchanged; unit
+test for both). Re-ingesting the flame-engine rerun's index (`dog-flame2`, a copy)
+adds the two `HasGameReference` rows (0 before).
+
+**Open (for routing).**
+- `indexers/types.ts`: `DiscoveredPackage.runtimeEntryPoints?: string[]` (the
+  adapter reads it with a cast), the `cause:` prefix in `IndexerResult.diagnostics`'
+  doc ("prefixed `info:`, `warn:` or `error:`"), and `shorthandRefs`' doc (also
+  CommonJS require-binding references).
+- Policy question: a computed `import()` / `require()` in a runtime script under
+  `scripts/` (package smoke tests loading the package's own `exports` targets) is
+  an untargeted `dynamic_access`, as it always was for scripts inside the tsconfig.
+  It keeps `@supabase/middleware` and `@supabase/server` opaque. Scoping such
+  flags like the witness-only `script` imports would be a policy change for every
+  script file, so it was not done here.

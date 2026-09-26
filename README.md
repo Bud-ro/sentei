@@ -51,7 +51,10 @@ opens pull requests.
     `mise.toml` / `.mise.toml` `[tools]` or `.tool-versions` pin, then the major
     that wrote the lockfile (pnpm `lockfileVersion` 9.0 → 9, 6.x → 8, 5.4 → 7;
     yarn v1 header → 1, berry `__metadata.version` → 2/3/4; bun → 1), else
-    pnpm 9 / yarn 1 / bun 1. Never `latest`.
+    pnpm 9 / yarn 1 / bun 1. Never `latest`. A pinned pnpm older than the major
+    that wrote the lockfile (`pnpm@7.1.7` with `lockfileVersion: '6.0'`) runs at
+    the lockfile's major instead, and an install that fails with
+    `ERR_PNPM_LOCKFILE_BREAKING_CHANGE` is retried once at that major.
   - **Engines** checks are off (`--engine-strict=false`,
     `--config.engine-strict=false`, yarn 1 `--ignore-engines`), so a repo
     pinning another Node major still installs.
@@ -75,6 +78,13 @@ opens pull requests.
   a `build_runner: ran|skipped|failed` line in the package's index
   diagnostics). A package whose `lib/` has Dart files but whose index has none
   of them is `failed`, never `ok`.
+- Files a runtime starts (a `node scripts/x.mjs` / `tsx` script, a Dockerfile `CMD`,
+  Next.js `next.config.*` / `middleware`, a `bin`) are entry points that keep what
+  they use reachable, never export surface. When the package's tsconfig does not
+  include them, they are indexed through a temporary
+  `tsconfig.sentei-runtime.json` next to it (it `extends` the package tsconfig and
+  is removed after the run); they never make the package opaque. A `main` /
+  `exports` / `types` entry outside the tsconfig still does.
 - tsconfig `lib`/`target`/`module` values newer than the bundled TypeScript
   5.9 (`ES2025`) are read as its newest (`esnext`, `nodenext`), with an
   `info:` line in the package's index log.
@@ -308,6 +318,12 @@ rows, `blocked_by` entries, blockers, `witness_mismatch` consumers and SARIF
 fingerprints all use this id; the summary table shows the name and the repo in two
 columns. (Within one repo a name must stay unique per manager: a private duplicate
 there is ignored like a template; two public ones are an error.)
+
+A `package.json` without `"name"` that declares dependencies (a demo app, a Phoenix
+`assets/` bundle) is still indexed, as a consumer: its name is `_unnamed/<dir>`
+(`_unnamed/.` at the repo root), it is private, has no export surface and gets no
+findings of its own, but its uses of org packages count. One without dependencies
+(a bare `{"private": true}` marker) is skipped with a warning.
 
 Manifests and SCIP symbols name dependencies by name only, so a dependency on a
 name several org packages share is resolved per consumer:
