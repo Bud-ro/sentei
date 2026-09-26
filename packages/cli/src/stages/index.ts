@@ -1,10 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { StageContext } from '../context.ts';
-import { isCached } from '../indexers/cache.ts';
+import { failureInputHash, isCached, toolchainVersion, type CacheDecision } from '../indexers/cache.ts';
 import { scipDart } from '../indexers/scip-dart.ts';
 import { scipTypescript } from '../indexers/scip-typescript.ts';
 import type {
+  DiscoveredPackage,
+  DiscoveredRepo,
   DiscoverFile,
   Indexer,
   IndexerOptions,
@@ -20,9 +22,19 @@ export const INDEXERS: readonly Indexer[] = [scipTypescript, scipDart];
 export interface IndexOptions extends IndexerOptions {
   /** Re-index every package even when its cached result can be reused. */
   force: boolean;
+  /** `--retry-failed`: re-index packages whose cached result is partial / failed (ok ones stay cached). */
+  retryFailed: boolean;
 }
 
-export const DEFAULT_INDEX_OPTIONS: IndexOptions = { force: false, install: true, maxOldSpaceMb: 8192 };
+export const DEFAULT_INDEX_OPTIONS: IndexOptions = { force: false, retryFailed: false, install: true, maxOldSpaceMb: 8192 };
+
+/** More packages than this: `index` prints `N/M packages ...` progress lines. */
+export const PROGRESS_THRESHOLD = 20;
+
+/** Every how many packages a progress line is printed (about ten per phase, at least every 10). */
+export function progressStep(total: number): number {
+  return Math.max(10, Math.ceil(total / 10));
+}
 
 /** `work/index/<repo slug>/index.json`. */
 export interface RepoIndex {
@@ -45,6 +57,10 @@ export interface PackageIndex {
   diagnostics: string[];
   /** Whether this result was made with installed third-party deps (an install run does not reuse a no-install result). */
   install: boolean;
+  /** failureInputHash when this result was made (the failure cache compares it; absent in older files and for unowned packages). */
+  inputHash?: string;
+  /** When this result was made, epoch seconds (absent in older files). */
+  indexedAt?: number;
 }
 
 /** `acme/lib-core` → `acme__lib-core`. */
@@ -71,27 +87,68 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
   const lookup = (id: string): OrgPackage | undefined => byId.get(id);
   const orgPackages = [...byId.values()];
 
-  // Phase 1: make every org package resolvable (install + source links) before
-  // indexing any, since a consumer resolves an org dep's own org imports through
-  // that dep's node_modules. Cached repos are prepared too (others resolve through them).
-  const summary = emptySummary();
-  const prepared = new Map<string, PrepareResult>();
-  for (const repo of discovered.repos) {
-    for (const pkg of repo.packages) {
-      const indexer = INDEXERS.find((ix) => ix.detect({ repo, pkg }));
-      if (indexer?.prepare === undefined) continue;
-      prepared.set(pkg.packageId, await indexer.prepare({ repo, pkg, lookup, orgPackages, options, ...(policy ? { policy } : {}) }));
-    }
-  }
-
-  // Phase 2: index. Per package, a previous result that can be reused (same
-  // headSha, indexer and version, status ok, install-compatible) is kept
-  // verbatim; only the others are re-indexed, and index.json is rewritten with both.
+  // Plan: per repo, each package's owner, failure-cache input hash and cache decision.
+  const toolchains = new Map<string, Promise<string>>();
+  const toolchainOf = (manager: string): Promise<string> => {
+    let t = toolchains.get(manager);
+    if (t === undefined) toolchains.set(manager, (t = toolchainVersion(manager)));
+    return t;
+  };
+  const plans: RepoPlan[] = [];
   for (const repo of discovered.repos) {
     const outDir = path.resolve(ctx.work, 'index', repoSlug(repo.repo));
     const indexJson = path.join(outDir, 'index.json');
     const owners = repo.packages.map((pkg) => [pkg, INDEXERS.find((ix) => ix.detect({ repo, pkg }))] as const);
-    const decisions = options.force ? undefined : isCached(indexJson, repo, owners, { install: options.install });
+    const inputHashes = new Map<string, string>();
+    for (const [pkg, ix] of owners) {
+      if (ix === undefined) continue;
+      const toolchain = await toolchainOf(pkg.manager);
+      inputHashes.set(pkg.packageId, failureInputHash(repo, pkg, { indexer: ix, install: options.install, toolchain, lookup, ...(policy ? { policy } : {}) }));
+    }
+    const decisions = options.force
+      ? undefined
+      : isCached(indexJson, repo, owners, { install: options.install, retryFailed: options.retryFailed, inputHashes });
+    plans.push({ repo, outDir, indexJson, owners, inputHashes, decisions });
+  }
+  const cachedFailure = (plan: RepoPlan, pkg: DiscoveredPackage): boolean => {
+    const d = plan.decisions?.get(pkg.packageId);
+    return d?.reuse === true && d.entry.status !== 'ok';
+  };
+
+  // Phase 1: make every org package resolvable (install + source links) before
+  // indexing any, since a consumer resolves an org dep's own org imports through
+  // that dep's node_modules. Cached repos are prepared too (others resolve through
+  // them), except packages whose cached failure will be reused: their prepare
+  // failed or fell short with the same inputs (the dart-lang run repeated 75
+  // failing `pub get`s on every rerun).
+  const summary = emptySummary();
+  const prepared = new Map<string, PrepareResult>();
+  const toPrepare = plans.flatMap((plan) => plan.owners
+    .filter(([pkg, ix]) => ix?.prepare !== undefined && !cachedFailure(plan, pkg))
+    .map(([pkg, ix]) => ({ repo: plan.repo, pkg, indexer: ix! })));
+  const prepStep = progressStep(toPrepare.length);
+  let preparedCount = 0;
+  for (const { repo, pkg, indexer } of toPrepare) {
+    ctx.log(`[index] ${prepareLine(repo, pkg, options.install)}`);
+    prepared.set(pkg.packageId, await indexer.prepare!({ repo, pkg, lookup, orgPackages, options, ...(policy ? { policy } : {}) }));
+    preparedCount++;
+    if (toPrepare.length > PROGRESS_THRESHOLD && (preparedCount % prepStep === 0 || preparedCount === toPrepare.length)) {
+      ctx.log(`[index] ${preparedCount}/${toPrepare.length} packages prepared`);
+    }
+  }
+
+  // Phase 2: index. Per package, a previous result that can be reused (same
+  // headSha, indexer and version, install-compatible; ok, or a failure with the
+  // same input hash) is kept verbatim; only the others are re-indexed, and
+  // index.json is rewritten with both.
+  const total = plans.reduce((n, p) => n + p.owners.length, 0);
+  const step = progressStep(total);
+  let done = 0;
+  const progress = (): void => {
+    done++;
+    if (total > PROGRESS_THRESHOLD && (done % step === 0 || done === total)) ctx.log(`[index] ${done}/${total} packages done`);
+  };
+  for (const { repo, outDir, indexJson, owners, inputHashes, decisions } of plans) {
     mkdirSync(outDir, { recursive: true });
     const logOf = (entry: PackageIndex): string | null => {
       if (entry.scip === null) return null;
@@ -108,7 +165,18 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
         result.status = worstStatus(result.status, entry.status);
         if (entry.indexer !== null && entry.install !== true) result.install = false;
         countPackage(summary, repo.repo, entry, true, logOf(entry));
-        ctx.log(`[index] ${repo.repo} ${pkg.packageId}: cached (${entry.status} at ${repo.headSha}; use --force to re-index)`);
+        if (entry.status === 'ok' || entry.indexer === null) {
+          ctx.log(`[index] ${repo.repo} ${pkg.packageId}: cached (${entry.status} at ${repo.headSha}; use --force to re-index)`);
+        } else {
+          // Replay the failure as the first run printed it, then say it is cached.
+          const firstProblem = (entry.diagnostics ?? []).find((d) => d.startsWith('error:') || d.startsWith('warn:'));
+          const log = logOf(entry);
+          const when = typeof entry.indexedAt === 'number' ? new Date(entry.indexedAt * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z') : 'an earlier run';
+          ctx.log(`[index] ${repo.repo} ${pkg.packageId}: ${entry.status} (${entry.indexer}@${entry.indexerVersion})` +
+            (firstProblem ? ` — ${firstProblem}` : ''));
+          ctx.log(`[index]   cached failure from ${when}; rerun with --retry-failed to retry${log !== null ? ` (log: ${log})` : ''}`);
+        }
+        progress();
         continue;
       }
       const why = options.force ? '--force' : decision?.reuse === false ? decision.reason : undefined;
@@ -123,6 +191,7 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
           exports: null,
           diagnostics: ['error: no indexer'],
           install: options.install,
+          indexedAt: Math.floor(Date.now() / 1000),
         };
       } else {
         const input = { repo, pkg, lookup, orgPackages, options, ...(policy ? { policy } : {}) };
@@ -137,6 +206,8 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
           exports: path.relative(outDir, r.exportsFile),
           diagnostics: r.diagnostics,
           install: options.install,
+          ...(inputHashes.has(pkg.packageId) ? { inputHash: inputHashes.get(pkg.packageId)! } : {}),
+          indexedAt: Math.floor(Date.now() / 1000),
         };
       }
       result.packages.push(entry);
@@ -149,6 +220,7 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
           (entry.indexer ? ` (${entry.indexer}@${entry.indexerVersion})` : '') +
           (entry.status !== 'ok' && firstProblem ? ` — ${firstProblem}` : ''),
       );
+      progress();
     }
     writeFileSync(indexJson, `${JSON.stringify(result, null, 2)}\n`);
   }
@@ -156,11 +228,48 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
   return summary;
 }
 
+/** One repo's plan: owners, failure-cache input hashes and cache decisions (undefined with --force). */
+interface RepoPlan {
+  repo: DiscoveredRepo;
+  outDir: string;
+  indexJson: string;
+  owners: ReadonlyArray<readonly [DiscoveredPackage, Indexer | undefined]>;
+  inputHashes: Map<string, string>;
+  decisions: Map<string, CacheDecision> | undefined;
+}
+
+/** Lockfiles that name an npm-style package manager, in the order they are looked for. */
+const LOCKFILES: ReadonlyArray<readonly [string, string]> = [
+  ['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lock', 'bun'], ['bun.lockb', 'bun'],
+  ['package-lock.json', 'npm'], ['npm-shrinkwrap.json', 'npm'],
+];
+
+/**
+ * The line printed as a package's prepare step starts, so a long install phase is
+ * not silent (the dart-lang index log printed nothing for its first ~10 minutes):
+ * `pub get <id>` (`--offline` without installs), `installing <id> (<pm>)` with the
+ * manager of the nearest lockfile between the package dir and the repo root
+ * (`npm` when none; the adapter makes the final choice), `linking <id>
+ * (--no-install)` for npm without installs.
+ */
+export function prepareLine(repo: DiscoveredRepo, pkg: DiscoveredPackage, install: boolean): string {
+  if (pkg.manager === 'pub') return `pub get${install ? '' : ' --offline'} ${pkg.packageId}`;
+  if (!install) return `linking ${pkg.packageId} (--no-install)`;
+  if (pkg.manager !== 'npm') return `preparing ${pkg.packageId} (${pkg.manager})`;
+  const root = path.resolve(repo.localPath);
+  for (let dir = path.resolve(root, pkg.path); dir.startsWith(root); dir = path.dirname(dir)) {
+    const hit = LOCKFILES.find(([file]) => existsSync(path.join(dir, file)));
+    if (hit !== undefined) return `installing ${pkg.packageId} (${hit[1]})`;
+    if (dir === root || path.dirname(dir) === dir) break;
+  }
+  return `installing ${pkg.packageId} (npm)`;
+}
+
 /** Per-indexer package counts of one `index` run (`(none)`: no indexer owns the package). */
 export interface IndexCounts {
   /** Indexed in this run (any status). */
   indexed: number;
-  /** Reused from a previous run (status ok by construction). */
+  /** Reused from a previous run (ok, or a cached partial / failed result: the failure cache). */
   cached: number;
   /** Status `failed` (fresh or reused), included in indexed / cached. */
   failed: number;

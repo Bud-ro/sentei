@@ -72,6 +72,9 @@ Options:
   --json         repos: print JSON instead of a table; index: print the
                  end-of-run summary as JSON ({"summary": …}; progress on stderr)
   --force        index: re-index repos even when cached for the same headSha
+  --retry-failed index/run: retry packages whose partial/failed result is
+                 cached (a failure is reused while its inputs are unchanged:
+                 head shas of the package and its org deps, toolchain, flags)
   --no-install   index: do not run npm ci / pnpm / yarn install
   --strict       index/run: exit 2 when any package failed to index (its
                  consumers' findings are blocked; run still writes the report)
@@ -192,6 +195,7 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
         'clones-dir': { type: 'string' },
         'config-dir': { type: 'string' },
         force: { type: 'boolean', default: false },
+        'retry-failed': { type: 'boolean', default: false },
         install: { type: 'boolean', default: true },
         strict: { type: 'boolean', default: false },
         'max-old-space-mb': { type: 'string', default: '8192' },
@@ -236,6 +240,7 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
   }
   if (values.json && command !== 'repos' && command !== 'index') return usageError('--json only applies to repos and index');
   if (values.strict && command !== 'index' && command !== 'run') return usageError('--strict only applies to index (and run)');
+  if (values['retry-failed'] && command !== 'index' && command !== 'run') return usageError('--retry-failed only applies to index (and run)');
   const github: GithubDiscoverOptions = {
     updateLockfile: values['update-lockfile'],
     include: values.include,
@@ -276,7 +281,7 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
   if (!Number.isInteger(maxOldSpaceMb) || maxOldSpaceMb <= 0) {
     return usageError('--max-old-space-mb must be a positive integer');
   }
-  const indexOptions = { force: values.force, install: values.install, maxOldSpaceMb };
+  const indexOptions = { force: values.force, retryFailed: values['retry-failed'], install: values.install, maxOldSpaceMb };
   let views: ReportViewName[] | undefined;
   try {
     views = values.view.length > 0 ? parseViews(values.view) : undefined;

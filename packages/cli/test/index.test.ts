@@ -7,11 +7,11 @@ import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
-import { isCached } from '../src/indexers/cache.ts';
+import { failureInputHash, isCached, toolchainVersion } from '../src/indexers/cache.ts';
 import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
 import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
-import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
+import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, prepareLine, progressStep, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
 
 const FIXTURE = path.resolve(import.meta.dirname, '../../../fixtures/org-small');
 /** Copy options that never carry a node_modules left in the fixture by a manual run. */
@@ -163,6 +163,9 @@ describe('index stage on fixtures/org-small', () => {
     lines = [];
     await index(ctx());
     expect(lines).toEqual([
+      // Cached packages are still prepared (others resolve through them); each says so as it starts.
+      '[index] installing npm:acme/lib-core:@acme/core (npm)',
+      '[index] installing npm:acme/app:@acme/app (npm)',
       '[index] acme/lib-core npm:acme/lib-core:@acme/core: cached (ok at sha-lib; use --force to re-index)',
       '[index] acme/app npm:acme/app:@acme/app: cached (ok at sha-app; use --force to re-index)',
       '[index] acme/app pub:acme/app:app_tool: cached (failed at sha-app; use --force to re-index)',
@@ -1031,13 +1034,110 @@ describe('index cache', () => {
   const decide = (f: string, r: DiscoveredRepo, install: boolean) =>
     Object.fromEntries([...isCached(f, r, owners, { install })].map(([id, d]) => [id, d.reuse ? 'reuse' : (d.reason ?? 'none')]));
 
-  it('(5a) reuses ok packages, refuses partial/failed ones and says why', () => {
+  it('(5a) reuses ok packages, refuses partial/failed ones without an input hash and says why', () => {
     expect(decide(indexJson('ok', false), repo, false)).toEqual({ 'npm:a': 'reuse', 'pub:b': 'reuse' });
     expect(decide(indexJson('partial', false), repo, false)).toEqual({
-      'npm:a': 'previous status partial; partial/failed results are always retried',
+      'npm:a': 'previous status partial; no input hash recorded',
       'pub:b': 'reuse',
     });
-    expect(decide(indexJson('failed', true), repo, true)['npm:a']).toBe('previous status failed; partial/failed results are always retried');
+    expect(decide(indexJson('failed', true), repo, true)['npm:a']).toBe('previous status failed; no input hash recorded');
+  });
+
+  describe('failure cache', () => {
+    function failedJson(status: 'partial' | 'failed', inputHash: string, withFiles: boolean): string {
+      const f = path.join(root, `fc-${status}-${inputHash}-${withFiles}.json`);
+      const slug = packageSlug(repo.packages[0]!);
+      writeFileSync(f, JSON.stringify({
+        repo: 'acme/r', headSha: 'sha1', status, install: true,
+        packages: [{
+          packageId: 'npm:a', indexer: 'scip-typescript', indexerVersion: scipTypescript.version, status, install: true, inputHash,
+          scip: `${slug}.scip`, exports: `${slug}.exports.json`, indexedAt: 1_790_000_000,
+          diagnostics: ['error: dart pub get exited with 1: override conflict'],
+        }],
+      }));
+      return f;
+    }
+    const one = (f: string, opts: { hash?: string; retryFailed?: boolean; install?: boolean } = {}) => {
+      const d = isCached(f, repo, [owners[0]], {
+        install: opts.install ?? true,
+        ...(opts.retryFailed !== undefined ? { retryFailed: opts.retryFailed } : {}),
+        ...(opts.hash !== undefined ? { inputHashes: new Map([['npm:a', opts.hash]]) } : {}),
+      }).get('npm:a')!;
+      return d.reuse ? 'reuse' : d.reason;
+    };
+
+    it('reuses a failed result with the same input hash, even without its .scip file', () => {
+      expect(one(failedJson('failed', 'h1', false), { hash: 'h1' })).toBe('reuse');
+    });
+
+    it('reuses a partial result with the same input hash only while its files exist', () => {
+      const slug = packageSlug(repo.packages[0]!);
+      rmSync(path.join(root, `${slug}.scip`), { force: true });
+      expect(one(failedJson('partial', 'h1', false), { hash: 'h1' })).toBe(`${slug}.scip missing`);
+      for (const n of [`${slug}.scip`, `${slug}.exports.json`]) writeFileSync(path.join(root, n), 'x');
+      expect(one(failedJson('partial', 'h1', true), { hash: 'h1' })).toBe('reuse');
+    });
+
+    it('retries on other inputs, on --retry-failed, and when this run installs but the failure did not (negative)', () => {
+      const f = failedJson('failed', 'h1', false);
+      expect(one(f, { hash: 'h2' })).toBe('previous status failed; inputs changed (toolchain, install mode, policy or org dependencies)');
+      expect(one(f)).toBe('previous status failed; inputs changed (toolchain, install mode, policy or org dependencies)');
+      expect(one(f, { hash: 'h1', retryFailed: true })).toBe('previous status failed; --retry-failed');
+      const noInstall = path.join(root, 'fc-noinstall.json');
+      writeFileSync(noInstall, readFileSync(f, 'utf8').replaceAll('"install":true', '"install":false'));
+      expect(one(noInstall, { hash: 'h1' })).toBe('previous run did not install dependencies');
+    });
+  });
+
+  describe('failureInputHash', () => {
+    const lib = { packageId: 'pub:acme/lib:lib', path: '.', manager: 'pub', name: 'lib', entryPoints: [], deps: [
+      { name: 'base', manager: 'pub', resolvedPackageId: 'pub:acme/base:base' },
+    ] };
+    const base = { packageId: 'pub:acme/base:base', path: '.', manager: 'pub', name: 'base', entryPoints: [], deps: [] };
+    const app = { packageId: 'pub:acme/app:app', path: 'app', manager: 'pub', name: 'app', entryPoints: [], deps: [
+      { name: 'lib', manager: 'pub', resolvedPackageId: 'pub:acme/lib:lib' },
+      { name: 'http', manager: 'pub', resolvedPackageId: null },
+    ] };
+    const repos = (baseSha: string): Record<string, DiscoveredRepo> => ({
+      app: { repo: 'acme/app', localPath: '/x', headSha: 'a1', packages: [app] },
+      lib: { repo: 'acme/lib', localPath: '/x', headSha: 'l1', packages: [lib] },
+      base: { repo: 'acme/base', localPath: '/x', headSha: baseSha, packages: [base] },
+    });
+    const hash = (over: { baseSha?: string; toolchain?: string; install?: boolean; appSha?: string; policy?: object } = {}): string => {
+      const rs = repos(over.baseSha ?? 'b1');
+      const byId = new Map(Object.values(rs).map((r) => [r.packages[0]!.packageId, { repo: r, pkg: r.packages[0]! }]));
+      return failureInputHash({ ...rs['app']!, headSha: over.appSha ?? 'a1' }, app, {
+        indexer: scipTypescript, install: over.install ?? true, toolchain: over.toolchain ?? 'Dart 3.11.3',
+        lookup: (id) => byId.get(id), ...(over.policy ? { policy: over.policy } : {}),
+      });
+    };
+
+    it('is stable for the same inputs and changes with each of them, including transitive org deps', () => {
+      expect(hash()).toMatch(/^[0-9a-f]{64}$/);
+      expect(hash()).toBe(hash());
+      const others = [
+        hash({ baseSha: 'b2' }), // a transitive org dependency moved
+        hash({ appSha: 'a2' }), // the package's own files or manifest
+        hash({ toolchain: 'Dart 3.13.0' }),
+        hash({ install: false }),
+        hash({ policy: { countTestsAsConsumers: true } }),
+      ];
+      for (const h of others) expect(h).not.toBe(hash());
+      expect(new Set(others).size).toBe(others.length);
+    });
+  });
+
+  it('toolchainVersion: node for npm, dart --version (and the Flutter SDK) for pub', async () => {
+    expect(await toolchainVersion('npm')).toBe(`node ${process.version}`);
+    const calls: string[] = [];
+    const fake = async (cmd: string, args: string[]) => {
+      calls.push([cmd, ...args].join(' '));
+      return 'Dart SDK version: 3.11.3 (stable)';
+    };
+    expect(await toolchainVersion('pub', fake)).toMatch(/^Dart SDK version: 3\.11\.3 \(stable\); flutter /);
+    expect(calls).toEqual(['dart --version']);
+    expect(await toolchainVersion('pub', async () => null)).toMatch(/^dart unavailable; flutter /);
+    expect(await toolchainVersion('cargo', fake)).toBe('cargo: unknown');
   });
 
   it('(5a) refuses a result made without install when this run installs', () => {
@@ -1071,7 +1171,7 @@ describe('per-package index cache (stage)', () => {
   let pwork: string;
   let log: string[];
   const TSCONFIG = JSON.stringify({ compilerOptions: { strict: true, module: 'esnext', moduleResolution: 'bundler', noEmit: true, types: [] }, include: ['src'] });
-  const run = async (opts: { force?: boolean } = {}) => {
+  const run = async (opts: { force?: boolean; retryFailed?: boolean } = {}) => {
     log = [];
     await index({ work: pwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: (l) => log.push(l) }, { install: false, ...opts });
     return readJson<RepoIndex>(pwork, 'index/acme__mono/index.json');
@@ -1108,18 +1208,35 @@ describe('per-package index cache (stage)', () => {
 
   it('re-runs only the package that cannot be reused and keeps the reused entry verbatim', async () => {
     const first = await run();
+    expect(log.slice(0, 2)).toEqual(['[index] linking npm:@acme/a (--no-install)', '[index] linking npm:@acme/b (--no-install)']);
     expect(first.packages.map((p) => [p.packageId, p.status])).toEqual([['npm:@acme/a', 'ok'], ['npm:@acme/b', 'partial']]);
+    expect(first.packages.every((p) => typeof p.indexedAt === 'number' && /^[0-9a-f]{64}$/.test(p.inputHash ?? ''))).toBe(true);
     const aLog = path.join(pwork, 'index/acme__mono/npm__acme__a.log');
+    const bLog = path.join(pwork, 'index/acme__mono/npm__acme__b.log');
     const aLogMtime = statSync(aLog).mtimeMs;
+    const bLogMtime = statSync(bLog).mtimeMs;
 
+    // Rerun: a is cached (ok); b's partial result is a cached failure (same inputs),
+    // replayed with its time, and b is not even prepared again.
     const second = await run();
-    expect(log[0]).toBe('[index] acme/mono npm:@acme/a: cached (ok at sha1; use --force to re-index)');
-    expect(log[1]).toMatch(/^\[index\] acme\/mono npm:@acme\/b: re-indexed \(previous status partial; partial\/failed results are always retried\): partial/);
-    expect(log[2]).toBe('[index] summary: 1 indexed, 1 cached, 0 failed, 1 partial');
-    expect(log).toHaveLength(5); // two packages, the summary line and its two-row table
-    expect(second.packages[0]).toEqual(first.packages[0]);
-    expect(second.status).toBe('partial');
+    const when = new Date(first.packages[1]!.indexedAt! * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    expect(log[0]).toBe('[index] linking npm:@acme/a (--no-install)');
+    expect(log[1]).toBe('[index] acme/mono npm:@acme/a: cached (ok at sha1; use --force to re-index)');
+    expect(log[2]).toMatch(/^\[index\] acme\/mono npm:@acme\/b: partial \(scip-typescript@[^)]+\) — /);
+    expect(log[3]).toBe(`[index]   cached failure from ${when}; rerun with --retry-failed to retry (log: ${path.join(pwork, 'index/acme__mono/npm__acme__b.log')})`);
+    expect(log[4]).toBe('[index] summary: 0 indexed, 2 cached, 0 failed, 1 partial');
+    expect(log).toHaveLength(7); // prepare, two packages (b on two lines), the summary line and its two-row table
+    expect(second).toEqual(first);
     expect(statSync(aLog).mtimeMs).toBe(aLogMtime); // a was not re-run
+    expect(statSync(bLog).mtimeMs).toBe(bLogMtime); // nor b
+
+    // --retry-failed: b only.
+    const third = await run({ retryFailed: true });
+    expect(log.slice(0, 2)).toEqual(['[index] linking npm:@acme/a (--no-install)', '[index] linking npm:@acme/b (--no-install)']);
+    expect(log[2]).toBe('[index] acme/mono npm:@acme/a: cached (ok at sha1; use --force to re-index)');
+    expect(log[3]).toMatch(/^\[index\] acme\/mono npm:@acme\/b: re-indexed \(previous status partial; --retry-failed\): partial/);
+    expect(third.packages[0]).toEqual(first.packages[0]);
+    expect(statSync(aLog).mtimeMs).toBe(aLogMtime);
 
     await run({ force: true });
     expect(log.filter((l) => l.startsWith('[index] acme/')).map((l) => l.replace(/: re-indexed \(--force\): .*/, ''))).toEqual([
@@ -1127,6 +1244,67 @@ describe('per-package index cache (stage)', () => {
       '[index] acme/mono npm:@acme/b',
     ]);
   }, 180_000);
+
+  it('retries a cached failure when an org dependency moved (negative)', async () => {
+    await run();
+    const discoverPath = path.join(pwork, 'discover.json');
+    const d = readJson<DiscoverFile>(pwork, 'discover.json');
+    const moved: DiscoverFile = { ...d, repos: [...d.repos, { repo: 'acme/other', localPath: path.join(root, 'mono'), headSha: 'o1', packages: [] }] };
+    // b gains a dependency on a package in another repo: its inputs differ.
+    const other = { packageId: 'npm:@acme/o', path: 'o', manager: 'cargo', name: '@acme/o', entryPoints: [], deps: [] };
+    moved.repos[1]!.packages.push(other);
+    moved.repos[0]!.packages[1]!.deps.push({ name: '@acme/o', manager: 'npm', resolvedPackageId: 'npm:@acme/o' });
+    writeFileSync(discoverPath, JSON.stringify(moved));
+    try {
+      await run();
+      expect(log.find((l) => l.includes('npm:@acme/b: '))).toMatch(/re-indexed \(previous status partial; inputs changed/);
+    } finally {
+      writeFileSync(discoverPath, JSON.stringify(d));
+    }
+  }, 60_000);
+});
+
+describe('index progress lines (dart-lang: a silent first 10 minutes)', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-progress-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('names the install each prepare step runs', () => {
+    const repo: DiscoveredRepo = { repo: 'acme/m', localPath: path.join(root, 'm'), headSha: 's', packages: [] };
+    mkdirSync(path.join(root, 'm/packages/x'), { recursive: true });
+    const pkg = (manager: string, p = 'packages/x') => ({ packageId: `${manager}:acme/m:x`, path: p, manager, name: 'x', entryPoints: [], deps: [] });
+    expect(prepareLine(repo, pkg('pub'), true)).toBe('pub get pub:acme/m:x');
+    expect(prepareLine(repo, pkg('pub'), false)).toBe('pub get --offline pub:acme/m:x');
+    expect(prepareLine(repo, pkg('npm'), false)).toBe('linking npm:acme/m:x (--no-install)');
+    expect(prepareLine(repo, pkg('npm'), true)).toBe('installing npm:acme/m:x (npm)');
+    writeFileSync(path.join(root, 'm/pnpm-lock.yaml'), '');
+    expect(prepareLine(repo, pkg('npm'), true)).toBe('installing npm:acme/m:x (pnpm)');
+    writeFileSync(path.join(root, 'm/packages/x/yarn.lock'), '');
+    expect(prepareLine(repo, pkg('npm'), true)).toBe('installing npm:acme/m:x (yarn)');
+    // Never looks above the repo root.
+    writeFileSync(path.join(root, 'bun.lock'), '');
+    rmSync(path.join(root, 'm/pnpm-lock.yaml'));
+    expect(prepareLine(repo, pkg('npm', '.'), true)).toBe('installing npm:acme/m:x (npm)');
+  });
+
+  it(`prints N/M packages done when more than 20 packages are indexed, and not for fewer`, async () => {
+    expect(progressStep(25)).toBe(10);
+    expect(progressStep(264)).toBe(27);
+    const runWith = async (n: number): Promise<string[]> => {
+      const w = path.join(root, `work${n}`);
+      mkdirSync(w, { recursive: true });
+      // Packages no indexer owns: indexed instantly (failed: no indexer).
+      const packages = Array.from({ length: n }, (_, i) => ({ packageId: `cargo:acme/c:p${i}`, path: `p${i}`, manager: 'cargo', name: `p${i}`, entryPoints: [], deps: [] }));
+      writeFileSync(path.join(w, 'discover.json'), JSON.stringify({ org: 'acme', repos: [{ repo: 'acme/c', localPath: root, headSha: 's', packages }] }));
+      const out: string[] = [];
+      await index({ work: w, dbPath: '', db: undefined as unknown as DatabaseSync, log: (l) => out.push(l) }, { install: false });
+      return out.filter((l) => /packages (done|prepared)$/.test(l));
+    };
+    expect(await runWith(25)).toEqual(['[index] 10/25 packages done', '[index] 20/25 packages done', '[index] 25/25 packages done']);
+    expect(await runWith(20)).toEqual([]);
+  });
 });
 
 describe('unjs fixes', () => {
