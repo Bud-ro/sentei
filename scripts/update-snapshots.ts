@@ -69,7 +69,21 @@ export function isFlutterSnapshot(orgName: string, rel: string): boolean {
 }
 
 /** Skip installed deps and pub state a manual run may have left in the fixture. */
-const SKIP = new Set(['node_modules', '.dart_tool', 'pubspec.lock', 'pubspec_overrides.yaml']);
+const SKIP = new Set(['node_modules', 'pubspec.lock', 'pubspec_overrides.yaml']);
+
+/**
+ * True for a fixture path to copy: not [SKIP], and inside a `.dart_tool/` only
+ * build_runner's `build/generated/` output, which a fixture commits on purpose
+ * (org-dart dart-gen: a generated part that exists only there).
+ */
+export function copyFixturePath(src: string): boolean {
+  if (SKIP.has(path.basename(src))) return false;
+  const segs = src.split(path.sep);
+  const k = segs.lastIndexOf('.dart_tool');
+  if (k < 0) return true;
+  const rest = segs.slice(k + 1);
+  return rest.length === 0 || (rest[0] === 'build' && (rest.length === 1 || rest[1] === 'generated'));
+}
 
 /** Recursively sort object keys, and arrays by their canonical JSON (sidecar arrays are sets). */
 function canonical(v: unknown): unknown {
@@ -102,7 +116,7 @@ export async function generateOrgSnapshots(
   const tmp = realpathSync(mkdtempSync(path.join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-snapshots-')));
   try {
     const orgDir = path.join(tmp, org.name);
-    cpSync(path.join(FIXTURES, org.name), orgDir, { recursive: true, filter: (src) => !SKIP.has(path.basename(src)) });
+    cpSync(path.join(FIXTURES, org.name), orgDir, { recursive: true, filter: copyFixturePath });
     if (!flutter) dropFlutterRepos(org.name, orgDir);
     const work = path.join(tmp, 'work');
     mkdirSync(work);

@@ -9,7 +9,9 @@
 //     resolved library by library; operator expressions are references;
 //     files the analyzer excludes are indexed too; a file outside the
 //     package config gets its enclosing pubspec's package; a variable's
-//     enclosing range covers its type annotation);
+//     enclosing range covers its type annotation; the parts of every indexed
+//     library are indexed, build_runner's .dart_tool/build/generated/ output
+//     included);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar
 //     (`--batch`: every package of a pub workspace in one run).
@@ -97,7 +99,10 @@ export const scipDart: Indexer = {
   // fork patch 11 (no crash on a file outside the package config), fork
   // patch 12 (a variable's enclosing range covers its type annotation);
   // dart-surface: Flutter plugin classes named in pubspec.yaml are entry symbols.
-  version: '1.7.0+sentei.10',
+  // sentei.11: fork patch 13 (the parts of every indexed library are
+  // documents, build_runner output under .dart_tool/build/generated/ included;
+  // a part outside the package makes it partial).
+  version: '1.7.0+sentei.11',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -168,12 +173,15 @@ export const scipDart: Indexer = {
     const prepared = input.prepared ?? (await this.prepare!(input));
     const diagnostics: string[] = [...prepared.diagnostics];
     let status: IndexStatus = prepared.status;
+    /** Why a part made the package partial, when nothing had before: a `cause:` line for ingest's flag reason. */
+    let cause: string | undefined;
     const slug = packageSlug(pkg);
     const scipFile = path.join(outDir, `${slug}.scip`);
     const exportsFile = path.join(outDir, `${slug}.exports.json`);
     const logFile = path.join(outDir, `${slug}.log`);
     const log: string[] = [...prepared.log];
     const finish = (): IndexerResult => {
+      if (cause !== undefined && status === 'partial') diagnostics.push(`cause: ${cause}`);
       log.push('--- diagnostics', ...diagnostics);
       writeFileSync(logFile, `${log.join('\n')}\n`);
       return { status, diagnostics, scipFile, exportsFile };
@@ -237,6 +245,21 @@ export const scipDart: Indexer = {
       if (files.unresolved.length > 0) {
         status = worstStatus(status, 'partial');
         diagnostics.push(`error: scip-dart could not resolve ${files.unresolved.length} file(s); references in them are unknown: ${listSome(files.unresolved)}`);
+      }
+      // Fork patch 13: parts the analyzer resolved from build_runner's
+      // `.dart_tool/build/generated/` are documents of the package, at their
+      // real path (GENERATED_GLOBS mark them generated). A part outside the
+      // package could not be one: its references are unknown (fail closed).
+      if (files.generatedParts.length > 0) {
+        diagnostics.push(
+          `info: scip-dart indexed ${files.generatedParts.length} part(s) from build_runner's .dart_tool/build/generated/: ${listSome(files.generatedParts)}`,
+        );
+      }
+      if (files.unindexedParts.length > 0) {
+        const why = `error: ${files.unindexedParts.length} part(s) of the package's libraries lie outside the package and were not indexed; references in them are unknown: ${listSome(files.unindexedParts)}`;
+        if (status === 'ok') cause ??= why;
+        status = worstStatus(status, 'partial');
+        diagnostics.push(why);
       }
       // Fork patch 11: a file reached by a relative import that no package of
       // the package config contains (dart-lang/native: jnigen's test/ from its
@@ -356,7 +379,9 @@ export const scipDart: Indexer = {
         continue;
       }
       incomplete++;
-      diagnostics.push(`error: missing generated part '${m.uri}' at ${at}: the library is incomplete, references inside the part are unknown (run build_runner before indexing)`);
+      const why = `error: missing generated part '${m.uri}' at ${at}: the library is incomplete, references inside the part are unknown (run build_runner before indexing)`;
+      if (status === 'ok' && unresolvedOrgModules.length === 0) cause ??= why;
+      diagnostics.push(why);
     }
     diagnostics.push(...surfaceDiagnostics);
     if (unresolvedOrgModules.length > 0 || incomplete > 0 || sidecar.unresolved.length > 0 || sidecar.missingEntryPoints.length > 0) {
@@ -700,25 +725,42 @@ async function surfaceWorkspace(
   }
 }
 
+/** What scip-dart (fork patches 10 and 13) reports about one package's files; package-relative POSIX paths. */
+export interface ScipDartFileReport {
+  /** Files indexed beyond the analyzer's analyzedFiles() (analysis_options.yaml `analyzer: exclude:`). */
+  excludedIndexed: string[];
+  /** Files that did not resolve: their references are unknown. */
+  unresolved: string[];
+  /** Parts of the package's libraries indexed from outside its walked dirs: build_runner output under `.dart_tool/build/generated/`. */
+  generatedParts: string[];
+  /** Parts of the package's libraries that are not in the package (`../…`), so not indexed: their references are unknown. */
+  unindexedParts: string[];
+}
+
 /**
- * The per-package file report scip-dart (fork patch 10) writes to stderr as
- * `sentei-scip-dart: {"package": <abs dir>, "excludedIndexed": [...], "unresolved": [...]}`
+ * The per-package file report scip-dart writes to stderr as
+ * `sentei-scip-dart: {"package": <abs dir>, "excludedIndexed": [...], "unresolved": [...], "generatedParts": [...], "unindexedParts": [...]}`
  * (package-relative POSIX paths), for the package in `dir` (real absolute path).
- * Absent (nothing excluded, everything resolved): both empty.
+ * Absent (nothing to report), or a key missing (an older fork): empty.
  */
-export function scipDartFileReport(stderr: string, dir: string): { excludedIndexed: string[]; unresolved: string[] } {
+export function scipDartFileReport(stderr: string, dir: string): ScipDartFileReport {
   for (const line of stderr.split('\n')) {
     if (!line.startsWith('sentei-scip-dart: ')) continue;
     try {
-      const r = JSON.parse(line.slice('sentei-scip-dart: '.length)) as { package?: unknown; excludedIndexed?: unknown; unresolved?: unknown };
-      if (typeof r.package !== 'string' || path.resolve(r.package) !== path.resolve(dir)) continue;
+      const r = JSON.parse(line.slice('sentei-scip-dart: '.length)) as Record<string, unknown>;
+      if (typeof r['package'] !== 'string' || path.resolve(r['package']) !== path.resolve(dir)) continue;
       const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
-      return { excludedIndexed: strings(r.excludedIndexed), unresolved: strings(r.unresolved) };
+      return {
+        excludedIndexed: strings(r['excludedIndexed']),
+        unresolved: strings(r['unresolved']),
+        generatedParts: strings(r['generatedParts']),
+        unindexedParts: strings(r['unindexedParts']),
+      };
     } catch {
       continue;
     }
   }
-  return { excludedIndexed: [], unresolved: [] };
+  return { excludedIndexed: [], unresolved: [], generatedParts: [], unindexedParts: [] };
 }
 
 /** Files scip-dart (fork patch 11) warned are in no package of the package config, absolute, sorted. */

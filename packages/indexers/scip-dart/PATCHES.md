@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.10` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 9 below, pub workspaces resolved once at the root, a package with `lib/` code but no `lib/` document fails, and dart-surface finds a re-exported `main`; sentei.10: patches 10 to 12 below, every public library under `lib/` is an entry point, dart-surface records the `main` of every library and the Flutter plugin classes named in pubspec.yaml): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.11` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 9 below, pub workspaces resolved once at the root, a package with `lib/` code but no `lib/` document fails, and dart-surface finds a re-exported `main`; sentei.10: patches 10 to 12 below, every public library under `lib/` is an entry point, dart-surface records the `main` of every library and the Flutter plugin classes named in pubspec.yaml; sentei.11: patch 13 below): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -1355,6 +1355,179 @@ definition, type included.
 +    }
 +    return _lineInfo.getRange(start, node.end - start);
 +  }
+ }
+```
+
+## 13. The parts of every indexed library are documents, build_runner's cache output included (`lib/src/indexer.dart`)
+
+A `build_to: cache` builder (over_react's) does not write `x.over_react.g.dart`
+next to its library but to `.dart_tool/build/generated/<package>/<path>`, and
+the analyzer resolves `part 'x.over_react.g.dart';` to that file when the
+source-side one does not exist (analyzer `PackageConfigWorkspace.findFile`;
+the unit's path is the generated file's). The files to index come from the
+analysis contexts and the conventional dirs (patch 10), neither of which
+walks a dot dir, and `_resolveByLibrary` kept only the units of those files:
+the generated part was resolved with its library and then dropped. Every
+reference inside it was lost, and nothing said so (the part is not missing,
+so dart-surface reports no missing part either): on the Workiva run
+over_react_test indexed `ok` with none of its 13 generated parts (its
+`PropsMetaCollection`, `JsBackedMap`, `UiProps` uses of over_react and react
+gone); a declaration used only from such a part came out dead (fail-open).
+
+Now `_resolveByLibrary` also returns the parts of the libraries it resolved
+from the package's files that are not among those files. A part inside the
+package dir (nested packages excluded) becomes a document at its real
+package-relative path, e.g.
+`.dart_tool/build/generated/over_react_test/lib/src/over_react_test/wrapper_component.over_react.g.dart`
+(its declarations get symbols under that path, the ones the library's
+references already carried). A part outside the package dir cannot be a
+document of it (a pub workspace member's generated parts sit under the
+workspace root's `.dart_tool/`, since the analyzer's workspace root is the
+directory of the package config; or a script's `part '../../shared/x.dart'`):
+it is listed as unindexed. The stderr report line gains two keys, written
+whenever any list is non-empty:
+`sentei-scip-dart: {"package", "excludedIndexed", "unresolved", "generatedParts", "unindexedParts"}`.
+The adapter writes an `info:` line for `generatedParts` and makes the package
+`partial`, with a `cause:` line, for `unindexedParts` (fail closed). Ingest
+marks the documents generated through GENERATED_GLOBS (`**/*.g.dart`,
+`**/generated/**`), so nothing declared in them gets a verdict, while their
+references count. Verified on a copy of the Workiva over_react_test clone
+(with its build_runner output): 37 → 50 documents, the 13 parts indexed, 0
+unindexed. The existing fixture snapshots are unchanged; fixture
+`dart-gen` (a part committed only under `.dart_tool/build/generated/`) keeps
+`splitSettingPairs` alive, private_dead with the fork before this patch.
+
+Upstreamable: a correctness bug for any package with `build_to: cache` parts.
+
+Diff against the state after patch 12:
+
+```diff
+--- a/lib/src/indexer.dart
++++ b/lib/src/indexer.dart
+@@ -126,23 +126,55 @@ Future<void> indexPackages(
+         .toSet();
+     final files = [...analyzed, ...extra]..sort();
+ 
+-    final resolvedUnits = await _resolveByLibrary(collection, files);
+-    final resolvedPaths = {for (final unit in resolvedUnits) unit.path};
++    final resolved = await _resolveByLibrary(collection, files);
++    final resolvedPaths = {for (final unit in resolved.units) unit.path};
+     final unresolved = files.where((f) => !resolvedPaths.contains(f)).toList();
+-    if (extra.isNotEmpty || unresolved.isNotEmpty) {
++    // Parts of the indexed libraries that are not among [files] (sentei patch
++    // 13): build_runner's `build_to: cache` output under
++    // `.dart_tool/build/generated/<package>/`, which the analyzer resolves a
++    // `part 'x.g.dart';` to when no `x.g.dart` sits next to the library (a
++    // dot dir, so never walked). A reference inside such a part is a use like
++    // any other: the part is a document of the package, at its real path.
++    // A part outside the package (a pub workspace member's generated parts
++    // live under the workspace root's `.dart_tool/`) cannot be a document of
++    // this package: reported as unindexed, its references are unknown.
++    final generatedParts = <ResolvedUnitResult>[];
++    final unindexedParts = <String>[];
++    for (final unit in resolved.parts) {
++      if (resolvedPaths.contains(unit.path)) continue;
++      if (nestedPackages.any((nested) => p.isWithin(nested, unit.path))) {
++        continue; // the nested package's own index covers it
++      }
++      if (p.isWithin(dirPath, unit.path)) {
++        generatedParts.add(unit);
++        resolvedPaths.add(unit.path);
++      } else {
++        unindexedParts.add(unit.path);
++      }
++    }
++    final resolvedUnits = [...resolved.units, ...generatedParts]
++      ..sort((a, b) => a.path.compareTo(b.path));
++    String rel(String f) =>
++        p.posix.joinAll(p.split(p.relative(f, from: dirPath)));
++    if (extra.isNotEmpty ||
++        unresolved.isNotEmpty ||
++        generatedParts.isNotEmpty ||
++        unindexedParts.isNotEmpty) {
+       // One machine-readable line per package for the caller (sentei's
+-      // adapter): files indexed beyond the analyzer's analyzedFiles(), and
+-      // files that could not be resolved (their references are unknown).
++      // adapter): files indexed beyond the analyzer's analyzedFiles(), files
++      // that could not be resolved (their references are unknown), parts
++      // indexed from outside the package's walked dirs (patch 13), and parts
++      // that could not be indexed as documents of the package.
+       stderr.writeln(
+         'sentei-scip-dart: ${jsonEncode({
+           'package': dirPath,
+           'excludedIndexed': [
+             for (final f in extra)
+-              if (resolvedPaths.contains(f)) p.posix.joinAll(p.split(p.relative(f, from: dirPath))),
+-          ]..sort(),
+-          'unresolved': [
+-            for (final f in unresolved) p.posix.joinAll(p.split(p.relative(f, from: dirPath))),
++              if (resolvedPaths.contains(f)) rel(f),
+           ]..sort(),
++          'unresolved': [for (final f in unresolved) rel(f)]..sort(),
++          'generatedParts': [for (final u in generatedParts) rel(u.path)]..sort(),
++          'unindexedParts': [for (final f in unindexedParts) rel(f)]..sort(),
+         })}',
+       );
+     }
+@@ -269,16 +301,28 @@ AnalysisContext? _contextFor(AnalysisContextCollection collection, String file)
+ /// the library's files. A file no library of [files] includes (a part of an
+ /// outside library, an orphan part) falls back to the library containing it,
+ /// then to resolving it alone.
+-Future<List<ResolvedUnitResult>> _resolveByLibrary(
++///
++/// Also returns the parts of the libraries of [files] that are not in
++/// [files] themselves, sorted by path (sentei patch 13): the analyzer
++/// resolves a `part 'x.g.dart';` whose file is missing next to the library
++/// to build_runner's `.dart_tool/build/generated/<package>/…/x.g.dart`, which
++/// no walk of the package's dirs finds.
++Future<({List<ResolvedUnitResult> units, List<ResolvedUnitResult> parts})>
++_resolveByLibrary(
+   AnalysisContextCollection collection,
+   List<String> files,
+ ) async {
+   final wanted = files.toSet();
+   final units = <String, ResolvedUnitResult>{};
+-  void take(SomeResolvedLibraryResult result) {
++  final parts = <String, ResolvedUnitResult>{};
++  void take(SomeResolvedLibraryResult result, {bool ownLibrary = false}) {
+     if (result is! ResolvedLibraryResult) return;
+     for (final unit in result.units) {
+-      if (wanted.contains(unit.path)) units.putIfAbsent(unit.path, () => unit);
++      if (wanted.contains(unit.path)) {
++        units.putIfAbsent(unit.path, () => unit);
++      } else if (ownLibrary && unit.isPart) {
++        parts.putIfAbsent(unit.path, () => unit);
++      }
+     }
+   }
+ 
+@@ -288,7 +332,7 @@ Future<List<ResolvedUnitResult>> _resolveByLibrary(
+       if (session == null) return;
+       final kind = session.getFile(file);
+       if (kind is FileResult && kind.isLibrary) {
+-        take(await session.getResolvedLibrary(file));
++        take(await session.getResolvedLibrary(file), ownLibrary: true);
+       }
+     }),
+   );
+@@ -306,8 +350,14 @@ Future<List<ResolvedUnitResult>> _resolveByLibrary(
+       if (unit is ResolvedUnitResult) units[file] = unit;
+     }),
+   );
+-  return [
+-    for (final file in files)
+-      if (units[file] case final unit?) unit,
+-  ];
++  return (
++    units: [
++      for (final file in files)
++        if (units[file] case final unit?) unit,
++    ],
++    parts: [
++      for (final path in parts.keys.toList()..sort())
++        if (!units.containsKey(path)) parts[path]!,
++    ],
++  );
  }
 ```
 

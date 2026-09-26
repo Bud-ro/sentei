@@ -282,6 +282,7 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
     expect(r.policy).not.toHaveProperty('assumeClosedWorld');
     expect(r.repos.map((x) => [x.repo, x.index_status]).sort()).toEqual([
       ['acme/dart-app', 'ok'],
+      ['acme/dart-gen', 'ok'],
       ['acme/dart-js', 'ok'],
       ['acme/dart-lib-pub', 'ok'],
       ['acme/dart-lib-x', 'ok'],

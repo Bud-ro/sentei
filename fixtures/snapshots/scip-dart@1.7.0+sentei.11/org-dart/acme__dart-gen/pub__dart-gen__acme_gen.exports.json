@@ -1,0 +1,35 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [
+    "lib/acme_gen.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "lib/acme_gen.dart",
+      "kind": "runtime",
+      "line": 9,
+      "name": "main"
+    }
+  ],
+  "exports": [
+    {
+      "col": 5,
+      "entry": "lib/acme_gen.dart",
+      "exportedAs": "main",
+      "file": "lib/acme_gen.dart",
+      "line": 9,
+      "name": "main",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-gen:acme_gen",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

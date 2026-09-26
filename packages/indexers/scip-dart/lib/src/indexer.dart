@@ -126,23 +126,55 @@ Future<void> indexPackages(
         .toSet();
     final files = [...analyzed, ...extra]..sort();
 
-    final resolvedUnits = await _resolveByLibrary(collection, files);
-    final resolvedPaths = {for (final unit in resolvedUnits) unit.path};
+    final resolved = await _resolveByLibrary(collection, files);
+    final resolvedPaths = {for (final unit in resolved.units) unit.path};
     final unresolved = files.where((f) => !resolvedPaths.contains(f)).toList();
-    if (extra.isNotEmpty || unresolved.isNotEmpty) {
+    // Parts of the indexed libraries that are not among [files] (sentei patch
+    // 13): build_runner's `build_to: cache` output under
+    // `.dart_tool/build/generated/<package>/`, which the analyzer resolves a
+    // `part 'x.g.dart';` to when no `x.g.dart` sits next to the library (a
+    // dot dir, so never walked). A reference inside such a part is a use like
+    // any other: the part is a document of the package, at its real path.
+    // A part outside the package (a pub workspace member's generated parts
+    // live under the workspace root's `.dart_tool/`) cannot be a document of
+    // this package: reported as unindexed, its references are unknown.
+    final generatedParts = <ResolvedUnitResult>[];
+    final unindexedParts = <String>[];
+    for (final unit in resolved.parts) {
+      if (resolvedPaths.contains(unit.path)) continue;
+      if (nestedPackages.any((nested) => p.isWithin(nested, unit.path))) {
+        continue; // the nested package's own index covers it
+      }
+      if (p.isWithin(dirPath, unit.path)) {
+        generatedParts.add(unit);
+        resolvedPaths.add(unit.path);
+      } else {
+        unindexedParts.add(unit.path);
+      }
+    }
+    final resolvedUnits = [...resolved.units, ...generatedParts]
+      ..sort((a, b) => a.path.compareTo(b.path));
+    String rel(String f) =>
+        p.posix.joinAll(p.split(p.relative(f, from: dirPath)));
+    if (extra.isNotEmpty ||
+        unresolved.isNotEmpty ||
+        generatedParts.isNotEmpty ||
+        unindexedParts.isNotEmpty) {
       // One machine-readable line per package for the caller (sentei's
-      // adapter): files indexed beyond the analyzer's analyzedFiles(), and
-      // files that could not be resolved (their references are unknown).
+      // adapter): files indexed beyond the analyzer's analyzedFiles(), files
+      // that could not be resolved (their references are unknown), parts
+      // indexed from outside the package's walked dirs (patch 13), and parts
+      // that could not be indexed as documents of the package.
       stderr.writeln(
         'sentei-scip-dart: ${jsonEncode({
           'package': dirPath,
           'excludedIndexed': [
             for (final f in extra)
-              if (resolvedPaths.contains(f)) p.posix.joinAll(p.split(p.relative(f, from: dirPath))),
+              if (resolvedPaths.contains(f)) rel(f),
           ]..sort(),
-          'unresolved': [
-            for (final f in unresolved) p.posix.joinAll(p.split(p.relative(f, from: dirPath))),
-          ]..sort(),
+          'unresolved': [for (final f in unresolved) rel(f)]..sort(),
+          'generatedParts': [for (final u in generatedParts) rel(u.path)]..sort(),
+          'unindexedParts': [for (final f in unindexedParts) rel(f)]..sort(),
         })}',
       );
     }
@@ -269,16 +301,28 @@ AnalysisContext? _contextFor(AnalysisContextCollection collection, String file) 
 /// the library's files. A file no library of [files] includes (a part of an
 /// outside library, an orphan part) falls back to the library containing it,
 /// then to resolving it alone.
-Future<List<ResolvedUnitResult>> _resolveByLibrary(
+///
+/// Also returns the parts of the libraries of [files] that are not in
+/// [files] themselves, sorted by path (sentei patch 13): the analyzer
+/// resolves a `part 'x.g.dart';` whose file is missing next to the library
+/// to build_runner's `.dart_tool/build/generated/<package>/…/x.g.dart`, which
+/// no walk of the package's dirs finds.
+Future<({List<ResolvedUnitResult> units, List<ResolvedUnitResult> parts})>
+_resolveByLibrary(
   AnalysisContextCollection collection,
   List<String> files,
 ) async {
   final wanted = files.toSet();
   final units = <String, ResolvedUnitResult>{};
-  void take(SomeResolvedLibraryResult result) {
+  final parts = <String, ResolvedUnitResult>{};
+  void take(SomeResolvedLibraryResult result, {bool ownLibrary = false}) {
     if (result is! ResolvedLibraryResult) return;
     for (final unit in result.units) {
-      if (wanted.contains(unit.path)) units.putIfAbsent(unit.path, () => unit);
+      if (wanted.contains(unit.path)) {
+        units.putIfAbsent(unit.path, () => unit);
+      } else if (ownLibrary && unit.isPart) {
+        parts.putIfAbsent(unit.path, () => unit);
+      }
     }
   }
 
@@ -288,7 +332,7 @@ Future<List<ResolvedUnitResult>> _resolveByLibrary(
       if (session == null) return;
       final kind = session.getFile(file);
       if (kind is FileResult && kind.isLibrary) {
-        take(await session.getResolvedLibrary(file));
+        take(await session.getResolvedLibrary(file), ownLibrary: true);
       }
     }),
   );
@@ -306,8 +350,14 @@ Future<List<ResolvedUnitResult>> _resolveByLibrary(
       if (unit is ResolvedUnitResult) units[file] = unit;
     }),
   );
-  return [
-    for (final file in files)
-      if (units[file] case final unit?) unit,
-  ];
+  return (
+    units: [
+      for (final file in files)
+        if (units[file] case final unit?) unit,
+    ],
+    parts: [
+      for (final path in parts.keys.toList()..sort())
+        if (!units.containsKey(path)) parts[path]!,
+    ],
+  );
 }

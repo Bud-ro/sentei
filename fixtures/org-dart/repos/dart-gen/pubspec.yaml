@@ -1,0 +1,7 @@
+name: acme_gen
+description: "Org-private library whose generated part build_runner wrote only to .dart_tool/build/generated/ (build_to: cache, like over_react)."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0

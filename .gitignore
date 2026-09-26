@@ -6,6 +6,13 @@ dist/
 # Dart
 .dart_tool/
 pubspec_overrides.yaml
+# ...except build_runner output a fixture commits on purpose (fixtures/org-dart
+# dart-gen: a generated part that exists only under .dart_tool/build/generated/).
+!fixtures/org-dart/repos/dart-gen/.dart_tool/
+fixtures/org-dart/repos/dart-gen/.dart_tool/*
+!fixtures/org-dart/repos/dart-gen/.dart_tool/build/
+fixtures/org-dart/repos/dart-gen/.dart_tool/build/*
+!fixtures/org-dart/repos/dart-gen/.dart_tool/build/generated/
 
 # sentei scratch when --work / clones point inside the tree
 .pm/

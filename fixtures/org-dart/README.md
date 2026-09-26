@@ -18,8 +18,11 @@ over them).
 | `flutter-app` | `acme_flutter_app` | private (`publish_to: none`) | Flutter app: `lib/main.dart` `main` calls `runApp` with an `AcmeButton`; `path:` dep on `acme_widgets` |
 | `flutter-plugin` | `acme_plugin` | private (`publish_to: none`) | Flutter plugin implementation (like flame-engine's gamepads_web): pubspec `flutter.plugin.platforms` names `AcmePluginWeb` (web `pluginClass`, `fileName: acme_plugin.dart`), `AcmePluginLinux` (`dartPluginClass`) and a native Android `pluginClass`; no org package depends on it |
 | `dart-workspace` | `acme_ws` (root), `acme_core`, `acme_tools` | private (`publish_to: none`) | pub workspace, members listed by path; `acme_tools` depends on its sibling `acme_core` and (hosted `^1.0.0`) on `acme_x` |
+| `dart-gen` | `acme_gen` | private (`publish_to: none`) | a library whose build_runner part exists only under `.dart_tool/build/generated/acme_gen/lib/` (committed; `.gitignore` re-includes that dir) |
 
-No `pubspec.lock` / `.dart_tool` is checked in. To build or index, copy the repos
+No `pubspec.lock` / `.dart_tool` is checked in, except `dart-gen`'s
+`.dart_tool/build/generated/` (build_runner output, on purpose; the test and
+snapshot copies keep it and drop the rest of `.dart_tool/`). To build or index, copy the repos
 somewhere else and run `dart pub get` in each package. `dart-app` depends on
 `acme_pub` by a hosted constraint (`^1.0.0`, not on pub.dev), like real org repos
 do. It resolves only when the indexer source-links it, e.g. with a
@@ -163,3 +166,13 @@ docs / example files: a use there makes them needs_review with a note.
 | Files the analyzer excludes (`analysis_options.yaml` `analyzer: exclude:`; dart-lang: 199 files, e.g. cronet_http `lib/src/jni/jni_bindings.dart`) | `dart-lib-x/analysis_options.yaml` excludes `lib/src/excluded/**`; the entry `lib/bindings.dart` re-exports `lib/src/excluded/bindings_gen.dart`, whose `bindingsCall` (used by `dart-app/bin/clock.dart`) calls the unexported `bindingsBackend` in `lib/src/bindings_backend.dart` | both alive; the excluded file is a document of acme_x's index (fork patch 10) and the adapter says so in an `info:` diagnostic (without it `bindingsBackend` was private_dead) |
 | Private typedef used only in the type annotation of a reachable top-level variable (flame-engine jenny `operators/_common.dart`) | `dart-lib-x/lib/src/builders.dart`: `final Map<String, _Doubler> _builders`, read by `buildDouble` (called by `extrasUsed`) | `_Doubler` alive: the variable's enclosing range covers its type (fork patch 12; the type reference was the file's, and `_Doubler` private_dead) |
 | Flutter plugin classes (flame-engine gamepads_web `GamepadsWeb`: DEPRECATE / ORG-DEAD) | `flutter-plugin/pubspec.yaml` `flutter.plugin.platforms`: web `pluginClass: AcmePluginWeb` (declared in `lib/src/web_impl.dart`, re-exported by the `fileName` library), linux `dartPluginClass: AcmePluginLinux`, android `pluginClass: AcmePluginAndroid` (Kotlin: no Dart class, skipped quietly) | `AcmePluginWeb`, `AcmePluginLinux` and what `registerWith` reaches alive (sidecar `entrySymbols`: Flutter's generated registrant instantiates them by name); `AcmePluginHelper`, exported and named nowhere, deletion_candidate `["no_refs"]` (negative) |
+
+### Generated parts under `.dart_tool/build/generated/` (Phase 2 fix round 4)
+
+A `build_to: cache` builder (over_react's) writes a library's `x.g.dart` part to
+`.dart_tool/build/generated/<package>/<path>`, and the analyzer resolves the part
+from there (Workiva over_react_test: all 13 parts, none next to its source).
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| A part that exists only under `.dart_tool/build/generated/` references an otherwise-unused declaration | `dart-gen/lib/acme_gen.dart` `part 'acme_gen.g.dart';`, committed as `dart-gen/.dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart`, whose `_$parseSettings` calls `splitSettingPairs` (`lib/src/settings_support.dart`, not exported) | `splitSettingPairs` alive (fork patch 13 indexes the part as a generated document at its real path; without it, private_dead `already_unreachable`); status `ok`, no build_runner run, no missing part |

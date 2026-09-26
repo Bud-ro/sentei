@@ -44,7 +44,16 @@ if (!HAS_FLUTTER) console.warn('[index-dart.test] SKIPPING Flutter indexing test
 /** Copy options that never carry pub state left in the fixture by a manual run. */
 const NO_PUB_STATE = {
   recursive: true,
-  filter: (src: string) => !['.dart_tool', 'pubspec.lock', 'pubspec_overrides.yaml'].includes(path.basename(src)),
+  // Pub state a manual run may have left in the fixture, except build_runner's
+  // `.dart_tool/build/generated/` output, which dart-gen commits on purpose.
+  filter: (src: string) => {
+    if (['pubspec.lock', 'pubspec_overrides.yaml'].includes(path.basename(src))) return false;
+    const segs = src.split(path.sep);
+    const k = segs.lastIndexOf('.dart_tool');
+    if (k < 0) return true;
+    const rest = segs.slice(k + 1);
+    return rest.length === 0 || (rest[0] === 'build' && (rest.length === 1 || rest[1] === 'generated'));
+  },
 };
 
 function readJson<T>(...p: string[]): T {
@@ -96,6 +105,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       repos: [
         repoOf(tmp, 'dart-app', pubPackage('acme_app', ['bin/main.dart', 'bin/shapes.dart'], [orgDep('acme_pub', '^1.0.0'), orgDep('acme_x', 'path:../dart-lib-x')])),
         repoOf(tmp, 'dart-bad', pubPackage('acme_bad', ['bin/main.dart'], [orgDep('acme_x', '^1.0.0')])),
+        repoOf(tmp, 'dart-gen', pubPackage('acme_gen', ['lib/acme_gen.dart'])),
         repoOf(tmp, 'dart-lib-pub', pubPackage('acme_pub', ['lib/acme_pub.dart'])),
         repoOf(tmp, 'dart-lib-x', pubPackage('acme_x', ['lib/acme_x.dart', 'lib/builder.dart', 'lib/syntax.dart'])),
       ],
@@ -122,7 +132,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.10',
+        indexerVersion: '1.7.0+sentei.11',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -271,6 +281,22 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     );
     // Packages without excludes say nothing about it.
     expect(ix('dart-app').packages[0]!.diagnostics.some((d) => d.includes('analyzedFiles'))).toBe(false);
+  });
+
+  it('indexes a part build_runner wrote only under .dart_tool/build/generated/, with its references (fork patch 13)', () => {
+    const scip = readScipIndex(path.join(work, 'index/acme__dart-gen/pub__acme_gen.scip'));
+    const file = '.dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart';
+    expect(scip.documents.map((d) => d.relativePath).sort()).toEqual([file, 'lib/acme_gen.dart', 'lib/src/settings_support.dart']);
+    const part = scip.documents.find((d) => d.relativePath === file)!;
+    const refs = part.occurrences.filter((o) => (o.symbolRoles & 1) === 0).map((o) => o.symbol);
+    expect(refs).toContain('scip-dart pub acme_gen 1.0.0 lib/src/`settings_support.dart`/splitSettingPairs().');
+    const defs = part.occurrences.filter((o) => (o.symbolRoles & 1) === 1).map((o) => o.symbol);
+    expect(defs).toContain('scip-dart pub acme_gen 1.0.0 `.dart_tool`/build/generated/acme_gen/lib/`acme_gen.g.dart`/_$parseSettings().');
+    const r = ix('dart-gen').packages[0]!;
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(r.diagnostics).toContain(`info: scip-dart indexed 1 part(s) from build_runner's .dart_tool/build/generated/: ${file}`);
+    // Not missing: neither build_runner nor the incomplete-library error.
+    expect(r.diagnostics.filter((d) => /build_runner|missing/.test(d) && !d.startsWith('info: scip-dart indexed'))).toEqual([]);
   });
 
   it('gives private declarations global symbols (patched scip-dart), consumer refs carry the lib symbols', () => {
@@ -1089,9 +1115,10 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     mkdirSync(out);
     const gen = await scipDart.run(inputFor(repos, repos[0]!), out);
     expect(gen.status).toBe('partial');
-    expect(gen.diagnostics).toContain(
-      "error: missing generated part 'acme_gen.g.dart' at lib/acme_gen.dart:1:6: the library is incomplete, references inside the part are unknown (run build_runner before indexing)",
-    );
+    const missing = "error: missing generated part 'acme_gen.g.dart' at lib/acme_gen.dart:1:6: the library is incomplete, references inside the part are unknown (run build_runner before indexing)";
+    expect(gen.diagnostics).toContain(missing);
+    // The flag reason ingest shows (statusReason): the missing part.
+    expect(gen.diagnostics.filter((d) => d.startsWith('cause: '))).toEqual([`cause: ${missing}`]);
     expect(gen.diagnostics.some((d) => d.startsWith("warn: missing part 'gen_test.g.dart' at test/gen_test.dart:3:6"))).toBe(true);
     // The missing parts are not also counted as plain analyzer errors (those never change status).
     expect(gen.diagnostics.some((d) => /uri_has_not_been_generated/.test(d))).toBe(false);
@@ -1099,6 +1126,28 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     const gentest = await scipDart.run(inputFor(repos, repos[1]!), out);
     expect(gentest.status, gentest.diagnostics.join('\n')).toBe('ok');
     expect(gentest.diagnostics.some((d) => d.startsWith("warn: missing part 'gen_test.over_react.g.dart' at test/gen_test.dart:1:6"))).toBe(true);
+  }, 300_000);
+
+  it('a part of a library that lies outside the package is not a document of it: partial, with a cause (fork patch 13)', async () => {
+    write({
+      // A script's part in a sibling dir of the package (a file: URI; from lib/ a
+      // package: URI cannot leave lib/).
+      'farpart/shared/common_part.dart': "part of '../pkg/bin/tool.dart';\n\nint fromOutside() => helperOuter();\n",
+      'farpart/pkg/pubspec.yaml': pubspec('acme_outer', '1.0.0'),
+      'farpart/pkg/bin/tool.dart': "import 'package:acme_outer/src/helper.dart';\n\npart '../../shared/common_part.dart';\n\nvoid main() => print(fromOutside());\n",
+      'farpart/pkg/lib/acme_outer.dart': "export 'src/helper.dart';\n",
+      'farpart/pkg/lib/src/helper.dart': 'int helperOuter() => 1;\n',
+    });
+    const repo = repoOf(root, 'farpart', { ...pubPackage('acme_outer', ['pkg/lib/acme_outer.dart', 'pkg/bin/tool.dart']), path: 'pkg' });
+    repo.localPath = path.join(root, 'farpart');
+    const out = path.join(root, 'out-farpart');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor([repo], repo), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('partial');
+    const why = "error: 1 part(s) of the package's libraries lie outside the package and were not indexed; references in them are unknown: ../shared/common_part.dart";
+    expect(r.diagnostics, r.diagnostics.join('\n')).toContain(why);
+    expect(r.diagnostics.filter((d) => d.startsWith('cause: '))).toEqual([`cause: ${why}`]);
+    expect(readScipIndex(r.scipFile!).documents.map((d) => d.relativePath).sort()).toEqual(['bin/tool.dart', 'lib/acme_outer.dart', 'lib/src/helper.dart']);
   }, 300_000);
 
   it('nothing under lib/ is a test file: a lib/ main stays an entry symbol, a missing part there makes it partial', async () => {
@@ -1261,16 +1310,23 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(loose.symbol).toMatch(/^local \d+$/);
   }, 300_000);
 
-  it('reads the per-package file report scip-dart writes to stderr (fork patch 10)', () => {
+  it('reads the per-package file report scip-dart writes to stderr (fork patches 10, 13)', () => {
     const stderr = [
       'some analyzer noise',
       'sentei-scip-dart: {"package":"/r/ws/packages/a","excludedIndexed":["lib/src/gen.dart"],"unresolved":[]}',
-      'sentei-scip-dart: {"package":"/r/ws/packages/b","excludedIndexed":[],"unresolved":["test/broken.dart"]}',
+      'sentei-scip-dart: {"package":"/r/ws/packages/b","excludedIndexed":[],"unresolved":["test/broken.dart"],"generatedParts":[".dart_tool/build/generated/b/lib/b.g.dart"],"unindexedParts":["../shared/p.dart"]}',
       'sentei-scip-dart: {not json',
     ].join('\n');
-    expect(scipDartFileReport(stderr, '/r/ws/packages/a')).toEqual({ excludedIndexed: ['lib/src/gen.dart'], unresolved: [] });
-    expect(scipDartFileReport(stderr, '/r/ws/packages/b')).toEqual({ excludedIndexed: [], unresolved: ['test/broken.dart'] });
-    expect(scipDartFileReport(stderr, '/r/ws/packages/c')).toEqual({ excludedIndexed: [], unresolved: [] });
+    const none = { excludedIndexed: [], unresolved: [], generatedParts: [], unindexedParts: [] };
+    // A report without the patch 13 keys (an older fork): empty lists.
+    expect(scipDartFileReport(stderr, '/r/ws/packages/a')).toEqual({ ...none, excludedIndexed: ['lib/src/gen.dart'] });
+    expect(scipDartFileReport(stderr, '/r/ws/packages/b')).toEqual({
+      excludedIndexed: [],
+      unresolved: ['test/broken.dart'],
+      generatedParts: ['.dart_tool/build/generated/b/lib/b.g.dart'],
+      unindexedParts: ['../shared/p.dart'],
+    });
+    expect(scipDartFileReport(stderr, '/r/ws/packages/c')).toEqual(none);
     expect(outsidePackageConfig([
       'WARN: /r/b/test/x.dart is in no package of the package config; symbols use the enclosing package b at /r/b/',
       'WARN: /r/a.dart is in no package of the package config; no enclosing pubspec.yaml either: its symbols are local',

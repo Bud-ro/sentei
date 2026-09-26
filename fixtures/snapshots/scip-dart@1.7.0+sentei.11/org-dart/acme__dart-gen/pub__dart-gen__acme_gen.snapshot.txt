@@ -1,0 +1,66 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## .dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart
+  // GENERATED CODE - DO NOT MODIFY BY HAND
+//^ definition scip-dart pub acme_gen . `.dart_tool`/build/generated/acme_gen/lib/`acme_gen.g.dart`/
+
+  part of 'acme_gen.dart';
+
+  // **************************************************************************
+  // SettingsGenerator
+  // **************************************************************************
+
+  Map<String, String> _$parseSettings(String text) => splitSettingPairs(text);
+//^^^ reference scip-dart pub dart:core . dart:core/`map.dart`/Map#
+//    ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//            ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                    ^^^^^^^^^^^^^^^ definition scip-dart pub acme_gen . `.dart_tool`/build/generated/acme_gen/lib/`acme_gen.g.dart`/_$parseSettings(). enclosing [8:0-8:76]
+//                                    ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                                           ^^^^ definition local 0 enclosing [8:36-8:47]
+//                                                    ^^^^^^^^^^^^^^^^^ reference scip-dart pub acme_gen . lib/src/`settings_support.dart`/splitSettingPairs().
+//                                                                      ^^^^ reference local 0
+
+## lib/acme_gen.dart
+  // A library with a build_runner part that is not next to it: a `build_to: cache`
+//^ definition scip-dart pub acme_gen . lib/`acme_gen.dart`/
+  // builder (over_react's) wrote it to
+  // .dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart, and the analyzer
+  // resolves the part from there (over_react_test on Workiva).
+  import 'src/settings_support.dart';
+
+  part 'acme_gen.g.dart';
+
+  // Expected: no finding (the main of a library is a runtime entry symbol).
+  void main() => print(_$parseSettings('mode=fast;level=2'));
+//     ^^^^ definition scip-dart pub acme_gen . lib/`acme_gen.dart`/main(). enclosing [9:0-9:59]
+//               ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//                     ^^^^^^^^^^^^^^^ reference scip-dart pub acme_gen . `.dart_tool`/build/generated/acme_gen/lib/`acme_gen.g.dart`/_$parseSettings().
+
+## lib/src/settings_support.dart
+  // Not exported: used only by the generated part of lib/acme_gen.dart.
+//^ definition scip-dart pub acme_gen . lib/src/`settings_support.dart`/
+
+  // Expected: alive, no finding. Its only reference is in the generated part under
+  // .dart_tool/build/generated/ (fork patch 13 indexes it; without, private_dead).
+  Map<String, String> splitSettingPairs(String text) => {
+//^^^ reference scip-dart pub dart:core . dart:core/`map.dart`/Map#
+//    ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//            ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                    ^^^^^^^^^^^^^^^^^ definition scip-dart pub acme_gen . lib/src/`settings_support.dart`/splitSettingPairs(). enclosing [4:0-7:6]
+//                                      ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                                             ^^^^ definition local 0 enclosing [4:38-4:49]
+        for (final pair in text.split(';'))
+//                 ^^^^ definition local 1 enclosing [5:11-5:21]
+//                         ^^^^ reference local 0
+//                              ^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#split().
+          if (pair.contains('=')) pair.split('=').first: pair.split('=').last,
+//            ^^^^ reference local 1
+//                 ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#contains().
+//                                ^^^^ reference local 1
+//                                     ^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#split().
+//                                                ^^^^^ reference scip-dart pub dart:core . dart:core/`iterable.dart`/Iterable#`<get>first`.
+//                                                       ^^^^ reference local 1
+//                                                            ^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#split().
+//                                                                       ^^^^ reference scip-dart pub dart:core . dart:core/`iterable.dart`/Iterable#`<get>last`.
+      };
