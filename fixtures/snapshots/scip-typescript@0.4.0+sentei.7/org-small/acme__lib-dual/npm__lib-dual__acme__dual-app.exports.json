@@ -1,0 +1,50 @@
+{
+  "deepImportExports": [
+    {
+      "entry": "src/lib/types.ts",
+      "exportedAs": "GenericSchema",
+      "file": "src/lib/types.ts",
+      "name": "GenericSchema",
+      "targetPackage": "@acme/dual"
+    },
+    {
+      "entry": "src/lib/types.ts",
+      "exportedAs": "UnusedSchema",
+      "file": "src/lib/types.ts",
+      "name": "UnusedSchema",
+      "targetPackage": "@acme/dual"
+    }
+  ],
+  "entryPoints": [
+    "packages/dual-app/src/main.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [
+    {
+      "col": 26,
+      "file": "packages/dual-app/src/main.ts",
+      "flag": "opaque_consumer",
+      "line": 7,
+      "reason": "deep import @acme/dual-legacy/dist/esm/internal/gone has no source",
+      "targetPackage": "@acme/dual-legacy"
+    }
+  ],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-app",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": [
+    {
+      "col": 26,
+      "file": "packages/dual-app/src/main.ts",
+      "line": 7,
+      "module": "@acme/dual-legacy/dist/esm/internal/gone",
+      "name": "*"
+    }
+  ]
+}

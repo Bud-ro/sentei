@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { DatabaseSync } from 'node:sqlite';
+import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
 
@@ -218,8 +219,10 @@ describe('consumer checks and import sites', () => {
       `export function f(): object { const local = 1; return { local }; }`,
       '',
     ].join('\n'),
-    // A deep dist import: a private build-output path, not a blocker.
+    // A deep dist import: a private build-output path, linked to its source (dist → src).
     deepdist: `import { usedFn } from '@acme/core/dist/fns';\nusedFn(1);\n`,
+    // A deep dist import with no source: unresolved, flags @acme/core (not a blocker here).
+    deepgone: `import { gone } from '@acme/core/dist/esm/gone';\ngone(1);\n`,
   };
 
   function writePkg(dir: string, name: string, files: Record<string, string>, deps: Record<string, string> = {}): void {
@@ -362,13 +365,41 @@ describe('consumer checks and import sites', () => {
     expect(result('skew').sidecar.shorthandRefs).toEqual([]);
   });
 
-  it('a deep dist import of an org package is recorded as an unresolved import, not partial', () => {
+  it('a deep dist import of an org package is linked to its source: the reference is the lib symbol', () => {
     const { index: ix, sidecar } = result('deepdist');
     expect(ix.status).toBe('ok');
-    expect(sidecar.unresolvedImports).toEqual([{ module: '@acme/core/dist/fns', name: '*', file: 'src/main.ts', line: 0, col: 23 }]);
+    expect(sidecar.unresolvedImports).toEqual([]);
+    expect(sidecar.flags).toEqual([]);
+    // The module it reached is surface of @acme/core (ingest marks these exported).
+    expect(sidecar.deepImportExports).toContainEqual({ targetPackage: '@acme/core', entry: 'src/fns.ts', exportedAs: 'usedFn', name: 'usedFn', file: 'src/fns.ts' });
+    expect(sidecar.deepImportExports!.every((d) => d.targetPackage === '@acme/core' && d.entry === 'src/fns.ts')).toBe(true);
+    expect(result('deepgone').sidecar.deepImportExports).toEqual([]);
+    const shadow = path.join(root, 'repos/deepdist/node_modules/@acme/core');
+    expect(existsSync(path.join(shadow, '.sentei-shadow'))).toBe(true);
+    expect(realpathSync(path.join(shadow, 'dist/fns.ts'))).toBe(path.join(root, 'repos/lib-core/src/fns.ts'));
+    expect(existsSync(path.join(root, 'repos/lib-core/dist'))).toBe(false); // nothing written into the checkout
     const diags = ix.packages[0]!.diagnostics;
-    expect(diags.some((d) => d.startsWith("warn: unresolved deep dist import '@acme/core/dist/fns' at src/main.ts:1:24"))).toBe(true);
+    expect(diags).toContain(`info: node_modules/@acme/core is a shadow of ${path.join('..', '..', '..', 'lib-core')} (deep imports linked to sources: dist/fns → src/fns.ts)`);
+    const lib = readScipIndex(path.join(cwork, 'index/acme__lib-core/npm__acme__core.scip'));
+    const usedFn = lib.documents.flatMap((d) => d.occurrences.filter((o) => (o.symbolRoles & 1) === 1).map((o) => o.symbol)).find((s) => s.endsWith('/usedFn().'));
+    expect(usedFn).toBeDefined();
+    const main = readScipIndex(path.join(cwork, 'index/acme__deepdist/npm__acme__deepdist.scip')).documents.find((d) => d.relativePath === 'src/main.ts')!;
+    expect(main.occurrences.some((o) => o.symbol === usedFn)).toBe(true);
+  });
+
+  it('a deep dist import with no source stays unresolved and flags the target package (fail closed)', () => {
+    const { index: ix, sidecar } = result('deepgone');
+    expect(ix.status).toBe('ok');
+    expect(sidecar.unresolvedImports).toEqual([{ module: '@acme/core/dist/esm/gone', name: '*', file: 'src/main.ts', line: 0, col: 21 }]);
+    expect(sidecar.flags).toEqual([
+      { flag: 'opaque_consumer', reason: 'deep import @acme/core/dist/esm/gone has no source', targetPackage: '@acme/core', file: 'src/main.ts', line: 0, col: 21 },
+    ]);
+    const diags = ix.packages[0]!.diagnostics;
+    expect(diags.some((d) => d.startsWith("warn: unresolved deep dist import '@acme/core/dist/esm/gone' at src/main.ts:1:22"))).toBe(true);
+    expect(diags.some((d) => d.startsWith('warn: deep import @acme/core/dist/esm/gone has no source in'))).toBe(true);
     expect(diags.some((d) => d.startsWith('error:'))).toBe(false);
+    // No link was needed: a plain symlink, as before.
+    expect(lstatSync(path.join(root, 'repos/deepgone/node_modules/@acme/core')).isSymbolicLink()).toBe(true);
   });
 
   it('records import bindings in re-exporting entry files as sites', () => {
@@ -1861,5 +1892,136 @@ describe('index summary formatting', () => {
       '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
       '  scip-typescript        1       0       0        0',
     ]);
+  });
+});
+
+describe('deep build-output imports of org packages (supabase dist/module/lib/types)', () => {
+  let root: string;
+  let prep: Awaited<ReturnType<NonNullable<typeof scipTypescript.prepare>>>;
+  const consumerDir = () => path.join(root, 'repos/consumer');
+
+  function write(repo: string, files: Record<string, string | object>): void {
+    for (const [f, body] of Object.entries(files)) {
+      const abs = path.join(root, 'repos', repo, ...f.split('/'));
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+    }
+  }
+  const SPECS = [
+    '@acme/dual/dist/module/lib/types',
+    '@acme/dual/dist/main/lib/types.js',
+    '@acme/dual/dist/module/lib/helpers',
+    '@acme/dual/dist/module/lib/gone',
+    '@acme/built/dist/extra',
+    '@acme/tv/dist/lib/types',
+  ];
+
+  beforeAll(async () => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-deep-')));
+    // Two outDirs (dist/main, dist/module) of one rootDir, `exports` naming only `.`.
+    write('mono', {
+      'packages/dual/package.json': {
+        name: '@acme/dual', version: '1.0.0', main: 'dist/main/index.js', types: 'dist/module/index.d.ts',
+        exports: { '.': { types: './dist/module/index.d.ts', require: './dist/main/index.js' } },
+      },
+      'packages/dual/tsconfig.json': { compilerOptions: { outDir: 'dist/main', rootDir: 'src' }, include: ['src'] },
+      'packages/dual/tsconfig.module.json': { extends: './tsconfig', compilerOptions: { outDir: 'dist/module' } },
+      'packages/dual/src/index.ts': `export const x = 1;\n`,
+      'packages/dual/src/lib/types.ts': `export type GenericSchema = { a: 1 };\n`,
+      'packages/dual/src/lib/helpers/index.ts': `export const h = 1;\n`,
+    });
+    // Built: dist/ exists in the checkout (index only); a deep import of a file it lacks.
+    write('built', {
+      'package.json': { name: '@acme/built', version: '1.0.0', types: 'dist/index.d.ts' },
+      'dist/index.d.ts': `export declare const b: number;\n`,
+      'src/index.ts': `export const b = 1;\n`,
+      'src/extra.ts': `export const extra = 1;\n`,
+    });
+    // typesVersions redirecting every subpath.
+    write('tv', {
+      'package.json': { name: '@acme/tv', version: '1.0.0', main: 'dist/index.js', typesVersions: { '*': { '*': ['dist/types/*'] } } },
+      'src/index.ts': `export const t = 1;\n`,
+      'src/lib/types.ts': `export type T = 1;\n`,
+    });
+    write('consumer', {
+      'package.json': { name: '@acme/consumer', version: '1.0.0' },
+      'src/main.ts': SPECS.map((s, i) => `import type * as m${i} from '${s}';\n`).join(''),
+    });
+    const lib = (repo: string, name: string, p = '.') => ({
+      repo: `acme/${repo}`, localPath: path.join(root, 'repos', repo), headSha: null,
+      packages: [{ packageId: `npm:${name}`, path: p, manager: 'npm' as const, name, entryPoints: [], deps: [] as DiscoverFile['repos'][number]['packages'][number]['deps'] }],
+    });
+    const repos: DiscoverFile['repos'] = [lib('mono', '@acme/dual', 'packages/dual'), lib('built', '@acme/built'), lib('tv', '@acme/tv'), lib('consumer', '@acme/consumer')];
+    repos[3]!.packages[0]!.deps = ['@acme/dual', '@acme/built', '@acme/tv'].map((d) => ({ name: d, manager: 'npm', resolvedPackageId: `npm:${d}` }));
+    const byId = new Map(repos.flatMap((x) => x.packages.map((p) => [p.packageId, { repo: x, pkg: p }] as const)));
+    prep = await scipTypescript.prepare!({
+      repo: repos[3]!, pkg: repos[3]!.packages[0]!, lookup: (id) => byId.get(id), orgPackages: [...byId.values()],
+      options: { install: false, maxOldSpaceMb: 1024 },
+    });
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Where TypeScript resolves `spec` from the consumer, as a realpath (undefined: nowhere). */
+  function resolve(spec: string, moduleResolution: ts.ModuleResolutionKind): string | undefined {
+    const bundler = moduleResolution === ts.ModuleResolutionKind.Bundler;
+    const options: ts.CompilerOptions = { moduleResolution, module: bundler ? ts.ModuleKind.ESNext : ts.ModuleKind.CommonJS };
+    const r = ts.resolveModuleName(spec, path.join(consumerDir(), 'src/main.ts'), options, ts.sys);
+    return r.resolvedModule === undefined ? undefined : realpathSync(r.resolvedModule.resolvedFileName);
+  }
+
+  it.each([
+    ['bundler', ts.ModuleResolutionKind.Bundler],
+    ['node10', ts.ModuleResolutionKind.Node10],
+  ] as const)('TypeScript (%s) resolves each mapped deep import to its source file in the checkout', (_, mode) => {
+    expect(resolve('@acme/dual/dist/module/lib/types', mode)).toBe(path.join(root, 'repos/mono/packages/dual/src/lib/types.ts'));
+    expect(resolve('@acme/dual/dist/main/lib/types.js', mode)).toBe(path.join(root, 'repos/mono/packages/dual/src/lib/types.ts'));
+    expect(resolve('@acme/dual/dist/module/lib/helpers', mode)).toBe(path.join(root, 'repos/mono/packages/dual/src/lib/helpers/index.ts'));
+    expect(resolve('@acme/built/dist/extra', mode)).toBe(path.join(root, 'repos/built/src/extra.ts'));
+    expect(resolve('@acme/tv/dist/lib/types', mode)).toBe(path.join(root, 'repos/tv/src/lib/types.ts'));
+    // The entry mapping still works; no source, no resolution.
+    expect(resolve('@acme/dual', mode)).toBe(path.join(root, 'repos/mono/packages/dual/src/index.ts'));
+    expect(resolve('@acme/built', mode)).toBe(path.join(root, 'repos/built/dist/index.d.ts'));
+    expect(resolve('@acme/dual/dist/module/lib/gone', mode)).toBeUndefined();
+  });
+
+  it('writes the links and entries into the shadow only, never into the checkout', () => {
+    const nm = path.join(consumerDir(), 'node_modules/@acme');
+    const pj = readJson<Record<string, unknown>>(nm, 'dual/package.json');
+    expect(pj['exports']).toEqual({
+      '.': { types: './src/index.ts', require: './src/index.ts' },
+      './dist/main/lib/types.js': './dist/main/lib/types.ts',
+      './dist/module/lib/helpers': './dist/module/lib/helpers.ts',
+      './dist/module/lib/types': './dist/module/lib/types.ts',
+    });
+    expect(readJson<Record<string, unknown>>(nm, 'tv/package.json')['typesVersions']).toEqual({
+      '*': { 'dist/lib/types': ['dist/lib/types.ts'], '*': ['src/*'] }, // exact key first: it wins over the (rewritten) pattern
+    });
+    // The built dist/ became a real dir of links; the checkout's dist/ is untouched.
+    expect(lstatSync(path.join(nm, 'built/dist')).isSymbolicLink()).toBe(false);
+    expect(lstatSync(path.join(nm, 'built/dist/index.d.ts')).isSymbolicLink()).toBe(true);
+    expect(existsSync(path.join(root, 'repos/built/dist/extra.ts'))).toBe(false);
+    expect(existsSync(path.join(root, 'repos/mono/packages/dual/dist'))).toBe(false);
+    expect(prep.diagnostics).toContain(
+      `warn: deep import @acme/dual/dist/module/lib/gone has no source in ${path.join('..', '..', '..', 'mono/packages/dual')} (left unresolved; the export surface flags it)`,
+    );
+    expect(prep.diagnostics.some((d) => d.startsWith('info: node_modules/@acme/built is a shadow of') && d.includes('deep imports linked to sources: dist/extra → src/extra.ts'))).toBe(true);
+  });
+
+  it('scans quoted <org package>/<subpath> strings only for org deps, outside build and dot dirs', () => {
+    write('scan', {
+      'src/a.ts': `import x from '@acme/dual/dist/a';\nconst y = require("@acme/built/dist/b");\nimport('lodash/fp');\n`,
+      'src/b.vue': '<script>import z from `@acme/dual/dist/c`</script>\n',
+      'dist/bundle.js': `import '@acme/dual/dist/nope';\n`,
+      '.cache/x.ts': `import '@acme/dual/dist/nope';\n`,
+      'src/c.ts': `import '@acme/dual/../escape';\n`,
+    });
+    const found = scanDeepImports(path.join(root, 'repos/scan'), new Set(['@acme/dual', '@acme/built']));
+    expect(Object.fromEntries([...found].map(([k, v]) => [k, [...v].sort()]))).toEqual({
+      '@acme/dual': ['dist/a', 'dist/c'],
+      '@acme/built': ['dist/b'],
+    });
   });
 });

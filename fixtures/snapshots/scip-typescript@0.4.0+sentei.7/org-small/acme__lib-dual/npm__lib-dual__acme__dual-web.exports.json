@@ -1,0 +1,68 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-web/next.config.ts",
+    "packages/dual-web/src/app/page.tsx",
+    "packages/dual-web/src/instrumentation.ts",
+    "packages/dual-web/src/middleware.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 13,
+      "entry": "packages/dual-web/src/middleware.ts",
+      "exportedAs": "config",
+      "file": "packages/dual-web/src/middleware.ts",
+      "line": 6,
+      "name": "config",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual-web/src/instrumentation.ts",
+      "exportedAs": "register",
+      "file": "packages/dual-web/src/instrumentation.ts",
+      "line": 3,
+      "name": "register",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual-web/src/middleware.ts",
+      "exportedAs": "middleware",
+      "file": "packages/dual-web/src/middleware.ts",
+      "line": 3,
+      "name": "middleware",
+      "sites": []
+    },
+    {
+      "col": 24,
+      "entry": "packages/dual-web/src/app/page.tsx",
+      "exportedAs": "default",
+      "file": "packages/dual-web/src/app/page.tsx",
+      "line": 3,
+      "name": "Page",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/dual-web/next.config.ts",
+      "exportedAs": "default",
+      "file": "packages/dual-web/next.config.ts",
+      "line": 3,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-web",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

@@ -1,0 +1,37 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "opaqueA",
+      "file": "src/index.ts",
+      "line": 5,
+      "name": "opaqueA",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "opaqueB",
+      "file": "src/index.ts",
+      "line": 10,
+      "name": "opaqueB",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-lazy-opaque:@acme/lazy-opaque",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

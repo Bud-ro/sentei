@@ -1,0 +1,76 @@
+{
+  "deepImportExports": [
+    {
+      "entry": "src/anon.ts",
+      "exportedAs": "default",
+      "file": "src/anon.ts",
+      "name": "default",
+      "targetPackage": "@acme/widgets"
+    },
+    {
+      "entry": "src/deep/thing.ts",
+      "exportedAs": "deepThing",
+      "file": "src/deep/thing.ts",
+      "name": "deepThing",
+      "targetPackage": "@acme/widgets"
+    },
+    {
+      "entry": "src/lazy.ts",
+      "exportedAs": "lazyWidget",
+      "file": "src/lazy.ts",
+      "name": "lazyWidget",
+      "targetPackage": "@acme/widgets"
+    }
+  ],
+  "entryPoints": [
+    "src/main.ts"
+  ],
+  "entrySymbols": [
+    {
+      "col": 12,
+      "file": "src/jsx.d.ts",
+      "kind": "ambient",
+      "line": 5,
+      "name": "Element"
+    },
+    {
+      "col": 18,
+      "file": "src/jsx.d.ts",
+      "kind": "ambient",
+      "line": 3,
+      "name": "JSX"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [
+    {
+      "col": 53,
+      "file": "src/main.ts",
+      "line": 13,
+      "member": "namespaceUsed",
+      "targetCol": 16,
+      "targetFile": "src/misc.ts",
+      "targetLine": 13,
+      "targetPackage": "@acme/widgets"
+    },
+    {
+      "col": 85,
+      "file": "src/main.ts",
+      "line": 13,
+      "member": "lazyWidget",
+      "targetCol": 16,
+      "targetFile": "src/lazy.ts",
+      "targetLine": 3,
+      "targetPackage": "@acme/widgets"
+    }
+  ],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/app-consumer:@acme/consumer",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

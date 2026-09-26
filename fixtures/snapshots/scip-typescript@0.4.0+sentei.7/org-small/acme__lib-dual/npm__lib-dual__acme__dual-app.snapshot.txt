@@ -1,0 +1,42 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.ts
+  // Entry point of @acme/dual-app, consumer of @acme/dual in the same repo (as
+//^ definition scip-typescript npm @acme/dual-app . src/`main.ts`/ enclosing [2:0-15:0]
+  // supabase-js consumes auth-js).
+  import { dualUsed } from '@acme/dual';
+//         ^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsed().
+//                         ^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/
+  // A deep build-output import (supabase auth-helpers imports
+  // '@supabase/supabase-js/dist/module/lib/types'): linked to src/lib/types.ts.
+  import type { GenericSchema } from '@acme/dual/dist/module/lib/types';
+//              ^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/GenericSchema#
+//                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/
+  // A deep build-output import with no source: unresolved, flags @acme/dual-legacy.
+  import type { Gone } from '@acme/dual-legacy/dist/esm/internal/gone';
+//              ^^^^ reference local 0
+
+  // Expected: alive, no finding (not exported; called from the entry file top level).
+  function main(schema: GenericSchema, gone?: Gone): void {
+//         ^^^^ definition scip-typescript npm @acme/dual-app . src/`main.ts`/main(). enclosing [10:0-12:1]
+//              ^^^^^^ definition scip-typescript npm @acme/dual-app . src/`main.ts`/main().(schema)
+//                      ^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/GenericSchema#
+//                                     ^^^^ definition scip-typescript npm @acme/dual-app . src/`main.ts`/main().(gone)
+//                                            ^^^^ reference local 0
+    console.log(dualUsed(), Object.keys(schema.Tables), gone);
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//              ^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsed().
+//                          ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object#
+//                          ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object.
+//                                 ^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.core.d.ts`/ObjectConstructor#keys().
+//                                 ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/ObjectConstructor#keys().
+//                                      ^^^^^^ reference scip-typescript npm @acme/dual-app . src/`main.ts`/main().(schema)
+//                                             ^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/GenericSchema#Tables.
+//                                                      ^^^^ reference scip-typescript npm @acme/dual-app . src/`main.ts`/main().(gone)
+  }
+
+  main({ Tables: {} });
+//^^^^ reference scip-typescript npm @acme/dual-app . src/`main.ts`/main().
+//       ^^^^^^ reference scip-typescript npm @acme/dual . src/lib/`types.ts`/GenericSchema#Tables.

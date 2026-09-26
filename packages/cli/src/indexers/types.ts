@@ -268,6 +268,30 @@ export interface ExportsSidecar {
    * says nothing about whether the package is used.
    */
   entrySymbols: EntrySymbol[];
+  /**
+   * The exports of every module of another org package that this package imports
+   * by a deep path (`@acme/x/dist/module/lib/types`, source-linked to
+   * `src/lib/types.ts`; `@acme/x/src/util`) and that resolved into that package's
+   * checkout. Such a module is an entry point of the target in all but name: ingest
+   * puts these declarations on the target's export surface (so a consumer's
+   * reference counts as an external use instead of reaching a "private" symbol
+   * that reachability calls dead). Keyed by name, not position: this sidecar may
+   * be cached while the target changes. TypeScript only; absent for Dart.
+   */
+  deepImportExports?: DeepImportExport[];
+}
+
+export interface DeepImportExport {
+  /** npm name of the org package the module belongs to. */
+  targetPackage: string;
+  /** The imported module, relative to the target package dir (POSIX). */
+  entry: string;
+  /** Name under which the module exports it. */
+  exportedAs: string;
+  /** Declared name. */
+  name: string;
+  /** File declaring it, relative to the target package dir (POSIX). */
+  file: string;
 }
 
 export interface EntrySymbol extends SourcePosition {
@@ -331,12 +355,18 @@ export interface UnresolvedImport extends SourcePosition {
 }
 
 export interface ConsumerFlag extends SourcePosition {
-  flag: 'namespace_dynamic' | 'dynamic_access';
+  /**
+   * `opaque_consumer` (always targeted): a deep build-output import of an org
+   * package (`@acme/x/dist/module/lib/types`) that no source link resolves, so
+   * the members it uses are unknown (position: the module specifier).
+   */
+  flag: 'namespace_dynamic' | 'dynamic_access' | 'opaque_consumer';
   /** One line naming the construct. */
   reason: string;
   /**
    * npm name of the org package whose members are hidden, when known: set for
-   * `namespace_dynamic` (the namespace import's specifier names it). Absent for
+   * `namespace_dynamic` (the namespace import's specifier names it) and
+   * `opaque_consumer` (the deep import's package). Absent for
    * `dynamic_access` (a computed specifier, even `'@acme/' + x`, may reach any
    * org package): an untargeted flag blocks every org package.
    */

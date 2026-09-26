@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/main.ts",
   "dependencies": {
-    "@acme/dual": "^1.0.0"
+    "@acme/dual": "^1.0.0",
+    "@acme/dual-legacy": "^1.0.0"
   }
 }

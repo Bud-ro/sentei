@@ -67,6 +67,7 @@ describe('discoverLocal on fixtures/org-small', () => {
       // main/module/types under two tsconfig outDirs (dist/main, dist/module), both rootDir src
       { package_id: 'npm:acme/lib-dual:@acme/dual', repo: 'acme/lib-dual', path: 'packages/dual', manager: 'npm', name: '@acme/dual', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual/src/index.ts"]' },
       { package_id: 'npm:acme/lib-dual:@acme/dual-app', repo: 'acme/lib-dual', path: 'packages/dual-app', manager: 'npm', name: '@acme/dual-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-app/src/main.ts"]' },
+      { package_id: 'npm:acme/lib-dual:@acme/dual-legacy', repo: 'acme/lib-dual', path: 'packages/dual-legacy', manager: 'npm', name: '@acme/dual-legacy', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual-legacy/src/index.ts"]' },
       // no main/exports: `npm start` = node dist/server.js and the Dockerfile CMD node /srv/dist/worker.js, mapped to src/ (tsconfig outDir dist)
       { package_id: 'npm:acme/lib-dual:@acme/dual-server', repo: 'acme/lib-dual', path: 'packages/dual-server', manager: 'npm', name: '@acme/dual-server', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-server/src/server.ts","packages/dual-server/src/worker.ts"]' },
       // Next.js (src/app): src/middleware.ts, src/instrumentation.ts and next.config.ts load by name; the root middleware.ts does not
@@ -92,6 +93,7 @@ describe('discoverLocal on fixtures/org-small', () => {
       { consumer_package_id: 'npm:acme/app-worker:@acme/worker', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-widgets:@acme/widgets', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app:@acme/app', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/lib-dual:@acme/dual-app', dep_name: '@acme/dual', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-dual:@acme/dual', dev: 0, resolution: 'name', ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/lib-dual:@acme/dual-app', dep_name: '@acme/dual-legacy', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-dual:@acme/dual-legacy', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/lib-dual:@acme/dual-web', dep_name: 'next', dep_manager: 'npm', dep_constraint: '16.0.0', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
       { consumer_package_id: 'npm:acme/lib-widgets:@acme/widgets', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-y:@acme/y', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/repo-broken:@acme/broken', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-y:@acme/y', dev: 0, resolution: 'name', ambiguous: 0 },
@@ -608,7 +610,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 20 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 21 }]);
   });
 });
 

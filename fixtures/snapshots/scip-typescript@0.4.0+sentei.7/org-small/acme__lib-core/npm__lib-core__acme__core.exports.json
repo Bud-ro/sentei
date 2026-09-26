@@ -1,0 +1,64 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "internalOnlyFn",
+      "file": "src/fns.ts",
+      "line": 13,
+      "name": "internalOnlyFn",
+      "sites": [
+        {
+          "col": 27,
+          "file": "src/index.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "unusedFn",
+      "file": "src/fns.ts",
+      "line": 8,
+      "name": "unusedFn",
+      "sites": [
+        {
+          "col": 17,
+          "file": "src/index.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "usedFn",
+      "file": "src/fns.ts",
+      "line": 3,
+      "name": "usedFn",
+      "sites": [
+        {
+          "col": 9,
+          "file": "src/index.ts",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-core:@acme/core",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

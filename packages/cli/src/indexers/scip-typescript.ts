@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { splitPackageId } from '@sentei/core';
+import { listFiles, sourceForBuildOutput, splitPackageId } from '@sentei/core';
 import type { SurfaceJob, SurfaceWorkerResult } from './surface-worker.ts';
 import type { DiscoveredPackage, DiscoveredRepo, ExportsSidecar, Indexer, IndexerInput, IndexerResult, IndexStatus } from './types.ts';
 import { worstStatus } from './types.ts';
@@ -276,7 +276,11 @@ export const scipTypescript: Indexer = {
   //   computed key or widening use is `namespace_dynamic` + a spread ref.
   //   `generatedFiles` also holds headerless `supabase gen types` output and
   //   files under `.prisma/`.
-  version: '0.4.0+sentei.6',
+  // +sentei.7: deep build-output imports of org packages are source-linked in
+  //   the shadow package (sourceForBuildOutput); `deepImportExports` (the
+  //   exports of every deep-imported org module); a deep dist import with no
+  //   source is a targeted `opaque_consumer` flag.
+  version: '0.4.0+sentei.7',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
@@ -984,10 +988,12 @@ function isInstalled(nodeModules: string): boolean {
  */
 function linkOrgDeps(input: IndexerInput, pkgDir: string, diagnostics: string[]): void {
   const nodeModules = path.join(pkgDir, 'node_modules');
-  for (const dep of input.pkg.deps) {
-    if (dep.resolvedPackageId === null || dep.resolvedPackageId === undefined) continue;
-    if (dep.resolvedPackageId === input.pkg.packageId) continue; // self-reference
-    const target = input.lookup(dep.resolvedPackageId);
+  const orgDeps = input.pkg.deps.filter(
+    (d) => d.resolvedPackageId !== null && d.resolvedPackageId !== undefined && d.resolvedPackageId !== input.pkg.packageId,
+  );
+  const deepImports = orgDeps.length > 0 ? scanDeepImports(pkgDir, new Set(orgDeps.map((d) => d.name))) : new Map<string, Set<string>>();
+  for (const dep of orgDeps) {
+    const target = input.lookup(dep.resolvedPackageId!);
     if (target === undefined) {
       diagnostics.push(`warn: ${dep.name} resolves to ${dep.resolvedPackageId}, which is not in discover.json`);
       continue;
@@ -1000,7 +1006,15 @@ function linkOrgDeps(input: IndexerInput, pkgDir: string, diagnostics: string[])
     const link = path.join(nodeModules, ...dep.name.split('/'));
     mkdirSync(path.dirname(link), { recursive: true });
     const relTarget = path.relative(path.dirname(link), targetDir);
-    const shadow = shadowManifest(targetDir);
+    const manifest = shadowManifest(targetDir);
+    const deep = manifest === undefined
+      ? { links: [], unmapped: [] }
+      : deepImportLinks(target.repo.localPath, target.pkg.path, targetDir, manifest.json, [...(deepImports.get(dep.name) ?? [])]);
+    if (manifest !== undefined && deep.links.length > 0) addDeepEntries(manifest.json, deep.links);
+    const shadow = manifest !== undefined && (manifest.rewritten.length > 0 || deep.links.length > 0) ? manifest : undefined;
+    for (const sub of deep.unmapped) {
+      diagnostics.push(`warn: deep import ${dep.name}/${sub} has no source in ${relTarget} (left unresolved; the export surface flags it)`);
+    }
 
     let existing;
     try {
@@ -1014,7 +1028,7 @@ function linkOrgDeps(input: IndexerInput, pkgDir: string, diagnostics: string[])
       unlinkSync(link);
       if (shadow === undefined) diagnostics.push(`info: replaced stale symlink node_modules/${dep.name}`);
     } else if (existing?.isDirectory() && isShadowDir(link)) {
-      rmSync(link, { recursive: true }); // ours: only symlinks, package.json and the marker
+      rmSync(link, { recursive: true }); // ours: only symlinks, dirs of symlinks, package.json and the marker
     } else if (existing !== undefined) {
       const displaced = path.join(nodeModules, '.sentei-displaced', `${dep.name.replace(/\//g, '__')}-${Date.now()}`);
       mkdirSync(path.dirname(displaced), { recursive: true });
@@ -1025,10 +1039,16 @@ function linkOrgDeps(input: IndexerInput, pkgDir: string, diagnostics: string[])
     }
     if (shadow !== undefined) {
       writeShadow(link, targetDir, shadow.json);
-      diagnostics.push(
-        `info: node_modules/${dep.name} is a shadow of ${relTarget} (unbuilt entry targets rewritten to sources: ` +
-          `${shadow.rewritten.join(', ')}${shadow.missing.length > 0 ? `; still missing: ${shadow.missing.join(', ')}` : ''})`,
-      );
+      const placed = deep.links.filter((l) => placeDeepLink(link, l.link, path.join(targetDir, ...l.source.split('/'))));
+      const parts: string[] = [];
+      if (shadow.rewritten.length > 0) {
+        parts.push(
+          `unbuilt entry targets rewritten to sources: ${shadow.rewritten.join(', ')}` +
+            `${shadow.missing.length > 0 ? `; still missing: ${shadow.missing.join(', ')}` : ''}`,
+        );
+      }
+      if (placed.length > 0) parts.push(`deep imports linked to sources: ${placed.map((l) => `${l.subpath} → ${l.source}`).join(', ')}`);
+      diagnostics.push(`info: node_modules/${dep.name} is a shadow of ${relTarget} (${parts.join('; ')})`);
       continue;
     }
     // On win32 use a junction (no admin rights needed); junctions need an absolute target.
@@ -1036,6 +1056,195 @@ function linkOrgDeps(input: IndexerInput, pkgDir: string, diagnostics: string[])
     else symlinkSync(relTarget, link, 'dir');
     diagnostics.push(`info: linked node_modules/${dep.name} -> ${relTarget}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Deep imports (`@acme/x/dist/module/lib/types`) of org packages
+// ---------------------------------------------------------------------------
+
+const DEEP_SCAN_EXT = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|mdx)$/;
+const DEEP_SPEC = /['"`]((?:@[\w.-]+\/)?[\w.-]+)\/([^'"`\s?#]+)['"`]/g;
+
+/**
+ * Subpaths the package's own code files import of each of `names`, by a text scan
+ * for every quoted `<name>/<subpath>` (imports, `import()`, `require`, `typeof
+ * import()`; a string that is not an import only adds a link nobody follows).
+ * Skips SKIP_DIRS and dot dirs; stops after `budget` entries (fewer imports are
+ * then linked, and the export surface flags the unlinked ones: fail closed).
+ */
+export function scanDeepImports(dir: string, names: ReadonlySet<string>, budget = { n: 20000 }): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const walk = (d: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (--budget.n < 0) return;
+      const abs = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) walk(abs);
+        continue;
+      }
+      if (!e.isFile() || !DEEP_SCAN_EXT.test(e.name)) continue;
+      let text;
+      try {
+        if (statSync(abs).size > 2_000_000) continue;
+        text = readFileSync(abs, 'utf8');
+      } catch {
+        continue;
+      }
+      for (const m of text.matchAll(DEEP_SPEC)) {
+        const name = m[1]!;
+        const sub = m[2]!;
+        if (!names.has(name) || sub.split('/').some((s) => s === '..' || s === '.' || s === '')) continue;
+        let set = out.get(name);
+        if (set === undefined) out.set(name, (set = new Set()));
+        set.add(sub);
+      }
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+export interface DeepLink {
+  /** Subpath as imported (`dist/module/lib/types`). */
+  subpath: string;
+  /** Package-relative path of the link in the shadow (`dist/module/lib/types.ts`). */
+  link: string;
+  /** Package-relative source file it points at (`src/lib/types.ts`). */
+  source: string;
+}
+
+/**
+ * Links for the deep imports `subpaths` of the org package at `targetDir` (repo
+ * root `repoRoot`, repo-relative dir `pkgPath`, package.json `json`) that do not
+ * resolve in the checkout as they are. Each is mapped from build output to source
+ * by core's `sourceForBuildOutput` (tsconfig outDir → rootDir pairs, the dist→src
+ * conventions). A subpath the package's `exports` covers (an exact key, a `*`
+ * pattern) is left to the entry rewrite; one that exists in the checkout (built
+ * output, a source path) needs nothing. `unmapped`: deep `dist/` imports with no
+ * source (left unresolved; the export surface flags them). Other unmapped subpaths
+ * (`x/styles.css`, a typo) are left to TypeScript as before.
+ */
+export function deepImportLinks(
+  repoRoot: string, pkgPath: string, targetDir: string, json: Record<string, unknown>, subpaths: readonly string[],
+): { links: DeepLink[]; unmapped: string[] } {
+  const links: DeepLink[] = [];
+  const unmapped: string[] = [];
+  let repoFiles: string[] | undefined;
+  const exportKeys = subpathExportKeys(json['exports']);
+  for (const sub of [...subpaths].sort()) {
+    if (exportKeys.some((k) => exportKeyMatches(k, `./${sub}`))) continue;
+    if (targetExists(targetDir, sub)) continue;
+    repoFiles ??= listFiles(repoRoot);
+    const source = sourceForBuildOutput(repoRoot, pkgPath, sub, repoFiles);
+    if (source === null) {
+      if (/(?:^|\/)dist(?:\/|$)/.test(sub)) unmapped.push(sub); // the imports the export surface flags
+      continue;
+    }
+    const ext = /\.d\.[cm]?ts$/.exec(source)?.[0] ?? path.posix.extname(source);
+    links.push({ subpath: sub, link: sub.replace(BUILT_EXT, '') + ext, source });
+  }
+  return { links, unmapped };
+}
+
+/** The subpath keys (`.`-prefixed) of an `exports` value; [] for sugar (a string, conditions only). */
+function subpathExportKeys(exports: unknown): string[] {
+  if (typeof exports !== 'object' || exports === null || Array.isArray(exports)) return [];
+  return Object.keys(exports).filter((k) => k.startsWith('.'));
+}
+
+function exportKeyMatches(key: string, spec: string): boolean {
+  const star = key.indexOf('*');
+  if (star < 0) return key === spec || (key.endsWith('/') && spec.startsWith(key));
+  const pre = key.slice(0, star);
+  const post = key.slice(star + 1);
+  return spec.length >= pre.length + post.length && spec.startsWith(pre) && spec.endsWith(post);
+}
+
+/**
+ * Makes the deep-import links resolvable through the shadow package.json too.
+ * Under `exports` resolution (node16/bundler) a subpath missing from `exports` never
+ * reaches the filesystem, so each link gets an exact `./<subpath>` key (sugar
+ * `exports` is first wrapped as `{".": …}`). Every `typesVersions` range gets an
+ * exact key, which wins over its patterns. Node10 resolution finds the link file
+ * itself.
+ */
+function addDeepEntries(json: Record<string, unknown>, links: readonly DeepLink[]): void {
+  const exp = json['exports'];
+  if (exp !== undefined && exp !== null) {
+    const map: Record<string, unknown> =
+      typeof exp === 'object' && !Array.isArray(exp) && subpathExportKeys(exp).length > 0
+        ? { ...(exp as Record<string, unknown>) }
+        : { '.': exp };
+    for (const l of links) map[`./${l.subpath}`] ??= `./${l.link}`;
+    json['exports'] = map;
+  }
+  const tv = json['typesVersions'];
+  if (typeof tv === 'object' && tv !== null && !Array.isArray(tv)) {
+    const exact = Object.fromEntries(links.map((l) => [l.subpath, [l.link]]));
+    json['typesVersions'] = Object.fromEntries(
+      Object.entries(tv).map(([range, paths]) =>
+        typeof paths === 'object' && paths !== null && !Array.isArray(paths) ? [range, { ...exact, ...paths }] : [range, paths],
+      ),
+    );
+  }
+}
+
+/**
+ * Places a link at `rel` (package-relative) inside the shadow dir `shadow` to the
+ * source file `sourceAbs`. A dir on the way that is a symlink into the checkout (a
+ * built `dist/`) becomes a real dir of symlinks to its entries, so nothing is ever
+ * written into the checkout. False when a file is in the way.
+ */
+function placeDeepLink(shadow: string, rel: string, sourceAbs: string): boolean {
+  const segs = rel.split('/');
+  let cur = shadow;
+  for (const seg of segs.slice(0, -1)) {
+    const next = path.join(cur, seg);
+    let st;
+    try {
+      st = lstatSync(next);
+    } catch {
+      st = undefined;
+    }
+    if (st === undefined) {
+      mkdirSync(next);
+    } else if (st.isSymbolicLink()) {
+      let real;
+      try {
+        real = realpathSync(next);
+      } catch {
+        return false;
+      }
+      if (!statSync(real).isDirectory()) return false;
+      unlinkSync(next);
+      mkdirSync(next);
+      for (const e of readdirSync(real, { withFileTypes: true })) {
+        const src = path.join(real, e.name);
+        const dst = path.join(next, e.name);
+        const isDir = e.isDirectory() || (e.isSymbolicLink() && existsSync(src) && statSync(src).isDirectory());
+        if (process.platform === 'win32') {
+          if (isDir) symlinkSync(src, dst, 'junction');
+          else copyFileSync(src, dst);
+        } else {
+          symlinkSync(path.relative(next, src), dst, isDir ? 'dir' : 'file');
+        }
+      }
+    } else if (!st.isDirectory()) {
+      return false;
+    }
+    cur = next;
+  }
+  const leaf = path.join(cur, segs[segs.length - 1]!);
+  if (existsSync(leaf)) return false;
+  if (process.platform === 'win32') copyFileSync(sourceAbs, leaf); // file symlinks need privileges on Windows
+  else symlinkSync(path.relative(cur, sourceAbs), leaf, 'file');
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1088,10 +1297,11 @@ interface ShadowManifest {
 }
 
 /**
- * The rewritten package.json when some declared entry target (`main`, `module`,
+ * The package.json with each declared entry target (`main`, `module`,
  * `types`/`typings`, `browser`, `bin`, every string leaf of `exports`, plus
- * `typesVersions` paths) does not exist in the checkout and has an existing
- * source counterpart; undefined when a plain symlink is enough.
+ * `typesVersions` paths) that does not exist in the checkout but has an existing
+ * source counterpart rewritten to it (`rewritten` empty: a plain symlink is
+ * enough, unless deep imports need links). Undefined when package.json is unreadable.
  */
 function shadowManifest(targetDir: string): ShadowManifest | undefined {
   let json: Record<string, unknown>;
@@ -1131,7 +1341,7 @@ function shadowManifest(targetDir: string): ShadowManifest | undefined {
   if (typeof json['typesVersions'] === 'object' && json['typesVersions'] !== null) {
     out['typesVersions'] = mapLeaves('typesVersions', json['typesVersions']);
   }
-  return rewritten.length > 0 ? { json: out, rewritten, missing } : undefined;
+  return { json: out, rewritten, missing };
 }
 
 // Mirrors the dist→src rule of `distToSrc` in packages/core/src/manifests.ts

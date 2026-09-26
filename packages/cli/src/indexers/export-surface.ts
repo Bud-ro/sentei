@@ -18,7 +18,7 @@ import {
   type ConsumerCheckResult,
   type OrgPackageDir,
 } from './consumer-checks.ts';
-import type { ConsumerPolicy, ExportRecord, ExportsSidecar, SourcePosition, UnindexedImport } from './types.ts';
+import type { ConsumerPolicy, DeepImportExport, ExportRecord, ExportsSidecar, SourcePosition, UnindexedImport } from './types.ts';
 
 export interface ExportSurfaceInput {
   packageId: string;
@@ -221,6 +221,8 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   const checked = new Set<string>();
   const pending = new Map(input.entryPoints.map((e) => [e, path.resolve(input.repoRoot, ...e.split('/'))] as const));
   const found = new Set<string>();
+  /** Deep-import surface of other org packages, keyed by JSON (dedupes across programs). */
+  const deepImportExports = new Map<string, DeepImportExport>();
   for (const spec of specs) {
     const roots = spec.rootNames.map((f) => path.resolve(f));
     const rootSet = new Set(roots);
@@ -243,6 +245,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     consumer.namespaceMemberRefs.push(...r.namespaceMemberRefs);
     consumer.shorthandRefs.push(...r.shorthandRefs);
     consumer.namespaceSpreadRefs.push(...r.namespaceSpreadRefs);
+    collectDeepImportExports(files, checker, input.orgPackageDirs, input.packageName ?? null, deepImportExports);
     // Every other compiler error is informational: it does not change what SCIP links.
     // Per own file (plus the program's global/options diagnostics), deduplicated.
     const fileDiags = files.length > 0 ? files.flatMap((sf) => ts.getPreEmitDiagnostics(program, sf)) : [];
@@ -287,12 +290,22 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       diagnostics.push(`warn: unresolved org module ${where} (test/docs file, not a counted consumer; status unaffected)`);
     } else if (isDeepDistImport(m.module)) {
       // A deep dist import (`hono/dist/types/router`) is a private-path import
-      // of build output: the checkout has no dist/ and we cannot map its members
-      // to source declarations. Blocking every verdict of this consumer (partial)
-      // for it is disproportionate; it is recorded in `unresolvedImports` (name
-      // `*`) instead, so it surfaces as version skew on the target package.
+      // of build output. The shadow package links it to its source when
+      // sourceForBuildOutput maps it (scip-typescript.ts `deepImportLinks`), so
+      // this one has no source: we cannot see which members it uses. Blocking
+      // every verdict of this consumer (partial) for it is disproportionate; it
+      // is recorded in `unresolvedImports` (name `*`, a diagnostic) and as an
+      // `opaque_consumer` flag targeted at the package, which blocks that
+      // package's verdicts only (fail closed: its members may be used here).
       consumer.unresolvedImports.push({ module: m.module, name: '*', file: m.file, line: m.line, col: m.col });
-      diagnostics.push(`warn: unresolved deep dist import ${where} (private build-output path; recorded as unresolved import '*', status unaffected)`);
+      const target = barePackageName(m.module);
+      if (target !== undefined) {
+        consumer.flags.push({
+          flag: 'opaque_consumer', reason: `deep import ${m.module} has no source`, targetPackage: target,
+          file: m.file, line: m.line, col: m.col,
+        });
+      }
+      diagnostics.push(`warn: unresolved deep dist import ${where} (private build-output path with no source; recorded as unresolved import '*' and a targeted opaque_consumer flag)`);
     } else {
       partial = true;
       diagnostics.push(`error: unresolved org module ${where}`);
@@ -426,6 +439,10 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       unindexedImports,
       generatedFiles,
       entrySymbols,
+      deepImportExports: [...deepImportExports.values()].sort(
+        (a, b) =>
+          cmp(a.targetPackage, b.targetPackage) || cmp(a.entry, b.entry) || cmp(a.exportedAs, b.exportedAs) || cmp(a.file, b.file) || cmp(a.name, b.name),
+      ),
     },
     diagnostics,
     partial,
@@ -764,6 +781,76 @@ function isExpandoDeclaration(decl: ts.Node): boolean {
     ts.isBinaryExpression(decl) ||
     ts.isCallExpression(decl)
   );
+}
+
+/**
+ * Adds to `out` the exports of every module that a deep import in `files`
+ * (`@acme/x/dist/module/lib/types`: a specifier naming another org package plus a
+ * subpath) resolves to inside that package's checkout (`orgDirs`, realpaths; the
+ * shadow package's links resolve there). Import/export declarations, `import x =
+ * require()`, `import()` / `require()` calls and `import('…')` types. Each
+ * declaration of an export that lives in the target package is one record (alias
+ * re-exports followed; `export * as ns` members and declarations outside the
+ * package are skipped). A self import (`selfName`) is not recorded.
+ */
+function collectDeepImportExports(
+  files: readonly ts.SourceFile[],
+  checker: ts.TypeChecker,
+  orgDirs: readonly OrgPackageDir[],
+  selfName: string | null,
+  out: Map<string, DeepImportExport>,
+): void {
+  const done = new Set<ts.Symbol>();
+  const handle = (lit: ts.StringLiteralLike): void => {
+    const name = barePackageName(lit.text);
+    if (name === undefined || name === lit.text || name === selfName) return;
+    const candidates = orgDirs.filter((d) => d.name === name);
+    if (candidates.length === 0) return;
+    const mod = checker.getSymbolAtLocation(lit);
+    if (mod === undefined || done.has(mod)) return;
+    done.add(mod);
+    const modSf = mod.declarations?.find(ts.isSourceFile);
+    if (modSf === undefined) return;
+    const inTarget = (abs: string, dir: string): boolean =>
+      isInside(abs, dir) && !path.relative(dir, abs).split(path.sep).includes('node_modules');
+    const modAbs = path.resolve(modSf.fileName);
+    const target = candidates.find((d) => inTarget(modAbs, d.dir));
+    if (target === undefined) return;
+    const rel = (abs: string): string => path.relative(target.dir, abs).split(path.sep).join(path.posix.sep);
+    let members: ts.Symbol[];
+    try {
+      members = checker.getExportsOfModule(mod);
+    } catch {
+      return;
+    }
+    for (const exp of members) {
+      const sym = exp.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exp) : exp;
+      for (const decl of expandAliasDeclarations(sym.declarations ?? [], checker)) {
+        if (ts.isSourceFile(decl)) continue;
+        const declAbs = path.resolve(decl.getSourceFile().fileName);
+        if (!inTarget(declAbs, target.dir)) continue;
+        const rec: DeepImportExport = { targetPackage: name, entry: rel(modAbs), exportedAs: exp.name, name: nameOf(decl, sym).name, file: rel(declAbs) };
+        out.set(JSON.stringify(rec), rec);
+      }
+    }
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteralLike(node)) {
+      const p = node.parent;
+      if (
+        ((ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) && p.moduleSpecifier === node) ||
+        ts.isExternalModuleReference(p) ||
+        (ts.isLiteralTypeNode(p) && ts.isImportTypeNode(p.parent)) ||
+        (ts.isCallExpression(p) && p.arguments[0] === node &&
+          (p.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(p.expression) && p.expression.text === 'require')))
+      ) {
+        handle(node);
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const sf of files) visit(sf);
 }
 
 /** True when an org module specifier reaches into the package's `dist/` (`hono/dist/types/router`). */

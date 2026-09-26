@@ -1,0 +1,37 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual/src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/dual/src/index.ts",
+      "exportedAs": "dualUnused",
+      "file": "packages/dual/src/index.ts",
+      "line": 10,
+      "name": "dualUnused",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual/src/index.ts",
+      "exportedAs": "dualUsed",
+      "file": "packages/dual/src/index.ts",
+      "line": 5,
+      "name": "dualUsed",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

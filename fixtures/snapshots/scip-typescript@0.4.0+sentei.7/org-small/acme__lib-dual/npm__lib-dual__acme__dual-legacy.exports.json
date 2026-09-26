@@ -1,0 +1,28 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-legacy/src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/dual-legacy/src/index.ts",
+      "exportedAs": "legacyUnused",
+      "file": "packages/dual-legacy/src/index.ts",
+      "line": 6,
+      "name": "legacyUnused",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-legacy",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

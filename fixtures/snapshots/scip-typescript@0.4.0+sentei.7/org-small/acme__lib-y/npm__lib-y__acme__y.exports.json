@@ -1,0 +1,37 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "yThing",
+      "file": "src/index.ts",
+      "line": 3,
+      "name": "yThing",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "yUnused",
+      "file": "src/index.ts",
+      "line": 8,
+      "name": "yUnused",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-y:@acme/y",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}
