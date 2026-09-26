@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS mat_base_verdicts (
 -- Dependents first, so every DROP succeeds.
 DROP VIEW IF EXISTS unresolved_ref_classes;
 DROP VIEW IF EXISTS verdicts;
+DROP VIEW IF EXISTS unexport_dropped;
+DROP VIEW IF EXISTS unexport_exempt_packages;
 DROP VIEW IF EXISTS private_dead;
 DROP VIEW IF EXISTS private_dead_unlocked;
 DROP VIEW IF EXISTS candidate_reach;
@@ -696,6 +698,42 @@ WITH RECURSIVE reach (symbol_id) AS (
 )
 SELECT symbol_id FROM reach;
 
+-- ---------------------------------------------------------------------------
+-- Unexport policy (fix round 6)
+-- ---------------------------------------------------------------------------
+
+-- Private apps: packages with visibility 'private' (publish_to: none, "private": true)
+-- that nothing in the org depends on or uses: no package_deps row resolves to them, no
+-- flag targets them (an unindexed / ambiguous / deep-import use), no consumer file is
+-- a witness file of theirs, no unresolved reference names them, no cross-package edge
+-- reaches them. Their export surface has no audience: every lib/** file of a pub app
+-- is a public library, so fire_atlas_editor alone had 72 unexport_candidate rows that
+-- nobody could act on. Their internal-only exports get no unexport row (unexport_dropped);
+-- they are treated like private symbols: alive when reachable from the package's entries,
+-- a dead island (a would-be deletion, through the witness) when not. A published package,
+-- or a private one with dependents, keeps its unexport candidates. Ignored manifests
+-- (examples) are not in the DB (discover.json only): a dead island still goes through
+-- the witness, which reads them, so a use there still stops a deletion.
+CREATE VIEW unexport_exempt_packages (package_id) AS
+SELECT package_id FROM packages WHERE visibility = 'private'
+EXCEPT SELECT resolved_package_id FROM package_deps WHERE resolved_package_id IS NOT NULL
+EXCEPT SELECT target_package_id FROM package_flags WHERE target_package_id IS NOT NULL
+EXCEPT SELECT target_package_id FROM witness_files
+EXCEPT SELECT target_package_id FROM unresolved_refs
+EXCEPT SELECT to_package_id FROM edges WHERE from_package_id <> to_package_id;
+
+-- Internal-only exports that get no unexport row: every one of a private app
+-- (unexport_exempt_packages). `verdicts` drops their unexport /
+-- deprecation [internal_refs_only] / blocked rows unless they are a dead island;
+-- analyze.ts reconcileDeadIslands deletes (instead of reverting to an unexport) a dead
+-- island of theirs that the witness made reachable again.
+CREATE VIEW unexport_dropped (symbol_id) AS
+SELECT v.symbol_id
+FROM mat_base_verdicts v
+JOIN symbols s ON s.symbol_id = v.symbol_id
+WHERE s.package_id IN (SELECT package_id FROM unexport_exempt_packages)
+  AND EXISTS (SELECT 1 FROM json_each(v.reasons) j WHERE j.value = 'internal_refs_only');
+
 -- The verdicts (PLAN.md §6.5), with dead islands: an internal-only export
 -- (unexport_candidate, or its published form deprecation_candidate [internal_refs_only])
 -- that is not in reachable_after has internal references only from other candidates
@@ -707,7 +745,9 @@ SELECT symbol_id FROM reach;
 -- other would-be deletion. candidate_symbols is the same set either way, so the
 -- private_dead cascade (unlocked_by) already agrees. Reads mat_base_verdicts and
 -- mat_reachable_after, which analyze.ts fills after staging the base verdicts in
--- `findings` (same candidate set).
+-- `findings` (same candidate set). An internal-only export in unexport_dropped (of a
+-- private app) that is not a dead island gets no row: it is alive. Staged, it was a candidate (so its own helpers were judged without it as a
+-- seed); reconcileDeadIslands, run right after, reverts what that made an island.
 CREATE VIEW verdicts (symbol_id, verdict, reasons, blocked_by) AS
 SELECT v.symbol_id,
        CASE
@@ -721,7 +761,10 @@ SELECT v.symbol_id,
        END,
        v.blocked_by
 FROM mat_base_verdicts v
-LEFT JOIN (SELECT symbol_id FROM mat_reachable_after) r ON r.symbol_id = v.symbol_id;
+LEFT JOIN (SELECT symbol_id FROM mat_reachable_after) r ON r.symbol_id = v.symbol_id
+-- unexport_dropped: no unexport row (a dead island stays a would-be deletion).
+WHERE NOT (v.symbol_id IN (SELECT symbol_id FROM unexport_dropped)
+           AND (r.symbol_id IS NOT NULL OR v.verdict = 'blocked'));
 
 -- What each candidate reaches that nothing else still reaches (the walk stops at
 -- symbols in reachable_after, which cannot be unlocked by anything).

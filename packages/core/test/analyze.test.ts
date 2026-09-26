@@ -1084,6 +1084,63 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(db.prepare('SELECT 1 AS r FROM reachable WHERE symbol_id = ?').get(helper)).toEqual({ r: 1 });
   });
 
+  it('private apps (visibility private, no dependents) get no unexport rows: alive when reachable, a dead island when not', () => {
+    // fire_atlas_editor / lightrunners: every lib/** file of a pub app is a public
+    // library, so each internal-only export was an unexport nobody could act on.
+    const tool = pkg('@acme/tool');
+    const main = doc(tool, 'src/main.ts', true);
+    doc(tool, 'src/lib.ts');
+    const usedByMain = sym(tool, 'src/lib.ts', 'usedByMain', { exported: true });
+    use(main, usedByMain, 'src/main.ts');
+    const chained = sym(tool, 'src/lib.ts', 'chained', { exported: true });
+    use(usedByMain, chained, 'src/lib.ts');
+    const islandA = sym(tool, 'src/lib.ts', 'islandA', { exported: true });
+    const islandB = sym(tool, 'src/lib.ts', 'islandB', { exported: true });
+    use(islandA, islandB, 'src/lib.ts');
+    use(islandB, islandA, 'src/lib.ts');
+    sym(tool, 'src/lib.ts', 'toolUnused', { exported: true });
+    analyze();
+    const island = ['internal_refs_only', 'dead_island', 'witness_pending'];
+    const appRows = [f('islandA', 'needs_review', island), f('islandB', 'needs_review', island), f('toolUnused', 'needs_review', DELETE)];
+    expect(findings()).toEqual(appRows);
+    expect(db.prepare('SELECT package_id FROM unexport_exempt_packages ORDER BY 1').all()).toEqual([{ package_id: app }, { package_id: tool }]);
+
+    // A dead island the witness makes reachable again (its user downgraded) is alive, not
+    // an unexport: reconcileDeadIslands deletes it.
+    downgradeAndPropagate('islandA');
+    expect(findings()).toEqual([
+      f('islandA', 'needs_review', ['internal_refs_only', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']),
+      f('toolUnused', 'needs_review', DELETE),
+    ]);
+
+    // Branch 2: the same package WITH a dependent keeps its unexport candidates …
+    dep(app, tool);
+    analyze();
+    expect(findings()).toEqual([
+      f('chained', 'unexport_candidate', ['internal_refs_only']),
+      ...appRows.slice(0, 2),
+      f('toolUnused', 'needs_review', DELETE),
+      f('usedByMain', 'unexport_candidate', ['internal_refs_only']),
+    ]);
+    // … and so does a published one without dependents (trusted private registry).
+    run('DELETE FROM package_deps WHERE resolved_package_id = ?', tool);
+    run("UPDATE packages SET visibility = 'published-private' WHERE package_id = ?", tool);
+    setPolicy('trustPrivateRegistry', true);
+    analyze();
+    expect(findings().filter((r) => r.verdict === 'unexport_candidate').map((r) => r.name)).toEqual(['chained', 'usedByMain']);
+    // A use by another package's code (no manifest dependency: a hoisted workspace dep)
+    // is a dependent too.
+    run("UPDATE packages SET visibility = 'private' WHERE package_id = ?", tool);
+    const other = sym(app, 'src/main.ts', 'otherUser');
+    use(other, toolUnusedId(), 'src/main.ts');
+    analyze();
+    expect(findings().filter((r) => r.verdict === 'unexport_candidate').map((r) => r.name)).toEqual(['chained', 'usedByMain']);
+  });
+
+  function toolUnusedId(): number {
+    return (db.prepare("SELECT symbol_id AS id FROM symbols WHERE name = 'toolUnused'").get() as { id: number }).id;
+  }
+
   it('counts overlay edges as references', () => {
     const s = sym(lib, 'src/fns.ts', 'viaOverlay', { exported: true });
     edge(appMain, s, 'overlay');

@@ -84,7 +84,8 @@ const MAX_ISLAND_PASSES = 10;
  * every candidate finding (deletion_candidate / deprecation_candidate, or needs_review +
  * witness_pending) with reason dead_island whose symbol is now in it is replaced by the
  * unexport verdict with
- * reasons minus dead_island / witness_pending; a witness-mismatched dead island
+ * reasons minus dead_island / witness_pending (or deleted, when analyze.sql
+ * unexport_dropped holds it: alive, no row); a witness-mismatched dead island
  * (needs_review without witness_pending) stays needs_review and only loses the
  * dead_island reason (the witness saw the name somewhere: fail closed). Repeats until a
  * pass changes nothing, at most MAX_ISLAND_PASSES passes (a revert keeps the symbol a
@@ -97,7 +98,8 @@ export function reconcileDeadIslands(db: DatabaseSync): number {
   const select = db.prepare(
     `SELECT f.symbol_id, f.verdict, f.reasons, f.blocked_by,
             EXISTS (SELECT 1 FROM symbols s JOIN private_packages p ON p.package_id = s.package_id
-                    WHERE s.symbol_id = f.symbol_id) AS priv
+                    WHERE s.symbol_id = f.symbol_id) AS priv,
+            f.symbol_id IN (SELECT symbol_id FROM unexport_dropped) AS dropped
      FROM findings f
      WHERE f.verdict IN ('deletion_candidate', 'deprecation_candidate', 'needs_review')
        AND EXISTS (SELECT 1 FROM json_each(f.reasons) j WHERE j.value = 'dead_island')
@@ -109,7 +111,7 @@ export function reconcileDeadIslands(db: DatabaseSync): number {
   let changed = 0;
   for (let pass = 0; pass < MAX_ISLAND_PASSES; pass += 1) {
     fillReachableAfter(db);
-    const rows = select.all() as Array<{ symbol_id: number; verdict: string; reasons: string; blocked_by: string; priv: number }>;
+    const rows = select.all() as Array<{ symbol_id: number; verdict: string; reasons: string; blocked_by: string; priv: number; dropped: number }>;
     if (rows.length === 0) break;
     for (const r of rows) {
       const reasons = JSON.parse(r.reasons) as string[];
@@ -117,6 +119,9 @@ export function reconcileDeadIslands(db: DatabaseSync): number {
       const kept = reasons.filter((x) => x !== 'dead_island' && (!candidate || x !== 'witness_pending'));
       const unexport = r.priv === 1 ? 'unexport_candidate' : 'deprecation_candidate';
       del.run(r.symbol_id, r.verdict);
+      // An unexport the policy drops (analyze.sql unexport_dropped: of a private app)
+      // is simply alive: no row.
+      if (candidate && r.dropped === 1) continue;
       ins.run(r.symbol_id, candidate ? unexport : r.verdict, JSON.stringify(kept), r.blocked_by);
     }
     changed += rows.length;
