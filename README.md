@@ -39,12 +39,27 @@ opens pull requests.
   (public repos clone without a token). `--org-dir` needs no token.
 - Behind a proxy, `NODE_USE_ENV_PROXY=1` (Node's `fetch` ignores `HTTPS_PROXY` by
   default; git does not).
-- Repos using pnpm, yarn or bun are installed with their own lockfile
-  (`--frozen-lockfile` / `--immutable`, scripts off). A missing pnpm or yarn is run
-  through `npm exec` at the version the repo's `packageManager` (or
-  `devEngines.packageManager`) names; a missing bun skips the install with a
-  warning. pnpm, yarn and corepack state and caches go under `<work>/.pm/`, not
-  `$HOME` (npm keeps its usual cache). `--no-install` skips installs altogether.
+- npm packages are installed with their own lockfile before indexing
+  (`npm ci`, `--frozen-lockfile` / `--immutable`, scripts off), found from the
+  package dir up to the repo root. How the install is chosen:
+  - **Manager**: the `packageManager` field (`pnpm@9.12.0`, `yarn@4.5.0`,
+    `npm@10`) when that manager's lockfile is there, then
+    `devEngines.packageManager`, then the first lockfile in the order
+    `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock(b)`.
+  - **Version** of a pnpm, yarn or bun that is not on `PATH` (run through
+    `npm exec`): `packageManager`, then `devEngines.packageManager`, then a
+    `mise.toml` / `.mise.toml` `[tools]` or `.tool-versions` pin, then the major
+    that wrote the lockfile (pnpm `lockfileVersion` 9.0 → 9, 6.x → 8, 5.4 → 7;
+    yarn v1 header → 1, berry `__metadata.version` → 2/3/4; bun → 1), else
+    pnpm 9 / yarn 1 / bun 1. Never `latest`.
+  - **Engines** checks are off (`--engine-strict=false`,
+    `--config.engine-strict=false`, yarn 1 `--ignore-engines`), so a repo
+    pinning another Node major still installs.
+  pnpm, yarn and corepack state and caches go under `<work>/.pm/`, not `$HOME`
+  (npm keeps its usual cache). `--no-install` skips installs altogether.
+- tsconfig `lib`/`target`/`module` values newer than the bundled TypeScript
+  5.9 (`ES2025`) are read as its newest (`esnext`, `nodenext`), with an
+  `info:` line in the package's index log.
 
 ## Quick start
 

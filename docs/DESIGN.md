@@ -1243,3 +1243,61 @@ wrong standing for 390 rows. Wrong rows and the fixes adopted:
   (a pre-2.12 example app) block ~330 findings each; the report now says why
   and suggests `ignoreManifests`, and missing generated parts trigger one
   targeted `build_runner` attempt when the package depends on it.
+
+### Phase 2 fix round 1: TS indexer toolchain
+
+From the supabase run (`index.txt`, per-package logs); all in
+`packages/cli/src/indexers/scip-typescript.ts` plus two preload files.
+
+- **Manager choice** (`choosePackageManager`): `packageManager`, then
+  `devEngines.packageManager`, then lockfile order (npm, pnpm, yarn, bun), read
+  from the nearest package.json that declares one. A declared manager whose
+  lockfile is absent falls through (a frozen install needs it). Cause:
+  auth-helpers has `package-lock.json` + `pnpm-lock.yaml` and `pnpm@7.1.7`;
+  `npm ci` failed EUSAGE on all nine packages.
+- **Pinned fallback version** (`packageManagerVersion`, `toolVersionPin`,
+  `pinnedVersion`): packageManager → devEngines → `mise.toml`/`.mise.toml`
+  `[tools]` / `.tool-versions` → lockfile major → pnpm 9 / yarn 1 / bun 1;
+  never `latest`. Cause: mcp and tanstack-db ran `pnpm@latest` = pnpm 12,
+  which failed on its store operation lock (read-only filesystem); mcp pins
+  pnpm 10 in `mise.toml`. `.nvmrc` pins only node and is not read. The pin
+  applies to the `npm exec` fallback only; a manager already on `PATH` runs
+  as is.
+- **bun via npm exec**: a missing bun used to skip the install, and sdk /
+  setup-cli then failed outright: their tsconfig `extends` `@tsconfig/node24`
+  / `@tsconfig/bun`, which only the install provides (TS6053, no files
+  indexed). `npm exec --package=bun@1 -- bun install --frozen-lockfile` works
+  (checked by hand on a copy of setup-cli: `@tsconfig/bun` installed).
+- **Engines** (`installArgs`): the env already set engine-strict=false, but
+  pnpm 10 lets `engineStrict: true` in `pnpm-workspace.yaml` beat the env
+  (evals: ERR_PNPM_UNSUPPORTED_ENGINE, node 24.x wanted). Flags on the
+  manager's own command line: npm `--engine-strict=false`, pnpm
+  `--config.engine-strict=false`, yarn 1 `--ignore-engines` (it rejects the
+  root package's engines too). Checked offline with cached pnpm 8.15, 9.15,
+  10.24 (fails without the flag, passes with it) and 11.1, yarn 1.22 and
+  4.10, npm 11. Berry checks no engines (and deprecates the flag); bun
+  enforces none. Yarn's flags (classic vs berry) now come from the resolved
+  version on the first call, not only in the fallback.
+- **TS6046** (orb-sync-engine, `lib: ["ES2025"]`, `target: "es2025"`, written
+  for TypeScript 7): scip-typescript 0.4.0 and the export surface run
+  TypeScript 5.9.3 (knows es2024/esnext); scip-typescript exits 1 on config
+  errors, failing every package. Options considered:
+  - *Run the repo's TypeScript*: rejected. scip-typescript `require`s its
+    own pinned copy and uses the 5.x compiler API; orb-sync-engine's
+    `typescript@7.0.2` is the native port (only `lib/tsc.js` and a binary, no
+    JS API), and older repo copies (4.x) would break scip-typescript instead.
+  - *A sentei-written tsconfig overriding lib/target*: does not help, the
+    extended base config is still converted and its TS6046 still reported.
+  - *Chosen*: `ts-option-compat-preload.cjs`, `--require`d into both node
+    children, wraps `get` of TypeScript's lib/target/module/moduleResolution
+    option maps (the only lookup its tsconfig conversion and
+    `/// <reference lib>` use). Only values *newer* than it knows are aliased:
+    `esYYYY[.part]` past its newest year and unknown `esnext.part` →
+    `esnext.part` when known, else `esnext` (es2025 features live in 5.9's
+    esnext libs); target/module `esYYYY` → `esnext`; `nodeNN` → `nodenext`.
+    Typos and other unknown values stay TS6046. Each alias prints a
+    `sentei-ts-compat:` line, which becomes an `info:` diagnostic. Missing
+    typings can only add type errors; they never drop an org reference.
+- The adapter version stays `0.4.0+sentei.5`: the sidecar format is unchanged
+  and the packages these fixes rescue were partial or failed, which the index
+  cache never reuses (bumping it would also regenerate `fixtures/snapshots`).
