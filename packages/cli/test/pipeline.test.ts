@@ -14,7 +14,7 @@ import { analyze } from '../src/stages/analyze.ts';
 import { discover } from '../src/stages/discover.ts';
 import { index } from '../src/stages/index.ts';
 import { ingest } from '../src/stages/ingest.ts';
-import { report } from '../src/stages/report.ts';
+import { report, sarifDirFor } from '../src/stages/report.ts';
 import { witness } from '../src/stages/witness.ts';
 import { sarifSchemaErrors } from '../../core/test/helpers/sarif.ts';
 import { dropFlutterRepos, FLUTTER_REPOS, hasFlutter } from '../../../scripts/update-snapshots.ts';
@@ -103,9 +103,9 @@ function expected(file: string): ExpectedRow[] {
   return sortRows(JSON.parse(readFileSync(path.join(FIXTURES, 'org-small', file), 'utf8')) as ExpectedRow[]);
 }
 
-/** Every SARIF result of every repo log in <work>/sarif. */
-function allSarifResults(work: string): Array<{ ruleId: string; symbol: unknown; message: string; log: SarifLog }> {
-  const dir = path.join(work, 'sarif');
+/** Every SARIF result of every repo log in <work>/<sub> (default: the default set in sarif/). */
+function allSarifResults(work: string, sub = 'sarif'): Array<{ ruleId: string; symbol: unknown; message: string; log: SarifLog }> {
+  const dir = path.join(work, sub);
   return readdirSync(dir).sort().flatMap((f) => {
     const log = JSON.parse(readFileSync(path.join(dir, f), 'utf8')) as SarifLog;
     return log.runs[0]!.results.map((x) => ({ ruleId: x.ruleId, symbol: x.properties.symbol, message: x.message.text, log }));
@@ -155,12 +155,25 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(byDefault.filter((x) => x.ruleId === 'sentei/deprecate').map((x) => x.symbol).sort())
       .toEqual(['default', 'internalUnused', 'namespaceUnused', 'testOnlyFn']);
 
-    // report --view org_dead: the same DB, no re-analysis; only org-dead results.
+    // report --view org_dead: the same DB, no re-analysis; only org-dead results, in
+    // <work>/sarif-org_dead/. The default set and report.json keep their content.
+    const readDir = (dir: string): Record<string, string> =>
+      Object.fromEntries(readdirSync(dir).map((f) => [f, readFileSync(path.join(dir, f), 'utf8')]));
+    const defaultFiles = readDir(path.join(work, 'sarif'));
+    const fullReport = JSON.parse(readFileSync(path.join(work, 'report.json'), 'utf8')) as Report;
     const filtered = await withCtx(org, async (ctx, out) => {
       await report(ctx, { views: ['org_dead'] });
       return out;
     });
-    const orgDead = allSarifResults(work);
+    expect(sarifDirFor(work, ['org_dead'])).toBe(path.join(work, 'sarif-org_dead'));
+    expect(sarifDirFor(work, ['delete', 'org_dead'])).toBe(path.join(work, 'sarif-delete,org_dead'));
+    expect(readDir(path.join(work, 'sarif'))).toEqual(defaultFiles);
+    const after = JSON.parse(readFileSync(path.join(work, 'report.json'), 'utf8')) as Report;
+    const undated = (x: Report): Report => ({ ...x, generatedAt: 0, generatedAtIso: '' });
+    expect(undated(after)).toEqual(undated(fullReport));
+    expect(filtered).toContain(`[report] wrote ${r.repos.length} SARIF log(s) (5 result(s), views: org_dead) to ${path.join(work, 'sarif-org_dead')}`);
+    expect(filtered).toContain(`[report] --view: the default SARIF set in ${path.join(work, 'sarif')} was left as it was`);
+    const orgDead = allSarifResults(work, 'sarif-org_dead');
     expect(orgDead.map((x) => x.ruleId).every((id) => id === 'sentei/org-dead')).toBe(true);
     expect(orgDead.map((x) => x.symbol).sort()).toEqual(['default', 'internalUnused', 'namespaceUnused', 'testOnlyFn', 'unusedHelper']);
     expect(orgDead.every((x) => x.message.endsWith(`Assertion: ${ORG_DEAD_ASSERTION}`))).toBe(true);

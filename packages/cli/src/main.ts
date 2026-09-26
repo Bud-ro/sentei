@@ -83,7 +83,10 @@ Options:
   --view <name>[,name]    report/run: views printed and emitted in SARIF (repeatable):
                           delete, deprecate, org_dead, unexport, private_dead,
                           needs_review, blocked, version_skew (default: all on
-                          stdout, all but org_dead in SARIF; report.json has all)
+                          stdout, all but org_dead in <work>/sarif/). With --view,
+                          SARIF goes to <work>/sarif-<view>[,<view>]/ and the
+                          default <work>/sarif/ is left alone; report.json always
+                          has every view
   -q, --quiet    Print only warnings, errors and the report summary
   -v, --verbose  On error, print the full stack trace
   -h, --help     Show this help

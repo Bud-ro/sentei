@@ -254,6 +254,7 @@ work/
   blame/<owner>__<repo>.json  blame cache, trusted only for the same head sha
   report.json              full findings, reasons, blockers, warnings, version skew
   sarif/<owner>__<repo>.sarif  one SARIF 2.1.0 log per repo (also for clean repos)
+  sarif-<view>[,<view>]/   the same for a `report --view` run (sarif/ is left alone)
 ```
 
 Stages can be rerun alone. `discover` and `ingest` rebuild the whole org;
@@ -419,6 +420,11 @@ and every `sentei/org-dead` result message state. It is the same evidence as
 `sentei report --view <name>[,<name>]` (repeatable; `org-dead` works too) limits
 the stdout summary and the SARIF logs to those views; `report.json` always has
 all of them. Default: every view on stdout, every view except `org_dead` in SARIF.
+The SARIF of a `--view` run goes to its own directory next to the default set,
+`work/sarif-<view>[,<view>]/` (views in the order of the table above, e.g.
+`work/sarif-delete,org_dead/`); `work/sarif/` is only written by a run without
+`--view`, so a filtered look never replaces the logs you upload. The report
+prints where each file went.
 
 **No option needs a re-index.** Indexing is the only expensive stage and is
 cached per package by head sha and indexer version. Changing the policy
