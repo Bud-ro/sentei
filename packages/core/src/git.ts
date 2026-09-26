@@ -77,8 +77,9 @@ export interface EnsureCloneResult {
 /**
  * Environment that makes git send `Authorization: Basic x-access-token:<token>`
  * to the clone URL's origin only (GitHub's documented form for git over https).
+ * Used by clones (ensureClone) and by blame (unshallow fetch, promisor blob fetches).
  */
-function authEnv(cloneUrl: string, token: string | null | undefined): Record<string, string> {
+export function authEnv(cloneUrl: string, token: string | null | undefined): Record<string, string> {
   if (!token || !cloneUrl.startsWith('https://')) return {};
   const origin = new URL(cloneUrl).origin;
   const basic = Buffer.from(`x-access-token:${token}`).toString('base64');

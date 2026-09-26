@@ -21,6 +21,14 @@
 // (line = 1-based blame line). Entries are only trusted when the cache sha equals the
 // repo's current sha; a file is re-blamed when any of its target lines is missing.
 // All git runs go through execFile (never a shell) with GIT_TERMINAL_PROMPT=0.
+// Repos run in parallel (`repoConcurrency`, default 8: --clone-concurrency), and the
+// `git blame` processes of all repos share one pool of `concurrency` (default 8).
+// The dart-lang run (31 repos) spent 1280 s unshallowing and blaming one repo at a
+// time. Results do not depend on the order: every repo writes its own cache and its
+// own symbols. Log lines of different repos may interleave.
+// An https origin gets the clone token (git.ts authEnv: an Authorization header in
+// GIT_CONFIG_* env vars, never argv, logs or .git/config) for the unshallow fetch and
+// for the promisor blob fetches of `git blame`, so private repos work like clones.
 // A partial (`--filter=blob:none`) clone fetches blobs from its promisor remote during
 // `git blame`; when that fetch fails (no network) the file's symbols stay NULL, and the
 // repo gets one `warning:` line with the count at the end (NETWORK_ERROR_RE), counted
@@ -30,6 +38,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { requireIngested } from './analyze.ts';
+import { authEnv } from './git.ts';
+import { findToken } from './github.ts';
 
 /** The part of work/discover.json (DiscoverModel) blame reads. */
 export interface BlameDiscoverInput {
@@ -47,9 +57,22 @@ export interface RunBlameOptions {
    * deletion_candidate finding (a cheap re-run). Default: every exported symbol.
    */
   only?: 'all' | 'candidates';
-  /** Parallel `git blame` processes per repo (default 8). */
+  /** Parallel `git blame` processes, all repos together (default 8). */
   concurrency?: number;
+  /** Repos unshallowed and blamed at once (default 8; the CLI passes --clone-concurrency). */
+  repoConcurrency?: number;
+  /**
+   * The GitHub token for fetches from an https origin; called at most once, and only
+   * when a repo needs a fetch. Default: findToken (GITHUB_TOKEN, GH_TOKEN, `gh auth
+   * token`). Never logged.
+   */
+  token?: () => Promise<string | null>;
+  /** Tests only: runs `git <args>` in `cwd` with extra env; resolves with stdout. */
+  runGit?: BlameGitRunner;
 }
+
+/** How blame runs git (execFile by default). Rejects with git's stderr in the message. */
+export type BlameGitRunner = (cwd: string, args: string[], env: Record<string, string>) => Promise<string>;
 
 export interface BlameCounts {
   /** Target symbols (exported, or candidates with only='candidates'). */
@@ -113,24 +136,25 @@ export function parseBlamePorcelain(out: string): Map<number, BlameLine> {
 
 class GitError extends Error {}
 
-function git(cwd: string, args: string[]): Promise<string> {
+const execGit: BlameGitRunner = (cwd, args, extraEnv) => {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       args,
       {
         cwd,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...extraEnv },
         maxBuffer: 512 * 1024 * 1024,
         encoding: 'utf8',
       },
       (err, stdout, stderr) => {
+        // Never echo env (it may carry an auth header); argv never carries secrets.
         if (err) reject(new GitError(`git ${args.join(' ')}: ${(stderr || err.message).trim()}`));
         else resolve(stdout);
       },
     );
   });
-}
+};
 
 function repoSlug(repo: string): string {
   return repo.replaceAll('/', '__');
@@ -161,8 +185,26 @@ async function pool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): P
   await Promise.all(Array.from({ length: Math.max(1, Math.min(n, items.length)) }, worker));
 }
 
+/** At most `n` calls of the returned function run at once; the rest wait in order. */
+function limiter(n: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (active >= Math.max(1, n)) await new Promise<void>((res) => waiting.push(res));
+    active++;
+    try {
+      return await fn();
+    } finally {
+      active--;
+      waiting.shift()?.();
+    }
+  };
+}
+
+type Git = (dir: string, args: string[]) => Promise<string>;
+
 /** Make the checkout non-shallow; false (after logging) if that is impossible. */
-async function ensureFullHistory(dir: string, repo: string, log: (l: string) => void): Promise<boolean> {
+async function ensureFullHistory(git: Git, dir: string, repo: string, log: (l: string) => void): Promise<boolean> {
   let shallow: string;
   try {
     shallow = (await git(dir, ['rev-parse', '--is-shallow-repository'])).trim();
@@ -198,6 +240,22 @@ interface Target {
 export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
   const { db, discover, workDir, log } = opts;
   const concurrency = opts.concurrency ?? 8;
+  const repoConcurrency = opts.repoConcurrency ?? 8;
+  const runGit = opts.runGit ?? execGit;
+  const blameSlot = limiter(concurrency);
+  let tokenOnce: Promise<string | null> | undefined;
+  const token = (): Promise<string | null> => (tokenOnce ??= (opts.token ?? (() => findToken()))().catch(() => null));
+  /** The auth env for fetches of the repo at `dir`: only for an https origin, and only with a token. */
+  const fetchEnv = async (dir: string): Promise<Record<string, string>> => {
+    let url: string;
+    try {
+      url = (await runGit(dir, ['remote', 'get-url', 'origin'], {})).trim();
+    } catch {
+      return {};
+    }
+    if (!url.startsWith('https://')) return {};
+    return authEnv(url, await token());
+  };
   const candidatesOnly = opts.only === 'candidates';
   requireIngested(db, 'blame');
 
@@ -230,19 +288,22 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
   /** Per repo: symbols left undated because a blame's promisor fetch failed. */
   const networkUndated = new Map<string, number>();
 
-  for (const [repo, files] of byRepo) {
+  await pool([...byRepo], repoConcurrency, async ([repo, files]) => {
     const d = discoverByRepo.get(repo);
     if (!d) {
       log(`[blame] ${repo}: not in discover.json; ages unknown`);
       counts.skippedRepos++;
-      continue;
+      return;
     }
     const dir = d.localPath;
     if (!existsSync(join(dir, '.git'))) {
       log(`[blame] ${repo}: no git history; ages unknown`);
       counts.skippedRepos++;
-      continue;
+      return;
     }
+    // Local git (rev-parse) runs without auth; the env is set up when a fetch may happen.
+    let env: Record<string, string> = {};
+    const git: Git = (cwd, args) => runGit(cwd, args, env);
     const revParse = async (): Promise<string> =>
       (await git(dir, ['rev-parse', '--verify', `${d.headSha ?? 'HEAD'}^{commit}`])).trim();
     const cachePath = join(cacheDir, `${repoSlug(repo)}.json`);
@@ -282,16 +343,17 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
     if (work !== null && work.toBlame.length === 0) {
       cache = old!;
     } else {
-      if (!(await ensureFullHistory(dir, repo, log))) {
+      env = await fetchEnv(dir);
+      if (!(await ensureFullHistory(git, dir, repo, log))) {
         counts.skippedRepos++;
-        continue;
+        return;
       }
       try {
         sha = await revParse();
       } catch (e) {
         log(`[blame] ${repo}: ${(e as Error).message}; skipping (ages unknown)`);
         counts.skippedRepos++;
-        continue;
+        return;
       }
       cache = { sha, files: old && old.sha === sha ? old.files : {} };
       work = plan(cache);
@@ -304,7 +366,7 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
     await pool(toBlame, concurrency, async ([file, list]) => {
       let lines: Map<number, BlameLine>;
       try {
-        lines = parseBlamePorcelain(await git(dir, ['blame', '--porcelain', cache.sha, '--', file]));
+        lines = parseBlamePorcelain(await blameSlot(() => git(dir, ['blame', '--porcelain', cache.sha, '--', file])));
       } catch (e) {
         const msg = (e as Error).message;
         log(`[blame] ${repo}: ${msg}; ages unknown for ${list.length} symbol(s)`);
@@ -328,7 +390,7 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
 
     mkdirSync(cacheDir, { recursive: true });
     writeCache(cachePath, cache);
-  }
+  });
 
   // Every target is reset first so a symbol we could not date this run is NULL (fails
   // closed) rather than keeping a stale age from an earlier sha.

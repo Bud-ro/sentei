@@ -295,3 +295,129 @@ describe('runBlame', () => {
     expect(ages(db, ids['acme/lib:a']!)).toEqual({ sha: null, at: null });
   });
 });
+
+describe('runBlame across repos (dart-lang: 31 repos one at a time, 1280 s)', () => {
+  const SHA = (i: number): string => String(i).padStart(40, 'a');
+  const porcelain = (sha: string, lines: number, time: number): string =>
+    Array.from({ length: lines }, (_, i) => `${sha} ${i + 1} ${i + 1} 1\n${i === 0 ? `author-time ${time}\n` : ''}\tline\n`).join('');
+
+  /** N fake repos (a `.git` dir each), one exported symbol on line 1 of src/index.ts. */
+  function fakeOrg(n: number): { root: string; repos: string[]; discover: BlameDiscoverInput } {
+    const root = tmp();
+    const repos = Array.from({ length: n }, (_, i) => `acme/r${i}`);
+    for (const r of repos) mkdirSync(join(root, r, '.git'), { recursive: true });
+    return { root, repos, discover: { repos: repos.map((r) => ({ repo: r, localPath: join(root, r), headSha: null })) } };
+  }
+
+  /** A fake git: shallow https clones; each fetch/blame takes a few ms, and concurrency is measured. */
+  function fakeGit(root: string) {
+    const calls: Array<{ repo: string; args: string[]; env: Record<string, string> }> = [];
+    let activeFetches = 0;
+    let activeBlames = 0;
+    let maxActiveFetches = 0;
+    let maxActiveBlames = 0;
+    const run = async (cwd: string, args: string[], env: Record<string, string>): Promise<string> => {
+      const repo = cwd.slice(root.length + 1);
+      const i = Number(repo.replace(/^acme\/r/, ''));
+      calls.push({ repo, args, env });
+      if (args[0] === 'remote') return `https://github.com/${repo}.git\n`;
+      if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return 'true\n';
+      if (args[0] === 'rev-parse') return `${SHA(i)}\n`;
+      const pause = (): Promise<void> => new Promise((r) => setTimeout(r, 5 + ((i * 7) % 11)));
+      if (args[0] === 'fetch') {
+        maxActiveFetches = Math.max(maxActiveFetches, ++activeFetches);
+        await pause();
+        activeFetches--;
+        return '';
+      }
+      if (args[0] === 'blame') {
+        maxActiveBlames = Math.max(maxActiveBlames, ++activeBlames);
+        await pause();
+        activeBlames--;
+        return porcelain(SHA(i), 2, 1_600_000_000 + i);
+      }
+      throw new Error(`unexpected: ${args.join(' ')}`);
+    };
+    return { run, calls, stats: () => ({ maxActiveFetches, maxActiveBlames }) };
+  }
+
+  const runOrg = async (n: number, repoConcurrency: number, token: string | null = 'ghs_secretsecretsecret') => {
+    const { root, repos, discover } = fakeOrg(n);
+    const { db, ids } = makeDb(repos, repos.map((r) => ({ repo: r, name: 'x', line: 0 })));
+    const fake = fakeGit(root);
+    let tokenCalls = 0;
+    const logs: string[] = [];
+    const counts = await runBlame({
+      db, discover, workDir: join(root, 'w'), log: (l) => logs.push(l), repoConcurrency, runGit: fake.run,
+      token: async () => {
+        tokenCalls++;
+        return token;
+      },
+    });
+    const dated = repos.map((r) => ages(db, ids[`${r}:x`]!));
+    return { counts, dated, fake, tokenCalls, logs, root };
+  };
+
+  it('unshallows and blames repos in parallel (repoConcurrency), with identical results', async () => {
+    const serial = await runOrg(12, 1);
+    const parallel = await runOrg(12, 8);
+    expect(serial.fake.stats().maxActiveFetches).toBe(1);
+    expect(parallel.fake.stats().maxActiveFetches).toBe(8);
+    expect(parallel.counts).toEqual(serial.counts);
+    expect(parallel.counts).toEqual({ symbols: 12, blamed: 12, skippedRepos: 0, cached: 0 });
+    expect(parallel.dated).toEqual(serial.dated);
+    expect(parallel.dated[3]).toEqual({ sha: SHA(3), at: 1_600_000_003 });
+    for (const w of [serial, parallel]) {
+      for (let i = 0; i < 12; i++) {
+        const cache = JSON.parse(readFileSync(join(w.root, 'w', 'blame', `acme__r${i}.json`), 'utf8')) as BlameCache;
+        expect(cache).toEqual({ sha: SHA(i), files: { 'src/index.ts': { '1': { sha: SHA(i), authorTime: 1_600_000_000 + i } } } });
+      }
+    }
+  });
+
+  it('blame processes of all repos share one pool of `concurrency`', async () => {
+    const r = await runOrg(20, 20);
+    expect(r.fake.stats().maxActiveFetches).toBe(20);
+    expect(r.fake.stats().maxActiveBlames).toBeLessThanOrEqual(8);
+  });
+
+  it('fetches and blames of an https origin carry the token in env only, never in argv or logs; the token is looked up once', async () => {
+    const r = await runOrg(5, 8);
+    expect(r.tokenCalls).toBe(1);
+    const remote = r.fake.calls.filter((c) => c.args[0] === 'fetch' || c.args[0] === 'blame');
+    expect(remote.length).toBeGreaterThanOrEqual(10);
+    for (const c of remote) {
+      expect(c.env['GIT_CONFIG_KEY_0']).toBe('http.https://github.com/.extraheader');
+      expect(c.env['GIT_CONFIG_VALUE_0']).toBe(`AUTHORIZATION: basic ${Buffer.from('x-access-token:ghs_secretsecretsecret').toString('base64')}`);
+    }
+    for (const c of r.fake.calls) expect(c.args.join(' ')).not.toContain('secret');
+    expect(r.logs.join('\n')).not.toMatch(/secret|AUTHORIZATION|basic /i);
+  });
+
+  it('no token: fetches run without auth env (public repos)', async () => {
+    const r = await runOrg(2, 8, null);
+    for (const c of r.fake.calls) expect(c.env).toEqual({});
+    expect(r.counts.blamed).toBe(2);
+  });
+
+  it('real shallow clones blamed in parallel date exactly as one at a time', async () => {
+    const root = tmp();
+    const origin = join(root, 'origin');
+    const { c1, c2 } = makeRepo(origin);
+    const repos = ['acme/a', 'acme/b', 'acme/c'];
+    const results: Array<Array<{ sha: string | null; at: number | null }>> = [];
+    for (const repoConcurrency of [1, 3]) {
+      const clones = repos.map((r) => join(root, `${repoConcurrency}`, r));
+      for (const c of clones) git(root, ['clone', '-q', '--depth=1', `file://${origin}`, c]);
+      const { db, ids } = makeDb(repos, repos.flatMap((r) => [{ repo: r, name: 'a', line: 0 }, { repo: r, name: 'b', line: 2 }]));
+      const r = await runBlame({
+        db, discover: { repos: repos.map((repo, i) => ({ repo, localPath: clones[i]!, headSha: null })) },
+        workDir: join(root, `w${repoConcurrency}`), log: () => {}, repoConcurrency,
+      });
+      expect(r).toEqual({ symbols: 6, blamed: 6, skippedRepos: 0, cached: 0 });
+      results.push(repos.flatMap((repo) => [ages(db, ids[`${repo}:a`]!), ages(db, ids[`${repo}:b`]!)]));
+    }
+    expect(results[1]).toEqual(results[0]);
+    expect(results[0]).toEqual(repos.flatMap(() => [{ sha: c1, at: T1 }, { sha: c2, at: T2 }]));
+  });
+});

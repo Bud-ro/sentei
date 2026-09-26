@@ -63,7 +63,8 @@ Options:
   --include-archived    discover/repos --org: keep archived repos
                         (org sentei.json "repos" holds the other selection
                         rules: languages, maxSizeMb, minPushed, probe)
-  --clone-concurrency <n>  discover --org: parallel clones (default 8)
+  --clone-concurrency <n>  discover --org: parallel clones; blame: repos unshallowed
+                           and blamed at once (default 8)
   --allow-clone-failures   discover --org: skip repos that fail to clone
                         (their packages are unknown) instead of failing
   --clones-dir <dir>    discover --org: where clones live (default: <work>/repos)
