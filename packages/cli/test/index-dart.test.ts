@@ -158,6 +158,8 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     });
     const rows = s.exports.map((e) => [e.exportedAs, e.name, e.file, e.line, e.col]);
     expect(rows).toEqual([
+      ['AcmeLoader', 'AcmeLoader', 'lib/acme_x.dart', 42, 10],
+      ['AcmeTiny', 'AcmeTiny', 'lib/acme_x.dart', 50, 10],
       ['IntTimes', 'IntTimes', 'lib/acme_x.dart', 29, 10],
       ['Shown', 'Shown', 'lib/src/shown.dart', 3, 6],
       ['docOnly', 'docOnly', 'lib/acme_x.dart', 37, 4],
@@ -198,6 +200,10 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     // Positions are the declarations' names, as SCIP defines them (ingest matches on them).
     expect(sidecar('dart-lib-x', 'acme_x').entrySymbols).toEqual([
       { name: 'main', file: 'benchmark/bench.dart', line: 5, col: 5, kind: 'runtime' }, // runnable script, not a discover entry
+      // The example app's script (example/ has its own pubspec): listed only because this
+      // hand-written discover.json has no ignoredManifests; with discover's (the snapshots,
+      // the pipeline) the ignored example dir is excluded.
+      { name: 'main', file: 'example/bin/demo.dart', line: 4, col: 5, kind: 'runtime' },
       { name: 'acmeBuilder', file: 'lib/builder.dart', line: 5, col: 7, kind: 'runtime' }, // build.yaml builder_factories
       { name: 'config', file: 'tool/dart_dev/config.dart', line: 5, col: 6, kind: 'runtime' }, // dart_dev convention
     ]); // test/x_test.dart's main is not one

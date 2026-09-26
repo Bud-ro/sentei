@@ -36,3 +36,19 @@ extension IntTimes on int {
 // Expected: deletion_candidate, reasons ["no_refs"]. Named only by the dartdoc
 // link `[docOnly]` on `doubled` above: a doc link is not a reference (fork patch 4).
 int docOnly() => 3;
+
+// Expected: needs_review, reasons ["no_refs", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:8 (member loadAcme)"].
+// Used only through its member, `'logo'.loadAcme()`, by the example app (an ignored
+// manifest): the witness searches an extension's member names too.
+extension AcmeLoader on String {
+  // Expected: no finding (a member of an extension; not exported on its own).
+  String loadAcme() => 'acme:$this';
+}
+
+// Expected: deletion_candidate, reasons ["no_refs"]. Its only member `sq` is shorter
+// than 3 characters, so the witness does not search it: the example's local `sq` is
+// not a hit.
+extension AcmeTiny on int {
+  // Expected: no finding (member of an extension).
+  int get sq => this * this;
+}

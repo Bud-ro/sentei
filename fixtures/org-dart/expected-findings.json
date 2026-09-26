@@ -4,6 +4,8 @@
   {"package_id": "npm:acme/dart-js:acme-js-src", "symbol": "jsOnlyUnused", "file": "js_src/src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "pub:acme/dart-lib-pub:acme_pub", "symbol": "pubExampleOnly", "file": "lib/acme_pub.dart", "verdict": "deprecation_candidate", "reasons": ["only_docs_refs"]},
   {"package_id": "pub:acme/dart-lib-pub:acme_pub", "symbol": "pubUnused", "file": "lib/acme_pub.dart", "verdict": "deprecation_candidate", "reasons": ["no_refs"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "AcmeLoader", "file": "lib/acme_x.dart", "verdict": "needs_review", "reasons": ["no_refs", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:8 (member loadAcme)"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "AcmeTiny", "file": "lib/acme_x.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "Hidden", "file": "lib/src/shown.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "_islandA", "file": "lib/acme_x.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "_islandB", "file": "lib/acme_x.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},

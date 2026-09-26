@@ -33,6 +33,24 @@
     {
       "col": 10,
       "entry": "lib/acme_x.dart",
+      "exportedAs": "AcmeLoader",
+      "file": "lib/acme_x.dart",
+      "line": 42,
+      "name": "AcmeLoader",
+      "sites": []
+    },
+    {
+      "col": 10,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "AcmeTiny",
+      "file": "lib/acme_x.dart",
+      "line": 50,
+      "name": "AcmeTiny",
+      "sites": []
+    },
+    {
+      "col": 10,
+      "entry": "lib/acme_x.dart",
       "exportedAs": "IntTimes",
       "file": "lib/acme_x.dart",
       "line": 29,

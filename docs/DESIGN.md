@@ -2521,3 +2521,51 @@ adds the two `HasGameReference` rows (0 before).
   It keeps `@supabase/middleware` and `@supabase/server` opaque. Scoping such
   flags like the witness-only `script` imports would be a policy change for every
   script file, so it was not done here.
+
+
+### Phase 2 fix round 3: witness extension members; ignored-manifest uses
+
+Found on the flame-engine rerun (dog-flame2, main 7441b3f).
+
+**Extension members** (witness.ts `memberNamesOf`, `memberLines`). flame_svg's
+`extension SvgLoader on …` was a deprecation_candidate `["no_refs"]` although
+`flame/examples` (an ignored manifest the witness scans) calls
+`game.loadSvg(…)` three times: an extension is used through its members on a
+receiver, so its own name is rarely written at a use site, and the witness only
+searched S's names. The fork records an extension as `symbols.kind =
+'extension'` (SCIP descriptor `lib/\`svg.dart\`/SvgLoader#`) and its members as
+children (`parent_symbol_id` = the extension; `SvgLoader#loadSvg().`, kind
+`method`, not exported themselves). For such an S the witness now also searches
+the names of its public members, under the same import and vouching rules as S's
+names, in every step that reads consumer files (manifest consumers, ignored
+manifests, witness_files, the `self` step; not the codegen / self-string steps,
+where a quoted member name is no evidence, nor the cross-manager step: JS cannot
+name a Dart extension member). A hit's reason ends ` (member <name>)`; a line
+naming S itself is S's hit. Skipped member names: private ones, names shorter
+than 3 characters (`id`, `x2`), Object's members (`toString`, `hashCode`,
+`noSuchMethod`, `runtimeType`; Dart forbids them on an extension, but a SCIP
+child of that name would hit every `toString()`). In an indexed file a member
+access is exactly the use, so it counts (the member-access skip of
+`indexedNameLines` does not apply), except where SCIP has an occurrence of
+another symbol with that name on that line and none of the member (SCIP resolved
+the call to another type's member). In an unindexed file a same-named member of
+an unrelated class is a hit, as the witness always accepts (needs_review is fail
+closed). Only `kind = 'extension'`: a class, mixin or extension type is named
+where it is used.
+dog-flame2 (analyze + witness on a copy of the DB): 4 pending candidates become
+needs_review, all through their members in ignored example apps: `SvgLoader`
+(`loadSvg`), flame_3d `TextureCache` (`loadTexture`, called in
+`flame_3d/example/lib/components/crate.dart:16`; the run's REPORT.md called it
+never used), flame_fire_atlas `FireAtlasExtensions` (`loadFireAtlas`),
+flame_texturepacker `TexturepackerLoader` (`atlasFromAssets`); witness 152
+checked / 58 mismatched → 152 / 62 (dead islands reverted to an unexport 82 → 86).
+**TypeScript analogue: none added.** TS module augmentation (`declare module 'x'
+{ interface Foo { bar } }`, `declare global`) declares members of ANOTHER
+module's symbol, so the augmenting interface is not a symbol of P with its own
+export row and never a candidate; an exported interface or class is named where
+it is used (a type annotation, `implements`, `new`). No shape in scip-typescript's
+output is used only through members the way a Dart extension is.
+Fixture: org-dart `dart-lib-x/example/` (an ignored manifest, `acme_x_example`),
+`AcmeLoader` → needs_review `(member loadAcme)`; `AcmeTiny` (only member `sq`, a
+local `sq` in the example) stays a deletion.
+

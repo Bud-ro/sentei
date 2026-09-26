@@ -1,0 +1,10 @@
+name: acme_x_example
+description: "Example app for acme_x: an ignored manifest (example/ is in ignoreManifestDirs), never indexed."
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  acme_x:
+    path: ..

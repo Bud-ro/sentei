@@ -365,7 +365,8 @@ too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
 `only_test_refs` when both exist), `witness_pending` (analyze output before `witness` runs),
 `witness_mismatch:<consumer>:<file>:<line>` (1-based; `<consumer>` is a package
 id, `self`, `self-string` or `ignored:<repo>/<manifest>`, and `<file>:<line>` can be
-`checkout missing`), `dead_island` (exports used only by other candidates, so they
+`checkout missing`; a hit on a member name of a Dart extension, which is used
+through its members, ends ` (member <name>)`), `dead_island` (exports used only by other candidates, so they
 go together: a would-be unexport that becomes a deletion, or a deprecation in a
 published package), `already_unreachable` (an existing private island),
 `unlocked_by:<symbol>` (dead once that candidate goes). `blocked_by` entries are

@@ -27,7 +27,12 @@
 //      `export { a as b }` consumer names only `b`). `default` is never searched as an
 //      identifier (npm); instead, when S is named `default` (anonymous default export)
 //      or exported as `default`, a default import of a matching module specifier is a
-//      hit (the default-import rule below).
+//      hit (the default-import rule below). For a Dart EXTENSION S (symbols.kind =
+//      'extension'), also the names of its public members (its SCIP children:
+//      symbols.parent_symbol_id = S), since an extension is used through its members on
+//      a receiver (`game.loadSvg(…)`) and its own name is rarely written; Object members
+//      and names under 3 characters are never searched (memberNamesOf). Such a hit's
+//      reason ends ` (member <name>)`.
 // Plus witness_files (ingest, from scoped sidecar unindexedImports): unindexed script /
 // docs / test files of a consumer C importing P, scanned like C's own files (step 1 +
 // 2, names only) whether or not C declares a dependency on P, consumer label C; a row
@@ -559,7 +564,26 @@ interface Hit {
   /** Repo-relative POSIX path, or null when the checkout is missing. */
   file: string | null;
   line: number;
+  /**
+   * What the reason adds in parentheses: `member <name>` (an extension member's name hit,
+   * not S's own). Absent: a plain hit.
+   */
+  notes?: string[];
 }
+
+/** `witness_mismatch:<consumer>:<file>:<line>` (+ ` (<notes>)`), or `…:checkout missing`. */
+function reasonOf(h: Hit): string {
+  const where = h.file === null ? 'checkout missing' : `${h.file}:${h.line}`;
+  return `witness_mismatch:${h.consumer}:${where}${h.notes && h.notes.length > 0 ? ` (${h.notes.join('; ')})` : ''}`;
+}
+
+/**
+ * Member names never searched for an extension (memberNamesOf): Object's members
+ * (a Dart extension cannot declare them, but a SCIP child of that name would match
+ * every `toString()` in the org) and names shorter than 3 characters (`x`, `id`).
+ */
+const OBJECT_MEMBER_NAMES: ReadonlySet<string> = new Set(['toString', 'hashCode', 'noSuchMethod', 'runtimeType']);
+const MIN_MEMBER_NAME = 3;
 
 interface ConsumerLoc {
   repoDir: string;
@@ -578,6 +602,8 @@ interface PendingRow {
   reasons: string;
   blocked_by: string;
   name: string;
+  /** symbols.kind (`extension` for a Dart extension: its members are searched too), or null. */
+  kind: string | null;
   file: string;
   /** 0-based definition line (symbols.line), or null. */
   line: number | null;
@@ -594,6 +620,14 @@ interface PendingRow {
 interface SearchPlan {
   /** Identifier names (declared name + export aliases; never `default` for npm). */
   names: string[];
+  /**
+   * Public member names of a Dart extension S (symbols.kind = 'extension'; the members
+   * are its SCIP children, symbols.parent_symbol_id = S), name -> member symbol_id:
+   * an extension is used through its members on a receiver (`'x'.loadSvg()`) and its
+   * own name is rarely written at a use site (flame_svg `SvgLoader`). Filtered by
+   * memberNamesOf. Empty for any other S.
+   */
+  members: Map<string, number>;
   /** Default-import targets, or null when S is not a default export (or pub). */
   defaults: DefaultTargets | null;
   /**
@@ -808,6 +842,34 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     return out;
   };
 
+  /**
+   * Lines (1-based) of `text` naming an extension member of S (plan.members) as a whole
+   * identifier, with the first member named on each line. A member access
+   * (`'x'.loadSvg()`) is exactly how an extension is used, so it counts, also in an
+   * indexed file (`indexed`), except where SCIP has an occurrence of a symbol with that
+   * name on that line and none of the member itself (SCIP resolved the call to another
+   * type's member: `other.loadSvg()`).
+   */
+  const memberLines = (
+    text: string, members: ReadonlyMap<string, number>, indexed: { consumer: string; file: string } | null,
+  ): Array<{ line: number; name: string }> => {
+    if (members.size === 0) return [];
+    const re = new RegExp(`(?<!\\w)(?:${[...members.keys()].map(escapeRe).join('|')})(?![\\w$])`, 'g');
+    const starts = lineStarts(text);
+    const occ = indexed === null ? null : occurrencesOf(indexed.consumer, indexed.file);
+    const out = new Map<number, string>();
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const line = lineOf(starts, m.index);
+      if (out.has(line)) continue;
+      if (occ) {
+        const here = (occ.get(line - 1) ?? []).filter((o) => o.name === m![0]);
+        if (here.length > 0 && !here.some((o) => o.id === members.get(m![0]))) continue;
+      }
+      out.set(line, m[0]);
+    }
+    return [...out].sort((a, b) => a[0] - b[0]).map(([line, name]) => ({ line, name }));
+  };
+
   /** Indexed documents of a package (repo-relative files), per package. */
   const docsOf = db.prepare('SELECT file FROM documents WHERE package_id = ?');
   const indexedCache = new Map<string, Set<string>>();
@@ -918,6 +980,15 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         named = named.filter((l) => !res.some((re) => re.test(src[l - 1] ?? '')));
       }
       const lines = new Set<number>(named);
+      // Extension members (plan.members): a line naming S itself is reported as S's hit.
+      let members = !vouched ? [] : memberLines(text, plan.members, !self && indexed?.has(f) ? { consumer, file: f } : null);
+      if (self) {
+        const res = SELF_DIRECTIVE_LINE_RES[row.manager];
+        const src = text.split(/\r?\n/);
+        members = members.filter((h) => !res.some((re) => re.test(src[h.line - 1] ?? '')));
+      }
+      const memberAt = new Map(members.filter((h) => !lines.has(h.line)).map((h) => [h.line, h.name]));
+      for (const l of memberAt.keys()) lines.add(l);
       if (plan.defaults) {
         const t = plan.defaults;
         for (const re of defaultRegexes(row.pkg_name)) {
@@ -927,7 +998,10 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
           }
         }
       }
-      for (const line of [...lines].sort((a, b) => a - b)) hits.push({ consumer: label, file: f, line });
+      for (const line of [...lines].sort((a, b) => a - b)) {
+        const member = memberAt.get(line);
+        hits.push({ consumer: label, file: f, line, ...(member !== undefined ? { notes: [`member ${member}`] } : {}) });
+      }
     }
     return hits;
   };
@@ -1136,10 +1210,29 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   const aliasesOf = db.prepare(
     'SELECT DISTINCT entry_file, exported_as FROM symbol_exports WHERE symbol_id = ? ORDER BY entry_file, exported_as',
   );
+  const membersOf = db.prepare('SELECT symbol_id, name FROM symbols WHERE parent_symbol_id = ? ORDER BY name, symbol_id');
+  /**
+   * The member names searched for an extension S (SearchPlan.members): its public
+   * children that are plain identifiers, not an Object member, at least MIN_MEMBER_NAME
+   * characters long and not already a name of S (`id`, `x`, `toString` would hit
+   * everywhere). The first symbol of a name wins (a getter/setter pair shares one).
+   */
+  const memberNamesOf = (row: PendingRow, names: readonly string[]): Map<string, number> => {
+    const out = new Map<string, number>();
+    if (row.kind !== 'extension') return out;
+    for (const m of membersOf.all(row.symbol_id) as Array<{ symbol_id: number; name: string }>) {
+      const n = m.name;
+      if (n.startsWith('_') || !/^[A-Za-z$][\w$]*$/.test(n) || n.length < MIN_MEMBER_NAME) continue;
+      if (OBJECT_MEMBER_NAMES.has(n) || names.includes(n) || out.has(n)) continue;
+      out.set(n, m.symbol_id);
+    }
+    return out;
+  };
   const planFor = (row: PendingRow): SearchPlan => {
     const aliases = aliasesOf.all(row.symbol_id) as Array<{ entry_file: string; exported_as: string }>;
     const all = [...new Set([row.name, ...aliases.map((a) => a.exported_as)])];
-    if (row.manager !== 'npm') return { names: all, defaults: null, entries: null };
+    const members = memberNamesOf(row, all);
+    if (row.manager !== 'npm') return { names: all, members, defaults: null, entries: null };
     const pkgPath = locs.get(row.package_id)?.pkgPath ?? null;
     const entries: DefaultTargets = { root: false, segs: new Set(), paths: new Set() };
     for (const f of new Set(aliases.map((a) => a.entry_file))) addDefaultTargets(entries, f, pkgPath, manifestOf(row.package_id));
@@ -1152,7 +1245,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       defaults = { root: false, segs: new Set(), paths: new Set() };
       for (const f of new Set(defaultFiles)) addDefaultTargets(defaults, f, pkgPath, manifestOf(row.package_id));
     }
-    return { names: all.filter((n) => n !== 'default'), defaults, entries };
+    return { names: all.filter((n) => n !== 'default'), members, defaults, entries };
   };
 
   // The current views (test_support_symbols below; a DB analyzed by an older sentei
@@ -1160,7 +1253,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   db.exec(analyzeSql());
   const pending = db
     .prepare(
-      `SELECT f.symbol_id, f.reasons, f.blocked_by, s.name, s.file, s.line, s.package_id,
+      `SELECT f.symbol_id, f.reasons, f.blocked_by, s.name, s.kind, s.file, s.line, s.package_id,
               p.manager, p.name AS pkg_name,
               p.package_id IN (SELECT package_id FROM private_packages) AS priv,
               s.symbol_id IN (SELECT symbol_id FROM test_support_symbols) AS test_support
@@ -1217,7 +1310,12 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         if (subs.length === 0) continue;
         if (plan.entries !== null && !subs.some((sub) => subpathMatches(plan.entries!, sub))) continue;
       }
-      for (const line of nameLines(text, plan.names)) hits.push({ consumer: c === row.package_id ? 'self' : c, file, line });
+      const consumer = c === row.package_id ? 'self' : c;
+      const named = new Set(nameLines(text, plan.names));
+      for (const line of named) hits.push({ consumer, file, line });
+      for (const h of memberLines(text, plan.members, null)) {
+        if (!named.has(h.line)) hits.push({ consumer, file, line: h.line, notes: [`member ${h.name}`] });
+      }
     }
     return hits;
   };
@@ -1232,7 +1330,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
    */
   const unexports = crossConsumers.size === 0 ? [] : (db
     .prepare(
-      `SELECT f.symbol_id, f.verdict, f.reasons, f.blocked_by, s.name, s.file, s.line, s.package_id,
+      `SELECT f.symbol_id, f.verdict, f.reasons, f.blocked_by, s.name, s.kind, s.file, s.line, s.package_id,
               p.manager, p.name AS pkg_name,
               p.package_id IN (SELECT package_id FROM private_packages) AS priv,
               s.symbol_id IN (SELECT symbol_id FROM test_support_symbols) AS test_support
@@ -1246,6 +1344,19 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
        ORDER BY f.symbol_id`,
     )
     .all() as unknown as Array<PendingRow & { verdict: string }>).filter((r) => crossConsumers.has(r.package_id));
+
+  /** One hit per position (the self steps share a key: a codegen template naming S is both a `self` and a `self-string` hit; the first is kept), sorted. */
+  const dedupeHits = (all: Hit[]): Hit[] => {
+    const seen = new Set<string>();
+    return all
+      .filter((h) => {
+        const k = `${h.consumer.startsWith('self') ? 'self' : h.consumer}\0${h.file ?? ''}\0${h.line}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);
+  };
 
   const del = db.prepare("DELETE FROM findings WHERE symbol_id = ? AND verdict = 'needs_review'");
   const delVerdict = db.prepare('DELETE FROM findings WHERE symbol_id = ? AND verdict = ?');
@@ -1276,21 +1387,10 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         ...selfHits(row, plan),
         ...selfStringHits(row, plan),
       ];
-      // One reason per position; the self steps share a key (a codegen template naming S
-      // is both a `self` and a `self-string` hit: the first, `self`, is kept).
-      const seen = new Set<string>();
-      const hits = all.filter((h) => {
-        const k = `${h.consumer.startsWith('self') ? 'self' : h.consumer}\0${h.file ?? ''}\0${h.line}`;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
+      const hits = dedupeHits(all);
       del.run(row.symbol_id);
       if (hits.length > 0) {
-        hits.sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);
-        const reasons = hits
-          .slice(0, MAX_HITS)
-          .map((h) => `witness_mismatch:${h.consumer}:${h.file === null ? 'checkout missing' : `${h.file}:${h.line}`}`);
+        const reasons = hits.slice(0, MAX_HITS).map(reasonOf);
         insFinding.run(row.symbol_id, 'needs_review', JSON.stringify([...base, ...reasons]), row.blocked_by);
         counts.mismatched += 1;
         log(`[witness] mismatch ${row.package_id}#${row.name} (${row.file}): ${reasons.join(', ')}${hits.length > MAX_HITS ? ` (+${hits.length - MAX_HITS} more)` : ''}`);
@@ -1304,12 +1404,9 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     let unexportsDowngraded = 0;
     for (const row of unexports) {
       const plan = planFor(row);
-      const hits = (crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c))
-        .sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);
+      const hits = dedupeHits((crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c)));
       if (hits.length === 0) continue; // the unexport stands
-      const reasons = hits
-        .slice(0, MAX_HITS)
-        .map((h) => `witness_mismatch:${h.consumer}:${h.file === null ? 'checkout missing' : `${h.file}:${h.line}`}`);
+      const reasons = hits.slice(0, MAX_HITS).map(reasonOf);
       delVerdict.run(row.symbol_id, row.verdict);
       insFinding.run(row.symbol_id, 'needs_review', JSON.stringify([...(JSON.parse(row.reasons) as string[]), ...reasons]), row.blocked_by);
       counts.checked += 1;

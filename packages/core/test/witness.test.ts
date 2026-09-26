@@ -1252,3 +1252,88 @@ describe('runWitness: same-repo packages of the other manager', () => {
     expectPass(org, org.ids['getByRole']!);
   });
 });
+
+describe('runWitness: extension members (Phase 2 fix round 3)', () => {
+  const P = 'pub:acme/lib:lib_pub';
+  const C = 'pub:acme/app:app_pub';
+  /** Make S a Dart extension (or another kind) with SCIP children `members`. */
+  function withMembers(org: Org, owner: string, kind: string, members: string[]): void {
+    org.db.prepare('UPDATE symbols SET kind = ? WHERE symbol_id = ?').run(kind, org.ids[owner]!);
+    for (const m of members) {
+      org.db.prepare(
+        "INSERT INTO symbols (symbol_str, package_id, file, name, kind, parent_symbol_id) VALUES (?, ?, 'lib/svg.dart', ?, 'method', ?)",
+      ).run(`sym ${owner}#${m}`, P, m, org.ids[owner]!);
+    }
+  }
+
+  it('an extension used only through a member (`x.loadSvg()`) is a hit naming the member (flame_svg SvgLoader)', () => {
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [{ name: 'SvgLoader', file: 'lib/svg.dart' }, { name: 'SvgCache', file: 'lib/svg.dart' }],
+      files: {
+        'lib/main.dart': [
+          "import 'package:lib_pub/svg.dart';", // 1
+          'void main() async {', // 2
+          "  final svg = await game.loadSvg('a.svg');", // 3: the member, on a receiver
+          '  // cache.clearSvg();', // 4: a comment never counts
+          '}', // 5
+        ].join('\n'),
+        // No import of P: a member name here is not a use of P.
+        'lib/other.dart': "void f() => x.loadSvg('b');\n",
+      },
+    });
+    withMembers(org, 'SvgLoader', 'extension', ['loadSvg', 'clearSvg']);
+    // A class's members are not searched: a class is named where it is used.
+    withMembers(org, 'SvgCache', 'class', ['loadSvg']);
+    expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+    expectMismatch(org, org.ids['SvgLoader']!, [`witness_mismatch:${C}:pkg/lib/main.dart:3 (member loadSvg)`]);
+    expectPass(org, org.ids['SvgCache']!);
+  });
+
+  it('skips Object member names, names under 3 characters and private members; a line naming S is S\'s own hit', () => {
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [{ name: 'Fmt', file: 'lib/svg.dart' }, { name: 'Both', file: 'lib/svg.dart' }],
+      files: {
+        'lib/main.dart': [
+          "import 'package:lib_pub/svg.dart';", // 1
+          'final a = 3.toString() + 4.hashCode.toString() + a.runtimeType.toString();', // 2: Object members
+          'final id = 1; final x2 = id + 1;', // 3: short names
+          'final p = _pad;', // 4: private member
+          'final b = Both(1).render();', // 5: S's own name and a member on one line
+        ].join('\n'),
+      },
+    });
+    withMembers(org, 'Fmt', 'extension', ['toString', 'hashCode', 'noSuchMethod', 'runtimeType', 'id', 'x2', '_pad']);
+    withMembers(org, 'Both', 'extension', ['render']);
+    witness(org);
+    expectPass(org, org.ids['Fmt']!);
+    expectMismatch(org, org.ids['Both']!, [`witness_mismatch:${C}:pkg/lib/main.dart:5`]);
+  });
+
+  it('a member name on an unrelated class: over-inclusive in unindexed files, SCIP decides in indexed ones', () => {
+    const lines = [
+      "import 'package:lib_pub/svg.dart';", // 1
+      "final a = other.loadSvg('x');", // 2: in indexed.dart, SCIP resolved this to another class's member
+      "final b = svg.loadSvg('y');", // 3: SCIP has nothing here: counts (fail closed)
+    ].join('\n');
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [{ name: 'SvgLoader', file: 'lib/svg.dart' }],
+      files: { 'lib/indexed.dart': lines, 'lib/plain.dart': lines },
+    });
+    withMembers(org, 'SvgLoader', 'extension', ['loadSvg']);
+    const run = (sql: string, ...p: Array<string | number>): number => Number(org.db.prepare(sql).run(...p).lastInsertRowid);
+    const mod = run("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('mod i', ?, 'pkg/lib/indexed.dart', 'indexed.dart', 'file')", C);
+    run("INSERT INTO documents (package_id, file, module_symbol_id) VALUES (?, 'pkg/lib/indexed.dart', ?)", C, mod);
+    const other = run("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('Other#loadSvg', ?, 'lib/other.dart', 'loadSvg', 'method')", P);
+    run(`INSERT INTO occurrences (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id)
+      VALUES (?, ?, ?, 'pkg/lib/indexed.dart', 1, 16, 8, ?)`, other, C, P, mod);
+    witness(org);
+    expectMismatch(org, org.ids['SvgLoader']!, [
+      `witness_mismatch:${C}:pkg/lib/indexed.dart:3 (member loadSvg)`,
+      `witness_mismatch:${C}:pkg/lib/plain.dart:2 (member loadSvg)`,
+      `witness_mismatch:${C}:pkg/lib/plain.dart:3 (member loadSvg)`,
+    ]);
+  });
+});
