@@ -1494,6 +1494,48 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(r.diagnostics.some((d) => d.includes('example/hello'))).toBe(false);
   }, 300_000);
 
+  it('grinder tasks (`@Task` / `@DefaultTask` of package:grinder, run by reflection) are runtime entry symbols', async () => {
+    // dart-lang/dart-pad: tool/grind.dart's `buildProjectTemplates` was the only user of
+    // dart_services' ProjectCreator (private_dead). A stand-in grinder (not in the pub cache offline).
+    write({
+      'grind/grinder/pubspec.yaml': pubspec('grinder', '0.9.0'),
+      'grind/grinder/lib/grinder.dart':
+        'class Task {\n  const Task([String? d]);\n}\n\nclass DefaultTask {\n  const DefaultTask([String? d]);\n}\n\nFuture<void> grind(List<String> args) async {}\n',
+      'grind/app/pubspec.yaml': pubspec('acme_grind', '1.0.0', '  grinder:\n    path: ../grinder\n'),
+      'grind/app/lib/acme_grind.dart': "export 'src/creator.dart';\n",
+      'grind/app/lib/src/creator.dart': 'class ProjectCreator {\n  void build() {}\n}\n',
+      'grind/app/tool/grind.dart': [
+        "import 'package:acme_grind/src/creator.dart';",
+        "import 'package:grinder/grinder.dart';",
+        '',
+        'Future<void> main(List<String> args) => grind(args);',
+        '',
+        "@Task('Build the project templates')",
+        'void buildTemplates() => ProjectCreator().build();',
+        '',
+        '@DefaultTask()',
+        'void everything() {}',
+        '',
+        'void helper() {}',
+        '',
+      ].join('\n'),
+      // A `Task` annotation that is not grinder's: not an entry.
+      'grind/app/tool/other.dart': 'class Task {\n  const Task();\n}\n\n@Task()\nvoid notATask() {}\n',
+    });
+    const repo = repoOf(root, 'grind', pubPackage('acme_grind', ['lib/acme_grind.dart']));
+    repo.localPath = path.join(root, 'grind/app');
+    const out = path.join(root, 'out-grind');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor([repo], repo), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    const s = readJson<ExportsSidecar>(r.exportsFile);
+    expect(s.entrySymbols.map((e) => [e.name, e.file, e.line, e.kind])).toEqual([
+      ['main', 'tool/grind.dart', 3, 'runtime'],
+      ['buildTemplates', 'tool/grind.dart', 6, 'runtime'],
+      ['everything', 'tool/grind.dart', 9, 'runtime'],
+    ]);
+  }, 300_000);
+
   it('an npm package or ignored npm manifest nested in a pub package does not hide its Dart files', async () => {
     // dart-lang/web js_interop_gen: an npm package (package.json) in lib/src/ made
     // dart-surface skip all of lib/src/, so lib/src/dart_main.dart's `main` (compiled

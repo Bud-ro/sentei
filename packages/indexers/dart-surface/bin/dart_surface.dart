@@ -222,6 +222,7 @@ class Surface {
   ///     are dropped by the adapter;
   ///   - build.yaml builder factories (see [_buildYamlFactories]);
   ///   - Flutter plugin classes named in pubspec.yaml (see [_flutterPluginClasses]);
+  ///   - grinder tasks (see [_addGrinderTasks]);
   ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
   final entrySymbols = <String, Map<String, Object>>{};
 
@@ -490,6 +491,7 @@ class Surface {
         // Every library's `main` (the defining file, not a part), lib/src/ included.
         if (fragment.element.firstFragment.source.fullName == file) {
           _addMain(fragment.element);
+          _addGrinderTasks(fragment.element);
         }
         // A part whose file does not exist: the library is incomplete.
         for (final d in parsed.unit.directives.whereType<PartDirective>()) {
@@ -643,6 +645,25 @@ class Surface {
     }
     for (final fn in library.topLevelFunctions) {
       if (fn.name == 'main') addEntrySymbol(fn, 'main');
+    }
+  }
+
+  /// grinder runs its tasks by reflection: `main(args) => grind(args)` in
+  /// `tool/grind.dart` finds the top-level functions annotated `@Task(...)` /
+  /// `@DefaultTask(...)` (package:grinder) and calls them by name, so nothing
+  /// references them. dart-lang/dart-pad's `buildProjectTemplates` was the
+  /// only user of dart_services' `ProjectCreator`, which came out private_dead.
+  void _addGrinderTasks(LibraryElement library) {
+    for (final fn in library.topLevelFunctions) {
+      final isTask = fn.metadata.annotations.any((a) {
+        final e = a.element;
+        if (e is! ConstructorElement) return false;
+        final uri = e.library.uri;
+        return uri.isScheme('package') &&
+            uri.pathSegments.firstOrNull == 'grinder' &&
+            const {'Task', 'DefaultTask'}.contains(e.enclosingElement.name);
+      });
+      if (isTask) addEntrySymbol(fn, fn.name ?? 'task');
     }
   }
 

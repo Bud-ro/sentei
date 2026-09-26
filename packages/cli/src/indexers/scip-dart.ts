@@ -105,7 +105,8 @@ export const scipDart: Indexer = {
   // a part outside the package makes it partial).
   // sentei.12: fork patch 14 (an extension type's representation field and
   // primary constructor are definitions: 397 false skew rows on jni); the
-  // sidecar's generatedFiles (header sniff over the index's documents).
+  // sidecar's generatedFiles (header sniff over the index's documents);
+  // dart-surface: grinder tasks (`@Task` / `@DefaultTask`) are entry symbols.
   version: '1.7.0+sentei.12',
 
   detect({ repo, pkg }) {

@@ -263,7 +263,8 @@ export interface ExportsSidecar {
    * in code. Dart (dart-surface): top-level `main` of a `lib/*.dart` entry and
    * of every non-test library outside `lib/` (bin/, tool/, benchmark/, web/,
    * example/, root scripts: run directly); build.yaml `builder_factories` /
-   * `builder_factory` of the `import:` library; dart_dev's
+   * `builder_factory` of the `import:` library; grinder tasks (top-level
+   * functions annotated `@Task` / `@DefaultTask` of package:grinder); dart_dev's
    * `tool/dart_dev/config.dart` top-level `config`. The file need not be a
    * discover entry point, and the symbol may be exported (a builder factory in
    * a `lib/*.dart` library). Position is the declaration's name. TypeScript
