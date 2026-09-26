@@ -348,7 +348,7 @@ export function readNpmPackage(
   const version = typeof json['version'] === 'string' ? json['version'] : null;
 
   const files = repoFiles ?? listFiles(repoRoot);
-  const resolved = resolveNpmEntryPoints(dir, json, files, warn);
+  const resolved = resolveNpmEntryPoints(dir, json, files, warn, tsconfigOutDirs(repoRoot, dir, packageFiles(dir, files)));
   const { unresolved } = resolved;
   const clientAll = clientEntryPoints(repoRoot, dir, files);
   const client = clientAll.filter((f) => !resolved.entryPoints.includes(f));
@@ -439,7 +439,16 @@ export function npmVisibility(json: Record<string, unknown>, manifest = 'package
  *   2. Node's extension/directory probing: `<p>.{ts,tsx,js,mjs,cjs,jsx}`, `<p>/index.*`;
  *      and the TypeScript source beside built output: `<p>` with its extension
  *      (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) replaced by `.ts .tsx .mts .cts`;
- *   3. dist→src mapping for unbuilt TS repos: if `<p>` starts with `dist/`, `lib/`,
+ *   3. dist→src mapping for unbuilt TS repos, in priority order:
+ *      a. the package's own tsconfigs (TsOutDir, from tsconfigOutDirs): `<p>` under an
+ *         `outDir` maps to the same path under that config's `rootDir`, so a package
+ *         built twice (`tsconfig.json` → `dist/main`, `tsconfig.module.json` →
+ *         `dist/module`, both rootDir `src`) maps `dist/module/index.d.ts` → `src/index.ts`;
+ *      b. the convention below;
+ *      c. one leading output segment stripped (`dist/<seg>/rest` → `src/rest`), only
+ *         when nothing under `src/<seg>` exists (then `<seg>` is a subpath, not a format),
+ *         and never for a `*` pattern;
+ *      the convention: if `<p>` starts with `dist/`, `lib/`,
  *      `build/` or `out/`, replace that first segment with `src/` and the
  *      extension (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) with `.ts`, then `.tsx`
  *      (then `.d.ts` for a declaration leaf: `dist/types.d.mts` → `src/types.d.ts`),
@@ -470,7 +479,8 @@ export function npmEntryPoints(
  */
 export function resolveNpmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
-): { entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; fallback: string | null; noneResolved: boolean } {
+  outDirs: readonly TsOutDir[] = [],
+):{ entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; fallback: string | null; noneResolved: boolean } {
   // `entry`: the exports entry (subpath key) a leaf belongs to; undefined outside exports.
   const declared: Array<{ path: string; surface: boolean; entry?: string }> = [];
   const patterns: Array<{ path: string; entry: string }> = [];
@@ -507,6 +517,7 @@ export function resolveNpmEntryPoints(
 
   const pkgFiles = packageFiles(dir, repoFiles);
   const pkgFileSet = new Set(pkgFiles);
+  const layout: SourceLayout = { files: pkgFileSet, outDirs };
   const found = new Set<string>();
   const add = (rel: string | null): void => {
     if (rel === null) return;
@@ -519,7 +530,7 @@ export function resolveNpmEntryPoints(
       warn(`${joinRel(dir, 'package.json')}: entry ${JSON.stringify(p)} escapes the package, ignored`);
       continue;
     }
-    const r = resolveEntry(n, pkgFileSet);
+    const r = resolveEntry(n, layout);
     if (!noteEntry(entry, p, r !== null, CODE_EXT.test(n)) && r === null && surface && CODE_EXT.test(n)) unresolved.add(p);
     add(r);
   }
@@ -534,7 +545,7 @@ export function resolveNpmEntryPoints(
     // `*` spans `/`, so `src/x/*.ts` for `dist/x/*/index.mjs` would also catch helpers).
     // A dist→src variant stands for the written (built) path, so `files` is checked on that.
     let matched = false;
-    for (const [i, variants] of [[n], ...distToSrcGroups(n)].entries()) {
+    for (const [i, variants] of [[n], ...distToSrcGroups(n, layout)].entries()) {
       const res = variants.map(exportPatternRegExp);
       const ok = (f: string): boolean => (i === 0 ? published(f) : published(n.replaceAll('*', 'x')));
       const hits = pkgFiles.filter((f) => patternFileOk(f, variants) && ok(f) && res.some((re) => re.test(f)));
@@ -554,7 +565,7 @@ export function resolveNpmEntryPoints(
       warn(`${joinRel(dir, 'package.json')}: bin ${JSON.stringify(b)} escapes the package, ignored`);
       continue;
     }
-    const r = resolveEntry(n, pkgFileSet);
+    const r = resolveEntry(n, layout);
     if (r !== null && (CODE_EXT.test(r) || posix.extname(r) === '')) binFiles.push(joinRel(dir, r));
   }
   let fallback: string | null = null;
@@ -585,7 +596,7 @@ export function resolveNpmEntryPoints(
       const re = exportPatternRegExp(n);
       pkgFiles.filter((f) => patternFileOk(f, [n]) && re.test(f)).forEach(add);
     } else {
-      add(resolveEntry(n, pkgFileSet));
+      add(resolveEntry(n, layout));
     }
   }
   const runtime = [...new Set([...[...found].filter((f) => !before.has(f)), ...binFiles.filter((f) => !found.has(f))])];
@@ -621,7 +632,7 @@ export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: read
     const clean = target.split(/[?#]/)[0]!;
     const n = normalizeRel(clean.startsWith('/') ? clean.slice(1) : base === '' ? clean : `${base}/${clean}`);
     if (n === null || n === '') return null;
-    return fileSet.has(n) ? n : resolveEntry(n, fileSet);
+    return fileSet.has(n) ? n : resolveEntry(n, { files: fileSet, outDirs: [] });
   };
   const scripts = (html: string): void => {
     const base = posix.dirname(html) === '.' ? '' : posix.dirname(html);
@@ -807,7 +818,7 @@ export function conventionEntryPoints(
   // No `main` in any config: the entry may be passed on the command line.
   for (const main of mains.length > 0 ? mains : wranglerScriptMains(scripts)) {
     const n = normalizeRel(main);
-    const r = n === null || n === '' ? null : resolveEntry(n, fileSet);
+    const r = n === null || n === '' ? null : resolveEntry(n, { files: fileSet, outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) });
     if (r !== null && ok(r)) out.add(r);
   }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
@@ -861,8 +872,18 @@ function collectExportLeaves(v: unknown, out: (leaf: string) => void): void {
   else if (isObject(v)) Object.values(v).forEach((x) => collectExportLeaves(x, out));
 }
 
+/**
+ * What entry resolution looks at: the package's files (package-relative) and its
+ * tsconfig outDir→rootDir pairs (tsconfigOutDirs; longest outDir first).
+ */
+export interface SourceLayout {
+  files: ReadonlySet<string>;
+  outDirs: readonly TsOutDir[];
+}
+
 /** Resolve one declared entry (package-relative, normalized) against the package's files. */
-function resolveEntry(p: string, files: ReadonlySet<string>): string | null {
+function resolveEntry(p: string, layout: SourceLayout): string | null {
+  const { files } = layout;
   if (files.has(p)) return p;
   for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.jsx']) if (files.has(p + ext)) return p + ext;
   for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.jsx']) {
@@ -874,31 +895,201 @@ function resolveEntry(p: string, files: ReadonlySet<string>): string | null {
     const stem = p.replace(BUILT_EXT, '');
     for (const ext of ['.ts', '.tsx', '.mts', '.cts']) if (files.has(stem + ext)) return stem + ext;
   }
-  for (const alt of distToSrcGroups(p).flat()) if (files.has(alt)) return alt;
+  for (const alt of distToSrcGroups(p, layout).flat()) if (files.has(alt)) return alt;
   return null;
 }
 
 const BUILD_DIR = /^(?:dist|lib|build|out)\//;
 const BUILT_EXT = /(?:\.d\.[cm]?ts|\.[cm]?js|\.jsx)$/;
+/** Source extensions a tsconfig `rootDir` file may have (allowJs included). */
+const ROOTDIR_SOURCE_EXT = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 
 /**
- * dist→src candidates in priority groups:
- * dist/foo.js → [[src/foo.ts, src/foo.tsx], [src/foo/index.ts, src/foo/index.tsx]];
- * dist/x/index.js → [[src/x/index.ts, src/x/index.tsx], [src/x.ts, src/x.tsx]];
+ * dist→src candidates in priority groups (see npmEntryPoints step 3):
+ * a. per tsconfig outDir containing `p`: `<outDir>/x/y.js` → `<rootDir>/x/y.{ts,tsx,mts,cts,js…}`,
+ *    then the index variants;
+ * b. dist/foo.js → [[src/foo.ts, src/foo.tsx], [src/foo/index.ts, src/foo/index.tsx]];
+ *    dist/x/index.js → [[src/x/index.ts, src/x/index.tsx], [src/x.ts, src/x.tsx]];
+ * c. dist/<seg>/foo.js → src/foo.* (one leading output segment stripped), only when no
+ *    package file sits at `src/<seg>.*` or under `src/<seg>/` (else `<seg>` is a subpath);
+ *    never for a `*` pattern (`dist/gone/*.js` → `src/*.ts` would match every source).
  * [] if the path is not build-output-shaped.
  */
-function distToSrcGroups(p: string): string[][] {
-  if (!BUILD_DIR.test(p) || !BUILT_EXT.test(p)) return [];
-  const stem = p.replace(BUILD_DIR, 'src/').replace(BUILT_EXT, '');
-  // A declaration leaf (`dist/types.d.mts`) may come from a hand-written `src/types.d.ts`.
-  const out = [/\.d\.[cm]?ts$/.test(p) ? [`${stem}.ts`, `${stem}.tsx`, `${stem}.d.ts`] : [`${stem}.ts`, `${stem}.tsx`]];
-  if (stem.endsWith('/index')) {
-    const parent = stem.slice(0, -'/index'.length);
-    if (parent !== 'src') out.push([`${parent}.ts`, `${parent}.tsx`]);
+function distToSrcGroups(p: string, layout: SourceLayout): string[][] {
+  if (!BUILT_EXT.test(p)) return [];
+  const decl = /\.d\.[cm]?ts$/.test(p);
+  const out: string[][] = [];
+  for (const { outDir, rootDir } of layout.outDirs) {
+    if (!p.startsWith(`${outDir}/`)) continue;
+    const stem = joinRel(rootDir === '' ? '.' : rootDir, p.slice(outDir.length + 1)).replace(BUILT_EXT, '');
+    out.push(...stemGroups(stem, rootDir, decl, ROOTDIR_SOURCE_EXT));
+  }
+  if (!BUILD_DIR.test(p)) return out;
+  out.push(...stemGroups(p.replace(BUILD_DIR, 'src/').replace(BUILT_EXT, ''), 'src', decl, ['.ts', '.tsx']));
+  const segs = p.split('/');
+  if (segs.length >= 3 && !p.includes('*')) {
+    const seg = segs[1]!;
+    let taken = false;
+    for (const f of layout.files) {
+      if (f.startsWith(`src/${seg}/`) || f.startsWith(`src/${seg}.`)) {
+        taken = true;
+        break;
+      }
+    }
+    if (!taken) {
+      const stem = `src/${segs.slice(2).join('/')}`.replace(BUILT_EXT, '');
+      out.push(...stemGroups(stem, 'src', decl, ['.ts', '.tsx', '.mts', '.cts']));
+    }
+  }
+  return out;
+}
+
+/**
+ * Candidate groups for one source stem under `root`: [stem.{exts}] (plus `stem.d.ts` for
+ * a declaration leaf: `dist/types.d.mts` may come from a hand-written `src/types.d.ts`),
+ * then `stem/index.{ts,tsx}`, or for a `…/index` stem its parent `.{ts,tsx}` (never
+ * `root` itself: `dist/index.js` must not become `src.ts`).
+ */
+function stemGroups(stem: string, root: string, decl: boolean, exts: readonly string[]): string[][] {
+  const out = [[...exts.map((e) => stem + e), ...(decl ? [`${stem}.d.ts`] : [])]];
+  if (stem === 'index' || stem.endsWith('/index')) {
+    const parent = stem === 'index' ? '' : stem.slice(0, -'/index'.length);
+    if (parent !== root && parent !== '') out.push([`${parent}.ts`, `${parent}.tsx`]);
   } else {
     out.push([`${stem}/index.ts`, `${stem}/index.tsx`]);
   }
   return out;
+}
+
+/** One tsconfig's build mapping, package-relative ('' = the package dir). */
+export interface TsOutDir {
+  outDir: string;
+  rootDir: string;
+  /** The package-root tsconfig it came from (package-relative), for diagnostics. */
+  config: string;
+}
+
+/**
+ * outDir→rootDir pairs of every `tsconfig*.json` at the root of the npm package at `dir`
+ * (`pkgFiles` package-relative), following relative `extends` (a string or an array;
+ * `./x`, `./x.json`, `./dir` → `./dir/tsconfig.json`; up to 10 levels; paths set in a
+ * base resolve against the base's dir, as tsc does). A base outside the repo or a
+ * package-name `extends` (`@tsconfig/node20`) is ignored; unreadable or unparsable
+ * configs are skipped (fewer mappings only means fewer entry points resolve, which
+ * leaves the package flagged opaque: fail closed). No `rootDir`: the single non-glob
+ * `include` entry if there is exactly one, else `src` when the package has files there,
+ * else the package dir (tsc's own default, the common dir of the inputs, needs the
+ * program). Pairs whose outDir or rootDir leaves the package, or whose rootDir is the
+ * outDir or inside it, are dropped. Sorted longest outDir first.
+ */
+export function tsconfigOutDirs(repoRoot: string, dir: string, pkgFiles: readonly string[]): TsOutDir[] {
+  const configs = pkgFiles.filter((f) => /^tsconfig[^/]*\.json$/.test(f)).sort(cmp);
+  if (configs.length === 0) return [];
+  const hasSrc = pkgFiles.some((f) => f.startsWith('src/'));
+  const toPkg = (repoRel: string): string | null => {
+    if (dir === '.') return repoRel === '.' ? '' : repoRel;
+    if (repoRel === dir) return '';
+    return repoRel.startsWith(`${dir}/`) ? repoRel.slice(dir.length + 1) : null;
+  };
+  const out = new Map<string, TsOutDir>();
+  for (const cfg of configs) {
+    const opts = readTsconfigChain(repoRoot, joinRel(dir, cfg), 0, new Set());
+    if (opts === null || opts.outDir === undefined) continue;
+    const outDir = toPkg(opts.outDir);
+    if (outDir === null || outDir === '') continue;
+    let rootDir: string | null;
+    if (opts.rootDir !== undefined) rootDir = toPkg(opts.rootDir);
+    else if (opts.include?.length === 1 && !/[*?]/.test(opts.include[0]!)) rootDir = toPkg(opts.include[0]!);
+    else rootDir = hasSrc ? 'src' : '';
+    if (rootDir === null || rootDir === outDir || rootDir.startsWith(`${outDir}/`)) continue;
+    const key = `${outDir}\0${rootDir}`;
+    if (!out.has(key)) out.set(key, { outDir, rootDir, config: cfg });
+  }
+  return [...out.values()].sort((a, b) => b.outDir.length - a.outDir.length || cmp(a.outDir, b.outDir) || cmp(a.rootDir, b.rootDir));
+}
+
+/** outDir / rootDir / include of a tsconfig after its relative `extends` chain, repo-relative POSIX. */
+interface TsPaths {
+  outDir?: string;
+  rootDir?: string;
+  include?: string[];
+}
+
+function readTsconfigChain(repoRoot: string, file: string, depth: number, seen: Set<string>): TsPaths | null {
+  if (depth > 10 || seen.has(file)) return null;
+  seen.add(file);
+  let json: unknown;
+  try {
+    json = JSON.parse(stripJsonc(readFileSync(join(repoRoot, file), 'utf8')));
+  } catch {
+    return null;
+  }
+  if (!isObject(json)) return null;
+  const base = posix.dirname(file);
+  const rel = (p: string): string | null => {
+    const n = posix.normalize(posix.join(base, p.replace(/\\/g, '/'))).replace(/\/$/, '');
+    return n === '..' || n.startsWith('../') || posix.isAbsolute(n) ? null : n;
+  };
+  let merged: TsPaths = {};
+  const ext = json['extends'];
+  for (const e of typeof ext === 'string' ? [ext] : Array.isArray(ext) ? ext : []) {
+    if (typeof e !== 'string' || !e.startsWith('.')) continue;
+    const target = rel(e);
+    if (target === null) continue;
+    const candidates = target.endsWith('.json') ? [target] : [target, `${target}.json`, `${target}/tsconfig.json`];
+    const found = candidates.find((c) => {
+      try {
+        return lstatSync(join(repoRoot, c)).isFile();
+      } catch {
+        return false;
+      }
+    });
+    if (found === undefined) continue;
+    const parent = readTsconfigChain(repoRoot, found, depth + 1, seen);
+    if (parent !== null) merged = { ...merged, ...parent };
+  }
+  const co = json['compilerOptions'];
+  if (isObject(co)) {
+    for (const k of ['outDir', 'rootDir'] as const) {
+      const v = co[k];
+      if (typeof v !== 'string') continue;
+      const r = rel(v);
+      if (r !== null) merged[k] = r;
+      else delete merged[k];
+    }
+  }
+  const inc = json['include'];
+  if (Array.isArray(inc)) {
+    const r = inc.filter((x): x is string => typeof x === 'string').map(rel);
+    if (r.every((x): x is string => x !== null)) merged.include = r;
+    else delete merged.include;
+  }
+  return merged;
+}
+
+/** JSON with comments and trailing commas (tsconfig) → JSON; string contents are kept verbatim. */
+export function stripJsonc(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+    } else if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = end === -1 ? text.length : end + 1;
+      out += ' ';
+    } else {
+      out += c;
+    }
+  }
+  // Trailing commas; a `,` inside a string followed by `}` is rare enough in a tsconfig.
+  return out.replace(/,(\s*[}\]])/g, '$1');
 }
 
 /**

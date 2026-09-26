@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_IGNORE_MANIFEST_DIRS, listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
+  stripJsonc, tsconfigOutDirs,
 } from '../src/manifests.ts';
 
 let root: string;
@@ -391,6 +392,86 @@ describe('npm manifests', () => {
     const [p] = readRepoManifests(root, warn);
     expect(p!.entryPoints).toEqual(['src/env.ts', 'src/glob.d.ts', 'src/index.ts', 'src/types.d.ts']);
     expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('maps entries under each tsconfig outDir to its rootDir (supabase auth-js: dist/main + dist/module, rootDir src)', () => {
+    pkgJson('packages/auth/package.json', {
+      name: '@x/auth', main: 'dist/main/index.js', module: 'dist/module/index.js', types: 'dist/module/index.d.ts',
+      exports: { './lib/*': './dist/module/lib/*.js' },
+    });
+    write('tsconfig.base.json', '{ "compilerOptions": { "strict": true } }');
+    // JSONC: comments and trailing commas, as tsc accepts them.
+    write('packages/auth/tsconfig.json', `{
+      // CommonJS build
+      "extends": "../../tsconfig.base.json",
+      "include": ["src"],
+      "compilerOptions": { "outDir": "dist/main", "rootDir": "src", /* sources */ "module": "CommonJS", },
+    }`);
+    // Inherits rootDir from ./tsconfig (extends without .json).
+    write('packages/auth/tsconfig.module.json', '{ "extends": "./tsconfig", "compilerOptions": { "outDir": "dist/module" } }');
+    write('packages/auth/tsconfig.test.json', '{ "extends": "./tsconfig.json", "compilerOptions": { "rootDir": ".", "outDir": "dist/test" } }');
+    write('packages/auth/src/index.ts');
+    write('packages/auth/src/lib/helpers.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['packages/auth/src/index.ts', 'packages/auth/src/lib/helpers.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('tsconfigOutDirs: extends chains, paths relative to the defining config, defaults and drops', () => {
+    write('configs/base.json', '{ "compilerOptions": { "outDir": "../pkg/build/cjs", "rootDir": "../pkg/lib" } }');
+    write('pkg/tsconfig.json', '{ "extends": "../configs/base.json" }'); // outDir/rootDir from the base's dir
+    write('pkg/tsconfig.esm.json', '{ "extends": ["./tsconfig.json"], "compilerOptions": { "outDir": "build/esm" } }');
+    write('pkg/tsconfig.inc.json', '{ "include": ["source"], "compilerOptions": { "outDir": "out" } }'); // rootDir = the include dir
+    write('pkg/tsconfig.none.json', '{ "compilerOptions": { "outDir": "o2" } }'); // no src/: package dir
+    write('pkg/tsconfig.escape.json', '{ "compilerOptions": { "outDir": "../elsewhere" } }'); // leaves the package
+    write('pkg/tsconfig.same.json', '{ "compilerOptions": { "outDir": "lib", "rootDir": "lib" } }'); // outDir == rootDir
+    write('pkg/tsconfig.pkgname.json', '{ "extends": "@tsconfig/node20/tsconfig.json" }'); // no outDir anywhere
+    write('pkg/tsconfig.broken.json', '{ "compilerOptions": { "outDir": ');
+    write('pkg/tsconfig.cycle.json', '{ "extends": "./tsconfig.cycle.json", "compilerOptions": { "outDir": "c" } }');
+    write('pkg/nested/tsconfig.json', '{ "compilerOptions": { "outDir": "zzz" } }'); // not at the package root
+    const files = listFiles(root).filter((f) => f.startsWith('pkg/')).map((f) => f.slice(4));
+    expect(tsconfigOutDirs(root, 'pkg', files)).toEqual([
+      { outDir: 'build/cjs', rootDir: 'lib', config: 'tsconfig.json' },
+      { outDir: 'build/esm', rootDir: 'lib', config: 'tsconfig.esm.json' },
+      { outDir: 'out', rootDir: 'source', config: 'tsconfig.inc.json' },
+      { outDir: 'o2', rootDir: '', config: 'tsconfig.none.json' },
+      { outDir: 'c', rootDir: '', config: 'tsconfig.cycle.json' },
+    ]);
+    expect(stripJsonc('{"a": "// not a comment", /* c */ "b": [1, 2,], } // end')).toBe('{"a": "// not a comment",   "b": [1, 2] } \n');
+  });
+
+  it('a tsconfig rootDir other than src, allowJs sources, and .mjs → .mts', () => {
+    pkgJson('package.json', { name: 'x', main: 'out/cjs/main.js', exports: { './m': './out/esm/m.mjs', './j': './out/esm/j.js' } });
+    write('tsconfig.json', '{ "compilerOptions": { "outDir": "out/cjs", "rootDir": "lib", "allowJs": true } }');
+    write('tsconfig.esm.json', '{ "extends": "./tsconfig.json", "compilerOptions": { "outDir": "out/esm" } }');
+    write('lib/main.ts');
+    write('lib/m.mts');
+    write('lib/j.js');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['lib/j.js', 'lib/m.mts', 'lib/main.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('without a tsconfig mapping, strips one leading output segment: dist/<seg>/x.js → src/x.ts', () => {
+    pkgJson('package.json', {
+      name: 'x', main: 'dist/main/index.js', module: 'lib/esm/index.mjs', types: 'dist/types/api.d.ts',
+      exports: { './react': './dist/react/index.js' },
+    });
+    write('src/index.ts');
+    write('src/api.ts');
+    // src/react/ exists (a subpath dir): dist/react/index.js must not become src/index.ts.
+    write('src/react/other.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['src/api.ts', 'src/index.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual(['./dist/react/index.js']);
+  });
+
+  it('the segment strip needs the source to exist and never maps to the src dir itself', () => {
+    pkgJson('package.json', { name: 'x', main: 'dist/cjs/gone.js', types: 'dist/cjs.d.ts' });
+    write('src/other.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.unresolvedEntryPoints).toEqual(['dist/cjs.d.ts', 'dist/cjs/gone.js']);
   });
 
   it('adds Vite/HTML client entries: index.html scripts and vite.config input values that resolve to local code', () => {
