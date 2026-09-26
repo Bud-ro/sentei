@@ -255,10 +255,50 @@ describe('analyzeOrg on hand-built rows', () => {
     const s = sym(lib, 'src/fns.ts', 'docOnly', { exported: true });
     use(docsMod, s, 'docs/example.ts');
     analyze();
-    expect(findings()).toEqual([f('docOnly', 'needs_review', DELETE)]);
+    // The policy is unchanged (docs files are not consumers); the reason makes it visible.
+    expect(findings()).toEqual([f('docOnly', 'needs_review', ['only_docs_refs', 'witness_pending'])]);
+    expect(db.prepare('SELECT symbol_id FROM docs_only_refs').all()).toEqual([{ symbol_id: s }]);
+    expect(db.prepare('SELECT count(*) AS n FROM test_only_refs').get()).toEqual({ n: 0 });
     setPolicy('countDocsAsConsumers', true);
     analyze();
     expect(findings()).toEqual([]);
+  });
+
+  it('only_docs_refs: the package\'s own example/, next to only_test_refs and internal_refs_only; only_test_refs unchanged', () => {
+    // extension_methods getTeam (dart-lang): used only by its own example/fluid_api.dart.
+    const example = doc(lib, 'example/fluid_api.dart');
+    const libTest = doc(lib, 'test/fns_test.dart');
+    const exampleOnly = sym(lib, 'src/fns.ts', 'exampleOnly', { exported: true });
+    use(example, exampleOnly, 'example/fluid_api.dart');
+    const both = sym(lib, 'src/fns.ts', 'testAndExample', { exported: true });
+    use(example, both, 'example/fluid_api.dart');
+    use(libTest, both, 'test/fns_test.dart');
+    const testOnly = sym(lib, 'src/fns.ts', 'testOnly', { exported: true });
+    use(libTest, testOnly, 'test/fns_test.dart');
+    const internal = sym(lib, 'src/fns.ts', 'internalAndExample', { exported: true });
+    const caller = sym(lib, 'src/fns.ts', 'caller', { exported: true });
+    use(caller, internal, 'src/fns.ts');
+    use(appMain, caller, 'src/main.ts');
+    use(example, internal, 'example/fluid_api.dart');
+    // Negative: a counted external use means neither reason (the symbol is alive).
+    const alive = aliveExport('aliveAndExample');
+    use(example, alive, 'example/fluid_api.dart');
+    analyze();
+    expect(findings()).toEqual([
+      f('exampleOnly', 'needs_review', ['only_docs_refs', 'witness_pending']),
+      f('internalAndExample', 'unexport_candidate', ['internal_refs_only', 'only_docs_refs']),
+      f('testAndExample', 'needs_review', ['only_test_refs', 'only_docs_refs', 'witness_pending']),
+      f('testOnly', 'needs_review', ['only_test_refs', 'witness_pending']),
+    ]);
+    // Docs files counted as consumers: no docs reason; the package's own example is an internal use.
+    setPolicy('countDocsAsConsumers', true);
+    analyze();
+    expect(findings()).toEqual([
+      f('exampleOnly', 'unexport_candidate', ['internal_refs_only']),
+      f('internalAndExample', 'unexport_candidate', ['internal_refs_only']),
+      f('testAndExample', 'unexport_candidate', ['internal_refs_only', 'only_test_refs']),
+      f('testOnly', 'needs_review', ['only_test_refs', 'witness_pending']),
+    ]);
   });
 
   it('counts consumer test-file refs into a package the consumer declares only as a dev dependency', () => {
@@ -379,7 +419,7 @@ describe('analyzeOrg on hand-built rows', () => {
     const s = sym(lib, 'src/fns.ts', 'docOnly', { exported: true });
     use(docsMod, s, 'docs/example.ts');
     analyze();
-    expect(findings()).toEqual([f('docOnly', 'needs_review', DELETE)]);
+    expect(findings()).toEqual([f('docOnly', 'needs_review', ['only_docs_refs', 'witness_pending'])]);
   });
 
   it('never reports declarations of generated files, while references from generated files still count', () => {
@@ -673,7 +713,7 @@ describe('analyzeOrg on hand-built rows', () => {
     analyze();
     expect(findings()).toEqual([
       f('both', 'unexport_candidate', ['internal_refs_only', 'only_test_refs']),
-      f('docsOnly', 'needs_review', DELETE),
+      f('docsOnly', 'needs_review', ['only_docs_refs', 'witness_pending']),
       f('testOnly', 'needs_review', ['only_test_refs', 'witness_pending']),
     ]);
 

@@ -301,7 +301,8 @@ export function isInternalOnly(f: Pick<ReportFinding, 'reasons'>): boolean {
 
 export const VIEW_DESCRIPTIONS: Readonly<Record<ReportViewName, string>> = Object.freeze({
   delete: 'Exports of private packages (nobody outside the org can depend on them) with no counted reference '
-    + '(no_refs) or only test references (only_test_refs), and a passed text witness: delete them. '
+    + '(no_refs), only test references (only_test_refs) or only docs / example references (only_docs_refs; '
+    + 'countDocsAsConsumers counts those), and a passed text witness: delete them. '
     + 'Reason dead_island: used only by other candidates; delete them together.',
   deprecate: 'Exports of published packages with the same evidence as a deletion (no counted reference in the org, '
     + 'witness passed). External consumers may exist: deprecate, and remove in a later major version.',
@@ -779,14 +780,18 @@ export interface FormatSummaryOptions {
 }
 
 /**
- * `no_refs 3, only_test_refs 1, dead_island 2`: each candidate row counted once, under
- * its most specific reason (dead_island, else only_test_refs, else no_refs); zeros dropped.
+ * `no_refs 3, only_test_refs 1, only_docs_refs 1, dead_island 2`: each candidate row
+ * counted once, under its most specific reason (dead_island, else only_test_refs, else
+ * only_docs_refs, else no_refs; a row with both test and docs uses counts as
+ * only_test_refs, report.json and SARIF carry both); zeros dropped.
  */
 function reasonBreakdown(rows: ReportFinding[]): string {
-  const keys = ['no_refs', 'only_test_refs', 'dead_island'] as const;
+  const keys = ['no_refs', 'only_test_refs', 'only_docs_refs', 'dead_island'] as const;
   const n: Record<string, number> = {};
   for (const f of rows) {
-    const k = f.reasons.includes('dead_island') ? 'dead_island' : f.reasons.includes('only_test_refs') ? 'only_test_refs' : 'no_refs';
+    const k = f.reasons.includes('dead_island') ? 'dead_island'
+      : f.reasons.includes('only_test_refs') ? 'only_test_refs'
+        : f.reasons.includes('only_docs_refs') ? 'only_docs_refs' : 'no_refs';
     n[k] = (n[k] ?? 0) + 1;
   }
   return keys.filter((k) => (n[k] ?? 0) > 0).map((k) => `${k} ${n[k]}`).join(', ');

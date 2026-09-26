@@ -66,6 +66,7 @@ DROP VIEW IF EXISTS reach_edges;
 DROP VIEW IF EXISTS kept_symbols;
 DROP VIEW IF EXISTS symbol_age_ok;
 DROP VIEW IF EXISTS internal_refs;
+DROP VIEW IF EXISTS docs_only_refs;
 DROP VIEW IF EXISTS test_only_refs;
 DROP VIEW IF EXISTS internal_ref_occurrences;
 DROP VIEW IF EXISTS external_refs;
@@ -457,6 +458,22 @@ WHERE i.in_test AND NOT p.count_tests
 EXCEPT
 SELECT symbol_id FROM external_refs;
 
+-- The same for excluded docs files (docs/, examples/, a pub package's own example/,
+-- demo/): symbols with uses there and no counted cross-package use (reason
+-- only_docs_refs). The policy does not change (docs files count only with
+-- countDocsAsConsumers); the reason only makes the excluded use visible, so "used only by
+-- its own example" does not read as no_refs. Both views may hold a symbol (both reasons).
+CREATE VIEW docs_only_refs (symbol_id) AS
+SELECT e.symbol_id
+FROM external_ref_occurrences e, analysis_params p
+WHERE e.in_docs AND NOT p.count_docs
+UNION
+SELECT i.symbol_id
+FROM internal_ref_occurrences i, analysis_params p
+WHERE i.in_docs AND NOT p.count_docs
+EXCEPT
+SELECT symbol_id FROM external_refs;
+
 -- ---------------------------------------------------------------------------
 -- Policy filters
 -- ---------------------------------------------------------------------------
@@ -581,8 +598,9 @@ WHERE x.exported_as = 'default'
 -- P); the verdict depends on nothing else about the world, so every report view
 -- (delete / deprecate / org_dead / unexport) is a filter over the same findings.
 -- no_refs becomes only_test_refs when the only uses (same-package or cross-package) are
--- in excluded test files (and only_test_refs is appended after internal_refs_only in the
--- first branch when there are also excluded test uses).
+-- in excluded test files, only_docs_refs when they are in excluded docs files, both (in
+-- that order) when there are both; the same reasons are appended after
+-- internal_refs_only in the first branch when there are also such excluded uses.
 -- Any would-be verdict in a package with a verdict_blockers row becomes `blocked`,
 -- keeping the base reasons, with blocked_by = sorted distinct '<blocker>:<flag>'.
 CREATE VIEW base_verdicts (symbol_id, verdict, reasons, blocked_by) AS
@@ -592,6 +610,7 @@ WITH base AS MATERIALIZED (
   SELECT s.symbol_id, s.package_id,
          s.symbol_id IN (SELECT symbol_id FROM internal_refs) AS has_internal,
          s.symbol_id IN (SELECT symbol_id FROM test_only_refs) AS test_only,
+         s.symbol_id IN (SELECT symbol_id FROM docs_only_refs) AS docs_only,
          s.package_id IN (SELECT package_id FROM private_packages) AS priv
   FROM symbols s
   WHERE s.is_exported = 1
@@ -611,9 +630,13 @@ classified AS (
            ELSE 'needs_review'
          END AS verdict,
          CASE
+           WHEN has_internal AND test_only AND docs_only THEN json_array('internal_refs_only', 'only_test_refs', 'only_docs_refs')
            WHEN has_internal AND test_only THEN json_array('internal_refs_only', 'only_test_refs')
+           WHEN has_internal AND docs_only THEN json_array('internal_refs_only', 'only_docs_refs')
            WHEN has_internal THEN json_array('internal_refs_only')
+           WHEN test_only AND docs_only THEN json_array('only_test_refs', 'only_docs_refs')
            WHEN test_only THEN json_array('only_test_refs')
+           WHEN docs_only THEN json_array('only_docs_refs')
            ELSE json_array('no_refs')
          END AS base_reasons
   FROM base

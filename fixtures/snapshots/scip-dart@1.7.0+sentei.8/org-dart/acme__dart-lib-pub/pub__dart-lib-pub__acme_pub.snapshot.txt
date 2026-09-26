@@ -1,6 +1,18 @@
 # sentei scip snapshot: scip-dart 1.7.0
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
+## example/example.dart
+  // Example of acme_pub: a docs file (example/ is in DOCS_GLOBS).
+//^ definition scip-dart pub acme_pub . example/`example.dart`/
+  import 'package:acme_pub/acme_pub.dart';
+
+  void main() {
+//     ^^^^ definition scip-dart pub acme_pub . example/`example.dart`/main(). enclosing [3:0-5:1]
+    print(pubExampleOnly());
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^^^ reference scip-dart pub acme_pub . lib/`acme_pub.dart`/pubExampleOnly().
+  }
+
 ## lib/acme_pub.dart
   // Package entry point for acme_pub (published-public: no publish_to).
 //^ definition scip-dart pub acme_pub . lib/`acme_pub.dart`/
@@ -14,3 +26,10 @@
   int pubUnused() => 8;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^ definition scip-dart pub acme_pub . lib/`acme_pub.dart`/pubUnused(). enclosing [6:0-6:21]
+
+  // Expected: deprecation_candidate ["only_docs_refs"]: used only by this package's own
+  // example/example.dart, a docs file (not a consumer while countDocsAsConsumers is
+  // false); the reason says so instead of no_refs.
+  int pubExampleOnly() => 9;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^^ definition scip-dart pub acme_pub . lib/`acme_pub.dart`/pubExampleOnly(). enclosing [11:0-11:26]

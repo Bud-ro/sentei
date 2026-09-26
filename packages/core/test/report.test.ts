@@ -380,6 +380,16 @@ describe('formatSummary', () => {
     expect(text.trimEnd().split('\n').at(-1)).toBe('Version skew: 3 reference(s) from 2 package(s) to symbols missing at HEAD');
   });
 
+  it('breaks candidate rows down by only_docs_refs too (a row with test and docs uses counts once, as only_test_refs)', () => {
+    const open = 'npm:acme/lib-pub:@acme/open';
+    addFinding(addSymbol(open, 'openExample', { line: 10, col: 16 }), 'deprecation_candidate', ['only_docs_refs']);
+    addFinding(addSymbol(open, 'openExample2', { line: 11, col: 16 }), 'deprecation_candidate', ['only_docs_refs']);
+    addFinding(addSymbol(open, 'openBoth', { line: 12, col: 16 }), 'deprecation_candidate', ['only_test_refs', 'only_docs_refs']);
+    const r = buildReport({ db, now: NOW });
+    expect(r.findings.find((f) => f.symbol === 'openBoth')!.reasons).toEqual(['only_test_refs', 'only_docs_refs']);
+    expect(formatSummary(r).split('\n')).toContain('  DEPRECATE         6  (no_refs 1, only_test_refs 2, only_docs_refs 2, dead_island 1)');
+  });
+
   it('prints only the selected views (report --view)', () => {
     const lines = formatSummary(buildReport({ db, now: NOW }), { views: parseViews(['org-dead,delete']) }).split('\n');
     expect(lines[2]).toBe('views: delete, org_dead');

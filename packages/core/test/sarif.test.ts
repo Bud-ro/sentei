@@ -176,6 +176,19 @@ describe('buildSarif', () => {
     for (const x of results(lib)) expect(rules[x.ruleIndex]!.id).toBe(x.ruleId);
   });
 
+  it('carries only_docs_refs (and only_test_refs next to it) in the message and properties', () => {
+    const f = [
+      finding({ symbol: 'exampleOnly', verdict: 'deletion_candidate', reasons: ['only_docs_refs'] }),
+      finding({ symbol: 'testAndExample', verdict: 'deletion_candidate', reasons: ['only_test_refs', 'only_docs_refs'], line: 2 }),
+    ];
+    const lib = buildSarif({ ...report(), findings: f, views: buildViews(f, [], new Set(['npm:acme/lib-core:@acme/util'])) }).get('acme/lib-core');
+    expect(bySymbol(lib, 'exampleOnly').message.text)
+      .toBe('`exampleOnly` in npm:acme/lib-core:@acme/util is a deletion candidate (reasons: only_docs_refs).');
+    expect(bySymbol(lib, 'testAndExample').message.text)
+      .toBe('`testAndExample` in npm:acme/lib-core:@acme/util is a deletion candidate (reasons: only_test_refs, only_docs_refs).');
+    expect(bySymbol(lib, 'testAndExample').properties.reasons).toEqual(['only_test_refs', 'only_docs_refs']);
+  });
+
   it('names blockers in the message and omits unknown positions', () => {
     const b = bySymbol(logs.get('acme/lib-pub'), 'pubB');
     expect(b.message.text).toBe('`pubB` in npm:acme/lib-pub:@acme/pub is blocked from a verdict (reasons: no_refs); blocked by npm:acme/dyn:@acme/dyn:dynamic_access, npm:acme/dyn:@acme/dyn:namespace_dynamic.');

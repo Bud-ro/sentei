@@ -2,8 +2,25 @@
   "entryPoints": [
     "lib/acme_pub.dart"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "example/example.dart",
+      "kind": "runtime",
+      "line": 3,
+      "name": "main"
+    }
+  ],
   "exports": [
+    {
+      "col": 4,
+      "entry": "lib/acme_pub.dart",
+      "exportedAs": "pubExampleOnly",
+      "file": "lib/acme_pub.dart",
+      "line": 11,
+      "name": "pubExampleOnly",
+      "sites": []
+    },
     {
       "col": 4,
       "entry": "lib/acme_pub.dart",
