@@ -627,10 +627,14 @@ function pnpmStoreDir(workDir: string): string {
  * The lockfile is searched from the package dir up to the repo root, so a
  * workspace package installs at the workspace root. Returns false on failure.
  *
- * A missing pnpm/yarn binary falls back to `npm exec --yes --package=<pm>@<version>`,
- * the version taken from the nearest `packageManager` field or `latest`. A
- * missing bun skips the install with a warning (org deps are source-linked
- * regardless; only third-party types are lost, which never hides an org use).
+ * The manager is `choosePackageManager`'s pick among the lockfiles of the
+ * first dir that has any. A missing pnpm/yarn/bun binary falls back to
+ * `npm exec --yes --package=<pm>@<version>`, the version from
+ * `packageManagerVersion` (packageManager, devEngines, mise/.tool-versions,
+ * the lockfile's major, a default major; never `latest`). A missing bun used
+ * to skip the install, but then a tsconfig `extends` of an installed package
+ * (`@tsconfig/bun`, `@tsconfig/node24`) cannot resolve and scip-typescript
+ * indexes nothing (supabase/sdk, supabase/setup-cli).
  *
  * Every subprocess runs with `hermeticEnv(workDir)` (pnpm also gets
  * `--store-dir <workDir>/.pm/pnpm-store`); the env keys are logged once, before
@@ -670,12 +674,8 @@ export async function install(
       let cmdArgs = args;
       let proc = await run(cmd, cmdArgs, d, env, shell);
       log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
-      if (proc.errno === 'ENOENT' && pm === 'bun') {
-        diagnostics.push(`warn: bun is not installed (spawn bun ENOENT); install skipped in ${rel}`);
-        return true;
-      }
       if (proc.errno === 'ENOENT' && pm !== 'npm') {
-        const want = packageManagerVersion(repoRoot, d, pm);
+        const want = packageManagerVersion(repoRoot, d, pm, lockfile);
         const fb = npmExecFallback(pm, want.version);
         diagnostics.push(
           `info: ${pm} is not installed (spawn ${pm} ENOENT); falling back to npm exec --yes --package=${fb.spec} ` +
@@ -763,30 +763,130 @@ function describeExit(proc: ExecResult): string {
   return `exited with code ${proc.code}`;
 }
 
+/** Toolchain files that may pin a package manager, searched from the lockfile dir up to the repo root. */
+const TOOL_VERSION_FILES = ['mise.toml', '.mise.toml', '.tool-versions'] as const;
+
+/** Major used when nothing pins a version: the current long-lived majors, never `latest`. */
+const DEFAULT_MAJOR: Record<Exclude<PackageManager, 'npm'>, string> = { pnpm: '9', yarn: '1', bun: '1' };
+
 /**
- * The version of `pm` named by the nearest package.json (from the lockfile dir
- * up to the repo root) whose `packageManager` field (`pnpm@9.1.0+sha512...`)
- * or, failing that, `devEngines.packageManager` (`{ name, version }` or an
- * array of those; the version may be a range) names `pm`; else `latest`.
+ * The version of `pm` that a toolchain file pins, or undefined. `.tool-versions`
+ * (asdf, mise): `pnpm 10.4.1` (the first version when several are listed);
+ * `mise.toml` / `.mise.toml`: a `pnpm = "10"`, `pnpm = ["10", "9"]`,
+ * `pnpm = { version = "10" }` or `"npm:pnpm" = "10"` line in the `[tools]` table.
+ * Only versions and ranges count (`latest`, `lts` or a path do not).
+ */
+export function toolVersionPin(file: string, text: string, pm: PackageManager): string | undefined {
+  const accept = (v: string | undefined): string | undefined =>
+    v !== undefined && /^(?:v?\d[\w.+-]*|[\^~<>=][\w.^~<>=|*\s-]*)$/.test(v.trim()) ? v.trim().replace(/^v(?=\d)/, '') : undefined;
+  const lines = text.split(/\r?\n/);
+  if (path.basename(file) === '.tool-versions') {
+    for (const raw of lines) {
+      const [tool, ...versions] = raw.replace(/#.*/, '').trim().split(/\s+/);
+      if (tool !== pm && tool !== `npm:${pm}`) continue;
+      for (const v of versions) if (accept(v) !== undefined) return accept(v);
+    }
+    return undefined;
+  }
+  let inTools = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    const section = /^\[\s*([^\]]+?)\s*\]/.exec(line);
+    if (section !== null) {
+      inTools = section[1] === 'tools';
+      continue;
+    }
+    if (!inTools) continue;
+    const m = /^(?:"(?:npm:)?([\w-]+)"|'(?:npm:)?([\w-]+)'|([\w-]+))\s*=\s*(.*)$/.exec(line);
+    if (m === null || (m[1] ?? m[2] ?? m[3]) !== pm) continue;
+    const value = m[4]!;
+    const inTable = /\bversion\s*=\s*["']([^"']*)["']/.exec(value);
+    const first = /["']([^"']*)["']/.exec(value);
+    return accept((inTable ?? first)?.[1]);
+  }
+  return undefined;
+}
+
+/**
+ * The major of `pm` that wrote a lockfile, from its text: pnpm `lockfileVersion`
+ * ('9.0' → 9, also written by pnpm 10 and 11; '6.x' → 8; '5.4' → 7; other 5.x
+ * → 6); yarn `# yarn lockfile v1` → 1, berry `__metadata.version` (≥ 7 → 4,
+ * 5–6 → 3, ≤ 4 → 2); bun → 1. Anything else gets DEFAULT_MAJOR (`source` says so).
+ */
+export function pinnedVersion(pm: Exclude<PackageManager, 'npm'>, lockfile: string, text: string): { version: string; source: string } {
+  const fallback = { version: DEFAULT_MAJOR[pm], source: `default major (${lockfile} names no version sentei knows)` };
+  if (pm === 'pnpm') {
+    const m = /^lockfileVersion:\s*['"]?(\d+)(?:\.(\d+))?/m.exec(text);
+    if (m === null) return fallback;
+    const [major, minor] = [Number(m[1]), Number(m[2] ?? 0)];
+    const version = major >= 7 ? '9' : major === 6 ? '8' : major === 5 ? (minor >= 4 ? '7' : '6') : undefined;
+    return version === undefined ? fallback : { version, source: `from lockfileVersion ${m[1]}.${m[2] ?? 0} in ${lockfile}` };
+  }
+  if (pm === 'yarn') {
+    if (/^# yarn lockfile v1\b/m.test(text)) return { version: '1', source: `from the v1 header of ${lockfile}` };
+    const m = /^__metadata:\s*\n(?:[ \t]+.*\n)*?[ \t]+version:\s*(\d+)/m.exec(text);
+    if (m === null) return fallback;
+    const v = Number(m[1]);
+    return { version: v >= 7 ? '4' : v >= 5 ? '3' : '2', source: `from __metadata.version ${v} in ${lockfile}` };
+  }
+  return { version: '1', source: `from ${lockfile}` };
+}
+
+/**
+ * The version of `pm` to run through `npm exec` when its binary is missing.
+ * First match wins, each searched from the lockfile dir up to the repo root:
+ *   1. `packageManager` (`pnpm@9.1.0+sha512...`) naming `pm`;
+ *   2. `devEngines.packageManager` (`{ name, version }` or an array; a range is kept);
+ *   3. a toolchain pin: `mise.toml`, `.mise.toml`, `.tool-versions`;
+ *   4. the major that wrote the lockfile (`pinnedVersion`), else DEFAULT_MAJOR.
+ * Never `latest`: a floating major changes install semantics (pnpm 12's store
+ * lock failed every install it ran in the supabase run).
  */
 function packageManagerVersion(
   repoRoot: string,
   lockDir: string,
-  pm: PackageManager,
+  pm: Exclude<PackageManager, 'npm'>,
+  lockfile: string,
 ): { version: string; source: string } {
-  for (let d = lockDir; ; d = path.dirname(d)) {
-    let json: unknown;
-    try {
-      json = JSON.parse(readFileSync(path.join(d, 'package.json'), 'utf8'));
-    } catch {
-      json = undefined;
+  const walk = <T>(visit: (d: string) => T | undefined): T | undefined => {
+    for (let d = lockDir; ; d = path.dirname(d)) {
+      const hit = visit(d);
+      if (hit !== undefined) return hit;
+      if (d === repoRoot || path.dirname(d) === d) return undefined;
     }
-    const rel = path.relative(repoRoot, path.join(d, 'package.json')).split(path.sep).join('/');
-    const hit = declaredManagers(json).find((e) => e.pm === pm && e.version !== undefined);
-    if (hit !== undefined) return { version: hit.version!, source: `from ${hit.field} in ${rel}` };
-    if (d === repoRoot || path.dirname(d) === d) break;
+  };
+  const rel = (f: string): string => path.relative(repoRoot, f).split(path.sep).join('/');
+  const read = (f: string): string | undefined => {
+    try {
+      return readFileSync(f, 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  for (const field of ['packageManager', 'devEngines.packageManager']) {
+    const found = walk((d) => {
+      let json: unknown;
+      try {
+        json = JSON.parse(read(path.join(d, 'package.json')) ?? '');
+      } catch {
+        json = undefined;
+      }
+      const hit = declaredManagers(json).find((e) => e.pm === pm && e.field === field && e.version !== undefined);
+      return hit === undefined ? undefined : { version: hit.version!, source: `from ${field} in ${rel(path.join(d, 'package.json'))}` };
+    });
+    if (found !== undefined) return found;
   }
-  return { version: 'latest', source: '(no matching packageManager or devEngines.packageManager field)' };
+  const tool = walk((d) => {
+    for (const f of TOOL_VERSION_FILES) {
+      const text = read(path.join(d, f));
+      const v = text === undefined ? undefined : toolVersionPin(f, text, pm);
+      if (v !== undefined) return { version: v, source: `from ${rel(path.join(d, f))}` };
+    }
+    return undefined;
+  });
+  if (tool !== undefined) return tool;
+  // bun.lockb is binary; bun's major needs no reading.
+  return pinnedVersion(pm, lockfile, lockfile === 'bun.lockb' ? '' : (read(path.join(lockDir, lockfile)) ?? ''));
 }
 
 /**

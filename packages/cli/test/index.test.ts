@@ -7,7 +7,7 @@ import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { choosePackageManager, hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, runNode, runSurfaceWorker, scipTypescript, stderrTail, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -716,13 +716,13 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     );
   });
 
-  it('(3) uses latest without a packageManager field, and yarn berry through @yarnpkg/cli-dist', async () => {
+  it('(3) uses the default major without any pin, and yarn berry through @yarnpkg/cli-dist', async () => {
     const plain = repo('yarn-classic', { 'package.json': '{}', 'yarn.lock': '' });
     const calls: Array<[string, string[]]> = [];
     const diagnostics: string[] = [];
     await install(plain, plain, diagnostics, [], fakeRunner(['yarn'], calls), root);
-    expect(calls[1]).toEqual(['npm', [...execFlags(), '--package=yarn@latest', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts']]);
-    expect(diagnostics[0]).toContain('(version latest (no matching packageManager or devEngines.packageManager field))');
+    expect(calls[1]).toEqual(['npm', [...execFlags(), '--package=yarn@1', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts']]);
+    expect(diagnostics[0]).toContain('(version 1 default major (yarn.lock names no version sentei knows))');
 
     const berry = repo('yarn-berry', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.10.3' }), 'yarn.lock': '' });
     const calls2: Array<[string, string[]]> = [];
@@ -730,11 +730,17 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     expect(calls2[1]).toEqual(['npm', [...execFlags(), '--package=@yarnpkg/cli-dist@4.10.3', '--', 'yarn', 'install', '--immutable', '--mode=skip-build']]);
   });
 
-  it('(3) skips a bun install with a warning when bun is missing, and names ENOENT when the fallback cannot start', async () => {
-    const bun = repo('bun-repo', { 'package.json': '{}', 'bun.lock': '' });
+  it('(3) runs a missing bun through npm exec (supabase/setup-cli), and names ENOENT when the fallback cannot start', async () => {
+    const bun = repo('bun-repo', { 'package.json': '{}', 'bun.lock': '{ "lockfileVersion": 1 }' });
+    const calls: Array<[string, string[]]> = [];
     const diagnostics: string[] = [];
-    expect(await install(bun, bun, diagnostics, [], fakeRunner(['bun'], []), root)).toBe(true);
-    expect(diagnostics).toEqual(['warn: bun is not installed (spawn bun ENOENT); install skipped in .']);
+    expect(await install(bun, bun, diagnostics, [], fakeRunner(['bun'], calls), root)).toBe(true);
+    expect(calls[1]).toEqual(['npm', [...execFlags(), '--package=bun@1', '--', 'bun', 'install', '--frozen-lockfile', '--ignore-scripts']]);
+    expect(diagnostics[0]).toBe('info: bun is not installed (spawn bun ENOENT); falling back to npm exec --yes --package=bun@1 (version 1 from bun.lock)');
+    const pinned = repo('bun-pinned', { 'package.json': JSON.stringify({ packageManager: 'bun@1.3.10' }), 'bun.lockb': '' });
+    const calls2: Array<[string, string[]]> = [];
+    await install(pinned, pinned, [], [], fakeRunner(['bun'], calls2), root);
+    expect(calls2[1]![1]).toContain('--package=bun@1.3.10');
 
     const npmRepo = repo('npm-repo', { 'package.json': '{}', 'package-lock.json': '{}' });
     const d2: string[] = [];
@@ -831,6 +837,82 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     await install(plain, plain, d2, [], fakeRunner([], calls2), root);
     expect(calls2.map(([cmd]) => cmd)).toEqual(['npm']);
     expect(d2[0]).toContain('installing with npm (package-lock.json: lockfile order)');
+  });
+
+  it('(toolchain 2) pins the major that wrote the lockfile, never latest', () => {
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', "lockfileVersion: '9.0'\n")).toEqual({ version: '9', source: 'from lockfileVersion 9.0 in pnpm-lock.yaml' });
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', 'lockfileVersion: 9.0\n').version).toBe('9');
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', "lockfileVersion: '6.0'\n").version).toBe('8');
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', "lockfileVersion: '6.1'\n").version).toBe('8');
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', 'lockfileVersion: 5.4\n').version).toBe('7');
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', 'lockfileVersion: 5.3\n').version).toBe('6');
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', '')).toEqual({ version: '9', source: 'default major (pnpm-lock.yaml names no version sentei knows)' });
+    expect(pinnedVersion('pnpm', 'pnpm-lock.yaml', "lockfileVersion: '3'\n").version).toBe('9');
+    const classic = '# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\n# yarn lockfile v1\n\n\nfoo@^1:\n  version "1.0.0"\n';
+    expect(pinnedVersion('yarn', 'yarn.lock', classic)).toEqual({ version: '1', source: 'from the v1 header of yarn.lock' });
+    const berry = (v: number): string => `# This file is generated by running "yarn install"\n\n__metadata:\n  version: ${v}\n  cacheKey: 10c0\n\n"foo@npm:^1":\n  version: 1.0.0\n`;
+    expect(pinnedVersion('yarn', 'yarn.lock', berry(8))).toEqual({ version: '4', source: 'from __metadata.version 8 in yarn.lock' });
+    expect(pinnedVersion('yarn', 'yarn.lock', berry(6)).version).toBe('3');
+    expect(pinnedVersion('yarn', 'yarn.lock', berry(4)).version).toBe('2');
+    expect(pinnedVersion('yarn', 'yarn.lock', '').version).toBe('1');
+    expect(pinnedVersion('bun', 'bun.lockb', '').version).toBe('1');
+  });
+
+  it('(toolchain 2) reads pnpm/yarn/bun pins from mise.toml and .tool-versions', () => {
+    const mcp = '[settings]\nexperimental = true\n\n[tools]\nnode = "lts"\npnpm = "10"\n\n[tools."github:x/y"]\nversion = "latest"\n';
+    expect(toolVersionPin('mise.toml', mcp, 'pnpm')).toBe('10');
+    expect(toolVersionPin('mise.toml', mcp, 'yarn')).toBeUndefined();
+    expect(toolVersionPin('.mise.toml', '[tools]\n"npm:pnpm" = "9.15.0"\n', 'pnpm')).toBe('9.15.0');
+    expect(toolVersionPin('mise.toml', '[tools]\npnpm = { version = "8.15", os = ["linux"] }\n', 'pnpm')).toBe('8.15');
+    expect(toolVersionPin('mise.toml', "[tools]\nbun = ['1.2.3', '1.1']\n", 'bun')).toBe('1.2.3');
+    // Not a version: no pin.
+    expect(toolVersionPin('mise.toml', '[tools]\npnpm = "latest"\n', 'pnpm')).toBeUndefined();
+    // Outside [tools]: no pin.
+    expect(toolVersionPin('mise.toml', '[env]\npnpm = "10"\n', 'pnpm')).toBeUndefined();
+    expect(toolVersionPin('.tool-versions', 'nodejs 22.1.0\npnpm 10.4.1 9.0.0 # comment\n', 'pnpm')).toBe('10.4.1');
+    expect(toolVersionPin('.tool-versions', 'yarn system\n', 'yarn')).toBeUndefined();
+    expect(toolVersionPin('.tool-versions', '# pnpm 8\n', 'pnpm')).toBeUndefined();
+  });
+
+  it('(toolchain 2) a missing pnpm runs at the mise.toml pin (supabase/mcp), else the lockfile major (supabase/tanstack-db)', async () => {
+    const mcp = repo('mise-repo', {
+      'package.json': '{}',
+      'pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+      'mise.toml': '[tools]\nnode = "lts"\npnpm = "10"\n',
+    });
+    const calls: Array<[string, string[]]> = [];
+    const d1: string[] = [];
+    await install(mcp, mcp, d1, [], fakeRunner(['pnpm'], calls), root);
+    expect(calls[1]![1]).toContain('--package=pnpm@10');
+    expect(d1[0]).toContain('(version 10 from mise.toml)');
+
+    // A workspace package: the pin lives at the repo root, above the lockfile dir.
+    const nested = repo('tv-repo', { 'package.json': '{}', '.tool-versions': 'pnpm 8.15.9\n' });
+    const sub = path.join(nested, 'sub');
+    mkdirSync(sub);
+    writeFileSync(path.join(sub, 'package.json'), '{}');
+    writeFileSync(path.join(sub, 'pnpm-lock.yaml'), "lockfileVersion: '6.0'\n");
+    const calls2: Array<[string, string[]]> = [];
+    await install(nested, sub, [], [], fakeRunner(['pnpm'], calls2), root);
+    expect(calls2[1]![1]).toContain('--package=pnpm@8.15.9');
+
+    const tanstack = repo('lock-only', { 'package.json': '{}', 'pnpm-lock.yaml': "lockfileVersion: '9.0'\n" });
+    const calls3: Array<[string, string[]]> = [];
+    const d3: string[] = [];
+    await install(tanstack, tanstack, d3, [], fakeRunner(['pnpm'], calls3), root);
+    expect(calls3[1]![1]).toContain('--package=pnpm@9');
+    expect(d3[0]).toContain('(version 9 from lockfileVersion 9.0 in pnpm-lock.yaml)');
+    expect(calls3.flatMap(([, a]) => a).some((a) => a.includes('latest'))).toBe(false);
+
+    // packageManager still beats a toolchain pin.
+    const both = repo('pm-and-mise', {
+      'package.json': JSON.stringify({ packageManager: 'pnpm@10.24.0' }),
+      'pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+      'mise.toml': '[tools]\npnpm = "9"\n',
+    });
+    const calls4: Array<[string, string[]]> = [];
+    await install(both, both, [], [], fakeRunner(['pnpm'], calls4), root);
+    expect(calls4[1]![1]).toContain('--package=pnpm@10.24.0');
   });
 
   it('(hermetic) passes HTTP_PROXY to yarn only when set, and never overrides YARN_* proxies', () => {
