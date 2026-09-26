@@ -2968,3 +2968,18 @@ followed by a plain string and `;` (`part of` never matches; a URI with
 interpolation or escapes is not a directive's). Parsing with the analyzer
 would need a Dart process before build_runner, for the same answer on
 directives. analyzer_plugin: 34 → 0.
+
+### Phase 2 fix round 4: witness text hygiene
+
+Found on the Workiva rerun (dog-workiva3).
+
+**Ignored-manifest note names the repo** (witness.ts `unexportHits`). The note
+was repo-relative, `(used by ignored manifest example/pubspec.yaml)`, so for
+opentracing `ScopeManager`, used by `w_module/example/web/panel/modules/
+sample_tracer.dart`, the reader could not tell which repo's `example/` it was.
+The note is now `(used by ignored manifest <org>/<repo>:<manifest>)`, the form
+the ignoreManifests warning uses for a manifest (repo-select.ts
+`ignoredManifestsWarning`: `acme/app:examples/demo/package.json`), e.g.
+`(used by ignored manifest Workiva/w_module:example/pubspec.yaml)`. The
+`ignored:<repo>/<manifest>` consumer label is unchanged. org-dart `inExample`'s
+expected reason is updated.

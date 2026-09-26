@@ -122,7 +122,7 @@
 //          ^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/AcmeTiny#`<get>sq`. enclosing [52:2-52:28]
   }
 
-  // Expected: needs_review, reasons ["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest example/pubspec.yaml)"].
+  // Expected: needs_review, reasons ["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest acme/dart-lib-x:example/pubspec.yaml)"].
   // Used inside acme_x only (by _privateFn), so an unexport by the index; the example
   // app (an ignored manifest, never indexed) names it, which the witness reports.
   int inExample() => 1;

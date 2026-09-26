@@ -22,7 +22,7 @@
 //     witness_mismatch reasons; no hit leaves the verdict as it was.
 //   - every unexport, of any package, is also re-checked against code the index never
 //     saw (unexportHits): ignored manifests that depend on P (steps 1-2, reason ending
-//     ` (used by ignored manifest <manifest>)`), and the docs / example files of P and
+//     ` (used by ignored manifest <org>/<repo>:<manifest>)`), and the docs / example files of P and
 //     of its consumers, whatever countDocsAsConsumers says (reason ending ` (used in a
 //     docs/example file)`). A hit makes it needs_review, never alive.
 // In each C:
@@ -571,7 +571,7 @@ interface Hit {
   line: number;
   /**
    * What the reason adds in parentheses: `member <name>` (an extension member's name hit,
-   * not S's own), `used by ignored manifest <manifest>` / `used in a docs/example file`
+   * not S's own), `used by ignored manifest <org>/<repo>:<manifest>` / `used in a docs/example file`
    * (the ignored note on every path, the docs note on the unexport re-check). Absent: a plain hit.
    */
   notes?: string[];
@@ -1369,12 +1369,16 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     .all() as unknown as Array<PendingRow & { verdict: string }>);
 
   const withNote = (hs: Hit[], note: string): Hit[] => hs.map((h) => ({ ...h, notes: [...(h.notes ?? []), note] }));
-  /** repo-relative manifest path of an ignored-manifest consumer key (`ignored:<repo>/<manifest>`). */
+  /**
+   * The note's name of an ignored-manifest consumer key (`ignored:<repo>/<manifest>`):
+   * `<org>/<repo>:<manifest>`, as the ignoreManifests warning names a manifest
+   * (repo-select.ts): the manifest may be in another repo than P.
+   */
   const ignoredManifestOf = new Map<string, string>();
   /** Ignored-manifest dirs per checkout (repoDir): their files are the ignored step's, not a docs hit too. */
   const ignoredDirsOf = new Map<string, string[]>();
   for (const r of discover.repos) {
-    for (const m of r.ignoredManifests ?? []) ignoredManifestOf.set(`ignored:${r.repo}/${m.manifest}`, m.manifest);
+    for (const m of r.ignoredManifests ?? []) ignoredManifestOf.set(`ignored:${r.repo}/${m.manifest}`, `${r.repo}:${m.manifest}`);
     ignoredDirsOf.set(r.localPath, (r.ignoredManifests ?? []).map((m) => m.path));
   }
 
@@ -1382,7 +1386,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
    * The unexport re-check (header): crossHits for a package with other-manager partners;
    * for every package, the ignored manifests that depend on P (or whose deps are
    * unknown), scanned like in the pending step (import of P, names and extension
-   * members), each hit noted `used by ignored manifest <manifest>`; and the docs /
+   * members), each hit noted `used by ignored manifest <org>/<repo>:<manifest>`; and the docs /
    * example files (DOCS_GLOBS, whatever countDocsAsConsumers says) of every consumer
    * of P and of P itself (the `self` rules: files the index did not see that import P
    * by name), noted `used in a docs/example file`. S stays an unexport when nothing

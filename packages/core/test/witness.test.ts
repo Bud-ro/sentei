@@ -1360,7 +1360,7 @@ describe('runWitness: unexports used by ignored manifests and docs files (Phase 
       { path: 'other', manifest: 'other/package.json', deps: [] },
     ];
     const counts = witness(org);
-    const note = 'witness_mismatch:ignored:acme/lib/example/package.json:example/src/main.ts:2 (used by ignored manifest example/package.json)';
+    const note = 'witness_mismatch:ignored:acme/lib/example/package.json:example/src/main.ts:2 (used by ignored manifest acme/lib:example/package.json)';
     expect(findingsOf(org, 'Query')).toEqual([{ verdict: 'needs_review', reasons: ['internal_refs_only', note] }]);
     expect(findingsOf(org, 'System')).toEqual([{ verdict: 'needs_review', reasons: ['internal_refs_only', 'only_test_refs', note] }]);
     expect(findingsOf(org, 'Internal')).toEqual([{ verdict: 'deprecation_candidate', reasons: ['internal_refs_only'] }]);
@@ -1411,7 +1411,25 @@ describe('runWitness: unexports used by ignored manifests and docs files (Phase 
       verdict: 'needs_review',
       reasons: [
         'internal_refs_only',
-        'witness_mismatch:ignored:acme/lib/example/pubspec.yaml:example/lib/main.dart:2 (member loadSvg; used by ignored manifest example/pubspec.yaml)',
+        'witness_mismatch:ignored:acme/lib/example/pubspec.yaml:example/lib/main.dart:2 (member loadSvg; used by ignored manifest acme/lib:example/pubspec.yaml)',
+      ],
+    }]);
+  });
+
+  it('an ignored manifest in ANOTHER repo is named <org>/<repo>:<manifest> in the note (Phase 2 fix round 4)', () => {
+    // Workiva: opentracing `ScopeManager` used by w_module's `example/` app; a bare
+    // `example/pubspec.yaml` did not say which repo.
+    const org = buildOrg({ manager: 'pub', symbols: [{ name: 'ScopeManager', file: 'lib/scope.dart' }] });
+    unexport(org, 'ScopeManager');
+    const app = org.discover.repos.find((r) => r.repo === 'acme/app')!;
+    write(app.localPath, 'example/lib/main.dart', "import 'package:lib_pub/scope.dart';\nfinal m = ScopeManager();\n");
+    app.ignoredManifests = [{ path: 'example', manifest: 'example/pubspec.yaml', deps: [{ resolvedPackageId: 'pub:acme/lib:lib_pub' }] }];
+    witness(org);
+    expect(findingsOf(org, 'ScopeManager')).toEqual([{
+      verdict: 'needs_review',
+      reasons: [
+        'internal_refs_only',
+        'witness_mismatch:ignored:acme/app/example/pubspec.yaml:example/lib/main.dart:2 (used by ignored manifest acme/app:example/pubspec.yaml)',
       ],
     }]);
   });

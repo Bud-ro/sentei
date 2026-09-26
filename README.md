@@ -399,8 +399,8 @@ too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
 id, `self`, `self-string` or `ignored:<repo>/<manifest>`, and `<file>:<line>` can be
 `checkout missing`; a hit on a member name of a Dart extension, which is used
 through its members, ends ` (member <name>)`; an unexport re-checked against code
-the index never saw ends ` (used by ignored manifest <manifest>)` or ` (used in a
-docs/example file)`), `dead_island` (exports used only by other candidates, so they
+the index never saw ends ` (used by ignored manifest <org>/<repo>:<manifest>)` or
+` (used in a docs/example file)`), `dead_island` (exports used only by other candidates, so they
 go together: a would-be unexport that becomes a deletion, or a deprecation in a
 published package), `already_unreachable` (an existing private island),
 `unlocked_by:<symbol>` (dead once that candidate goes). `blocked_by` entries are
