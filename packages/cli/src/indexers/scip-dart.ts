@@ -302,7 +302,7 @@ export const scipDart: Indexer = {
     let incomplete = 0;
     for (const m of missingParts) {
       const at = `${m.file}:${m.line + 1}:${m.col + 1}`;
-      if (!inSurfaceDir(m.file, 'pub', pkg.path) && isExcludedConsumerFile(m.file, input.policy)) {
+      if (isExcludedConsumerFile(m.file, input.policy, { manager: 'pub', path: pkg.path })) {
         diagnostics.push(`warn: missing part '${m.uri}' at ${at} (not generated?); ignored: a test/docs file that does not count as a consumer`);
         continue;
       }
