@@ -990,7 +990,7 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
       { path: 'examples/demo', deps: ['npm:acme/lib:@acme/lib', null], files: { 'src/x.ts': IMPORTS, 'node_modules/y/i.ts': IMPORTS } },
     ]);
     expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
-    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:ignored:acme/lib/examples/demo/package.json:examples/demo/src/x.ts:2']);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:ignored:acme/lib/examples/demo/package.json:examples/demo/src/x.ts:2 (used by ignored manifest examples/demo/package.json)']);
     expectPass(org, org.ids['otherFn']!);
   });
 
@@ -1004,7 +1004,7 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
       deps: [{ resolvedPackageId: null, candidates: ['npm:acme/lib:@acme/lib', 'npm:acme/fork:@acme/lib'] }],
     }];
     witness(org);
-    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:ignored:acme/lib/examples/demo/package.json:examples/demo/src/x.ts:2']);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:ignored:acme/lib/examples/demo/package.json:examples/demo/src/x.ts:2 (used by ignored manifest examples/demo/package.json)']);
   });
 
   it('an ignored manifest that does not depend on P is not scanned (as an ignored consumer)', () => {
@@ -1027,8 +1027,8 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
     ]);
     witness(org);
     expectMismatch(org, org.ids['deadFn']!, [
-      'witness_mismatch:ignored:acme/lib/examples/gone/package.json:checkout missing',
-      'witness_mismatch:ignored:acme/lib/fixtures/bad/package.json:fixtures/bad/a.ts:2',
+      'witness_mismatch:ignored:acme/lib/examples/gone/package.json:checkout missing (used by ignored manifest examples/gone/package.json)',
+      'witness_mismatch:ignored:acme/lib/fixtures/bad/package.json:fixtures/bad/a.ts:2 (used by ignored manifest fixtures/bad/package.json)',
     ]);
   });
 

@@ -572,7 +572,7 @@ interface Hit {
   /**
    * What the reason adds in parentheses: `member <name>` (an extension member's name hit,
    * not S's own), `used by ignored manifest <manifest>` / `used in a docs/example file`
-   * (unexport re-check). Absent: a plain hit.
+   * (the ignored note on every path, the docs note on the unexport re-check). Absent: a plain hit.
    */
   notes?: string[];
 }
@@ -1368,6 +1368,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     )
     .all() as unknown as Array<PendingRow & { verdict: string }>);
 
+  const withNote = (hs: Hit[], note: string): Hit[] => hs.map((h) => ({ ...h, notes: [...(h.notes ?? []), note] }));
   /** repo-relative manifest path of an ignored-manifest consumer key (`ignored:<repo>/<manifest>`). */
   const ignoredManifestOf = new Map<string, string>();
   /** Ignored-manifest dirs per checkout (repoDir): their files are the ignored step's, not a docs hit too. */
@@ -1388,7 +1389,6 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
    * hits; a hit only moves it to needs_review (fail closed), never to "alive".
    */
   const unexportHits = (row: PendingRow, plan: SearchPlan): Hit[] => {
-    const withNote = (hs: Hit[], note: string): Hit[] => hs.map((h) => ({ ...h, notes: [...(h.notes ?? []), note] }));
     const ignored = [...new Set([...(ignoredConsumers.get(row.package_id) ?? []), ...ignoredAnyPackage])].sort(cmp);
     const withTests = row.test_support === 1;
     const docsHits = (c: string, tests: boolean, label: string): Hit[] => {
@@ -1435,7 +1435,12 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       ];
       const plan = planFor(row);
       const all = [
-        ...consumers.flatMap(({ c, dev }) => findHits(row, plan, c, dev || row.test_support === 1)),
+        // An ignored manifest's hit says so, as on the unexport path (fix round 4): the
+        // `ignored:` consumer label alone read like a package.
+        ...consumers.flatMap(({ c, dev }) => {
+          const hs = findHits(row, plan, c, dev || row.test_support === 1);
+          return c.startsWith('ignored:') ? withNote(hs, `used by ignored manifest ${ignoredManifestOf.get(c) ?? c}`) : hs;
+        }),
         ...(crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c)),
         ...extraFileHits(row, plan),
         // P is its own consumer for own files that import it BY NAME (unindexed files
