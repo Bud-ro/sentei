@@ -1253,6 +1253,36 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(r.diagnostics.some((d) => d.includes('example/hello'))).toBe(false);
   }, 300_000);
 
+  it('an npm package or ignored npm manifest nested in a pub package does not hide its Dart files', async () => {
+    // dart-lang/web js_interop_gen: an npm package (package.json) in lib/src/ made
+    // dart-surface skip all of lib/src/, so lib/src/dart_main.dart's `main` (compiled
+    // by path with dart2js) was no entry symbol: 351 false private_dead rows.
+    write({
+      'jsgen/pubspec.yaml': pubspec('acme_jsgen', '1.0.0'),
+      'jsgen/lib/acme_jsgen.dart': "export 'src/api.dart';\n",
+      'jsgen/lib/src/api.dart': 'int api() => 1;\n',
+      'jsgen/lib/src/dart_main.dart': 'void main() => print(_drive());\n\nint _drive() => 1;\n',
+      'jsgen/lib/src/package.json': JSON.stringify({ name: 'jsgen-driver', private: true }),
+      'jsgen/tool/js/package.json': JSON.stringify({ name: 'jsgen-tool', private: true }),
+      'jsgen/tool/js/run.dart': 'void main() {}\n',
+    });
+    const repo: DiscoveredRepo = {
+      repo: 'acme/jsgen', localPath: path.join(root, 'jsgen'), defaultBranch: 'main', headSha: null,
+      packages: [
+        pubPackage('acme_jsgen', ['lib/acme_jsgen.dart']),
+        { packageId: 'npm:jsgen-driver', path: 'lib/src', manager: 'npm', name: 'jsgen-driver', entryPoints: [], deps: [] },
+      ],
+      ignoredManifests: [{ path: 'tool/js' }],
+    };
+    const out = path.join(root, 'out-jsgen');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor([repo], repo), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    const s = readJson<ExportsSidecar>(r.exportsFile);
+    expect(s.entrySymbols.map((e) => `${e.file}:${e.name}`)).toEqual(['lib/src/dart_main.dart:main', 'tool/js/run.dart:main']);
+    expect(s.exports.map((e) => [e.exportedAs, e.file])).toEqual([['api', 'lib/src/api.dart']]);
+  }, 300_000);
+
   it('after a failed pub get, unresolved own package: URIs are one error, not unresolved exports', async () => {
     // over_react's app/over_react_redux/todo_client: pub get fails on an old SDK
     // bound, the enclosing package's config (which does not map todo_client) is

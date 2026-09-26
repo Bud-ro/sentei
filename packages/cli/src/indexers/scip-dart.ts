@@ -617,17 +617,22 @@ interface SurfaceSpec {
 function surfaceSpec(input: Pick<IndexerInput, 'repo'>, pkg: DiscoveredPackage): SurfaceSpec {
   const { repo } = input;
   const dir = realpathSync(packageDir(repo, pkg));
+  // Only pub packages own Dart files: scip-dart leaves out the dirs with a
+  // pubspec.yaml, not an npm package.json. dart-lang/web's js_interop_gen has
+  // an npm package in lib/src/ (its dart2js driver's node deps), and taking it
+  // as nested dropped all of lib/src/ from dart-surface's scan (its `main`).
   const nested = repo.packages
+    .filter((p) => p.manager === 'pub')
     .map((p) => packageDir(repo, p))
     .filter((d) => d !== packageDir(repo, pkg) && existsSync(d))
     .map((d) => realpathSync(d))
     .filter((d) => d.startsWith(dir + path.sep));
-  // Ignored manifests (examples, templates, fixtures) strictly inside this
+  // Ignored pub manifests (examples, templates, fixtures) strictly inside this
   // package are separate packages too: scip-dart does not index them, so an
   // entry symbol or export found there could never match a definition.
   const ignored = (repo.ignoredManifests ?? [])
     .map((m) => path.resolve(repo.localPath, ...m.path.split('/')))
-    .filter((d) => existsSync(d))
+    .filter((d) => existsSync(path.join(d, 'pubspec.yaml')))
     .map((d) => realpathSync(d))
     .filter((d) => d.startsWith(dir + path.sep) && !nested.includes(d));
   return {
