@@ -2983,3 +2983,33 @@ the ignoreManifests warning uses for a manifest (repo-select.ts
 `(used by ignored manifest Workiva/w_module:example/pubspec.yaml)`. The
 `ignored:<repo>/<manifest>` consumer label is unchanged. org-dart `inExample`'s
 expected reason is updated.
+
+**Comments and strings in consumer files** (witness.ts `consumerText`,
+`blankStrings`). react `isElement` was needs_review for two text accidents in
+react_testing_library: (a) the import gate (`mentioning`) read the RAW text,
+so a doc comment `/// import 'package:react/react.dart'` made a file an
+importer of react (the name search already blanked comments; the gate did
+not); (b) Dart string literals were searched, so `matchState['isElement']`
+(`lib/src/matchers/jest_dom/is_checked.dart:94,116,132`,
+`is_disabled.dart:85,95`) was a hit, and no SCIP occurrence on those lines
+vetoed it. Now the gate and the name search read the same text:
+- comments blanked, always (the existing `blankComments`);
+- in a file the index saw (a `documents` row of that consumer), and in P's own
+  files scanned as `self` (unchanged), every string literal blanked too, except
+  module specifiers (`SPECIFIER_BEFORE_RE`: `import`/`export`/`part` targets,
+  `from '…'`, `require(`, `import(`), Dart `@JS('…')` annotation names, and
+  interpolations (`${…}`, Dart `$name`, not in a raw `r'…'`), which are code;
+- in an unindexed file (ignored manifests, files outside the program) strings
+  are kept: no SCIP saw it, so a quoted name may be the only trace of a use.
+The steps that exist to catch string-based access keep reading strings:
+cross-manager (`@JS('rtl.render')`), codegen, self-string, and witness_files.
+In an indexed file an `@JS('a.b')` segment after a dot is still a member access
+(the indexed-file rule), so only an undotted `@JS('name')` counts there; the
+cross-manager step, which reads every segment, is where JS names matter.
+Accepted gap: a JS bracket access of a namespace import, `lib['queryAll']`, in
+an indexed file is no longer a hit (SCIP does not record it either); Dart has
+no such access to a top-level declaration.
+dog-workiva3 (analyze + witness on a copy of the DB): `react#isElement` is the
+only change, needs_review → deprecation_candidate; witness 217 checked /
+28 mismatched → 217 / 27; the 11 unexport downgrades are unchanged apart
+from the note (above).

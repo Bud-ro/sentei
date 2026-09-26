@@ -6,7 +6,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { blankComments, runWitness, stringLiterals, type WitnessDiscoverInput } from '../src/witness.ts';
+import { blankComments, blankStrings, runWitness, stringLiterals, type WitnessDiscoverInput } from '../src/witness.ts';
 
 // A hand-built org: library P (npm:acme/lib:@acme/lib or pub:acme/lib:lib_pub) with one consumer C
 // whose package dir is <repo>/pkg. Every symbol gets a witness_pending finding.
@@ -1432,5 +1432,103 @@ describe('runWitness: unexports used by ignored manifests and docs files (Phase 
         'witness_mismatch:ignored:acme/app/example/pubspec.yaml:example/lib/main.dart:2 (used by ignored manifest acme/app:example/pubspec.yaml)',
       ],
     }]);
+  });
+});
+
+describe('runWitness: text hygiene (Phase 2 fix round 4)', () => {
+  const C = 'pub:acme/app:app_pub';
+  /** Mark consumer files (relative to the consumer package dir) as indexed documents of `consumer`. */
+  function indexed(org: Org, consumer: string, files: string[]): void {
+    for (const f of files) {
+      const r = org.db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES (?, ?, ?, ?, 'file')").run(`mod ${f}`, consumer, `pkg/${f}`, f);
+      org.db.prepare('INSERT INTO documents (package_id, file, module_symbol_id) VALUES (?, ?, ?)').run(consumer, `pkg/${f}`, Number(r.lastInsertRowid));
+    }
+  }
+
+  it('a doc-comment import of P is no import: the file is not scanned (indexed or not)', () => {
+    // react_testing_library: `/// import 'package:react/react.dart'` in a doc comment.
+    const src = "/// import 'package:lib_pub/lib_pub.dart';\n/* import 'package:lib_pub/lib_pub.dart'; */\nvoid f(x) => isElement(x);\n";
+    const org = buildOrg({ manager: 'pub', symbols: [{ name: 'isElement', file: 'lib/lib_pub.dart' }], files: { 'lib/a.dart': src, 'lib/b.dart': src } });
+    indexed(org, C, ['lib/a.dart']);
+    witness(org);
+    expectPass(org, org.ids['isElement']!);
+  });
+
+  it("in an INDEXED file a string literal naming S is not a hit (matchState['isElement']); a real use still is", () => {
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [{ name: 'isElement', file: 'lib/lib_pub.dart' }, { name: 'isUsed', file: 'lib/lib_pub.dart' }],
+      files: {
+        'lib/is_checked.dart': [
+          "import 'package:lib_pub/lib_pub.dart';", // 1
+          "final a = matchState['isElement'];", // 2: a map key
+          'final b = """isElement', // 3: a multi-line string
+          '""";', // 4
+          'final c = isUsed(a);', // 5: a real use
+        ].join('\n'),
+      },
+    });
+    indexed(org, C, ['lib/is_checked.dart']);
+    witness(org);
+    expectPass(org, org.ids['isElement']!);
+    expectMismatch(org, org.ids['isUsed']!, [`witness_mismatch:${C}:pkg/lib/is_checked.dart:5`]);
+  });
+
+  it("in an indexed file, interpolations and @JS('…') names still count; a raw string does not interpolate", () => {
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [
+        { name: 'inBraces', file: 'lib/lib_pub.dart' }, { name: 'inDollar', file: 'lib/lib_pub.dart' },
+        { name: 'jsName', file: 'lib/lib_pub.dart' }, { name: 'inRaw', file: 'lib/lib_pub.dart' },
+      ],
+      files: {
+        'lib/i.dart': [
+          "import 'package:lib_pub/lib_pub.dart';", // 1
+          "final a = 'x ${inBraces(1)} y';", // 2
+          'final b = "$inDollar";', // 3
+          "@JS('jsName')", // 4
+          'external void f();', // 5
+          "final c = r'$inRaw';", // 6
+        ].join('\n'),
+      },
+    });
+    indexed(org, C, ['lib/i.dart']);
+    witness(org);
+    expectMismatch(org, org.ids['inBraces']!, [`witness_mismatch:${C}:pkg/lib/i.dart:2`]);
+    expectMismatch(org, org.ids['inDollar']!, [`witness_mismatch:${C}:pkg/lib/i.dart:3`]);
+    expectMismatch(org, org.ids['jsName']!, [`witness_mismatch:${C}:pkg/lib/i.dart:4`]);
+    expectPass(org, org.ids['inRaw']!);
+  });
+
+  it('in an UNINDEXED file a string naming S still hits (no SCIP there)', () => {
+    const org = buildOrg({
+      manager: 'pub',
+      symbols: [{ name: 'isElement', file: 'lib/lib_pub.dart' }],
+      files: { 'lib/plain.dart': "import 'package:lib_pub/lib_pub.dart';\nfinal a = matchState['isElement'];\n" },
+    });
+    witness(org);
+    expectMismatch(org, org.ids['isElement']!, [`witness_mismatch:${C}:pkg/lib/plain.dart:2`]);
+  });
+
+  it('npm: an indexed file quoting S is no hit; a template interpolation naming S is', () => {
+    const org = buildOrg({
+      symbols: [{ name: 'queryAll' }, { name: 'getBy' }],
+      files: { 'src/t.ts': "import * as lib from '@acme/lib';\nconst k = 'queryAll';\nconst m = `${getBy}`;\n" },
+    });
+    indexed(org, 'npm:acme/app:@acme/app', ['src/t.ts']);
+    witness(org);
+    expectPass(org, org.ids['queryAll']!);
+    expectMismatch(org, org.ids['getBy']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/t.ts:3']);
+  });
+});
+
+describe('blankStrings', () => {
+  it('blanks literals except specifiers, @JS names and interpolations; keeps offsets', () => {
+    const src = "import 'package:p/p.dart';\n@JS('a.b')\nfinal x = m['k'] + '${f(1)} $g \\$h' + r'$i' + '''\nz''';\n";
+    const out = blankStrings(src, true);
+    expect(out.length).toBe(src.length);
+    expect(out).toBe(`import 'package:p/p.dart';\n@JS('a.b')\nfinal x = m[   ] + \x20\${f(1)} $g      + r     +    \n    ;\n`);
+    const js = "import x from 'p';\nconst a = 'k' + `t ${v} u` + require('q');\n";
+    expect(blankStrings(js)).toBe("import x from 'p';\nconst a =     +    ${v}    + require('q');\n");
   });
 });

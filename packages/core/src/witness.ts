@@ -47,7 +47,16 @@
 // when it is an indexed document (the indexed-file rules below do not apply), and is
 // labelled `self`.
 // Comments never count: code files are read with comments blanked (not `.vue` / `.md`
-// witness_files, whose markup is not JS).
+// witness_files, whose markup is not JS), for the import check (step 1: a doc comment
+// `/// import 'package:P/p.dart'` is no import) and the names (step 2) alike.
+// Strings count only where nothing else can see the use (blankStrings, consumerText): in
+// an INDEXED file of a consumer (and in P's own files scanned as `self`) every string
+// literal is blanked before steps 1-2 except module specifiers (`import 'package:P/…'`,
+// `from '…'`, `require('…')`), Dart `@JS('…')` annotation names and interpolations
+// (`${…}`, Dart `$name`: code), so `matchState['isElement']` is no use of `isElement`.
+// Strings are kept in unindexed files (ignored manifests, files outside the program,
+// witness_files), in the cross-manager step (`@JS('rtl.render')` naming a JS export) and
+// in the codegen / self-string steps, which exist to catch string-built access.
 // Entry vouching (npm): a file's import of P vouches for S only through a specifier that
 // reaches one of S's symbol_exports entries (the matching of the default-import rule
 // below: the bare specifier reaches the root entry, `P/react` the entry behind
@@ -365,6 +374,70 @@ function blankInterpolations(s: string): string {
     }
   }
   return out;
+}
+
+/** Text right before a literal that keeps it in blankStrings: a Dart `@JS('…')` name. */
+const KEEP_LITERAL_BEFORE_RE = /@JS\s*\(\s*$/;
+
+/**
+ * A literal's text with its characters blanked (newlines kept) except its
+ * interpolations, which are code: JS template `${…}`, Dart `${…}` and `$name` (not in a
+ * Dart raw string `r'…'`, where `$` is literal). Escapes are blanked with the character
+ * they escape (`\$x` is text).
+ */
+function blankLiteral(lit: string, dart: boolean, raw: boolean): string {
+  const interpolates = !raw && (dart || lit.startsWith('`'));
+  if (!interpolates) return lit.replace(/[^\n]/g, ' ');
+  let out = '';
+  let i = 0;
+  while (i < lit.length) {
+    const c = lit[i]!;
+    if (c === '\\') {
+      out += lit.slice(i, i + 2).replace(/[^\n]/g, ' ');
+      i += 2;
+    } else if (c === '$' && lit[i + 1] === '{') {
+      let depth = 0;
+      let j = i + 1;
+      do {
+        if (lit[j] === '{') depth += 1;
+        else if (lit[j] === '}') depth -= 1;
+        j += 1;
+      } while (j < lit.length && depth > 0);
+      out += lit.slice(i, j);
+      i = j;
+    } else if (c === '$' && dart && /[A-Za-z_]/.test(lit[i + 1] ?? '')) {
+      const m = /^\$[A-Za-z_]\w*/.exec(lit.slice(i))!;
+      out += m[0];
+      i += m[0].length;
+    } else {
+      out += c === '\n' ? '\n' : ' ';
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * `code` (comments already blanked) with every string literal blanked, offsets and
+ * lines kept, except module specifiers (SPECIFIER_BEFORE_RE: `import 'package:P/…'`,
+ * `from '…'`, `require('…')`), Dart `@JS('…')` annotation names (they name JS, which
+ * the index cannot follow) and interpolations (blankLiteral). The text the witness
+ * searches in an indexed consumer file (and in P's own files for `self`): a string
+ * there is data (`matchState['isElement']`), not a use of a declaration.
+ */
+export function blankStrings(code: string, dart = false): string {
+  // Linear rebuild (a slice-and-concat per literal was quadratic: 10 s on Workiva).
+  const parts: string[] = [];
+  let at = 0;
+  for (const lit of stringLiterals(code, dart)) {
+    const before = code.slice(Math.max(0, lit.start - 40), lit.start);
+    if (SPECIFIER_BEFORE_RE.test(before) || (dart && KEEP_LITERAL_BEFORE_RE.test(before))) continue;
+    const raw = dart && /(?:^|[^\w$])[rR]$/.test(code.slice(Math.max(0, lit.start - 2), lit.start));
+    parts.push(code.slice(at, lit.start), blankLiteral(lit.text, dart, raw));
+    at = lit.start + lit.text.length;
+  }
+  parts.push(code.slice(at));
+  return parts.join('');
 }
 
 /** 1-based line of a string offset. */
@@ -800,10 +873,12 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   };
 
   /**
-   * readText with comments blanked (blankComments) and every string literal that is not
-   * a module specifier blanked too, for P's own files scanned as the `self` consumer: an
-   * import of P written inside a code template (`` `import { X } from 'P'` ``) is
-   * generated code (the self codegen step's business), not an import by this file.
+   * readText with comments blanked (blankComments) and string literals blanked
+   * (blankStrings: not module specifiers, `@JS('…')` names or interpolations). For P's
+   * own files scanned as the `self` consumer (an import of P written inside a code
+   * template, `` `import { X } from 'P'` ``, is generated code: the self codegen step's
+   * business, not an import by this file) and for INDEXED files of a consumer (the index
+   * resolved their code; a string there is data: `matchState['isElement']`).
    */
   const codeCache = new Map<string, string>();
   const readCode = (consumer: string, rel: string): string => {
@@ -811,33 +886,33 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     let t = codeCache.get(key);
     if (t === undefined) {
       const dart = extname(rel) === '.dart';
-      const code = blankComments(readText(consumer, rel), dart);
-      // Linear rebuild (a slice-and-concat per literal was quadratic: 10 s on Workiva).
-      const parts: string[] = [];
-      let at = 0;
-      for (const lit of stringLiterals(code, dart)) {
-        if (SPECIFIER_BEFORE_RE.test(code.slice(Math.max(0, lit.start - 40), lit.start))) continue;
-        parts.push(code.slice(at, lit.start), lit.text.replace(/[^\n]/g, ' '));
-        at = lit.start + lit.text.length;
-      }
-      parts.push(code.slice(at));
-      t = parts.join('');
+      t = blankStrings(blankComments(readText(consumer, rel), dart), dart);
       codeCache.set(key, t);
     }
     return t;
   };
 
+  /**
+   * The text of consumer file `rel` the witness searches, for the import gate and the
+   * names alike: comments never count (a doc comment `/// import 'package:P/p.dart'` is
+   * no import, a commented-out use no use); string literals are blanked too (readCode)
+   * for `self` and for a file the index saw (indexedFiles(consumer)), and kept in an
+   * unindexed file (no SCIP there: a quoted name may be the only trace of a use).
+   */
+  const consumerText = (consumer: string, rel: string, self: boolean): string =>
+    self || indexedFiles(consumer).has(rel) ? readCode(consumer, rel) : readNoComments(consumer, rel);
+
   /** Files of C mentioning P (keyed C\0P\0withTests\0code\0docsOnly: `files` is consumerFiles(C, withTests, docsOnly)). */
   const mentionCache = new Map<string, string[]>();
   const mentioning = (
-    consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string, withTests: boolean, read = readText, docsOnly = false,
+    consumer: string, files: string[], manager: 'npm' | 'pub', pkgName: string, withTests: boolean, self: boolean, docsOnly = false,
   ): string[] => {
-    const key = `${consumer}\0${manager}:${pkgName}\0${withTests ? 1 : 0}\0${read === readCode ? 1 : 0}\0${docsOnly ? 1 : 0}`;
+    const key = `${consumer}\0${manager}:${pkgName}\0${withTests ? 1 : 0}\0${self ? 1 : 0}\0${docsOnly ? 1 : 0}`;
     let out = mentionCache.get(key);
     if (!out) {
       const res = mentionRegexes(manager, pkgName);
       out = files.filter((f) => {
-        const text = read(consumer, f);
+        const text = consumerText(consumer, f, self);
         return res.some((re) => {
           re.lastIndex = 0;
           return re.test(text);
@@ -984,12 +1059,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       const indexed = indexedFiles(consumer);
       files = files.filter((f) => !indexed.has(f) && !isGenerated(consumer, f));
     }
-    const read = self ? readCode : readText;
     const indexed = self ? null : indexedFiles(consumer);
     const hits: Hit[] = [];
-    for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests, read, docsOnly)) {
-      // Comments never count (a commented-out import or use is not code).
-      const text = self ? readCode(consumer, f) : readNoComments(consumer, f);
+    for (const f of mentioning(consumer, files, row.manager, row.pkg_name, withTests, self, docsOnly)) {
+      // Comments never count; strings count only in an unindexed file (consumerText).
+      const text = consumerText(consumer, f, self);
       // Named hits only in a file importing P through a specifier that reaches S.
       const vouched = plan.entries === null
         || specifiersOf(text, row.manager, row.pkg_name).some((sub) => subpathMatches(plan.entries!, sub));
