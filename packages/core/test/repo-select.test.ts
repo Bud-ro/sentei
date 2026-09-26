@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { readRepoSelectConfig } from '../src/config.ts';
 import {
-  decideRepo, defaultSelectSettings, diffSettings, mergeSelectSettings, minPushedCutoff, type RepoFacts, type RepoSelectSettings,
+  decideRepo, defaultSelectSettings, diffSettings, excludedReposWarning, mergeSelectSettings, minPushedCutoff, shortenExcludedWarning,
+  type RepoFacts, type RepoSelectSettings,
 } from '../src/repo-select.ts';
 
 const NOW = Date.parse('2026-09-26T00:00:00Z');
 const facts = (name: string, extra: Partial<RepoFacts> = {}): RepoFacts => ({
   name, fork: false, template: false, archived: false, disabled: false,
-  language: 'TypeScript', sizeKb: 1000, pushedAt: '2026-09-01T00:00:00Z', ...extra,
+  language: 'TypeScript', sizeKb: 1000, pushedAt: '2026-09-01T00:00:00Z', manifests: [], headTreeKb: 500, probe: 'tree', ...extra,
 });
 const settings = (extra: Partial<RepoSelectSettings> = {}): RepoSelectSettings => ({ ...defaultSelectSettings(), ...extra });
 const decide = (f: RepoFacts, s: Partial<RepoSelectSettings> = {}) => decideRepo(f, settings(s), NOW);
@@ -28,12 +29,23 @@ describe('decideRepo', () => {
     expect(decide(facts('e', { empty: true })).reasons).toEqual(['empty repository (no commit on the default branch)']);
   });
 
-  it('size over maxSizeMb (API size in KB); null disables', () => {
-    const big = facts('big', { sizeKb: 600 * 1024 });
-    expect(decide(big)).toEqual({ include: false, reasons: ['size 600 MB over repos.maxSizeMb 500'] });
+  it('size over maxSizeMb: the HEAD tree size when known; null disables', () => {
+    const big = facts('big', { headTreeKb: 600 * 1024 });
+    expect(decide(big)).toEqual({ include: false, reasons: ['HEAD size 600 MB over repos.maxSizeMb 500'] });
     expect(decide(big, { maxSizeMb: 1000 }).include).toBe(true);
     expect(decide(big, { maxSizeMb: null }).include).toBe(true);
-    expect(decide(facts('unknown', { sizeKb: null })).include).toBe(true);
+    // supabase/cli: a huge history (API size) but a small HEAD is kept.
+    expect(decide(facts('cli', { sizeKb: 301 * 1024, headTreeKb: 26 * 1024 }), { maxSizeMb: 300 }))
+      .toEqual({ include: true, reasons: ['language TypeScript'] });
+  });
+
+  it('size falls back to the API size (full history) only when the HEAD size is unknown', () => {
+    const truncated = facts('mono', { sizeKb: 900 * 1024, headTreeKb: null, probe: 'truncated', manifests: ['package.json'] });
+    expect(decide(truncated)).toEqual({ include: false, reasons: ['size 900 MB (API size, full history; git tree truncated) over repos.maxSizeMb 500'] });
+    expect(decide({ ...truncated, probe: 'root' }).reasons).toEqual(['size 900 MB (API size, full history; git tree unavailable) over repos.maxSizeMb 500']);
+    const unprobed = facts('big', { sizeKb: 900 * 1024, manifests: undefined, headTreeKb: undefined, probe: undefined });
+    expect(decide(unprobed, { probe: false }).reasons).toEqual(['size 900 MB (API size, full history; probe off) over repos.maxSizeMb 500']);
+    expect(decide(facts('unknown', { sizeKb: null, headTreeKb: null, probe: 'root' })).include).toBe(true);
   });
 
   it('pushed_at older than minPushed (ISO date or <n>d)', () => {
@@ -47,22 +59,54 @@ describe('decideRepo', () => {
     expect(minPushedCutoff('2025-13-45', NOW)).toBeNull();
   });
 
-  it('language: a listed language matches; otherwise the manifest probe decides', () => {
+  it('language: a listed language matches; otherwise a manifest anywhere in the HEAD tree decides', () => {
     const py = facts('hw', { language: 'Python' });
-    expect(decide(py)).toEqual({ include: false, reasons: ['language Python not in repos.languages; manifest probe pending'], needsProbe: true });
-    expect(decide({ ...py, manifests: { 'package.json': true } })).toEqual({ include: true, reasons: ['language Python, but package.json at the root'] });
-    expect(decide({ ...py, manifests: { 'package.json': false, 'pubspec.yaml': true } }).reasons).toEqual(['language Python, but pubspec.yaml at the root']);
-    expect(decide({ ...py, manifests: { 'package.json': false, 'pubspec.yaml': false } }))
-      .toEqual({ include: false, reasons: ['language Python not in repos.languages; no package.json or pubspec.yaml at the root'] });
+    const unprobed = { ...py, manifests: undefined, headTreeKb: undefined, probe: undefined };
+    expect(decide(unprobed)).toEqual({ include: false, reasons: ['git tree probe pending'], needsProbe: true });
+    // A TypeScript repo is probed too (HEAD size, manifests for the record).
+    expect(decide({ ...unprobed, language: 'TypeScript' }).needsProbe).toBe(true);
+    expect(decide({ ...py, manifests: ['assets/package.json'] })).toEqual({ include: true, reasons: ['language Python, but assets/package.json'] });
+    expect(decide({ ...py, manifests: ['a/package.json', 'b/package.json', 'c/pubspec.yaml', 'd/package.json'] }).reasons)
+      .toEqual(['language Python, but 4 manifests (a/package.json, b/package.json, c/pubspec.yaml, …)']);
+    expect(decide(py)).toEqual({ include: false, reasons: ['language Python not in repos.languages; no package.json or pubspec.yaml in the HEAD tree'] });
+    expect(decide({ ...py, probe: 'truncated', headTreeKb: null }).reasons)
+      .toEqual(['language Python not in repos.languages; no package.json or pubspec.yaml at the root or in the truncated git tree']);
+    expect(decide({ ...py, probe: 'root', headTreeKb: null }).reasons)
+      .toEqual(['language Python not in repos.languages; no package.json or pubspec.yaml at the root (git tree unavailable)']);
     expect(decide(facts('docs', { language: null }), { probe: false }))
       .toEqual({ include: false, reasons: ['no language detected (probe off)'] });
     expect(decide(py, { languages: [] })).toEqual({ include: true, reasons: ['language rule disabled (repos.languages: [])'] });
     expect(decide(py, { languages: ['python'] }).include).toBe(true);
   });
 
-  it('the probe is only pending for repos no other rule excludes', () => {
-    expect(decide(facts('hw', { language: 'C', archived: true })).needsProbe).toBeUndefined();
-    expect(decide(facts('hw', { language: 'C', sizeKb: 900 * 1024 })).needsProbe).toBeUndefined();
+  it('the probe is pending for candidates and explicitly matched repos, never for skipped kinds', () => {
+    const unprobed = (extra: Partial<RepoFacts>): RepoFacts =>
+      facts('hw', { language: 'C', manifests: undefined, headTreeKb: undefined, probe: undefined, ...extra });
+    expect(decide(unprobed({ archived: true })).needsProbe).toBeUndefined();
+    expect(decide(unprobed({ fork: true })).needsProbe).toBeUndefined();
+    expect(decide(unprobed({ empty: true }), { exclude: ['hw'] }).needsProbe).toBeUndefined();
+    expect(decide(unprobed({}), { probe: false }).needsProbe).toBeUndefined();
+    // Explicitly matched: the decision stands, the probe is for the record (the report warning).
+    expect(decide(unprobed({}), { exclude: ['hw'] })).toEqual({ include: false, reasons: ['excluded by repos.exclude "hw"'], needsProbe: true });
+    expect(decide(unprobed({ archived: true }), { cliInclude: ['hw'] })).toEqual({ include: true, reasons: ['included by --include "hw"'], needsProbe: true });
+    expect(decide(facts('hw'), { exclude: ['hw'] }).needsProbe).toBeUndefined(); // already probed
+    expect(decideRepo(unprobed({}), settings({ exclude: ['hw'] }), NOW, true).needsProbe).toBeUndefined(); // legacy lockfile
+  });
+
+  it('names excluded repos with manifests in one warning, cut to ten for stdout', () => {
+    const items = Array.from({ length: 12 }, (_, i) => ({ repo: `acme/r${String(i).padStart(2, '0')}`, reason: 'archived (--include-archived to keep)', manifests: ['package.json'] }));
+    items[0] = { repo: 'acme/r00', reason: 'excluded by repos.exclude "r0*"', manifests: ['a/package.json', 'b/pubspec.yaml'] };
+    items[1] = { repo: 'acme/r01', reason: 'HEAD size 600 MB over repos.maxSizeMb 500', manifests: ['package.json'] };
+    items[2] = { repo: 'acme/r02', reason: 'clone failed: git clone: boom', manifests: ['package.json'] };
+    const w = excludedReposWarning(items);
+    expect(w.startsWith('12 excluded repo(s) have package manifests and may consume org packages (their references are invisible): '
+      + 'acme/r00 (repos.exclude, 2 manifests), acme/r01 (size, 1 manifest), acme/r02 (clone failed, 1 manifest), acme/r03 (archived, 1 manifest), ')).toBe(true);
+    expect(w.endsWith('acme/r11 (archived, 1 manifest)')).toBe(true);
+    const short = shortenExcludedWarning(w);
+    expect(short).toMatch(/acme\/r09 \(archived, 1 manifest\) … and 2 more \(all in report\.json warnings\)$/);
+    expect(short).not.toContain('acme/r10');
+    expect(shortenExcludedWarning(excludedReposWarning(items.slice(0, 10)))).toBe(excludedReposWarning(items.slice(0, 10)));
+    expect(shortenExcludedWarning('minAgeDays is 0: age policy disabled')).toBe('minAgeDays is 0: age policy disabled');
   });
 
   it('include/exclude: --include > --exclude > repos.include > repos.exclude; include forces past every rule', () => {

@@ -20,6 +20,7 @@ import {
   DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readRepoManifestsWithIgnored,
   type IgnoredManifest, type Manager, type ManifestPackage, type Visibility,
 } from './manifests.ts';
+import type { ExcludedRepoInfo } from './repo-select.ts';
 
 export interface DiscoverDep {
   name: string;
@@ -178,6 +179,13 @@ export interface DiscoverModel {
   policy: Policy;
   keep: string[];
   repos: DiscoverRepo[];
+  /**
+   * GitHub source: listed repos this run does not analyse (selection exclusions, and
+   * clone failures skipped with --allow-clone-failures), sorted by repo. Their
+   * references to org packages are invisible; the report warns about the ones with
+   * manifests. Absent for a local org directory.
+   */
+  excludedRepos?: ExcludedRepoInfo[];
 }
 
 export interface DiscoverLocalOptions {

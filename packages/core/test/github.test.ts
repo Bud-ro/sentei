@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  cloneRepos, discoverGithub, findToken, GithubApi, listRepos, probeManifests, readLockfile, selectGithubRepos, type Clock,
+  cloneRepos, discoverGithub, findToken, GithubApi, listRepos, probeManifests, probeRepoTree, readLockfile, readTree, selectGithubRepos, type Clock,
 } from '../src/github.ts';
 import type { EnsureCloneOptions } from '../src/git.ts';
 import { makeBareRepo } from './helpers/gitRepo.ts';
@@ -65,6 +65,20 @@ const branch = (name: string, s: string, b = 'main'): Record<string, Route> => (
   [`${API}/repos/acme/${name}/branches/${b}`]: { body: { name: b, commit: { sha: s } } },
 });
 const contents = (name: string, file: string, ref?: string): string => `${API}/repos/acme/${name}/contents/${file}${ref ? `?ref=${ref}` : ''}`;
+const treeUrl = (name: string, ref = 'main'): string => `${API}/repos/acme/${name}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
+/** A recursive-tree route: `files` maps blob path → size in bytes (dirs are implied). */
+const tree = (name: string, files: Record<string, number>, opts: { ref?: string; truncated?: boolean } = {}): Record<string, Route> => ({
+  [treeUrl(name, opts.ref)]: {
+    body: {
+      sha: sha('f'), truncated: opts.truncated ?? false,
+      tree: [
+        ...[...new Set(Object.keys(files).flatMap((p) => p.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))))]
+          .map((path) => ({ path, type: 'tree', sha: sha('d') })),
+        ...Object.entries(files).map(([path, size]) => ({ path, type: 'blob', size, sha: sha('b') })),
+      ],
+    },
+  },
+});
 const api = (fetchImpl: typeof fetch, extra: { clock?: Clock; log?: (l: string) => void } = {}): GithubApi =>
   new GithubApi({ token: 'tok', fetchImpl, ...extra });
 
@@ -201,13 +215,74 @@ describe('probeManifests', () => {
     expect(calls).toHaveLength(5);
   });
 
-  it('a rate-limited probe waits and retries instead of failing', async () => {
+  it('a rate-limited root probe waits and retries instead of failing', async () => {
     const clock = fakeClock();
     const { fetchImpl } = fakeFetch({
       [contents('js', 'package.json')]: [{ status: 429, body: {}, headers: { 'retry-after': '2' } }, { body: { type: 'file' } }],
     });
     expect(await probeManifests(api(fetchImpl, { clock }), 'acme', 'js', null)).toEqual({ 'package.json': true });
     expect(clock.sleeps).toEqual([2000]);
+  });
+});
+
+describe('probeRepoTree', () => {
+  it('one request by branch name: nested manifests outside installed/vendored dirs, HEAD size = sum of blobs', async () => {
+    const { fetchImpl, calls } = fakeFetch(tree('realtime', {
+      'mix.exs': 2048,
+      'assets/package.json': 1024, // nested only: the root probe missed it (supabase/realtime)
+      'pkgs/a/pubspec.yaml': 512,
+      'node_modules/x/package.json': 100, // committed dependencies are not the repo's code
+      'web/vendor/y/package.json': 100,
+      'third_party/z/pubspec.yaml': 100,
+      'app/build/package.json': 100,
+      '.dart_tool/package_config.json': 100,
+      'docs/package.json.md': 12,
+    }));
+    // Every blob counts toward the size (4096 bytes); only manifests are filtered.
+    expect(await probeRepoTree(api(fetchImpl), 'acme', 'realtime', { branch: 'main' })).toEqual({
+      probe: 'tree', manifests: ['assets/package.json', 'pkgs/a/pubspec.yaml'], headTreeKb: 4,
+    });
+    expect(calls.map((c) => c.url)).toEqual([treeUrl('realtime')]);
+  });
+
+  it('uses the pinned sha when there is one; a branch with a slash is encoded', async () => {
+    const a = fakeFetch(tree('lib', { 'package.json': 10 }, { ref: sha('1') }));
+    expect(await probeRepoTree(api(a.fetchImpl), 'acme', 'lib', { branch: 'main', sha: sha('1') })).toMatchObject({ probe: 'tree', manifests: ['package.json'] });
+    expect(a.calls.map((c) => c.url)).toEqual([treeUrl('lib', sha('1'))]);
+    const b = fakeFetch(tree('lib', { 'package.json': 10 }, { ref: 'release/1.x' }));
+    expect(await probeRepoTree(api(b.fetchImpl), 'acme', 'lib', { branch: 'release/1.x' })).toMatchObject({ probe: 'tree' });
+    expect(b.calls[0]!.url).toBe(`${API}/repos/acme/lib/git/trees/release%2F1.x?recursive=1`);
+  });
+
+  it('truncated tree: partial manifests plus the root probe, no HEAD size (the API size decides)', async () => {
+    const { fetchImpl, calls } = fakeFetch({
+      ...tree('mono', { 'apps/web/package.json': 10, 'big.bin': 50 * 1024 * 1024 }, { truncated: true }),
+      [contents('mono', 'package.json', 'main')]: { body: { type: 'file' } },
+    });
+    expect(await probeRepoTree(api(fetchImpl), 'acme', 'mono', { branch: 'main' }))
+      .toEqual({ probe: 'truncated', manifests: ['apps/web/package.json', 'package.json'], headTreeKb: null });
+    expect(calls.map((c) => c.url)).toEqual([treeUrl('mono'), contents('mono', 'package.json', 'main')]);
+  });
+
+  it('409 is an empty repo; a 404 by branch name looks the branch up (404 = empty) and retries by sha', async () => {
+    const empty = fakeFetch({ [treeUrl('e')]: { status: 409, body: { message: 'Git Repository is empty.' } } });
+    expect(await probeRepoTree(api(empty.fetchImpl), 'acme', 'e', { branch: 'main' })).toEqual({ empty: true });
+    const gone = fakeFetch({});
+    expect(await probeRepoTree(api(gone.fetchImpl), 'acme', 'g', { branch: 'main' })).toEqual({ empty: true });
+    expect(gone.calls.map((c) => c.url)).toEqual([treeUrl('g'), `${API}/repos/acme/g/branches/main`]);
+    const odd = fakeFetch({ ...branch('odd', sha('7')), ...tree('odd', { 'package.json': 2048 }, { ref: sha('7') }) });
+    expect(await probeRepoTree(api(odd.fetchImpl), 'acme', 'odd', { branch: 'main' }))
+      .toEqual({ probe: 'tree', manifests: ['package.json'], headTreeKb: 2, headSha: sha('7') });
+    // Still no tree: root probe only.
+    const none = fakeFetch({ ...branch('none', sha('8')), [contents('none', 'package.json', sha('8'))]: { body: { type: 'file' } } });
+    expect(await probeRepoTree(api(none.fetchImpl), 'acme', 'none', { branch: 'main' }))
+      .toEqual({ probe: 'root', manifests: ['package.json'], headTreeKb: null, headSha: sha('8') });
+  });
+
+  it('other errors propagate; readTree rejects a body without a tree', async () => {
+    const { fetchImpl } = fakeFetch({ [treeUrl('x')]: { status: 500, body: { message: 'boom' } } });
+    await expect(probeRepoTree(api(fetchImpl), 'acme', 'x', { branch: 'main' })).rejects.toThrow(/500.*boom/);
+    expect(() => readTree({ sha: 'x' })).toThrow(/no "tree" array/);
   });
 });
 
@@ -221,98 +296,167 @@ describe('selectGithubRepos', () => {
   const listing = [
     repo('lib'),
     repo('app', { language: 'Dart' }),
-    repo('hw-board', { language: 'C' }), // probe: nothing
-    repo('tools', { language: 'Shell' }), // probe: package.json
-    repo('site', { language: null }), // probe: pubspec.yaml
+    repo('hw-board', { language: 'C' }), // tree: no manifest
+    repo('tools', { language: 'Shell' }), // tree: a nested package.json only
+    repo('site', { language: null }), // truncated tree: root probe finds pubspec.yaml
     repo('old', { archived: true, language: 'C' }),
     repo('forked', { fork: true }),
-    repo('huge', { size: 900 * 1024, language: 'C++' }),
+    repo('huge', { size: 900 * 1024, language: 'C++' }), // huge history, small HEAD (supabase/cli)
+    repo('giant', { size: 700 * 1024 }), // huge HEAD
+    repo('mobile'), // excluded by config, but carries manifests
     repo('empty'),
   ];
   const routes = (): Record<string, Route | Route[]> => ({
     [LIST]: { body: listing },
+    ...tree('lib', { 'package.json': 100, 'src/index.ts': 924 }),
+    ...tree('app', { 'pubspec.yaml': 100 }),
+    ...tree('hw-board', { 'main.c': 100 }),
+    ...tree('tools', { 'install.sh': 100, 'cli/package.json': 924 }),
+    ...tree('site', { 'index.html': 100 }, { truncated: true }),
+    [contents('site', 'pubspec.yaml', 'main')]: { body: { type: 'file' } },
+    ...tree('huge', { 'package.json': 100, 'src/main.cc': 2 * 1024 * 1024 }),
+    ...tree('giant', { 'package.json': 100, 'data.bin': 600 * 1024 * 1024 }),
+    ...tree('mobile', { 'pubspec.yaml': 100, 'packages/ui/pubspec.yaml': 100 }),
+    [treeUrl('empty')]: { status: 409, body: { message: 'Git Repository is empty.' } },
     ...branch('lib', sha('1')),
     ...branch('app', sha('2')),
     ...branch('tools', sha('3')),
     ...branch('site', sha('4')),
-    [contents('tools', 'package.json')]: { body: { type: 'file' } },
-    [contents('site', 'pubspec.yaml')]: { body: { type: 'file' } },
+    ...branch('huge', sha('6')),
   });
 
-  it('decides every repo, probes only the undecided, pins only the selected, records everything in the lockfile', async () => {
+  it('probes every candidate\'s git tree (1 request), pins only the selected, records everything in the lockfile', async () => {
     const { fetchImpl, calls } = fakeFetch(routes());
     const lockfile = join(tmp, 'acme.lock.json');
     const logs: string[] = [];
     const clock = fakeClock();
-    const sel = await selectGithubRepos({ org: 'acme', token: 'tok', fetchImpl, lockfile, clock, log: (l) => logs.push(l) });
+    const config = { exclude: ['mobile'] };
+    const sel = await selectGithubRepos({ org: 'acme', token: 'tok', fetchImpl, lockfile, clock, config, log: (l) => logs.push(l) });
     const summary = Object.fromEntries(sel.repos.map((r) => [r.entry.name, [r.decision.include, r.decision.reasons.join('; ')]]));
     expect(summary).toEqual({
       app: [true, 'language Dart'],
       empty: [false, 'empty repository (no commit on the default branch)'],
       forked: [false, 'fork (--include-forks to keep)'],
-      'hw-board': [false, 'language C not in repos.languages; no package.json or pubspec.yaml at the root'],
-      huge: [false, 'size 900 MB over repos.maxSizeMb 500'],
+      giant: [false, 'HEAD size 600 MB over repos.maxSizeMb 500'],
+      'hw-board': [false, 'language C not in repos.languages; no package.json or pubspec.yaml in the HEAD tree'],
+      huge: [true, 'language C++, but package.json'],
       lib: [true, 'language TypeScript'],
+      mobile: [false, 'excluded by repos.exclude "mobile"'],
       old: [false, 'archived (--include-archived to keep)'],
-      site: [true, 'no language detected, but pubspec.yaml at the root'],
-      tools: [true, 'language Shell, but package.json at the root'],
+      site: [true, 'no language detected, but pubspec.yaml'],
+      tools: [true, 'language Shell, but cli/package.json'],
     });
-    // No probe for archived/fork/too-large repos, no sha lookup for unselected ones.
+    // One tree request per candidate (and for the explicitly excluded repo); nothing
+    // for archived/fork repos; a root probe only for the truncated tree; shas only for
+    // the selected.
     const urls = calls.map((c) => c.url.slice(API.length));
-    for (const skipped of ['old', 'forked', 'huge']) expect(urls.some((u) => u.includes(`/${skipped}/`))).toBe(false);
-    expect(urls.filter((u) => u.includes('/contents/')).sort()).toEqual([
-      '/repos/acme/hw-board/contents/package.json', '/repos/acme/hw-board/contents/pubspec.yaml',
-      '/repos/acme/site/contents/package.json', '/repos/acme/site/contents/pubspec.yaml',
-      '/repos/acme/tools/contents/package.json',
-    ]);
+    for (const skipped of ['old', 'forked']) expect(urls.some((u) => u.includes(`/${skipped}/`))).toBe(false);
+    expect(urls.filter((u) => u.includes('/git/trees/')).map((u) => u.split('/')[3]).sort())
+      .toEqual(['app', 'empty', 'giant', 'huge', 'hw-board', 'lib', 'mobile', 'site', 'tools']);
+    expect(urls.filter((u) => u.includes('/contents/'))).toEqual(['/repos/acme/site/contents/package.json?ref=main', '/repos/acme/site/contents/pubspec.yaml?ref=main']);
     expect(urls.filter((u) => u.includes('/branches/')).sort()).toEqual([
-      '/repos/acme/app/branches/main', '/repos/acme/empty/branches/main', '/repos/acme/lib/branches/main',
+      '/repos/acme/app/branches/main', '/repos/acme/huge/branches/main', '/repos/acme/lib/branches/main',
       '/repos/acme/site/branches/main', '/repos/acme/tools/branches/main',
     ]);
+    expect(calls).toHaveLength(1 + 9 + 2 + 5);
     expect(sel.apiRequests).toBe(calls.length);
-    expect(logs).toContain('selected 4 of 9 repo(s); skipped 1 archived, 1 empty, 1 fork, 1 language, 1 too large (`sentei repos` lists every reason)');
+    expect(logs).toContain('fetching the git tree of 9 repo(s) (package.json/pubspec.yaml anywhere, HEAD size; 1 request each)');
+    expect(logs).toContain('acme/site: git tree truncated by GitHub; root manifests only, API size used for repos.maxSizeMb');
+    expect(logs).toContain('selected 5 of 11 repo(s); skipped 1 archived, 1 empty, 1 excluded by include/exclude, 1 fork, 1 language, 1 too large (`sentei repos` lists every reason)');
+    expect(logs).toContain('warning: 2 excluded repo(s) have package manifests and may consume org packages (their references are invisible): '
+      + 'acme/giant (size, 1 manifest), acme/mobile (repos.exclude, 2 manifests)');
 
     const lock = readLockfile(lockfile);
+    expect(lock.version).toBe(3);
     expect(lock.selection).toEqual(sel.settings);
     expect(lock.generatedAt).toBe('2026-09-26T00:00:00.000Z');
     expect(lock.repos.find((r) => r.name === 'tools')).toEqual({
-      name: 'tools', defaultBranch: 'main', headSha: sha('3'), fork: false, language: 'Shell', sizeKb: 100, pushedAt: '2026-01-01T00:00:00Z',
-      manifests: { 'package.json': true }, selected: true, reasons: ['language Shell, but package.json at the root'],
+      name: 'tools', defaultBranch: 'main', headSha: sha('3'), fork: false, language: 'Shell', sizeKb: 100, headTreeKb: 1, pushedAt: '2026-01-01T00:00:00Z',
+      probe: 'tree', manifests: ['cli/package.json'], selected: true, reasons: ['language Shell, but cli/package.json'],
     });
+    expect(lock.repos.find((r) => r.name === 'site')).toMatchObject({ probe: 'truncated', headTreeKb: null, manifests: ['pubspec.yaml'] });
+    expect(lock.repos.find((r) => r.name === 'huge')).toMatchObject({ sizeKb: 900 * 1024, headTreeKb: 2049, selected: true });
     expect(lock.repos.find((r) => r.name === 'old')).toEqual({
       name: 'old', defaultBranch: 'main', fork: false, archived: true, language: 'C', sizeKb: 100, pushedAt: '2026-01-01T00:00:00Z',
       selected: false, reasons: ['archived (--include-archived to keep)'],
     });
     expect(lock.repos.find((r) => r.name === 'empty')).toMatchObject({ empty: true, selected: false });
+    // The audit list: every excluded repo, its reasons and what the probe found (null = not probed).
+    expect(lock.excluded).toEqual([
+      { repo: 'empty', reason: 'empty repository (no commit on the default branch)', manifests: null },
+      { repo: 'forked', reason: 'fork (--include-forks to keep)', manifests: null },
+      { repo: 'giant', reason: 'HEAD size 600 MB over repos.maxSizeMb 500', manifests: ['package.json'] },
+      { repo: 'hw-board', reason: 'language C not in repos.languages; no package.json or pubspec.yaml in the HEAD tree', manifests: [] },
+      { repo: 'mobile', reason: 'excluded by repos.exclude "mobile"', manifests: ['packages/ui/pubspec.yaml', 'pubspec.yaml'] },
+      { repo: 'old', reason: 'archived (--include-archived to keep)', manifests: null },
+    ]);
+    const text = readFileSync(lockfile, 'utf8');
+    expect(text.startsWith('{\n  "version": 3,\n  "org": "acme",')).toBe(true);
 
     // Rerun from the lockfile: same decisions, zero API calls, file untouched.
     const noApi = fakeFetch({});
-    const before = readFileSync(lockfile, 'utf8');
-    const again = await selectGithubRepos({ org: 'acme', token: null, fetchImpl: noApi.fetchImpl, lockfile, clock });
+    const again = await selectGithubRepos({ org: 'acme', token: null, fetchImpl: noApi.fetchImpl, lockfile, clock, config });
     expect(noApi.calls).toEqual([]);
     expect(again.repos.map((r) => r.decision)).toEqual(sel.repos.map((r) => r.decision));
-    expect(readFileSync(lockfile, 'utf8')).toBe(before);
+    expect(readFileSync(lockfile, 'utf8')).toBe(text);
 
-    // Changed settings are re-decided from recorded facts; only what is missing is fetched.
-    const more = fakeFetch({ ...branch('old', sha('5')) });
+    // Changed settings are re-decided from recorded facts; only what is missing is fetched
+    // (old: forced in, so its tree is fetched for the record and its sha pinned).
+    const more = fakeFetch({ ...tree('old', { 'main.c': 10 }), ...branch('old', sha('5')) });
     const logs3: string[] = [];
     const third = await selectGithubRepos({
       org: 'acme', token: 'tok', fetchImpl: more.fetchImpl, lockfile, clock, log: (l) => logs3.push(l),
-      config: { exclude: ['app'] }, cli: { include: ['old'] },
+      config: { exclude: ['mobile', 'app'] }, cli: { include: ['old'] },
     });
-    expect(more.calls.map((c) => c.url)).toEqual([`${API}/repos/acme/old/branches/main`]);
-    expect(third.repos.filter((r) => r.decision.include).map((r) => r.entry.name)).toEqual(['lib', 'old', 'site', 'tools']);
-    expect(logs3).toContain('selection settings changed since the lockfile was written (exclude [] → ["app"]; cliInclude [] → ["old"]): re-deciding from its recorded facts, pins kept');
+    expect(more.calls.map((c) => c.url)).toEqual([treeUrl('old'), `${API}/repos/acme/old/branches/main`]);
+    expect(third.repos.filter((r) => r.decision.include).map((r) => r.entry.name)).toEqual(['huge', 'lib', 'old', 'site', 'tools']);
+    expect(logs3).toContain('selection settings changed since the lockfile was written (exclude ["mobile"] → ["mobile","app"]; cliInclude [] → ["old"]): re-deciding from its recorded facts, pins kept');
     const lock3 = readLockfile(lockfile);
-    expect(lock3.selection?.exclude).toEqual(['app']);
+    expect(lock3.selection?.exclude).toEqual(['mobile', 'app']);
     expect(lock3.repos.find((r) => r.name === 'lib')!.headSha).toBe(sha('1')); // pins kept
     expect(lock3.repos.find((r) => r.name === 'app')).toMatchObject({ headSha: sha('2'), selected: false, reasons: ['excluded by repos.exclude "app"'] });
+    expect(lock3.repos.find((r) => r.name === 'old')).toMatchObject({ probe: 'tree', manifests: [], headSha: sha('5') });
 
     // Without a token, a lockfile missing data is a clear error.
-    await expect(selectGithubRepos({ org: 'acme', token: null, lockfile, clock, cli: { include: ['huge'] } }))
+    await expect(selectGithubRepos({ org: 'acme', token: null, lockfile, clock, config, cli: { include: ['giant'] } }))
       .rejects.toThrow(/pinning 1 repo\(s\) to their head sha needs a GitHub token/);
   });
 
+  it('a v2 lockfile is upgraded: its root-only probes are dropped and every candidate gets a tree at its pinned sha', async () => {
+    const lockfile = join(tmp, 'v2.lock.json');
+    const selection = { include: [], exclude: [], cliInclude: [], cliExclude: [], languages: ['TypeScript', 'JavaScript', 'Dart'],
+      maxSizeMb: 500, minPushed: null, includeForks: false, includeArchived: false, probe: true };
+    writeFileSync(lockfile, JSON.stringify({ org: 'acme', generatedAt: 'x', selection, repos: [
+      { name: 'lib', defaultBranch: 'main', headSha: sha('1'), fork: false, language: 'TypeScript', sizeKb: 10, pushedAt: '2026-01-01T00:00:00Z', selected: true, reasons: ['language TypeScript'] },
+      { name: 'rt', defaultBranch: 'main', fork: false, language: 'Elixir', sizeKb: 10, pushedAt: '2026-01-01T00:00:00Z',
+        manifests: { 'package.json': false, 'pubspec.yaml': false }, selected: false, reasons: ['language Elixir not in repos.languages; no package.json or pubspec.yaml at the root'] },
+    ] }));
+    const { fetchImpl, calls } = fakeFetch({
+      ...tree('lib', { 'package.json': 10 }, { ref: sha('1') }),
+      ...tree('rt', { 'mix.exs': 10, 'assets/package.json': 10 }),
+      ...branch('rt', sha('2')),
+    });
+    const sel = await selectGithubRepos({ org: 'acme', token: 'tok', fetchImpl, lockfile });
+    expect(calls.map((c) => c.url)).toEqual([treeUrl('lib', sha('1')), treeUrl('rt'), `${API}/repos/acme/rt/branches/main`]);
+    expect(sel.repos.map((r) => [r.entry.name, r.decision.include, r.decision.reasons])).toEqual([
+      ['lib', true, ['language TypeScript']],
+      ['rt', true, ['language Elixir, but assets/package.json']],
+    ]);
+    const lock = readLockfile(lockfile);
+    expect(lock.version).toBe(3);
+    expect(lock.repos.map((r) => r.manifests)).toEqual([['package.json'], ['assets/package.json']]);
+  });
+
+  it('prints tree progress every 50 repos above 300 candidates', async () => {
+    const many = Array.from({ length: 301 }, (_, i) => `r${String(i).padStart(3, '0')}`);
+    const { fetchImpl } = fakeFetch({
+      [LIST]: { body: many.map((n) => repo(n)) },
+      ...Object.assign({}, ...many.map((n) => ({ ...tree(n, { 'package.json': 10 }), ...branch(n, sha('1')) }))),
+    });
+    const logs: string[] = [];
+    await selectGithubRepos({ org: 'acme', token: 'tok', fetchImpl, lockfile: null, log: (l) => logs.push(l) });
+    expect(logs.filter((l) => l.startsWith('git trees '))).toEqual([50, 100, 150, 200, 250, 300].map((n) => `git trees ${n}/301`));
+  });
   it('a legacy lockfile (no selection metadata) needs no API and is never rewritten', async () => {
     const lockfile = join(tmp, 'old.lock.json');
     const text = JSON.stringify({ org: 'acme', generatedAt: 'x', repos: [
@@ -421,6 +565,11 @@ describe('discoverGithub (file:// clones, fake API)', () => {
     });
     expect(model.source).toEqual({ kind: 'github', org: 'acme', apiUrl: API, lockfile, clonesDir });
     expect(model.policy.minAgeDays).toBe(7);
+    // No tree routes here: skipme's tree and branch 404 (an empty repo, never probed).
+    expect(model.excludedRepos).toEqual([
+      { repo: 'acme/forked', reason: 'fork (--include-forks to keep)', manifests: null },
+      { repo: 'acme/skipme', reason: 'excluded by repos.exclude "skip*"', manifests: null },
+    ]);
     expect(model.repos.map((r) => [r.repo, r.headSha, r.localPath, r.defaultBranch])).toEqual([
       ['acme/app', app.shas[1], join(clonesDir, 'app'), 'main'],
       ['acme/lib', lib.shas[0], join(clonesDir, 'lib'), 'main'],
@@ -472,6 +621,8 @@ describe('discoverGithub (file:// clones, fake API)', () => {
       [LIST]: { body: [repo('lib', { clone_url: lib.url }), repo('gone', { clone_url: `${lib.url.replace(/lib\.git$/, 'gone.git')}` })] },
       ...branch('lib', lib.shas[1]),
       ...branch('gone', sha('e')),
+      ...tree('lib', { 'package.json': 10 }),
+      ...tree('gone', { 'package.json': 10 }),
     });
     const lockfile = join(tmp, 'acme.lock.json');
     const clonesDir = join(tmp, 'clones');
@@ -485,6 +636,8 @@ describe('discoverGithub (file:// clones, fake API)', () => {
     const model = await discoverGithub({ org: 'acme', token: null, lockfile, clonesDir, orgConfigDir: null, allowCloneFailures: true, log: (l) => logs.push(l) });
     expect(model.repos.map((r) => r.repo)).toEqual(['acme/lib']);
     expect(model.source).toMatchObject({ kind: 'github', cloneFailures: [{ repo: 'acme/gone', error: expect.stringMatching(/^git clone/) }] });
+    // A skipped clone failure is an excluded repo for the report's warning.
+    expect(model.excludedRepos).toEqual([{ repo: 'acme/gone', reason: expect.stringMatching(/^clone failed: git clone/), manifests: ['package.json'] }]);
     expect(logs.some((l) => /^warning: skipping 1 repo\(s\) that could not be cloned \(--allow-clone-failures\): gone\. Every org package they contain is unknown/.test(l))).toBe(true);
     expect(logs.some((l) => l.startsWith('cloned 2/2 (1 cached, 1 failed)'))).toBe(true);
   });
@@ -500,5 +653,13 @@ describe('discoverGithub (file:// clones, fake API)', () => {
     expect(() => readLockfile(lockfile)).toThrow(/template must be a boolean/);
     write({ org: 'acme', generatedAt: 'x', selection: { include: 'x' }, repos: [] });
     expect(() => readLockfile(lockfile)).toThrow(/selection.include must be an array of strings/);
+    write({ version: 4, org: 'acme', generatedAt: 'x', repos: [] });
+    expect(() => readLockfile(lockfile)).toThrow(/version 4 was written by a newer sentei/);
+    write({ version: 3, org: 'acme', generatedAt: 'x', repos: [{ name: 'x', defaultBranch: 'main', headSha: sha('e'), probe: 'tree', manifests: ['../package.json'] }] });
+    expect(() => readLockfile(lockfile)).toThrow(/manifests must be an array of repo-relative paths/);
+    write({ version: 3, org: 'acme', generatedAt: 'x', repos: [{ name: 'x', defaultBranch: 'main', headSha: sha('e'), manifests: ['package.json'] }] });
+    expect(() => readLockfile(lockfile)).toThrow(/manifests and probe go together/);
+    write({ version: 3, org: 'acme', generatedAt: 'x', repos: [], excluded: [{ repo: 'x' }] });
+    expect(() => readLockfile(lockfile)).toThrow(/excluded\[0\] needs "repo" and "reason"/);
   });
 });

@@ -236,28 +236,45 @@ describe('repos and GitHub discover (fake API)', () => {
   const sha = (c: string): string => c.repeat(40);
 
   it('repos lists every repo with its decision (fresh listing → lockfile), then reads the lockfile with no API calls', async () => {
+    const tree = (name: string, files: Record<string, number>): Record<string, unknown> => ({
+      [`${API}/repos/acme/${name}/git/trees/main?recursive=1`]: {
+        truncated: false, tree: Object.entries(files).map(([p, size]) => ({ path: p, type: 'blob', size })),
+      },
+    });
     const { fetchImpl, urls } = fakeFetch({
-      [LIST]: [apiRepo('lib'), apiRepo('hw', { language: 'C' }), apiRepo('old', { archived: true }), apiRepo('tools', { language: 'Shell' })],
+      [LIST]: [apiRepo('lib'), apiRepo('hw', { language: 'C' }), apiRepo('old', { archived: true }), apiRepo('tools', { language: 'Shell' }),
+        apiRepo('cli', { size: 900 * 1024 })],
+      ...tree('lib', { 'package.json': 1024, 'src/index.ts': 1024 }),
+      ...tree('hw', { 'main.c': 512 }),
+      ...tree('tools', { 'cli/package.json': 3 * 1024 * 1024 }),
+      ...tree('cli', { 'package.json': 1024, 'apps/web/package.json': 1024 }),
       [`${API}/repos/acme/lib/branches/main`]: { commit: { sha: sha('a') } },
       [`${API}/repos/acme/tools/branches/main`]: { commit: { sha: sha('b') } },
-      [`${API}/repos/acme/tools/contents/package.json`]: { type: 'file' },
+      [`${API}/repos/acme/cli/branches/main`]: { commit: { sha: sha('c') } },
     });
     const work = freshWork();
     const r = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work);
-    expect(r.err).toContain('[repos] listed 4 repo(s) for acme');
+    expect(r.err).toContain('[repos] listed 5 repo(s) for acme');
     expect(r.code).toBe(0);
     expect(r.out.split('\n')).toEqual([
-      'REPO   LANGUAGE      SIZE  PUSHED      SELECTED  REASONS',
-      'hw     C           2.0 MB  2026-08-01  no        language C not in repos.languages; no package.json or pubspec.yaml at the root',
-      'lib    TypeScript  2.0 MB  2026-08-01  yes       language TypeScript',
-      'old    TypeScript  2.0 MB  2026-08-01  no        archived (--include-archived to keep)',
-      'tools  Shell       2.0 MB  2026-08-01  yes       language Shell, but package.json at the root',
+      'Selected (3):',
+      'REPO   LANGUAGE          SIZE  MANIFESTS  PUSHED      REASONS',
+      'cli    TypeScript        2 KB          2  2026-08-01  language TypeScript',
+      'lib    TypeScript        2 KB          1  2026-08-01  language TypeScript',
+      'tools  Shell           3.0 MB          1  2026-08-01  language Shell, but cli/package.json',
       '',
-      '2 of 4 repo(s) selected',
+      'Excluded (2):',
+      'REPO   LANGUAGE          SIZE  MANIFESTS  PUSHED      REASONS',
+      'hw     C                 1 KB          0  2026-08-01  language C not in repos.languages; no package.json or pubspec.yaml in the HEAD tree',
+      'old    TypeScript  2.0 MB api          -  2026-08-01  archived (--include-archived to keep)',
+      '',
+      '3 of 5 repo(s) selected',
+      'SIZE is the HEAD tree; "api" marks GitHub\'s full-history size (git tree not fetched, truncated or unavailable)',
       '',
     ]);
     const lock = JSON.parse(readFileSync(path.join(work, 'acme.lock.json'), 'utf8'));
-    expect(lock.repos.map((x: { name: string; selected: boolean }) => [x.name, x.selected])).toEqual([['hw', false], ['lib', true], ['old', false], ['tools', true]]);
+    expect(lock.repos.map((x: { name: string; selected: boolean }) => [x.name, x.selected]))
+      .toEqual([['cli', true], ['hw', false], ['lib', true], ['old', false], ['tools', true]]);
     const calls = urls.length;
 
     // --json, from the lockfile; flags override config and re-decide without API calls.
@@ -266,8 +283,12 @@ describe('repos and GitHub discover (fake API)', () => {
     expect(urls).toHaveLength(calls);
     const rows = JSON.parse(j.out);
     expect(rows.find((x: { name: string }) => x.name === 'tools')).toMatchObject({
-      selected: false, reasons: ['excluded by --exclude "tools"'], language: 'Shell', sizeKb: 2048, manifests: { 'package.json': true }, headSha: sha('b'),
+      selected: false, reasons: ['excluded by --exclude "tools"'], language: 'Shell', sizeKb: 2048, headTreeKb: 3072, sizeSource: 'head',
+      probe: 'tree', manifests: ['cli/package.json'], headSha: sha('b'),
     });
+    const t = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work, '--exclude', 'tools');
+    expect(t.out).toContain('\n1 excluded repo(s) have package manifests and may consume org packages (their references are invisible): tools\n');
+    expect(t.err).toContain('[repos] warning: 1 excluded repo(s) have package manifests and may consume org packages (their references are invisible): acme/tools (--exclude, 1 manifest)');
     expect(j.err).toMatch(/selection settings changed since the lockfile was written \(cliExclude \[\] → \["tools"\]\)/);
   });
 
@@ -306,6 +327,6 @@ describe('repos and GitHub discover (fake API)', () => {
     expect(model.source.cloneFailures).toEqual([{ repo: 'acme/gone', error: expect.stringMatching(/^git clone/) }]);
 
     const listed = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work);
-    expect(listed.out).toMatch(/^gone .* yes +language TypeScript; last clone failed: git clone/m);
+    expect(listed.out).toMatch(/^gone .* language TypeScript; last clone failed: git clone/m);
   });
 });

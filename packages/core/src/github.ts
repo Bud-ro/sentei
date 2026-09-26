@@ -1,17 +1,19 @@
-// GitHub discovery (PLAN.md §6.1, §13; DESIGN Phase 2 decisions 4 and 5): list an
-// org's (or user's) repos over the REST API with plain fetch + Link-header
-// pagination, decide which ones to clone (repo-select.ts, manifest probes for the
-// undecided), pin head shas in a lockfile, shallow-clone the selected repos in
-// parallel, then build the model with discoverRepos.
+// GitHub discovery (PLAN.md §6.1, §13; DESIGN Phase 2 decisions 4 and 5, fix
+// round 1): list an org's (or user's) repos over the REST API with plain fetch +
+// Link-header pagination, fetch each candidate's recursive git tree (manifests
+// anywhere, HEAD size), decide which ones to clone (repo-select.ts), pin head shas
+// in a lockfile, shallow-clone the selected repos in parallel, then build the
+// model with discoverRepos.
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { readOrgConfig, type RepoSelectConfig } from './config.ts';
 import { discoverRepos, type DiscoverModel } from './discover.ts';
 import { ensureClone, objectStoreKb, type EnsureCloneOptions, type EnsureCloneResult } from './git.ts';
+import { ALWAYS_SKIP_DIRS, inIgnoredDir } from './manifests.ts';
 import {
-  decideRepo, DEFAULT_CLONE_CONCURRENCY, diffSettings, mergeSelectSettings, PROBE_MANIFESTS,
-  type RepoDecision, type RepoFacts, type RepoSelectCli, type RepoSelectSettings,
+  decideRepo, DEFAULT_CLONE_CONCURRENCY, diffSettings, excludedReposWarning, mergeSelectSettings, PROBE_MANIFESTS,
+  shortenExcludedWarning, type ExcludedRepoInfo, type ProbeKind, type RepoDecision, type RepoFacts, type RepoSelectCli, type RepoSelectSettings,
 } from './repo-select.ts';
 
 export const DEFAULT_API_URL = 'https://api.github.com';
@@ -99,6 +101,14 @@ export const SECONDARY_BACKOFF_MS: readonly number[] = [60_000, 120_000, 240_000
 const MAX_PRIMARY_WAITS = 2;
 
 class NotFound extends Error {}
+/** A non-404 error response that is not a rate limit (status kept for callers such as the tree probe). */
+class HttpError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 const clockTime = (ms: number): string => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const humanWait = (ms: number): string => (ms >= 90_000 ? `${Math.ceil(ms / 60_000)} min` : `${Math.ceil(ms / 1000)} s`);
@@ -196,7 +206,7 @@ export class GithubApi {
         this.#pause(this.#clock.now() + delay, `GitHub API secondary rate limit (${res.status}, retry ${secondaryRetries}/${SECONDARY_BACKOFF_MS.length})`);
         continue;
       }
-      throw new Error(`sentei: GitHub API GET ${label}: ${res.status} ${res.statusText}${message ? `: ${message}` : ''}`);
+      throw new HttpError(`sentei: GitHub API GET ${label}: ${res.status} ${res.statusText}${message ? `: ${message}` : ''}`, res.status);
     }
   }
 
@@ -304,8 +314,94 @@ export async function headShaOf(api: GithubApi, owner: string, repo: string, bra
 }
 
 /**
+ * Directories whose manifests are not the repo's own code: installed or vendored
+ * dependencies, tool state, build output. Committed ones still show up in a git
+ * tree, unlike a checkout walk where .gitignore hides them.
+ */
+export const TREE_SKIP_DIRS: ReadonlySet<string> = new Set([...ALWAYS_SKIP_DIRS, 'build', 'vendor', 'third_party']);
+
+/** Result of probing one repo's HEAD tree. */
+export type TreeProbe =
+  | { empty: true }
+  | {
+    empty?: false;
+    probe: ProbeKind;
+    /** Sorted repo-relative package.json / pubspec.yaml paths outside TREE_SKIP_DIRS. */
+    manifests: string[];
+    /** Sum of blob sizes (KB, rounded up); null unless the full tree was read. */
+    headTreeKb: number | null;
+    /** Commit sha, when the probe had to look the branch up (fallback path only). */
+    headSha?: string;
+  };
+
+interface ApiTree {
+  truncated?: boolean;
+  tree?: Array<{ path?: unknown; type?: unknown; size?: unknown }>;
+}
+
+/** Manifests and blob-size sum of a (possibly partial) recursive tree listing. */
+export function readTree(body: unknown): { manifests: string[]; kb: number; truncated: boolean } {
+  const t = body as ApiTree;
+  if (typeof t !== 'object' || t === null || !Array.isArray(t.tree)) throw new Error('sentei: GitHub API: git tree response has no "tree" array');
+  const manifests: string[] = [];
+  let bytes = 0;
+  for (const e of t.tree) {
+    if (e.type !== 'blob' || typeof e.path !== 'string') continue;
+    if (typeof e.size === 'number') bytes += e.size;
+    const base = e.path.slice(e.path.lastIndexOf('/') + 1);
+    if (PROBE_MANIFESTS.includes(base) && !inIgnoredDir(e.path, TREE_SKIP_DIRS)) manifests.push(e.path);
+  }
+  return { manifests: manifests.sort(), kb: Math.ceil(bytes / 1024), truncated: t.truncated === true };
+}
+
+/**
+ * One repo's HEAD tree: GET /repos/{o}/{r}/git/trees/{ref}?recursive=1, where `ref`
+ * is the pinned sha when there is one, else the default branch name (the API takes
+ * either). One request in the normal case. Fallbacks:
+ * - 409 (empty repository) → `{ empty: true }`;
+ * - 404 by branch name → look the branch up (404 there = empty repo) and retry the
+ *   tree by its commit sha (3 requests; `headSha` is returned);
+ * - `truncated: true` (over 100k entries / 7 MB) → the partial tree's manifests
+ *   plus the root probe (probeManifests), `probe: 'truncated'`, no HEAD size;
+ * - a tree still missing → root probe only, `probe: 'root'`.
+ */
+export async function probeRepoTree(api: GithubApi, owner: string, repo: string, ref: { sha?: string; branch: string }): Promise<TreeProbe> {
+  const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const treeAt = async (r: string): Promise<unknown | 'missing' | 'empty'> => {
+    try {
+      return (await api.get(`${base}/git/trees/${encodeURIComponent(r)}?recursive=1`)).body;
+    } catch (err) {
+      if (err instanceof NotFound) return 'missing';
+      if (err instanceof HttpError && err.status === 409) return 'empty';
+      throw err;
+    }
+  };
+  let headSha: string | undefined;
+  let body = await treeAt(ref.sha ?? ref.branch);
+  if (body === 'empty') return { empty: true };
+  if (body === 'missing' && ref.sha === undefined) {
+    const sha = await headShaOf(api, owner, repo, ref.branch);
+    if (sha === null) return { empty: true };
+    headSha = sha;
+    body = await treeAt(sha);
+    if (body === 'empty') return { empty: true };
+  }
+  const withSha = headSha !== undefined ? { headSha } : {};
+  const rootProbe = async (): Promise<string[]> => {
+    const found = await probeManifests(api, owner, repo, headSha ?? ref.sha ?? ref.branch);
+    return PROBE_MANIFESTS.filter((m) => found[m] === true);
+  };
+  if (body === 'missing') return { probe: 'root', manifests: await rootProbe(), headTreeKb: null, ...withSha };
+  const t = readTree(body);
+  if (!t.truncated) return { probe: 'tree', manifests: t.manifests, headTreeKb: t.kb, ...withSha };
+  const manifests = [...new Set([...t.manifests, ...await rootProbe()])].sort();
+  return { probe: 'truncated', manifests, headTreeKb: null, ...withSha };
+}
+
+/**
  * Root manifest probe: GET /repos/{o}/{r}/contents/<file> at `ref`, 404 = absent.
- * Stops at the first hit (package.json before pubspec.yaml), so 1-2 requests.
+ * Stops at the first hit (package.json before pubspec.yaml), so 1-2 requests. Only
+ * the fallback of probeRepoTree now.
  */
 export async function probeManifests(api: GithubApi, owner: string, repo: string, ref: string | null): Promise<Record<string, boolean>> {
   const out: Record<string, boolean> = {};
@@ -336,10 +432,15 @@ export interface LockRepo {
   /** The default branch had no commit when listed. */
   empty?: boolean;
   language?: string | null;
+  /** API `size` (KB, whole history). */
   sizeKb?: number | null;
+  /** HEAD tree size (KB), null when the tree was truncated or unavailable; absent = not probed. */
+  headTreeKb?: number | null;
   pushedAt?: string | null;
-  /** Root manifest probe result; absent = not probed. */
-  manifests?: Record<string, boolean>;
+  /** How the manifests were found; absent = not probed. */
+  probe?: ProbeKind;
+  /** package.json / pubspec.yaml paths found by the probe; absent = not probed. */
+  manifests?: string[];
   selected?: boolean;
   reasons?: string[];
   /** First line of the last clone failure (cleared by a successful clone). */
@@ -348,8 +449,27 @@ export interface LockRepo {
   cloneUrl?: string;
 }
 
+/**
+ * Lockfile format written by this version. 3: `manifests` is a path list from the
+ * git tree, plus `headTreeKb`, `probe` and the `excluded` summary. 2 (no `version`
+ * key, `selection` header, `manifests` as root file → boolean) is read and upgraded:
+ * its root-only probe results are dropped so every candidate gets a tree probe.
+ */
+export const LOCKFILE_VERSION = 3;
+
+/** One excluded repo, for auditing what was skipped (derived from `repos` on every write). */
+export interface LockExcluded {
+  repo: string;
+  /** The decision's reasons, joined with "; ". */
+  reason: string;
+  /** Manifest paths found; null = not probed (rule 2-3 skips, probe off). */
+  manifests: string[] | null;
+}
+
 /** PLAN §13: pinned listing, committed next to the fixtures. */
 export interface Lockfile {
+  /** LOCKFILE_VERSION; absent in v1 (legacy) and v2 lockfiles. */
+  version?: number;
   org: string;
   /** ISO timestamp of the listing. */
   generatedAt: string;
@@ -361,7 +481,12 @@ export interface Lockfile {
   selection?: RepoSelectSettings;
   /** Every listed repo, sorted by name. */
   repos: LockRepo[];
+  /** Excluded repos with their reasons and manifests (v3; absent in legacy lockfiles). */
+  excluded?: LockExcluded[];
 }
+
+const isRelPath = (p: unknown): p is string =>
+  typeof p === 'string' && p !== '' && !p.startsWith('/') && !p.split('/').some((s) => s === '' || s === '.' || s === '..');
 
 export function readLockfile(file: string): Lockfile {
   let json: unknown;
@@ -376,6 +501,12 @@ export function readLockfile(file: string): Lockfile {
   if (typeof o['org'] !== 'string' || o['org'] === '') throw bad('"org" must be a non-empty string');
   if (typeof o['generatedAt'] !== 'string') throw bad('"generatedAt" must be a string');
   if (!Array.isArray(o['repos'])) throw bad('"repos" must be an array');
+  const version = o['version'];
+  if (version !== undefined && (typeof version !== 'number' || !Number.isInteger(version) || version < 3)) throw bad('"version" must be an integer ≥ 3');
+  if (typeof version === 'number' && version > LOCKFILE_VERSION) {
+    throw bad(`version ${version} was written by a newer sentei (this one reads up to ${LOCKFILE_VERSION}); upgrade, or rerun with --update-lockfile`);
+  }
+  const v3 = version !== undefined;
   let selection: RepoSelectSettings | undefined;
   if (o['selection'] !== undefined) {
     const sel = o['selection'];
@@ -427,17 +558,25 @@ export function readLockfile(file: string): Lockfile {
       if (e['sizeKb'] !== null && (typeof e['sizeKb'] !== 'number' || e['sizeKb'] < 0)) throw bad(`repos[${i}].sizeKb must be a number or null`);
       out.sizeKb = e['sizeKb'] as number | null;
     }
+    if (e['headTreeKb'] !== undefined) {
+      if (e['headTreeKb'] !== null && (typeof e['headTreeKb'] !== 'number' || e['headTreeKb'] < 0)) throw bad(`repos[${i}].headTreeKb must be a number or null`);
+      out.headTreeKb = e['headTreeKb'] as number | null;
+    }
     if (e['pushedAt'] !== undefined) {
       if (e['pushedAt'] !== null && typeof e['pushedAt'] !== 'string') throw bad(`repos[${i}].pushedAt must be a string or null`);
       out.pushedAt = e['pushedAt'] as string | null;
     }
-    if (e['manifests'] !== undefined) {
-      const m = e['manifests'];
-      if (typeof m !== 'object' || m === null || Array.isArray(m) || !Object.values(m).every((v) => typeof v === 'boolean')) {
-        throw bad(`repos[${i}].manifests must map file names to booleans`);
-      }
-      out.manifests = { ...(m as Record<string, boolean>) };
+    if (e['probe'] !== undefined) {
+      if (e['probe'] !== 'tree' && e['probe'] !== 'truncated' && e['probe'] !== 'root') throw bad(`repos[${i}].probe must be "tree", "truncated" or "root"`);
+      out.probe = e['probe'];
     }
+    // v2 wrote a root-only probe (file → boolean): dropped, so the repo gets a tree probe.
+    if (e['manifests'] !== undefined && v3) {
+      const m = e['manifests'];
+      if (!Array.isArray(m) || !m.every(isRelPath)) throw bad(`repos[${i}].manifests must be an array of repo-relative paths`);
+      out.manifests = [...m];
+    }
+    if (v3 && (out.manifests === undefined) !== (out.probe === undefined)) throw bad(`repos[${i}]: manifests and probe go together`);
     if (e['reasons'] !== undefined) {
       if (!Array.isArray(e['reasons']) || !e['reasons'].every((x) => typeof x === 'string')) throw bad(`repos[${i}].reasons must be an array of strings`);
       out.reasons = [...e['reasons']];
@@ -453,7 +592,21 @@ export function readLockfile(file: string): Lockfile {
     if (out.selected === true && out.headSha === undefined) throw bad(`repos[${i}] is selected but has no headSha`);
     return out;
   });
-  return { org: o['org'], generatedAt: o['generatedAt'], ...(selection ? { selection } : {}), repos };
+  let excluded: LockExcluded[] | undefined;
+  if (o['excluded'] !== undefined) {
+    if (!Array.isArray(o['excluded'])) throw bad('"excluded" must be an array');
+    excluded = o['excluded'].map((x: unknown, i): LockExcluded => {
+      const e = (typeof x === 'object' && x !== null ? x : {}) as Record<string, unknown>;
+      if (typeof e['repo'] !== 'string' || typeof e['reason'] !== 'string') throw bad(`excluded[${i}] needs "repo" and "reason" strings`);
+      const m = e['manifests'];
+      if (m !== null && (!Array.isArray(m) || !m.every(isRelPath))) throw bad(`excluded[${i}].manifests must be an array of paths or null`);
+      return { repo: e['repo'], reason: e['reason'], manifests: m === null ? null : [...(m as string[])] };
+    });
+  }
+  return {
+    ...(v3 ? { version: version as number } : {}),
+    org: o['org'], generatedAt: o['generatedAt'], ...(selection ? { selection } : {}), repos, ...(excluded ? { excluded } : {}),
+  };
 }
 
 export function writeLockfile(file: string, lock: Lockfile): void {
@@ -461,7 +614,20 @@ export function writeLockfile(file: string, lock: Lockfile): void {
   writeFileSync(file, lockfileText(lock));
 }
 
-const lockfileText = (lock: Lockfile): string => `${JSON.stringify(lock, null, 2)}\n`;
+const LOCK_REPO_KEYS: ReadonlyArray<keyof LockRepo> = [
+  'name', 'defaultBranch', 'headSha', 'fork', 'template', 'archived', 'disabled', 'empty', 'language', 'sizeKb', 'headTreeKb',
+  'pushedAt', 'probe', 'manifests', 'selected', 'reasons', 'cloneError', 'cloneUrl',
+];
+
+/** Stable key order whatever order the fields were set in. */
+const lockfileText = (lock: Lockfile): string => `${JSON.stringify({
+  ...(lock.version !== undefined ? { version: lock.version } : {}),
+  org: lock.org,
+  generatedAt: lock.generatedAt,
+  ...(lock.selection ? { selection: lock.selection } : {}),
+  repos: lock.repos.map((r) => Object.fromEntries(LOCK_REPO_KEYS.filter((k) => r[k] !== undefined).map((k) => [k, r[k]]))),
+  ...(lock.excluded ? { excluded: lock.excluded } : {}),
+}, null, 2)}\n`;
 
 // ------------------------------------------------------------------ select ---
 
@@ -517,7 +683,13 @@ const factsOf = (r: LockRepo): RepoFacts => ({
   sizeKb: r.sizeKb ?? null,
   pushedAt: r.pushedAt ?? null,
   ...(r.manifests ? { manifests: r.manifests } : {}),
+  ...(r.headTreeKb !== undefined ? { headTreeKb: r.headTreeKb } : {}),
+  ...(r.probe ? { probe: r.probe } : {}),
 });
+
+/** Print tree-probe progress every this many repos when there are more than TREE_PROGRESS_OVER. */
+const TREE_PROGRESS_EVERY = 50;
+const TREE_PROGRESS_OVER = 300;
 
 /**
  * Listing (API, or the lockfile when it exists) → decisions (repo-select.ts) →
@@ -585,13 +757,26 @@ export async function selectGithubRepos(opts: SelectGithubReposOptions): Promise
   const decideAll = (): RepoDecision[] => lock.repos.map((r) => decideRepo(factsOf(r), settings, nowMs, legacy));
   let decisions = decideAll();
 
-  // Probes, only for repos every other rule lets through.
+  // Git trees (manifests anywhere, HEAD size) for every candidate rules 2-3 let
+  // through, and for explicitly matched repos (for the record).
   const toProbe = lock.repos.filter((_, i) => decisions[i]!.needsProbe === true);
   if (toProbe.length > 0) {
-    const a = await needApi(`probing ${toProbe.length} repo(s) for package.json/pubspec.yaml`);
-    log(`probing ${toProbe.length} repo(s) whose language is not in repos.languages for ${PROBE_MANIFESTS.join('/')}`);
+    const a = await needApi(`fetching the git tree of ${toProbe.length} repo(s)`);
+    log(`fetching the git tree of ${toProbe.length} repo(s) (${PROBE_MANIFESTS.join('/')} anywhere, HEAD size; 1 request each)`);
+    let done = 0;
     await mapPool(toProbe, API_CONCURRENCY, async (r) => {
-      r.manifests = await probeManifests(a, owners.get(r.name) ?? opts.org, r.name, r.headSha ?? null);
+      const p = await probeRepoTree(a, owners.get(r.name) ?? opts.org, r.name, { branch: r.defaultBranch, ...(r.headSha ? { sha: r.headSha } : {}) });
+      if (p.empty === true) {
+        r.empty = true;
+      } else {
+        r.probe = p.probe;
+        r.manifests = p.manifests;
+        r.headTreeKb = p.headTreeKb;
+        if (p.headSha !== undefined && r.headSha === undefined) r.headSha = p.headSha;
+        if (p.probe !== 'tree') log(`${opts.org}/${r.name}: git tree ${p.probe === 'truncated' ? 'truncated by GitHub' : 'unavailable'}; root manifests only, API size used for repos.maxSizeMb`);
+      }
+      done++;
+      if (toProbe.length > TREE_PROGRESS_OVER && done % TREE_PROGRESS_EVERY === 0) log(`git trees ${done}/${toProbe.length}`);
     });
     decisions = decideAll();
   }
@@ -612,15 +797,22 @@ export async function selectGithubRepos(opts: SelectGithubReposOptions): Promise
   }
 
   if (!legacy) {
+    lock.version = LOCKFILE_VERSION;
     lock.selection = settings;
     lock.repos.forEach((r, i) => {
       r.selected = decisions[i]!.include;
       r.reasons = decisions[i]!.reasons;
     });
+    lock.excluded = lock.repos.filter((_, i) => !decisions[i]!.include)
+      .map((r) => ({ repo: r.name, reason: r.reasons!.join('; '), manifests: r.manifests ?? null }));
   }
   const selectedCount = decisions.filter((d) => d.include).length;
   log(`selected ${selectedCount} of ${lock.repos.length} repo(s)${summarizeSkips(decisions)}`);
   if (selectedCount === 0) log('warning: no repos selected');
+  const withManifests = excludedWithManifests(lock.repos.map((entry, i) => ({ entry, decision: decisions[i]! })));
+  if (withManifests.length > 0) {
+    log(`warning: ${shortenExcludedWarning(excludedReposWarning(withManifests.map((x) => ({ ...x, repo: `${opts.org}/${x.repo}` }))), 10, '`sentei repos` lists them all')}`);
+  }
 
   if (lockfile !== null && !legacy && lockfileText(lock) !== before) {
     writeLockfile(lockfile, lock);
@@ -641,6 +833,13 @@ export async function selectGithubRepos(opts: SelectGithubReposOptions): Promise
   };
 }
 
+/** Excluded repos whose probe found at least one manifest (bare repo names), in input order. */
+export function excludedWithManifests(repos: ReadonlyArray<{ entry: LockRepo; decision: RepoDecision }>): ExcludedRepoInfo[] {
+  return repos
+    .filter((r) => !r.decision.include && (r.entry.manifests?.length ?? 0) > 0)
+    .map((r) => ({ repo: r.entry.name, reason: r.decision.reasons.join('; '), manifests: r.entry.manifests! }));
+}
+
 /** ", skipped: 12 archived, 3 fork, ..." grouped by the first word of each skip reason. */
 function summarizeSkips(decisions: readonly RepoDecision[]): string {
   const counts = new Map<string, number>();
@@ -648,7 +847,7 @@ function summarizeSkips(decisions: readonly RepoDecision[]): string {
     if (d.include) continue;
     const r = d.reasons[d.reasons.length - 1] ?? '';
     const key = /^excluded by/.test(r) ? 'excluded by include/exclude'
-      : /^size /.test(r) ? 'too large'
+      : /^(HEAD )?size /.test(r) ? 'too large'
         : /^(last push|never pushed)/.test(r) ? 'stale'
           : /^(language|no language)/.test(r) ? 'language'
             : r.split(/[ (]/)[0]!;
@@ -831,8 +1030,17 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
   }
   const failedNames = new Set(failed.map((o) => o.name));
   const cloned = selected.filter((r) => !failedNames.has(r.entry.name));
+  // Every repo this run does not see, for the report's excluded-repo warning.
+  const excludedRepos: ExcludedRepoInfo[] = [
+    ...sel.repos.filter((r) => !r.decision.include)
+      .map((r) => ({ repo: `${opts.org}/${r.entry.name}`, reason: r.decision.reasons.join('; '), manifests: r.entry.manifests ?? null })),
+    ...failed.map((o) => {
+      const r = sel.repos.find((x) => x.entry.name === o.name)!;
+      return { repo: `${opts.org}/${o.name}`, reason: `clone failed: ${o.error}`, manifests: r.entry.manifests ?? null };
+    }),
+  ].sort((a, b) => (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0));
 
-  return discoverRepos({
+  const model = discoverRepos({
     org: opts.org,
     source: {
       kind: 'github', org: opts.org, apiUrl: (opts.apiUrl ?? DEFAULT_API_URL).replace(/\/+$/, ''), lockfile: sel.lockfile, clonesDir,
@@ -843,4 +1051,5 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
     log,
     ...(opts.now !== undefined ? { now: opts.now } : {}),
   });
+  return { ...model, excludedRepos };
 }
