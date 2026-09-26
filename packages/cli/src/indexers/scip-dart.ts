@@ -4,7 +4,8 @@
 //     @ 8d017a25874efb8513617e85e508a573692cbb63) with the patches listed in its
 //     PATCHES.md (SDK floor 3.11; `--private-symbols`, which we always pass;
 //     valid symbols for operators, nameless elements and import prefixes;
-//     no occurrences for dartdoc `[Name]` links);
+//     no occurrences for dartdoc `[Name]` links; `--package`, one run for the
+//     packages of a pub workspace; every analysis context's files);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar.
 // Org dependencies are source-linked with a `pubspec_overrides.yaml`
@@ -15,15 +16,20 @@
 // _embedder.yaml) into the Flutter SDK; both tools then analyze against the
 // Flutter SDK's own Dart SDK (`--sdk-path <flutterRoot>/bin/cache/dart-sdk`),
 // which is a no-op when the `dart` on PATH is Flutter's.
+// A pub workspace (root pubspec `workspace:`, members `resolution: workspace`)
+// is resolved once at its root (source links only there, only for org deps
+// outside the workspace: pub refuses to override a workspace package) and
+// indexed by one scip-dart run over all its packages (see [PubWorkspace]).
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TEST_GLOBS, inSurfaceDir, matchGlob } from '@sentei/core';
+import { readScipIndex } from '@sentei/core/scip';
 import { isExcludedConsumerFile } from './consumer-checks.ts';
 import { packageDir, packageSlug } from './scip-typescript.ts';
-import type { DiscoveredPackage, DiscoveredRepo, EntrySymbol, ExportsSidecar, Indexer, IndexerInput, IndexStatus, IndexerResult, SourcePosition } from './types.ts';
+import type { DiscoveredDep, DiscoveredPackage, DiscoveredRepo, EntrySymbol, ExportsSidecar, Indexer, IndexerInput, IndexerOptions, IndexStatus, IndexerResult, PrepareResult, SourcePosition } from './types.ts';
 import { worstStatus } from './types.ts';
 
 const INDEXERS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../indexers');
@@ -71,7 +77,10 @@ export const scipDart: Indexer = {
   // a failed pub get, unresolved own `package:` URIs collapse into one error.
   // sentei.8: Flutter packages (`flutter pub get`, fork patch 5 `--sdk-path`
   // and dart-surface `--sdk-path` pointing at the Flutter SDK's Dart SDK).
-  version: '1.7.0+sentei.8',
+  // sentei.9: pub workspaces (resolved once at the root, indexed by one run,
+  // fork patch 6), fork patch 7 (the lib/ of a member listed by path), a
+  // package with lib/ code but no lib/ document fails.
+  version: '1.7.0+sentei.9',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -87,6 +96,16 @@ export const scipDart: Indexer = {
       return { status: 'failed', diagnostics: [`error: ${path.join(pkg.path, 'pubspec.yaml')} not found`], log };
     }
     const dir = realpathSync(pkgDirPath);
+    // A pub workspace resolves once, at its root, for every member.
+    const ws = pubWorkspaceOf(repo, pkg);
+    if (ws !== undefined) {
+      const shared = await once(workspacePrepares, options, ws.root, () => prepareWorkspace(input, ws));
+      return {
+        status: shared.status,
+        diagnostics: [`info: ${workspaceRole(ws, dir)}: resolved once at the workspace root for ${ws.packages.length} package(s)`, ...shared.diagnostics],
+        log: [...shared.log],
+      };
+    }
     // 1. Source-link org dependencies (before `pub get`, which reads the overrides).
     const links = writeOverrides(input, dir, diagnostics);
     // 2. Resolve. Offline when installs are disabled: path deps and anything
@@ -152,17 +171,30 @@ export const scipDart: Indexer = {
 
     const repoRoot = realpathSync(repo.localPath);
     const dir = realpathSync(packageDir(repo, pkg));
+    const ws = pubWorkspaceOf(repo, pkg);
 
-    // Flutter packages: analyze against the Flutter SDK's Dart SDK.
-    const sdk = flutterReason(input) !== undefined ? await flutterSdk() : undefined;
+    // Flutter packages (in a workspace: when any package of it is one): analyze
+    // against the Flutter SDK's Dart SDK.
+    const needsFlutter = ws !== undefined ? workspaceFlutterReason(input, ws) !== undefined : flutterReason(input) !== undefined;
+    const sdk = needsFlutter ? await flutterSdk() : undefined;
     const sdkArgs = sdk?.dartSdk !== undefined ? ['--sdk-path', sdk.dartSdk] : [];
 
     // 3. Index. scip-dart exits 0 on type errors and on unresolved imports; it
     //    fails only without .dart_tool/package_config.json (i.e. pub get failed).
-    rmSync(scipFile, { force: true });
-    const scipArgs = ['run', 'scip_dart', '--private-symbols', ...sdkArgs, '--output', scipFile, dir];
-    const proc = await exec('dart', scipArgs, SCIP_DART_DIR);
-    log.push(`$ dart ${scipArgs.join(' ')}  (cwd ${SCIP_DART_DIR})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+    //    A pub workspace is indexed by one scip-dart run over all its packages
+    //    (fork patch 6), each still getting its own index as if indexed alone.
+    let proc: ExecResult;
+    if (ws !== undefined) {
+      const shared = await once(workspaceRuns, options, `${ws.root}\0${outDir}`, () => indexWorkspace(repo, ws, outDir, sdkArgs));
+      proc = shared.proc;
+      log.push(...shared.log);
+      diagnostics.push(`info: indexed in one scip-dart run with the ${ws.packages.length} package(s) of the pub workspace at ${ws.rootPath}`);
+    } else {
+      rmSync(scipFile, { force: true });
+      const scipArgs = ['run', 'scip_dart', '--private-symbols', ...sdkArgs, '--output', scipFile, dir];
+      proc = await exec('dart', scipArgs, SCIP_DART_DIR);
+      log.push(`$ dart ${scipArgs.join(' ')}  (cwd ${SCIP_DART_DIR})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+    }
     if (proc.code !== 0) {
       status = 'failed';
       const why = firstLine(proc.stderr);
@@ -171,6 +203,23 @@ export const scipDart: Indexer = {
     if (!existsSync(scipFile) || statSync(scipFile).size === 0) {
       status = 'failed';
       diagnostics.push(`error: ${path.basename(scipFile)} missing or empty`);
+    } else {
+      // A package with library code whose index has none of it: the analyzer
+      // context missed lib/ (fork patch 7 fixed one such case). Every export
+      // would look unused and every consumer reference unknown: never `ok`.
+      const libFiles = ownLibDartFiles(repo, pkg);
+      if (libFiles > 0) {
+        let libDocs = 0;
+        try {
+          libDocs = readScipIndex(scipFile).documents.filter((d) => d.relativePath.replaceAll('\\', '/').startsWith('lib/')).length;
+        } catch (err) {
+          diagnostics.push(`error: ${path.basename(scipFile)} unreadable: ${(err as Error).message.split('\n')[0]}`);
+        }
+        if (libDocs === 0) {
+          status = 'failed';
+          diagnostics.push(`error: scip-dart indexed none of the ${libFiles} Dart file(s) under lib/ (the analyzer did not cover lib/); the index is incomplete`);
+        }
+      }
     }
 
     // 4. Export-surface sidecar.
@@ -273,6 +322,244 @@ export const scipDart: Indexer = {
   },
 };
 
+// ---- pub workspaces ----------------------------------------------------------
+
+/**
+ * A pub workspace (Dart 3.6+): a root pubspec with `workspace: [paths/globs]`
+ * and members with `resolution: workspace`. Pub resolves every member once, at
+ * the root (one package config, one lockfile), and refuses any
+ * `dependency_overrides` of a workspace package ("Cannot override workspace
+ * packages."), so source links go into the root's pubspec_overrides.yaml, and
+ * only for org dependencies outside the workspace.
+ */
+export interface PubWorkspace {
+  /** Real absolute path of the root (the outermost `workspace:` pubspec the package resolves through). */
+  root: string;
+  /** The root dir relative to the repo root, POSIX (`.` for the repo root). */
+  rootPath: string;
+  /** The repo's discovered pub packages the root resolves (members at any depth, and the root itself when discovered), by path. */
+  packages: DiscoveredPackage[];
+}
+
+/** The two top-level pubspec keys that make a workspace: `workspace:` (a root) and `resolution: workspace` (a member). */
+export function pubspecWorkspaceKeys(text: string): { root: boolean; member: boolean } {
+  return {
+    root: /^workspace[ \t]*:/m.test(text),
+    member: /^resolution[ \t]*:[ \t]*["']?workspace["']?[ \t]*(?:#.*)?$/m.test(text),
+  };
+}
+
+type WorkspaceKeysReader = (dir: string) => { root: boolean; member: boolean } | undefined;
+
+/**
+ * The workspace root resolving the package in `dir` (real absolute paths), or
+ * undefined when it is not in a workspace: `dir` itself when its pubspec has
+ * `workspace:` and no `resolution: workspace`; for a member, the nearest
+ * enclosing `workspace:` pubspec inside the repo, followed outwards while that
+ * one is itself a member (nested workspaces resolve at the outermost root). A
+ * member with no root above it is left alone (pub reports that itself).
+ */
+export function workspaceRootOf(repoRoot: string, dir: string, read: WorkspaceKeysReader): string | undefined {
+  const own = read(dir);
+  if (own === undefined) return undefined;
+  if (!own.member) return own.root ? dir : undefined;
+  let cur = dir;
+  while (cur !== repoRoot && cur.startsWith(repoRoot + path.sep)) {
+    cur = path.dirname(cur);
+    const k = read(cur);
+    if (k?.root && !k.member) return cur;
+  }
+  return undefined;
+}
+
+/** The pub workspace `pkg` belongs to (as root or member), or undefined. */
+export function pubWorkspaceOf(repo: DiscoveredRepo, pkg: DiscoveredPackage): PubWorkspace | undefined {
+  const cache = new Map<string, { root: boolean; member: boolean } | undefined>();
+  const read: WorkspaceKeysReader = (d) => {
+    if (!cache.has(d)) {
+      let keys: { root: boolean; member: boolean } | undefined;
+      try {
+        keys = pubspecWorkspaceKeys(readFileSync(path.join(d, 'pubspec.yaml'), 'utf8'));
+      } catch {
+        keys = undefined;
+      }
+      cache.set(d, keys);
+    }
+    return cache.get(d);
+  };
+  if (!existsSync(repo.localPath)) return undefined;
+  const repoRoot = realpathSync(repo.localPath);
+  const dirOf = (p: DiscoveredPackage): string | undefined => {
+    const d = packageDir(repo, p);
+    return existsSync(path.join(d, 'pubspec.yaml')) ? realpathSync(d) : undefined;
+  };
+  const own = dirOf(pkg);
+  if (own === undefined) return undefined;
+  const root = workspaceRootOf(repoRoot, own, read);
+  if (root === undefined) return undefined;
+  const packages = repo.packages
+    .filter((p) => p.manager === 'pub')
+    .filter((p) => {
+      const d = dirOf(p);
+      return d !== undefined && workspaceRootOf(repoRoot, d, read) === root;
+    })
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { root, rootPath: path.relative(repoRoot, root).split(path.sep).join('/') || '.', packages };
+}
+
+function workspaceRole(ws: PubWorkspace, dir: string): string {
+  return dir === ws.root ? `pub workspace root (${ws.rootPath})` : `pub workspace member (root ${ws.rootPath})`;
+}
+
+/**
+ * Work shared by every package of a workspace, once per index-stage run: the
+ * stage passes one `options` object to every prepare/run call of a run, so it
+ * keys the memo (a direct adapter call with its own options object redoes it).
+ */
+const workspacePrepares = new WeakMap<IndexerOptions, Map<string, Promise<PrepareResult>>>();
+const workspaceRuns = new WeakMap<IndexerOptions, Map<string, Promise<{ proc: ExecResult; log: string[] }>>>();
+
+function once<T>(store: WeakMap<IndexerOptions, Map<string, Promise<T>>>, options: IndexerOptions, key: string, fn: () => Promise<T>): Promise<T> {
+  let byKey = store.get(options);
+  if (byKey === undefined) store.set(options, (byKey = new Map()));
+  let p = byKey.get(key);
+  if (p === undefined) byKey.set(key, (p = fn()));
+  return p;
+}
+
+/**
+ * Why the workspace needs the Flutter SDK (pub resolves all members together,
+ * so one Flutter member makes `dart pub get` fail for all), or undefined:
+ * [flutterReason] of any discovered package in it, or a `sdk: flutter` /
+ * `environment.flutter` in the pubspec of a workspace member discover
+ * ignored (example apps).
+ */
+export function workspaceFlutterReason(input: Pick<IndexerInput, 'repo' | 'lookup'>, ws: PubWorkspace): string | undefined {
+  const { repo } = input;
+  for (const p of ws.packages) {
+    const r = flutterReason({ repo, pkg: p, lookup: input.lookup });
+    if (r !== undefined) return `${p.name ?? p.path}: ${r}`;
+  }
+  for (const m of repo.ignoredManifests ?? []) {
+    const d = path.resolve(repo.localPath, ...m.path.split('/'));
+    if (!existsSync(path.join(d, 'pubspec.yaml'))) continue;
+    const real = realpathSync(d);
+    if (real !== ws.root && !real.startsWith(ws.root + path.sep)) continue;
+    let text: string;
+    try {
+      text = readFileSync(path.join(d, 'pubspec.yaml'), 'utf8');
+    } catch {
+      continue;
+    }
+    if (!pubspecWorkspaceKeys(text).member) continue;
+    const fake: DiscoveredPackage = { packageId: `pub:${m.path}`, path: m.path, manager: 'pub', name: null, entryPoints: [], deps: [] };
+    const r = pubspecFlutterReason(repo, fake);
+    if (r !== undefined) return `${m.path}: ${r}`;
+  }
+  return undefined;
+}
+
+/**
+ * `prepare` for a workspace, once: drops sentei overrides an older version
+ * left in members (pub refuses them), writes the source links of every
+ * package's org dependencies outside the workspace into the root's
+ * pubspec_overrides.yaml, and runs `dart pub get` (`flutter pub get` when
+ * [workspaceFlutterReason]) at the root, with the usual conflict retries.
+ */
+async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<PrepareResult> {
+  const { repo, options } = input;
+  const diagnostics: string[] = [];
+  const log: string[] = [];
+  for (const p of ws.packages) {
+    const d = realpathSync(packageDir(repo, p));
+    if (d !== ws.root) removeOurOverrides(d, diagnostics);
+  }
+  const ids = new Set(ws.packages.map((p) => p.packageId));
+  const names = new Set(ws.packages.flatMap((p) => (p.name !== null && p.name !== undefined ? [p.name] : [])));
+  const deps = ws.packages.flatMap((p) => p.deps);
+  const write = (excluded: ReadonlySet<string>): Map<string, string> =>
+    writeOverridesFor(deps, ids, names, input.lookup, ws.root, diagnostics, excluded);
+  const links = write(new Set());
+  const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
+  const flutter = workspaceFlutterReason(input, ws);
+  let cmd = 'dart';
+  if (flutter !== undefined) {
+    const sdk = await flutterSdk();
+    log.push(...sdk.log);
+    if (sdk.root === undefined) {
+      diagnostics.push(
+        `error: Flutter package (${flutter}) but \`flutter\` is not on PATH: not resolved; install the Flutter SDK to index it` +
+          (sdk.error ? ` (${sdk.error})` : ''),
+      );
+      return { status: 'partial', diagnostics, log };
+    }
+    cmd = 'flutter';
+    diagnostics.push(`info: Flutter workspace (${flutter}); Flutter SDK ${sdk.version ?? '?'} at ${sdk.root}`);
+  }
+  const proc = await pubGet(input, ws.root, args, links, diagnostics, log, exec, cmd, write);
+  if (proc.code !== 0) {
+    const why = firstLine(proc.stderr) ?? firstLine(proc.stdout) ?? '';
+    diagnostics.push(`error: ${cmd} ${args.join(' ')} exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
+    return { status: 'partial', diagnostics, log };
+  }
+  diagnostics.push(`info: ran ${cmd} ${args.join(' ')} at the workspace root ${ws.rootPath}`);
+  return { status: 'ok', diagnostics, log };
+}
+
+/** Puts back (or removes) a pubspec_overrides.yaml sentei wrote in `dir`. */
+function removeOurOverrides(dir: string, diagnostics: string[]): void {
+  const file = path.join(dir, OVERRIDES);
+  if (!existsSync(file) || !readFileSync(file, 'utf8').startsWith(OVERRIDES_HEADER)) return;
+  const backup = path.join(dir, BACKUP_DIR, OVERRIDES);
+  if (existsSync(backup)) copyFileSync(backup, file);
+  else rmSync(file);
+  diagnostics.push(`info: removed the ${OVERRIDES} an earlier sentei run wrote in workspace member ${dir} (links belong at the workspace root)`);
+}
+
+/**
+ * One scip-dart run over every package of the workspace (fork patch 6,
+ * `--package <dir>=<out>`), from the root's package config: each package's
+ * `.scip` is written to its usual `<slug>.scip` in `outDir`, with the same
+ * documents and symbols as a run on that package alone.
+ */
+async function indexWorkspace(repo: DiscoveredRepo, ws: PubWorkspace, outDir: string, sdkArgs: string[]): Promise<{ proc: ExecResult; log: string[] }> {
+  const targets = ws.packages.map((p) => [realpathSync(packageDir(repo, p)), path.join(outDir, `${packageSlug(p)}.scip`)] as const);
+  for (const [, out] of targets) rmSync(out, { force: true });
+  const args = ['run', 'scip_dart', '--private-symbols', ...sdkArgs, ...targets.flatMap(([d, out]) => ['--package', `${d}=${out}`]), ws.root];
+  const started = Date.now();
+  const proc = await exec('dart', args, SCIP_DART_DIR);
+  const log = [
+    `$ dart ${args.join(' ')}  (cwd ${SCIP_DART_DIR}; one run for the ${targets.length} package(s) of the workspace, ${((Date.now() - started) / 1000).toFixed(1)} s)`,
+    '--- stdout',
+    proc.stdout,
+    '--- stderr',
+    proc.stderr,
+  ];
+  return { proc, log };
+}
+
+/** Number of `.dart` files under the package's `lib/` (nested packages and dot dirs excluded). */
+export function ownLibDartFiles(repo: DiscoveredRepo, pkg: DiscoveredPackage): number {
+  const lib = path.join(packageDir(repo, pkg), 'lib');
+  let n = 0;
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (dir !== lib && entries.some((e) => e.isFile() && e.name === 'pubspec.yaml')) return;
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      if (e.isDirectory()) walk(path.join(dir, e.name));
+      else if (e.isFile() && e.name.endsWith('.dart')) n++;
+    }
+  };
+  walk(lib);
+  return n;
+}
+
 // ---- pubspec_overrides.yaml ------------------------------------------------
 
 /**
@@ -291,11 +578,28 @@ export function writeOverrides(
   diagnostics: string[],
   exclude: ReadonlySet<string> = new Set(),
 ): Map<string, string> {
+  return writeOverridesFor(input.pkg.deps, new Set([input.pkg.packageId]), new Set(), input.lookup, pkgDir, diagnostics, exclude);
+}
+
+/**
+ * [writeOverrides] for any dependency list: links every dep resolved to an org
+ * package outside `selfIds`, except pub names in `skipNames` (a pub workspace's
+ * own members: pub refuses to override them) and in `exclude`.
+ */
+function writeOverridesFor(
+  deps: readonly DiscoveredDep[],
+  selfIds: ReadonlySet<string>,
+  skipNames: ReadonlySet<string>,
+  lookup: IndexerInput['lookup'],
+  pkgDir: string,
+  diagnostics: string[],
+  exclude: ReadonlySet<string> = new Set(),
+): Map<string, string> {
   const links = new Map<string, string>();
-  for (const dep of input.pkg.deps) {
+  for (const dep of deps) {
     if (dep.resolvedPackageId === null || dep.resolvedPackageId === undefined) continue;
-    if (dep.resolvedPackageId === input.pkg.packageId) continue;
-    const target = input.lookup(dep.resolvedPackageId);
+    if (selfIds.has(dep.resolvedPackageId)) continue;
+    const target = lookup(dep.resolvedPackageId);
     if (target === undefined) {
       diagnostics.push(`warn: ${dep.name} resolves to ${dep.resolvedPackageId}, which is not in discover.json`);
       continue;
@@ -307,7 +611,11 @@ export function writeOverrides(
     }
     // The override key must be the target's pub name (what pub resolves).
     const name = target.pkg.name ?? dep.name;
-    if (exclude.has(name)) continue;
+    if (exclude.has(name) || links.has(name)) continue;
+    if (skipNames.has(name)) {
+      diagnostics.push(`warn: ${dep.name} resolves to ${dep.resolvedPackageId}, but the pub workspace has a member of that name; not linked`);
+      continue;
+    }
     links.set(name, path.relative(pkgDir, realpathSync(targetDir)).split(path.sep).join('/') || '.');
   }
 
@@ -474,6 +782,8 @@ export async function pubGet(
   log: string[],
   run: (cmd: string, args: string[], cwd: string) => Promise<ExecResult> = exec,
   cmd = 'dart',
+  /** Rewrites the overrides without the excluded links (default: [writeOverrides] for `input`). */
+  rewrite: (excluded: ReadonlySet<string>) => Map<string, string> = (excluded) => writeOverrides(input, dir, diagnostics, excluded),
 ): Promise<ExecResult> {
   const { pkg } = input;
   let proc = await run(cmd, args, dir);
@@ -487,7 +797,7 @@ export async function pubGet(
       excluded.add(c.dep);
       diagnostics.push(`warn: ${c.dep} not source-linked: HEAD conflicts with ${c.pkg ?? pkg.name ?? pkg.packageId}'s constraint (${c.detail})`);
     }
-    current = new Set(writeOverrides(input, dir, diagnostics, excluded).keys());
+    current = new Set(rewrite(excluded).keys());
     proc = await run(cmd, args, dir);
     log.push(`$ ${cmd} ${args.join(' ')}  (cwd ${dir}; retry without ${[...excluded].join(', ')})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
   }

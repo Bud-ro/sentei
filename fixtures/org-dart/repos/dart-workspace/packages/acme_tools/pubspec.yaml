@@ -1,0 +1,16 @@
+name: acme_tools
+description: "Pub workspace member CLI."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+resolution: workspace
+
+dependencies:
+  # A workspace sibling: pub resolves it in the workspace, never overridden.
+  acme_core: ^1.0.0
+  # An org package outside the workspace (hosted constraint): source-linked in
+  # the workspace root's pubspec_overrides.yaml.
+  acme_x: ^1.0.0

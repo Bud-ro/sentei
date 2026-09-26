@@ -9,6 +9,7 @@ import 'package:package_config/package_config.dart';
 import 'package:pubspec_parse/pubspec_parse.dart';
 import 'package:path/path.dart' as p;
 import 'package:scip_dart/src/flags.dart';
+import 'package:scip_dart/src/indexer.dart' show PackageTarget, indexPackages;
 import 'package:scip_dart/src/pubspec_indexer.dart';
 import 'package:scip_dart/src/version.dart';
 
@@ -51,6 +52,14 @@ Future<void> main(List<String> args) async {
                   'Dart SDK the analyzer resolves dart: libraries from '
                   '(default: the SDK running scip-dart)',
             )
+            ..addMultiOption(
+              'package',
+              help:
+                  'Index several packages in one run, as <dir>=<output> '
+                  '(repeatable): the positional directory is then the pub '
+                  'workspace root whose package config resolves them all, and '
+                  'each package gets its own index, as if indexed alone',
+            )
             ..addFlag(
               'version',
               defaultsTo: false,
@@ -90,6 +99,38 @@ Future<void> main(List<String> args) async {
   if (packageConfig == null) {
     stderr.writeln('ERROR: Unable to locate packageConfig');
     exit(1);
+  }
+
+  final packages = result['package'] as List<String>;
+  if (packages.isNotEmpty) {
+    if (result['index-pubspec'] as bool) {
+      stderr.writeln(
+        'ERROR: --index-pubspec cannot be combined with --package',
+      );
+      exit(64);
+    }
+    final targets = <PackageTarget>[];
+    final outputs = <PackageTarget, String>{};
+    for (final spec in packages) {
+      final eq = spec.indexOf('=');
+      if (eq <= 0 || eq == spec.length - 1) {
+        stderr.writeln('ERROR: --package expects <dir>=<output>, got "$spec"');
+        exit(64);
+      }
+      final dir = spec.substring(0, eq);
+      final file = File(p.join(dir, 'pubspec.yaml'));
+      if (!file.existsSync()) {
+        stderr.writeln('ERROR: Unable to locate pubspec.yaml in $dir');
+        exit(1);
+      }
+      final target = PackageTarget(dir, Pubspec.parse(file.readAsStringSync()));
+      targets.add(target);
+      outputs[target] = spec.substring(eq + 1);
+    }
+    await indexPackages(packageRoot, packageConfig, targets, (target, index) {
+      File(outputs[target]!).writeAsBytesSync(index.writeToBuffer());
+    });
+    return;
   }
 
   final pubspecFile = File(p.join(packageRoot, 'pubspec.yaml'));

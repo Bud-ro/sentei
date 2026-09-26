@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.8` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.9` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 and 7 below, pub workspaces resolved once at the root, and a package with `lib/` code but no `lib/` document fails): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -387,6 +387,348 @@ Flutter packages (a no-op when `dart` on PATH is Flutter's). Upstreamable.
      includedPaths: [...allPackageRoots, dirPath],
 +    sdkPath: Flags.instance.sdkPath,
    );
+```
+
+## 6. Pub workspaces: one run for many packages (`bin/scip_dart.dart`, `lib/src/indexer.dart`)
+
+In a pub workspace (root pubspec `workspace:`, members `resolution: workspace`)
+pub resolves every member once, at the root. sentei ran scip-dart per member,
+and each run built a full analysis context collection for the whole
+workspace resolution: ~15 s per member, 9.5 min for the 37 packages of
+flame-engine/flame. `--package <dir>=<output>` (repeatable) indexes several
+packages in one process: the positional directory is then the workspace root
+(its package config resolves every member), one `AnalysisContextCollection`
+is built, and each package gets its own `Index`, written to its own output,
+equal to what a run on that package alone produces: its documents are its own
+files (nested packages excluded) relative to its own dir, file symbols carry
+its own pubspec's name and version, `metadata.projectRoot` is its dir, and the
+external symbols are those its documents reference. Resolved units are
+dropped after each package; the element model is shared. flame: one run of
+~40–65 s instead of ~9.5 min. A package's snapshot equals the one of a run
+on it alone (a test checks fixtures/org-dart's acme_core; also checked on
+flame-engine/tiled.dart), and the existing fixture snapshots are unchanged. Without `--package`, `indexPackage`
+is `indexPackages` over one target. Documents are now sorted by path (upstream
+used the analyzer's file order); the snapshots sort them anyway.
+
+Upstreamable as a feature (monorepo indexing).
+
+## 7. Every analysis context's files (`lib/src/indexer.dart`)
+
+Upstream indexes `collection.contextFor(root).contextRoot.analyzedFiles()`.
+The collection's included paths are the package root plus every package's
+`lib/` from the package config, and for a workspace member listed by path in
+the root pubspec (`workspace: [packages/tiled]`, as in flame-engine's
+tiled.dart, gamepads and forge2d) the analyzer gives the member's `lib/` a
+context of its own, while `contextFor(member)` returns the workspace root's
+context, which excludes it: 0 `lib/` documents, status ok, every consumer
+reference "version skew" (451 rows). Members matched by a glob
+(`packages/**`) happened to work. The files to index are now the analyzed
+Dart files of every context that overlaps a target package, filtered by the
+package's dir (nested packages still excluded), and each file is resolved in
+the context that analyzes it (`collection.contextFor(file)`). Verified with
+analyzer 14.4 on tiled.dart: 0 → 28 `lib/` documents. The adapter also fails a
+package whose index has no `lib/` document although `lib/` has Dart files.
+
+Upstreamable: a correctness bug for any pub workspace listed by path.
+
+Patches 6 and 7 in one diff (the second rewrites the loop the first
+restructured):
+
+```diff
+--- a/bin/scip_dart.dart
++++ b/bin/scip_dart.dart
+@@ -9,6 +9,7 @@ import 'package:package_config/package_config.dart';
+ import 'package:pubspec_parse/pubspec_parse.dart';
+ import 'package:path/path.dart' as p;
+ import 'package:scip_dart/src/flags.dart';
++import 'package:scip_dart/src/indexer.dart' show PackageTarget, indexPackages;
+ import 'package:scip_dart/src/pubspec_indexer.dart';
+ import 'package:scip_dart/src/version.dart';
+ 
+@@ -51,6 +52,14 @@ Future<void> main(List<String> args) async {
+                   'Dart SDK the analyzer resolves dart: libraries from '
+                   '(default: the SDK running scip-dart)',
+             )
++            ..addMultiOption(
++              'package',
++              help:
++                  'Index several packages in one run, as <dir>=<output> '
++                  '(repeatable): the positional directory is then the pub '
++                  'workspace root whose package config resolves them all, and '
++                  'each package gets its own index, as if indexed alone',
++            )
+             ..addFlag(
+               'version',
+               defaultsTo: false,
+@@ -92,6 +101,38 @@ Future<void> main(List<String> args) async {
+     exit(1);
+   }
+ 
++  final packages = result['package'] as List<String>;
++  if (packages.isNotEmpty) {
++    if (result['index-pubspec'] as bool) {
++      stderr.writeln(
++        'ERROR: --index-pubspec cannot be combined with --package',
++      );
++      exit(64);
++    }
++    final targets = <PackageTarget>[];
++    final outputs = <PackageTarget, String>{};
++    for (final spec in packages) {
++      final eq = spec.indexOf('=');
++      if (eq <= 0 || eq == spec.length - 1) {
++        stderr.writeln('ERROR: --package expects <dir>=<output>, got "$spec"');
++        exit(64);
++      }
++      final dir = spec.substring(0, eq);
++      final file = File(p.join(dir, 'pubspec.yaml'));
++      if (!file.existsSync()) {
++        stderr.writeln('ERROR: Unable to locate pubspec.yaml in $dir');
++        exit(1);
++      }
++      final target = PackageTarget(dir, Pubspec.parse(file.readAsStringSync()));
++      targets.add(target);
++      outputs[target] = spec.substring(eq + 1);
++    }
++    await indexPackages(packageRoot, packageConfig, targets, (target, index) {
++      File(outputs[target]!).writeAsBytesSync(index.writeToBuffer());
++    });
++    return;
++  }
++
+   final pubspecFile = File(p.join(packageRoot, 'pubspec.yaml'));
+   if (!pubspecFile.existsSync()) {
+     stderr.writeln('ERROR: Unable to locate pubspec.yaml');
+--- a/lib/src/indexer.dart
++++ b/lib/src/indexer.dart
+@@ -12,93 +12,159 @@ import 'package:scip_dart/src/scip_visitor.dart';
+ import 'package:scip_dart/src/utils.dart';
+ import 'package:scip_dart/src/version.dart';
+ 
++/// One package to index: its documents are relative to [root], its file
++/// symbols carry [pubspec]'s name and version.
++class PackageTarget {
++  final String root;
++  final Pubspec pubspec;
++  PackageTarget(this.root, this.pubspec);
++}
++
+ Future<Index> indexPackage(
+   String root,
+   PackageConfig packageConfig,
+   Pubspec pubspec,
+ ) async {
+-  final dirPath = p.normalize(p.absolute(root));
+-
+-  final metadata = Metadata(
+-    projectRoot: Uri.file(dirPath).toString(),
+-    textDocumentEncoding: TextEncoding.UTF8,
+-    toolInfo: ToolInfo(
+-      name: 'scip-dart',
+-      version: scipDartVersion,
+-      arguments: [],
+-    ),
+-  );
++  late Index index;
++  await indexPackages(root, packageConfig, [
++    PackageTarget(root, pubspec),
++  ], (_, i) => index = i);
++  return index;
++}
++
++/// Indexes every package of [targets] with one analysis context collection
++/// rooted at [collectionRoot] (a pub workspace root, whose package config
++/// resolves every member), calling [onIndex] once per target, in order, with
++/// an index equal to what [indexPackage] on that target alone produces: its
++/// documents are the target's own files (nested packages excluded), relative
++/// to the target's root. The element model is shared; resolved units are
++/// dropped after each target.
++Future<void> indexPackages(
++  String collectionRoot,
++  PackageConfig packageConfig,
++  List<PackageTarget> targets,
++  void Function(PackageTarget target, Index index) onIndex,
++) async {
++  final rootPath = p.normalize(p.absolute(collectionRoot));
+ 
+   final allPackageRoots = packageConfig.packages
+       .map((package) => p.normalize(package.packageUriRoot.toFilePath()))
+       .toList();
+ 
+-  final nestedPackages = (await pubspecPathsFor(root))
+-      .map((path) => p.dirname(path))
+-      .where((path) => path != root)
+-      .toList();
+-
+-  if (Flags.instance.verbose) print('Ignoring subdirectories: $nestedPackages');
++  final targetRoots = [
++    for (final t in targets) p.normalize(p.absolute(t.root)),
++  ];
+ 
+   final collection = AnalysisContextCollection(
+-    includedPaths: [...allPackageRoots, dirPath],
++    includedPaths: {...allPackageRoots, rootPath, ...targetRoots}.toList(),
+     sdkPath: Flags.instance.sdkPath,
+   );
+ 
+-  if (Flags.instance.performance) print('Analyzing Source');
+-  final st = Stopwatch()..start();
+-
+-  final context = collection.contextFor(dirPath);
+-  final resolvedUnitFutures = context.contextRoot
+-      .analyzedFiles()
+-      .where((file) => p.extension(file) == '.dart')
+-      // only index dart files of the current dart package, to index nested
+-      // packages, scip indexing can simply be re-run for that nested package
+-      .where(
+-        (file) => !nestedPackages.any(
+-          (nested) => p.isWithin(p.normalize(p.absolute(nested)), file),
++  // Every analyzed Dart file of every context that overlaps a target. A
++  // package's `lib/` is also in [allPackageRoots], and the analyzer may give
++  // it a context of its own (a pub workspace member listed by path, e.g.
++  // `workspace: [packages/x]`), so the context `contextFor(root)` returns
++  // need not analyze it.
++  bool overlaps(String contextRoot) => targetRoots.any(
++    (t) =>
++        t == contextRoot ||
++        p.isWithin(contextRoot, t) ||
++        p.isWithin(t, contextRoot),
++  );
++  final analyzedFiles = <String>{
++    for (final context in collection.contexts)
++      if (overlaps(p.normalize(context.contextRoot.root.path)))
++        ...context.contextRoot.analyzedFiles().where(
++          (file) => p.extension(file) == '.dart',
+         ),
+-      )
+-      .map(context.currentSession.getResolvedUnit);
+-
+-  final resolvedUnits = await Future.wait(resolvedUnitFutures);
+-
+-  if (Flags.instance.performance) {
+-    print('Analyzing Source took: ${st.elapsedMilliseconds}ms');
+-    st.reset();
+-    print('Parsing Ast');
+-  }
+-
+-  final documents = resolvedUnits.whereType<ResolvedUnitResult>().map((
+-    resUnit,
+-  ) {
+-    final relativePath = p.relative(resUnit.path, from: dirPath);
+-
+-    final visitor = ScipVisitor(
+-      relativePath,
+-      dirPath,
+-      resUnit.lineInfo,
+-      resUnit.diagnostics,
+-      packageConfig,
+-      pubspec,
++  };
++
++  for (var i = 0; i < targets.length; i++) {
++    final target = targets[i];
++    final dirPath = targetRoots[i];
++
++    final metadata = Metadata(
++      projectRoot: Uri.file(dirPath).toString(),
++      textDocumentEncoding: TextEncoding.UTF8,
++      toolInfo: ToolInfo(
++        name: 'scip-dart',
++        version: scipDartVersion,
++        arguments: [],
++      ),
+     );
+-    resUnit.unit.accept(visitor);
+ 
+-    return Document(
+-      language: Language.Dart.name,
+-      relativePath: relativePath,
+-      occurrences: visitor.occurrences,
+-      symbols: visitor.symbols,
++    final nestedPackages = (await pubspecPathsFor(dirPath))
++        .map((path) => p.normalize(p.absolute(p.dirname(path))))
++        .where((path) => path != dirPath)
++        .toList();
++
++    if (Flags.instance.verbose) {
++      print('Ignoring subdirectories: $nestedPackages');
++    }
++
++    if (Flags.instance.performance) print('Analyzing Source ($dirPath)');
++    final st = Stopwatch()..start();
++
++    // only index dart files of the current dart package, to index nested
++    // packages, scip indexing can simply be re-run for that nested package
++    final files =
++        analyzedFiles
++            .where((file) => p.isWithin(dirPath, file))
++            .where(
++              (file) =>
++                  !nestedPackages.any((nested) => p.isWithin(nested, file)),
++            )
++            .toList()
++          ..sort();
++
++    final resolvedUnits = await Future.wait(
++      files.map(
++        (file) =>
++            collection.contextFor(file).currentSession.getResolvedUnit(file),
++      ),
+     );
+-  }).toList();
+ 
+-  if (Flags.instance.performance) {
+-    print('Parsing Ast took: ${st.elapsedMilliseconds}ms');
++    if (Flags.instance.performance) {
++      print('Analyzing Source took: ${st.elapsedMilliseconds}ms');
++      st.reset();
++      print('Parsing Ast');
++    }
++
++    globalExternalSymbols = [];
++    final documents = resolvedUnits.whereType<ResolvedUnitResult>().map((
++      resUnit,
++    ) {
++      final relativePath = p.relative(resUnit.path, from: dirPath);
++
++      final visitor = ScipVisitor(
++        relativePath,
++        dirPath,
++        resUnit.lineInfo,
++        resUnit.diagnostics,
++        packageConfig,
++        target.pubspec,
++      );
++      resUnit.unit.accept(visitor);
++
++      return Document(
++        language: Language.Dart.name,
++        relativePath: relativePath,
++        occurrences: visitor.occurrences,
++        symbols: visitor.symbols,
++      );
++    }).toList();
++
++    if (Flags.instance.performance) {
++      print('Parsing Ast took: ${st.elapsedMilliseconds}ms');
++    }
++
++    onIndex(
++      target,
++      Index(
++        metadata: metadata,
++        documents: documents,
++        externalSymbols: globalExternalSymbols,
++      ),
++    );
+   }
+-
+-  return Index(
+-    metadata: metadata,
+-    documents: documents,
+-    externalSymbols: globalExternalSymbols,
+-  );
+ }
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)

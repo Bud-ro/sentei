@@ -7,8 +7,23 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { parseDescriptors, parseScipSymbol, readScipIndex } from '@sentei/core/scip';
+import { snapshotScip } from '@sentei/core/scip/snapshot';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { flutterReason, OVERRIDES_HEADER, parseOverrideConflicts, parseYamlBlock, pubGet, scipDart, setFlutterSdkForTests, writeOverrides } from '../src/indexers/scip-dart.ts';
+import {
+  flutterReason,
+  OVERRIDES_HEADER,
+  ownLibDartFiles,
+  parseOverrideConflicts,
+  parseYamlBlock,
+  pubGet,
+  pubspecWorkspaceKeys,
+  pubWorkspaceOf,
+  SCIP_DART_DIR,
+  scipDart,
+  setFlutterSdkForTests,
+  workspaceRootOf,
+  writeOverrides,
+} from '../src/indexers/scip-dart.ts';
 import type { DiscoverFile, DiscoveredPackage, DiscoveredRepo, ExportsSidecar, IndexerInput, OrgPackage } from '../src/indexers/types.ts';
 import { scipTypescript } from '../src/indexers/scip-typescript.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
@@ -100,7 +115,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.8',
+        indexerVersion: '1.7.0+sentei.9',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -323,6 +338,159 @@ describe.skipIf(!HAS_DART || !HAS_FLUTTER)(`index stage with scip-dart on the Fl
     const libRefs = new Set(lib.documents.flatMap((d) => d.occurrences.map((o) => o.symbol)));
     expect([...libRefs].some((r) => /^scip-dart pub flutter \S+ lib\/src\/widgets\/`framework\.dart`\/StatelessWidget#$/.test(r))).toBe(true);
   });
+});
+
+describe('pub workspace detection', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-ws-detect-')));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  function write(files: Record<string, string>): void {
+    for (const [f, body] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+      writeFileSync(path.join(root, f), body);
+    }
+  }
+  const pkgAt = (p: string, name: string): DiscoveredPackage => ({ packageId: `pub:${name}`, path: p, manager: 'pub', name, entryPoints: [], deps: [] });
+
+  it('reads the two workspace keys of a pubspec', () => {
+    expect(pubspecWorkspaceKeys('name: ws\nworkspace:\n  - a\n')).toEqual({ root: true, member: false });
+    expect(pubspecWorkspaceKeys('name: a\nresolution: workspace # since Dart 3.6\n')).toEqual({ root: false, member: true });
+    expect(pubspecWorkspaceKeys("name: a\nresolution: 'workspace'\nworkspace: [b]\n")).toEqual({ root: true, member: true });
+    // Only top-level keys count.
+    expect(pubspecWorkspaceKeys('name: a\nmelos:\n  workspace: x\n  resolution: workspace\n')).toEqual({ root: false, member: false });
+  });
+
+  it('resolves members at the outermost root, and lists the discovered packages it resolves', () => {
+    write({
+      'ws/pubspec.yaml': 'name: ws\nworkspace:\n  - a\n  - inner\n',
+      'ws/a/pubspec.yaml': 'name: a\nresolution: workspace\n',
+      'ws/inner/pubspec.yaml': 'name: inner\nresolution: workspace\nworkspace:\n  - b\n',
+      'ws/inner/b/pubspec.yaml': 'name: b\nresolution: workspace\n',
+      'ws/lone/pubspec.yaml': 'name: lone\n',
+      'stray/pubspec.yaml': 'name: stray\nresolution: workspace\n',
+    });
+    const repo: DiscoveredRepo = {
+      repo: 'acme/ws', localPath: path.join(root, 'ws'), headSha: null,
+      packages: [pkgAt('.', 'ws'), pkgAt('a', 'a'), pkgAt('inner', 'inner'), pkgAt('inner/b', 'b'), pkgAt('lone', 'lone'), { ...pkgAt('.', 'ws_npm'), manager: 'npm' }],
+    };
+    const ws = pubWorkspaceOf(repo, repo.packages[3]!)!;
+    expect(ws.root).toBe(path.join(root, 'ws'));
+    expect(ws.rootPath).toBe('.');
+    expect(ws.packages.map((p) => p.path)).toEqual(['.', 'a', 'inner', 'inner/b']);
+    expect(pubWorkspaceOf(repo, repo.packages[0]!)?.root).toBe(ws.root);
+    expect(pubWorkspaceOf(repo, repo.packages[2]!)?.root).toBe(ws.root); // a nested root that is itself a member
+    expect(pubWorkspaceOf(repo, repo.packages[4]!)).toBeUndefined(); // not a member
+    // The root need not be a discovered package.
+    const onlyMember: DiscoveredRepo = { ...repo, packages: [pkgAt('a', 'a')] };
+    expect(pubWorkspaceOf(onlyMember, onlyMember.packages[0]!)).toMatchObject({ root: ws.root, packages: [{ path: 'a' }] });
+    // A member with no root above it inside the repo is left to pub.
+    const stray: DiscoveredRepo = { repo: 'acme/stray', localPath: path.join(root, 'stray'), headSha: null, packages: [pkgAt('.', 'stray')] };
+    expect(pubWorkspaceOf(stray, stray.packages[0]!)).toBeUndefined();
+    expect(workspaceRootOf(path.join(root, 'ws'), path.join(root, 'ws', 'lone'), () => ({ root: false, member: false }))).toBeUndefined();
+  });
+
+  it('counts the Dart files under lib/, not those of a package nested in it', () => {
+    write({
+      'libcount/pubspec.yaml': 'name: libcount\n',
+      'libcount/lib/a.dart': '',
+      'libcount/lib/src/b.dart': '',
+      'libcount/lib/src/notes.md': '',
+      'libcount/lib/.hidden/c.dart': '',
+      'libcount/lib/nested/pubspec.yaml': 'name: nested\n',
+      'libcount/lib/nested/lib/d.dart': '',
+    });
+    const repo: DiscoveredRepo = { repo: 'acme/libcount', localPath: path.join(root, 'libcount'), headSha: null, packages: [pkgAt('.', 'libcount')] };
+    expect(ownLibDartFiles(repo, repo.packages[0]!)).toBe(2);
+    expect(ownLibDartFiles({ ...repo, localPath: path.join(root, 'nothing-here') }, repo.packages[0]!)).toBe(0);
+  });
+});
+
+describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart-workspace)', () => {
+  let tmp: string;
+  let work: string;
+  const WS = 'repos/dart-workspace';
+
+  beforeAll(async () => {
+    tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-index-ws-')));
+    for (const r of ['dart-workspace', 'dart-lib-x']) cpSync(path.join(FIXTURE, 'repos', r), path.join(tmp, 'repos', r), NO_PUB_STATE);
+    // A member override an older sentei wrote: pub refuses to override a workspace package.
+    writeFileSync(
+      path.join(tmp, WS, 'packages/acme_core/pubspec_overrides.yaml'),
+      `${OVERRIDES_HEADER}\ndependency_overrides:\n  acme_tools:\n    path: ../acme_tools\n`,
+    );
+    work = path.join(tmp, 'work');
+    mkdirSync(work);
+    const at = (p: string, name: string, entryPoints: string[], deps: DiscoveredPackage['deps'] = []): DiscoveredPackage => ({
+      ...pubPackage(name, entryPoints, deps),
+      path: p,
+    });
+    const discover: DiscoverFile = {
+      org: 'acme',
+      repos: [
+        {
+          repo: 'acme/dart-workspace', localPath: path.join(tmp, WS), defaultBranch: 'main', headSha: null,
+          packages: [
+            at('.', 'acme_ws', []),
+            at('packages/acme_core', 'acme_core', ['packages/acme_core/lib/acme_core.dart']),
+            at('packages/acme_tools', 'acme_tools', ['packages/acme_tools/bin/acme_tools.dart'], [orgDep('acme_core', '^1.0.0'), orgDep('acme_x', '^1.0.0')]),
+          ],
+        },
+        repoOf(tmp, 'dart-lib-x', pubPackage('acme_x', ['lib/acme_x.dart', 'lib/builder.dart', 'lib/syntax.dart'])),
+      ],
+    };
+    writeFileSync(path.join(work, 'discover.json'), JSON.stringify(discover, null, 2));
+    await index({ work, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+  }, 600_000);
+
+  afterAll(() => {
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const ix = () => readJson<RepoIndex>(work, 'index/acme__dart-workspace/index.json');
+  const docs = (pkg: string) => readScipIndex(path.join(work, 'index/acme__dart-workspace', `pub__${pkg}.scip`)).documents.map((d) => d.relativePath).sort();
+
+  it('resolves once at the root: every package ok, source links only there and only for org deps outside the workspace', () => {
+    expect(ix().packages.map((p) => [p.packageId, p.status])).toEqual([
+      ['pub:acme_ws', 'ok'],
+      ['pub:acme_core', 'ok'],
+      ['pub:acme_tools', 'ok'],
+    ]);
+    expect(readFileSync(path.join(tmp, WS, 'pubspec_overrides.yaml'), 'utf8')).toBe(
+      `${OVERRIDES_HEADER}\ndependency_overrides:\n  acme_x:\n    path: ../dart-lib-x\n`,
+    );
+    for (const m of ['acme_core', 'acme_tools']) expect(existsSync(path.join(tmp, WS, 'packages', m, 'pubspec_overrides.yaml')), m).toBe(false);
+    expect(existsSync(path.join(tmp, WS, 'packages/acme_tools/.dart_tool/package_config.json'))).toBe(false);
+    expect(existsSync(path.join(tmp, WS, '.dart_tool/package_config.json'))).toBe(true);
+    const tools = ix().packages[2]!.diagnostics;
+    expect(tools).toContain('info: pub workspace member (root .): resolved once at the workspace root for 3 package(s)');
+    expect(tools).toContain('info: ran dart pub get --offline at the workspace root .');
+    expect(tools.some((d) => d.startsWith('info: removed the pubspec_overrides.yaml an earlier sentei run wrote in workspace member'))).toBe(true);
+  });
+
+  it('indexes every package in one scip-dart run, each with its own member-relative documents (lib/ of members listed by path)', () => {
+    expect(docs('acme_ws')).toEqual([]);
+    expect(docs('acme_core')).toEqual(['lib/acme_core.dart', 'lib/src/vec.dart']);
+    expect(docs('acme_tools')).toEqual(['bin/acme_tools.dart']);
+    const runs = (pkg: string) => readFileSync(path.join(work, 'index/acme__dart-workspace', `pub__${pkg}.log`), 'utf8')
+      .split('\n').filter((l) => l.startsWith('$ dart run scip_dart'));
+    const run = runs('acme_core');
+    expect(run).toHaveLength(1);
+    expect(run[0]).toContain('one run for the 3 package(s) of the workspace');
+    expect(runs('acme_tools')).toEqual(run);
+    expect(ix().packages[1]!.diagnostics).toContain('info: indexed in one scip-dart run with the 3 package(s) of the pub workspace at .');
+  });
+
+  it('a package of a workspace run gets the index a run on it alone produces', () => {
+    const alone = path.join(tmp, 'acme_core-alone.scip');
+    const r = spawnSync('dart', ['run', 'scip_dart', '--private-symbols', '--output', alone, path.join(tmp, WS, 'packages/acme_core')], {
+      cwd: SCIP_DART_DIR, encoding: 'utf8', shell: process.platform === 'win32',
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(snapshotScip(readScipIndex(path.join(work, 'index/acme__dart-workspace/pub__acme_core.scip')))).toBe(snapshotScip(readScipIndex(alone)));
+  }, 300_000);
 });
 
 describe('Flutter package detection', () => {
@@ -677,6 +845,27 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(r.status).toBe('partial');
     expect(r.diagnostics.some((d) => d.startsWith("error: missing generated part 'fake.g.dart' at lib/testing/fake.dart:1:6"))).toBe(true);
     expect(readJson<ExportsSidecar>(r.exportsFile).entrySymbols).toEqual([{ name: 'main', file: 'lib/mocks.dart', line: 0, col: 5, kind: 'runtime' }]);
+  }, 300_000);
+
+  it('a package with Dart files under lib/ but no lib/ document in its index fails (never ok)', async () => {
+    // flame-engine/tiled.dart: scip-dart indexed none of packages/tiled/lib, the
+    // package came out ok, and its consumers produced 451 false version-skew rows.
+    // Here the analyzer is told to skip lib/ (analysis_options exclude).
+    write({
+      'nolib/pubspec.yaml': pubspec('acme_nolib', '1.0.0'),
+      'nolib/analysis_options.yaml': 'analyzer:\n  exclude:\n    - lib/**\n',
+      'nolib/lib/acme_nolib.dart': 'int a() => 1;\n',
+      'nolib/bin/main.dart': 'void main() {}\n',
+    });
+    const repos = [repoOf(root, 'nolib', pubPackage('acme_nolib', ['lib/acme_nolib.dart']))];
+    repos[0]!.localPath = path.join(root, 'nolib');
+    const out = path.join(root, 'out-nolib');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor(repos, repos[0]!), out);
+    expect(r.status).toBe('failed');
+    expect(r.diagnostics).toContain(
+      'error: scip-dart indexed none of the 1 Dart file(s) under lib/ (the analyzer did not cover lib/); the index is incomplete',
+    );
   }, 300_000);
 
   it('a missing part only makes the package partial in lib/ or bin/, not in web/ demo code', async () => {

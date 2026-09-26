@@ -1,0 +1,9 @@
+name: acme_core
+description: "Pub workspace member library (listed by path in the root pubspec)."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+resolution: workspace

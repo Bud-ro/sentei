@@ -16,6 +16,7 @@ over them).
 | `dart-testkit` | `acme_kit` | private (`publish_to: none`) | test-support library: `lib/testing.dart` entry, `lib/src/test_utils/` |
 | `flutter-widgets` | `acme_widgets` | private (`publish_to: none`) | Flutter lib (`environment.flutter`, `flutter: {sdk: flutter}`): `AcmeButton` (used), `AcmeBanner` (unused) |
 | `flutter-app` | `acme_flutter_app` | private (`publish_to: none`) | Flutter app: `lib/main.dart` `main` calls `runApp` with an `AcmeButton`; `path:` dep on `acme_widgets` |
+| `dart-workspace` | `acme_ws` (root), `acme_core`, `acme_tools` | private (`publish_to: none`) | pub workspace, members listed by path; `acme_tools` depends on its sibling `acme_core` and (hosted `^1.0.0`) on `acme_x` |
 
 No `pubspec.lock` / `.dart_tool` is checked in. To build or index, copy the repos
 somewhere else and run `dart pub get` in each package. `dart-app` depends on
@@ -117,3 +118,15 @@ unexports of such packages, which analyze otherwise never sends to the witness.
 | npm export used only inside its package, read by Dart through `@JS('acmeBridge.start')` | `dart-js/js_src/src/index.ts` `acmeBridge` (the bundle's default export) | needs_review `["internal_refs_only", "witness_mismatch:pub:acme/dart-js:acme_js_app:bin/main.dart:8"]`, not unexport_candidate |
 | npm export nothing in the index uses, bound by an `@JS()` declaration of the same name | `acmeLegacyStart` | needs_review `["no_refs", …main.dart:13, …main.dart:18]` |
 | npm export no Dart file names (negative) | `jsOnlyUnused` | deletion_candidate `["no_refs"]` |
+
+### Pub workspace (Phase 2 fix round 1)
+
+`dart-workspace` is a pub workspace (root `workspace: [packages/acme_core,
+packages/acme_tools]`, members `resolution: workspace`), like flame-engine's
+flame, tiled.dart, gamepads and forge2d, and supabase-flutter.
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| Source links of a workspace | `acme_tools` depends on `acme_x` (hosted `^1.0.0`, another repo) and on its sibling `acme_core` | one `pubspec_overrides.yaml`, at the workspace root, linking `acme_x` only (pub refuses to override a workspace package: "Cannot override workspace packages."); one `pub get` at the root; every package `ok` |
+| Members listed by path, not by glob | root `workspace:` list | `acme_core`'s `lib/` is indexed (fork patch 7: scip-dart used to index none of it); a package with `lib/` code and no `lib/` document would be `failed` |
+| One scip-dart run for the workspace | all three packages | each gets its own `.scip`, equal to a run on it alone (fork patch 6) |

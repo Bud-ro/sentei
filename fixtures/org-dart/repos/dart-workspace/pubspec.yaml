@@ -1,0 +1,11 @@
+name: acme_ws
+description: "Pub workspace root with an explicit member list (fix round 1: tiled.dart, gamepads, forge2d)."
+publish_to: none
+
+environment:
+  sdk: ">=3.6.0 <4.0.0"
+
+# Members listed by path, not by glob: scip-dart used to index none of their lib/ files.
+workspace:
+  - packages/acme_core
+  - packages/acme_tools

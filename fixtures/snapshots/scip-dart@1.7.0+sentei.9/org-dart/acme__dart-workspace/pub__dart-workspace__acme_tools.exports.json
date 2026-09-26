@@ -1,0 +1,24 @@
+{
+  "entryPoints": [
+    "packages/acme_tools/bin/acme_tools.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "packages/acme_tools/bin/acme_tools.dart",
+      "kind": "runtime",
+      "line": 4,
+      "name": "main"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-workspace:acme_tools",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

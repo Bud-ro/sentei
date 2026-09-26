@@ -1,0 +1,35 @@
+{
+  "entryPoints": [
+    "packages/acme_core/lib/acme_core.dart"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 5,
+      "entry": "packages/acme_core/lib/acme_core.dart",
+      "exportedAs": "shifted",
+      "file": "packages/acme_core/lib/src/vec.dart",
+      "line": 10,
+      "name": "shifted",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "packages/acme_core/lib/acme_core.dart",
+      "exportedAs": "Vec2",
+      "file": "packages/acme_core/lib/src/vec.dart",
+      "line": 1,
+      "name": "Vec2",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-workspace:acme_core",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

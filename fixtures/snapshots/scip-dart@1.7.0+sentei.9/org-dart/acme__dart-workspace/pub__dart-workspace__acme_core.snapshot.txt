@@ -1,0 +1,45 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/acme_core.dart
+  // Entry point of acme_core, a pub workspace member listed by path in the root
+//^ definition scip-dart pub acme_core . lib/`acme_core.dart`/
+  // pubspec: scip-dart used to index none of its lib/ files (fork patch 7).
+  library;
+
+  export 'src/vec.dart';
+
+## lib/src/vec.dart
+  // Expected: alive, no finding (external refs from acme_tools).
+//^ definition scip-dart pub acme_core . lib/src/`vec.dart`/
+  class Vec2 {
+//      ^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2# enclosing [1:0-7:1]
+    // Expected: alive, no finding.
+    final int x;
+//        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x. enclosing [3:12-3:13]
+    // Expected: alive, no finding.
+    final int y;
+//        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y. enclosing [5:12-5:13]
+    const Vec2(this.x, this.y);
+//        ^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`(). enclosing [6:2-6:29]
+//                  ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                          ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
+  }
+
+  // Expected: alive, no finding (external ref from acme_tools).
+  Vec2 shifted(Vec2 v, int d) => Vec2(v.x + d, v.y + d);
+//^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+//     ^^^^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/shifted(). enclosing [10:0-10:54]
+//             ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+//                  ^ definition local 0 enclosing [10:13-10:19]
+//                     ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                         ^ definition local 1 enclosing [10:21-10:26]
+//                               ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
+//                                    ^ reference local 0
+//                                      ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                                          ^ reference local 1
+//                                             ^ reference local 0
+//                                               ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
+//                                                   ^ reference local 1
