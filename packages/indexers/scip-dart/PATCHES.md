@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.9` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 and 7 below, pub workspaces resolved once at the root, and a package with `lib/` code but no `lib/` document fails): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.9` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 8 below, pub workspaces resolved once at the root, and a package with `lib/` code but no `lib/` document fails): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -729,6 +729,103 @@ restructured):
 -    externalSymbols: globalExternalSymbols,
 -  );
  }
+```
+
+## 8. Resolve by library, so parts see their library (`lib/src/indexer.dart`)
+
+Upstream resolves every file with `getResolvedUnit`, all in parallel. For a
+part, the analyzer must find its library first; for a name-based
+`part of foo;` it can only find a library it already knows, so whether a part
+was resolved in its library depended on request order. When the part came
+first it was resolved alone ("Undefined class", `InvalidType`), and every
+reference from it into the library's other files was lost: flame-engine/oxygen
+(`part of oxygen;` everywhere) had no reference from `EntityManager` to
+`ComponentManager` members and got 6 false DEPRECATE rows (fail-open).
+Patch 6's sorted file order happened to put oxygen's library first; a part
+directory that sorts before the library (`lib/_parts/` in fixtures/org-dart)
+still lost them. Files are now resolved library by library: each library
+file with `getResolvedLibrary`, whose units include its parts (URI-based or
+name-based alike); a file no indexed library includes (a part of an outside
+library, an orphan part) falls back to `getResolvedLibraryContaining`, then to
+`getResolvedUnit`. Documents are unchanged otherwise (fixture snapshots
+identical except the name-based parts' recovered references). Cost: about
+15-20% more CPU on flame than per-file resolution under the same load
+(analyzer 14.4), for a result that no longer depends on scheduling.
+
+Upstreamable: a correctness bug for any library with name-based parts.
+
+```diff
+--- a/lib/src/indexer.dart
++++ b/lib/src/indexer.dart
+@@ -117,12 +117,7 @@ Future<void> indexPackages(
+             .toList()
+           ..sort();
+ 
+-    final resolvedUnits = await Future.wait(
+-      files.map(
+-        (file) =>
+-            collection.contextFor(file).currentSession.getResolvedUnit(file),
+-      ),
+-    );
++    final resolvedUnits = await _resolveByLibrary(collection, files);
+ 
+     if (Flags.instance.performance) {
+       print('Analyzing Source took: ${st.elapsedMilliseconds}ms');
+@@ -168,3 +163,54 @@ Future<void> indexPackages(
+     );
+   }
+ }
++
++/// Resolves [files] library by library, in [files] order: each library file
++/// with `getResolvedLibrary`, whose units include its parts, so a part is
++/// always analysed in its library's context. Resolving a part on its own
++/// (`getResolvedUnit`, in parallel with everything else) only works when the
++/// analyzer can find its library from the part: for a name-based
++/// `part of foo;` it often cannot, and the part then resolves without its
++/// library ("Undefined class", `InvalidType`), losing every reference between
++/// the library's files. A file no library of [files] includes (a part of an
++/// outside library, an orphan part) falls back to the library containing it,
++/// then to resolving it alone.
++Future<List<ResolvedUnitResult>> _resolveByLibrary(
++  AnalysisContextCollection collection,
++  List<String> files,
++) async {
++  final wanted = files.toSet();
++  final units = <String, ResolvedUnitResult>{};
++  void take(SomeResolvedLibraryResult result) {
++    if (result is! ResolvedLibraryResult) return;
++    for (final unit in result.units) {
++      if (wanted.contains(unit.path)) units.putIfAbsent(unit.path, () => unit);
++    }
++  }
++
++  await Future.wait(
++    files.map((file) async {
++      final session = collection.contextFor(file).currentSession;
++      final kind = session.getFile(file);
++      if (kind is FileResult && kind.isLibrary) {
++        take(await session.getResolvedLibrary(file));
++      }
++    }),
++  );
++  final leftover = files.where((file) => !units.containsKey(file)).toList();
++  if (Flags.instance.performance && leftover.isNotEmpty) {
++    print('Resolving ${leftover.length} file(s) outside the indexed libraries');
++  }
++  await Future.wait(
++    leftover.map((file) async {
++      final session = collection.contextFor(file).currentSession;
++      take(await session.getResolvedLibraryContaining(file));
++      if (units.containsKey(file)) return;
++      final unit = await session.getResolvedUnit(file);
++      if (unit is ResolvedUnitResult) units[file] = unit;
++    }),
++  );
++  return [
++    for (final file in files)
++      if (units[file] case final unit?) unit,
++  ];
++}
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)

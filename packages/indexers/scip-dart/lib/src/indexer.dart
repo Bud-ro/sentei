@@ -117,12 +117,7 @@ Future<void> indexPackages(
             .toList()
           ..sort();
 
-    final resolvedUnits = await Future.wait(
-      files.map(
-        (file) =>
-            collection.contextFor(file).currentSession.getResolvedUnit(file),
-      ),
-    );
+    final resolvedUnits = await _resolveByLibrary(collection, files);
 
     if (Flags.instance.performance) {
       print('Analyzing Source took: ${st.elapsedMilliseconds}ms');
@@ -167,4 +162,55 @@ Future<void> indexPackages(
       ),
     );
   }
+}
+
+/// Resolves [files] library by library, in [files] order: each library file
+/// with `getResolvedLibrary`, whose units include its parts, so a part is
+/// always analysed in its library's context. Resolving a part on its own
+/// (`getResolvedUnit`, in parallel with everything else) only works when the
+/// analyzer can find its library from the part: for a name-based
+/// `part of foo;` it often cannot, and the part then resolves without its
+/// library ("Undefined class", `InvalidType`), losing every reference between
+/// the library's files. A file no library of [files] includes (a part of an
+/// outside library, an orphan part) falls back to the library containing it,
+/// then to resolving it alone.
+Future<List<ResolvedUnitResult>> _resolveByLibrary(
+  AnalysisContextCollection collection,
+  List<String> files,
+) async {
+  final wanted = files.toSet();
+  final units = <String, ResolvedUnitResult>{};
+  void take(SomeResolvedLibraryResult result) {
+    if (result is! ResolvedLibraryResult) return;
+    for (final unit in result.units) {
+      if (wanted.contains(unit.path)) units.putIfAbsent(unit.path, () => unit);
+    }
+  }
+
+  await Future.wait(
+    files.map((file) async {
+      final session = collection.contextFor(file).currentSession;
+      final kind = session.getFile(file);
+      if (kind is FileResult && kind.isLibrary) {
+        take(await session.getResolvedLibrary(file));
+      }
+    }),
+  );
+  final leftover = files.where((file) => !units.containsKey(file)).toList();
+  if (Flags.instance.performance && leftover.isNotEmpty) {
+    print('Resolving ${leftover.length} file(s) outside the indexed libraries');
+  }
+  await Future.wait(
+    leftover.map((file) async {
+      final session = collection.contextFor(file).currentSession;
+      take(await session.getResolvedLibraryContaining(file));
+      if (units.containsKey(file)) return;
+      final unit = await session.getResolvedUnit(file);
+      if (unit is ResolvedUnitResult) units[file] = unit;
+    }),
+  );
+  return [
+    for (final file in files)
+      if (units[file] case final unit?) unit,
+  ];
 }

@@ -1,13 +1,50 @@
 # sentei scip snapshot: scip-dart 1.7.0
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
+## lib/_parts/engine.dart
+  part of acme_core;
+//^ definition scip-dart pub acme_core . lib/_parts/`engine.dart`/
+
+  // Expected: alive, no finding (external ref from acme_tools bin/acme_tools.dart).
+  class Engine {
+//      ^^^^^^ definition scip-dart pub acme_core . lib/_parts/`engine.dart`/Engine# enclosing [3:0-6:1]
+    // Expected: alive, no finding. `_Helper` is declared in the other part.
+    int run() => _Helper().step() + 1;
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//      ^^^ definition scip-dart pub acme_core . lib/_parts/`engine.dart`/Engine#run(). enclosing [5:2-5:36]
+//               ^^^^^^^ reference scip-dart pub acme_core . lib/_parts/`helper.dart`/_Helper#`<constructor>`().
+//                         ^^^^ reference scip-dart pub acme_core . lib/_parts/`helper.dart`/_Helper#step().
+  }
+
+## lib/_parts/helper.dart
+  part of acme_core;
+//^ definition scip-dart pub acme_core . lib/_parts/`helper.dart`/
+
+  // Expected: alive, no finding: used by `Engine.run` in the sibling part
+  // (resolved in its library, fork patch 8). The parts sort before their library
+  // (`lib/_parts/` < `lib/acme_core.dart`), which is when resolving a part
+  // alone lost it.
+  class _Helper {
+//      ^^^^^^^ definition scip-dart pub acme_core . lib/_parts/`helper.dart`/_Helper# enclosing [6:0-9:1]
+    // Expected: alive, no finding.
+    int step() => 41;
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//      ^^^^ definition scip-dart pub acme_core . lib/_parts/`helper.dart`/_Helper#step(). enclosing [8:2-8:19]
+  }
+
 ## lib/acme_core.dart
   // Entry point of acme_core, a pub workspace member listed by path in the root
 //^ definition scip-dart pub acme_core . lib/`acme_core.dart`/
   // pubspec: scip-dart used to index none of its lib/ files (fork patch 7).
-  library;
+  // A named library whose parts say `part of acme_core;` (by name, not URI):
+  // scip-dart used to resolve such parts without their library, so every
+  // reference between the parts was lost (flame-engine/oxygen, fork patch 8).
+  library acme_core;
 
   export 'src/vec.dart';
+
+  part '_parts/engine.dart';
+  part '_parts/helper.dart';
 
 ## lib/src/vec.dart
   // Expected: alive, no finding (external refs from acme_tools).

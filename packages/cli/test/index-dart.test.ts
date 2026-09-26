@@ -472,7 +472,7 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
 
   it('indexes every package in one scip-dart run, each with its own member-relative documents (lib/ of members listed by path)', () => {
     expect(docs('acme_ws')).toEqual([]);
-    expect(docs('acme_core')).toEqual(['lib/acme_core.dart', 'lib/src/vec.dart']);
+    expect(docs('acme_core')).toEqual(['lib/_parts/engine.dart', 'lib/_parts/helper.dart', 'lib/acme_core.dart', 'lib/src/vec.dart']);
     expect(docs('acme_tools')).toEqual(['bin/acme_tools.dart']);
     const runs = (pkg: string) => readFileSync(path.join(work, 'index/acme__dart-workspace', `pub__${pkg}.log`), 'utf8')
       .split('\n').filter((l) => l.startsWith('$ dart run scip_dart'));
@@ -481,6 +481,14 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
     expect(run[0]).toContain('one run for the 3 package(s) of the workspace');
     expect(runs('acme_tools')).toEqual(run);
     expect(ix().packages[1]!.diagnostics).toContain('info: indexed in one scip-dart run with the 3 package(s) of the pub workspace at .');
+  });
+
+  it('resolves name-based parts (`part of acme_core;`) in their library: references between parts survive (fork patch 8)', () => {
+    const core = readScipIndex(path.join(work, 'index/acme__dart-workspace/pub__acme_core.scip'));
+    const engine = core.documents.find((d) => d.relativePath === 'lib/_parts/engine.dart')!;
+    const refs = engine.occurrences.filter((o) => (o.symbolRoles & 1) === 0).map((o) => o.symbol);
+    expect(refs).toContain('scip-dart pub acme_core 1.0.0 lib/_parts/`helper.dart`/_Helper#`<constructor>`().');
+    expect(refs).toContain('scip-dart pub acme_core 1.0.0 lib/_parts/`helper.dart`/_Helper#step().');
   });
 
   it('a package of a workspace run gets the index a run on it alone produces', () => {

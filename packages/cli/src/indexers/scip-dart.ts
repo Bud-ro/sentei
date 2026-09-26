@@ -5,7 +5,8 @@
 //     PATCHES.md (SDK floor 3.11; `--private-symbols`, which we always pass;
 //     valid symbols for operators, nameless elements and import prefixes;
 //     no occurrences for dartdoc `[Name]` links; `--package`, one run for the
-//     packages of a pub workspace; every analysis context's files);
+//     packages of a pub workspace; every analysis context's files; files
+//     resolved library by library);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar.
 // Org dependencies are source-linked with a `pubspec_overrides.yaml`
@@ -78,8 +79,9 @@ export const scipDart: Indexer = {
   // sentei.8: Flutter packages (`flutter pub get`, fork patch 5 `--sdk-path`
   // and dart-surface `--sdk-path` pointing at the Flutter SDK's Dart SDK).
   // sentei.9: pub workspaces (resolved once at the root, indexed by one run,
-  // fork patch 6), fork patch 7 (the lib/ of a member listed by path), a
-  // package with lib/ code but no lib/ document fails.
+  // fork patch 6), fork patch 7 (the lib/ of a member listed by path), fork
+  // patch 8 (parts resolved in their library), a package with lib/ code but no
+  // lib/ document fails.
   version: '1.7.0+sentei.9',
 
   detect({ repo, pkg }) {

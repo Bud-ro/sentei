@@ -129,4 +129,5 @@ flame, tiled.dart, gamepads and forge2d, and supabase-flutter.
 | --- | --- | --- |
 | Source links of a workspace | `acme_tools` depends on `acme_x` (hosted `^1.0.0`, another repo) and on its sibling `acme_core` | one `pubspec_overrides.yaml`, at the workspace root, linking `acme_x` only (pub refuses to override a workspace package: "Cannot override workspace packages."); one `pub get` at the root; every package `ok` |
 | Members listed by path, not by glob | root `workspace:` list | `acme_core`'s `lib/` is indexed (fork patch 7: scip-dart used to index none of it); a package with `lib/` code and no `lib/` document would be `failed` |
+| Name-based parts (`part of acme_core;`) in a dir that sorts before the library | `acme_core/lib/_parts/engine.dart` uses `_Helper` from `lib/_parts/helper.dart` | `_Helper` alive (fork patch 8: resolved alone, the part lost the reference and `_Helper` was private_dead) |
 | One scip-dart run for the workspace | all three packages | each gets its own `.scip`, equal to a run on it alone (fork patch 6) |

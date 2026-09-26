@@ -16,6 +16,15 @@
     {
       "col": 6,
       "entry": "packages/acme_core/lib/acme_core.dart",
+      "exportedAs": "Engine",
+      "file": "packages/acme_core/lib/_parts/engine.dart",
+      "line": 3,
+      "name": "Engine",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "packages/acme_core/lib/acme_core.dart",
       "exportedAs": "Vec2",
       "file": "packages/acme_core/lib/src/vec.dart",
       "line": 1,
