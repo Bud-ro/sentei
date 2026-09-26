@@ -180,6 +180,15 @@ export interface ExportsSidecar {
    * never make their package eligible for private_dead (entry_symbols.kind).
    */
   entrySymbols?: Array<{ file: string; line: number; col: number; name: string; kind?: 'runtime' | 'ambient' }>;
+  /**
+   * Dart conditional imports / exports (`import 'a.dart' if (dart.library.js_interop) 'b.dart'`):
+   * `file` is the importing document and file/line/col the directive (0-based,
+   * repo-relative); `target` the default URI the analyzer resolved (repo-relative path,
+   * or a `package:` / `dart:` URI outside the repo), `alternatives` the `if (…)` URIs
+   * resolved the same way. The index sees only `target`, so nothing references the
+   * alternatives' declarations; see IngestCounts.conditionalImports. Optional.
+   */
+  conditionalImports?: Array<{ file: string; line: number; col: number; target: string; alternatives: string[] }>;
 }
 
 export interface IngestOptions {
@@ -216,6 +225,26 @@ export interface IngestCounts {
   resolvedUnresolvedImports: number;
   /** Sidecar entrySymbols that matched no definition (warned). */
   unmatchedEntrySymbols: number;
+  /**
+   * Sidecar conditionalImports alternatives applied: an in-repo alternative document B of
+   * a conditional directive in A with default target T. A conditional import requires B
+   * to offer T's API, and the index resolved every use against T, so each symbol X of T
+   * lends its references to B's twin X' (the symbol with the same descriptors after the
+   * module path; for a top-level X without one, B's top-level symbol of the same name):
+   * a copy of every reference occurrence of X and of every edge into X. B's declarations
+   * are then used wherever T's are; what B's own code alone uses follows through B's
+   * edges, and B's members through their owners. When T is not an indexed document of
+   * the repo (a `package:` / `dart:` URI, or no module symbol to match descriptors on),
+   * every top-level symbol of B gets an edge from A's module symbol and from each
+   * top-level symbol of A (reachable whenever A is) and, when exported, an occurrence at
+   * the directive (fail closed). An alternative in another package than A is seeded
+   * (entry_symbols): reachability never crosses packages.
+   */
+  conditionalImports: number;
+  /** conditionalImports alternatives symbols mirrored from a same-named symbol of the target. */
+  conditionalMirroredSymbols: number;
+  /** conditionalImports entries or alternatives that are not indexed documents of the repo (warned). */
+  unmatchedConditionalImports: number;
   /** Sidecar namespaceSpreadRefs applied (edges to every symbol of the target module). */
   namespaceSpreadRefs: number;
   /** namespaceSpreadRefs whose consumer or target module is not an indexed document (warned). */
@@ -450,6 +479,20 @@ function isImportPrefix(p: ParsedGlobal, scipKind: number, isModule: boolean): b
   return scipKind === SymbolInformation_Kind.Namespace || p.descriptors.at(-1)?.suffix === 'namespace';
 }
 
+/**
+ * The declared name when `descriptors` (the part of a symbol after its module path)
+ * name a top-level declaration (one non-namespace descriptor: `createStorage().`,
+ * `Storage#`, `kMode.`), else undefined.
+ */
+function topLevelName(descriptors: string): string | undefined {
+  try {
+    const ds = parseDescriptors(descriptors);
+    return ds.length === 1 && ds[0]!.suffix !== 'namespace' ? ds[0]!.name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function normPkgPath(p: string): string {
   const n = posix.normalize(p.replaceAll('\\', '/'));
   return n === '.' || n === './' ? '' : n.replace(/\/$/, '');
@@ -588,7 +631,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     resolvedUnresolvedImports: 0,
     unmatchedEntrySymbols: 0, namespaceSpreadRefs: 0, unmatchedNamespaceSpreadRefs: 0, droppedModuleRefs: 0, witnessFiles: 0,
     generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0,
-    ambiguousSymbolRefs: 0, warnings: 0,
+    ambiguousSymbolRefs: 0, conditionalImports: 0, conditionalMirroredSymbols: 0, unmatchedConditionalImports: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -1393,6 +1436,99 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       }
     }
 
+    // ---- Sidecar conditionalImports (after every occurrence is known) -----------
+    // A conditional import or export selects one of several documents per platform; the
+    // analyzer (and so the index) sees only the default target T. Alternatives are real
+    // code on another platform: see IngestCounts.conditionalImports.
+    {
+      const docAt = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
+      const keyOf = new Map<number, string>();
+      for (const [norm, row] of symbols) keyOf.set(row.symbolId, norm);
+      const inDoc = db.prepare(`SELECT symbol_id, parent_symbol_id IS NULL AS top, is_exported
+        FROM symbols WHERE package_id = ? AND file = ? AND symbol_id <> ? ORDER BY symbol_id`);
+      const mirrorOccurrences = db.prepare(`INSERT INTO occurrences
+          (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site)
+        SELECT ?, o.package_id, ?, o.file, o.line, o.col, o.role, o.enclosing_symbol_id, 0
+        FROM occurrences o
+        WHERE o.symbol_id = ? AND (o.role & 1) = 0 AND o.is_export_site = 0
+          AND NOT EXISTS (SELECT 1 FROM occurrences p WHERE p.symbol_id = ?1 AND p.package_id = o.package_id
+            AND p.file = o.file AND p.line IS o.line AND p.col IS o.col)`);
+      const mirrorEdges = db.prepare(`INSERT OR IGNORE INTO edges (from_symbol_id, to_symbol_id, from_package_id, to_package_id, source)
+        SELECT from_symbol_id, ?, from_package_id, ?, source FROM edges WHERE to_symbol_id = ?`);
+      const occAt = db.prepare('SELECT 1 FROM occurrences WHERE symbol_id = ? AND package_id = ? AND file = ? AND line = ? AND col = ? LIMIT 1');
+      const isUri = (u: string): boolean => /^[A-Za-z][\w+.-]*:/.test(u);
+      const unmatchedCond: string[] = [];
+      for (const { packageId, repo, data } of sidecars) {
+        for (const c of data.conditionalImports ?? []) {
+          const label = `${packageId} ${c.file}:${c.line + 1}:${c.col + 1}`;
+          const a = docAt.get(`${repo}\0${posix.normalize(c.file)}`);
+          if (!a) {
+            unmatchedCond.push(`${label} (importing file is not an indexed document)`);
+            continue;
+          }
+          const t = isUri(c.target) ? undefined : docAt.get(`${repo}\0${posix.normalize(c.target)}`);
+          const tKey = t ? keyOf.get(t.moduleSymbolId) : undefined;
+          // A's top-level declarations and module symbol: "A is reachable".
+          const aSources = [a.moduleSymbolId, ...(inDoc.all(a.packageId, a.file, a.moduleSymbolId) as Array<{ symbol_id: number; top: number }>)
+            .filter((r) => r.top === 1).map((r) => r.symbol_id)].map((id) => byId.get(id)!);
+          for (const alt of c.alternatives) {
+            if (isUri(alt)) continue; // outside the repo: not ours to keep alive
+            const b = docAt.get(`${repo}\0${posix.normalize(alt)}`);
+            if (!b) {
+              unmatchedCond.push(`${label} alternative ${alt} (not an indexed document)`);
+              continue;
+            }
+            const bKey = keyOf.get(b.moduleSymbolId);
+            const bRows = inDoc.all(b.packageId, b.file, b.moduleSymbolId) as Array<{ symbol_id: number; top: number; is_exported: number }>;
+            // Synthetic `sentei file` module symbols carry no descriptor path: nothing to match on.
+            const matchable = t !== undefined && tKey !== undefined && bKey !== undefined && !tKey.startsWith('sentei ') && !bKey.startsWith('sentei ');
+            if (matchable) {
+              const bTopByName = new Map<string, number>();
+              for (const r of bRows) {
+                const k = keyOf.get(r.symbol_id);
+                if (r.top === 1 && k !== undefined && k.startsWith(bKey)) {
+                  const name = topLevelName(k.slice(bKey.length));
+                  if (name !== undefined && !bTopByName.has(name)) bTopByName.set(name, r.symbol_id);
+                }
+              }
+              for (const r of inDoc.all(t.packageId, t.file, t.moduleSymbolId) as Array<{ symbol_id: number }>) {
+                const xKey = keyOf.get(r.symbol_id);
+                if (xKey === undefined || !xKey.startsWith(tKey)) continue;
+                const rest = xKey.slice(tKey.length);
+                let twin = symbols.get(bKey + rest);
+                if (!twin || twin.packageId !== b.packageId || twin.symbolId === b.moduleSymbolId) {
+                  const name = topLevelName(rest);
+                  const byName = name !== undefined ? bTopByName.get(name) : undefined;
+                  twin = byName !== undefined ? byId.get(byName) : undefined;
+                }
+                if (!twin) continue;
+                counts.occurrences += Number(mirrorOccurrences.run(twin.symbolId, twin.packageId, r.symbol_id).changes);
+                counts.edges += Number(mirrorEdges.run(twin.symbolId, twin.packageId, r.symbol_id).changes);
+                counts.conditionalMirroredSymbols += 1;
+              }
+            } else {
+              for (const r of bRows) {
+                if (r.top !== 1) continue;
+                const to = byId.get(r.symbol_id)!;
+                for (const from of aSources) edgeRun(st.edge, from, to, 'scip');
+                if (r.is_exported === 1 && !occAt.get(r.symbol_id, a.packageId, a.file, c.line, c.col)) {
+                  st.occurrence.run(r.symbol_id, a.packageId, to.packageId, a.file, c.line, c.col, 0, a.moduleSymbolId, 0);
+                  counts.occurrences += 1;
+                }
+              }
+            }
+            // Reachability never crosses packages (reach_edges): seed a foreign alternative.
+            if (b.packageId !== a.packageId) {
+              for (const r of bRows) if (r.top === 1) st.entrySymbol.run(r.symbol_id, 'runtime');
+            }
+            counts.conditionalImports += 1;
+          }
+        }
+      }
+      counts.unmatchedConditionalImports = unmatchedCond.length;
+      if (unmatchedCond.length > 0) warn(`${unmatchedCond.length} conditional import(s) not applied: ${unmatchedCond.join('; ')}`);
+    }
+
     counts.exported = exportedIds.size;
     counts.unmatchedExports = unmatched.length;
     if (unmatched.length > 0) warn(`${unmatched.length} sidecar export(s) match no SCIP definition: ${unmatched.join('; ')}`);
@@ -1468,6 +1604,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     + `namespaceMemberRefs=${counts.namespaceMemberRefs} shorthandRefs=${counts.shorthandRefs} exportAliases=${counts.exportAliases}`
     + (counts.resolvedUnresolvedImports > 0 ? ` resolvedUnresolvedImports=${counts.resolvedUnresolvedImports}` : '')
     + (counts.namespaceSpreadRefs > 0 ? ` namespaceSpreadRefs=${counts.namespaceSpreadRefs}` : '')
+    + (counts.conditionalImports > 0 ? ` conditionalImports=${counts.conditionalImports} (mirrored ${counts.conditionalMirroredSymbols})` : '')
     + (counts.droppedModuleRefs > 0 ? ` droppedModuleRefs=${counts.droppedModuleRefs}` : '')
     + (counts.witnessFiles > 0 ? ` witnessFiles=${counts.witnessFiles}` : '')
     + (counts.generatedDocuments > 0 ? ` generatedDocuments=${counts.generatedDocuments}` : '')

@@ -1530,3 +1530,38 @@ checker has typed these nodes already for the diagnostics pass). Fixture:
 shapes are unit tests in `packages/cli/test/namespace-destructuring.test.ts`.
 Snapshot change on the existing fixture: one new member ref (`app-consumer`'s
 `import('@acme/widgets/lazy').then((m) => m.lazyWidget)`).
+
+**Conditional imports (Dart; ingest side of the dart-surface `conditionalImports`
+field).** `import 'unsupported.dart' if (dart.library.io) 'desktop.dart'` (and
+the `export` form, fire_atlas's `storage.dart`): the analyzer, and so the
+index, resolves every use against the default target, so the alternatives'
+declarations (flame_3d's web GPU backend, ~70 symbols) had no references and
+were `private_dead` whenever their package was not blocked. Ingest handles
+each `{ file, line, col, target, alternatives }` entry with the existing
+tables only (no schema or analyze.sql change):
+- **Twin mirroring** when the target T is an indexed document of the repo: a
+  conditional import requires each alternative B to offer T's API, so every
+  symbol X of T lends its uses to B's twin X' (same descriptors after the
+  module path; for a top-level X without one, B's top-level symbol of the same
+  name, which covers a function in one file and a getter in the other): a copy
+  of every reference occurrence of X (same consumer position and enclosing
+  declaration) and of every edge into X. B's twins are then reachable and
+  referenced exactly where T's are; B's private helpers follow through B's own
+  edges and its members through their owners, so a helper nothing in B uses is
+  still reported. Uses through a conditional export in a consumer file are
+  covered too, since every reference to X is mirrored wherever it sits.
+- **Document fallback** when there is nothing to match on (the default is a
+  `dart:` / `package:` URI outside the repo, or a synthetic module symbol):
+  every top-level symbol of B gets an edge from A's module symbol and from each
+  top-level declaration of A ("B is reachable whenever A is"), plus an
+  occurrence at the directive for exported ones (fail closed).
+- An alternative in another package than the importing document is seeded
+  (`entry_symbols`), since `reach_edges` never crosses packages; alternatives
+  outside the repo are skipped; an importing file or in-repo alternative that
+  is not an indexed document is counted and warned about.
+- Because everything lands in `occurrences` / `edges` / `entry_symbols`, no
+  SQL view needs a new input. Test: `packages/core/test/conditional-imports.test.ts`
+  (hand-made SCIP and sidecar; the gap without the field, twins by descriptor
+  and by name, the URI fallback, the negative dead helper, warnings). The
+  scip-dart adapter must copy the field into `<pkg>.exports.json` (the Dart
+  branch's side).
