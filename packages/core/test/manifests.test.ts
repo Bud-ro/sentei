@@ -110,7 +110,7 @@ describe('ignored manifest dirs', () => {
     ]);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/^fixtures\/bad\/package\.json \(ignored manifest\): cannot parse: .*; its deps are unknown$/);
-    expect(readRepoManifests(root, () => {}, listFiles(root))).toEqual(r.packages);
+    expect(readRepoManifests(root, () => {}, listFiles(root), { ignoreManifest: (m) => m.startsWith('gen/') })).toEqual(r.packages);
   });
 
   it('manifests under default ignore dirs (any depth) are skipped with one log line; their files are still listed', () => {
@@ -903,13 +903,55 @@ describe('npm manifests', () => {
     ]);
   });
 
-  it('skips a package without a name, with a warning', () => {
+  it('skips a package without a name and without dependencies (a bare marker), with a warning', () => {
     pkgJson('package.json', { private: true, workspaces: ['packages/*'] });
     pkgJson('packages/a/package.json', { name: 'a' });
+    pkgJson('marker/package.json', { private: true, type: 'module' });
+    pkgJson('empty/package.json', { dependencies: {}, devDependencies: {} });
     write('packages/a/index.ts');
     const pkgs = readRepoManifests(root, warn);
     expect(pkgs.map((p) => p.name)).toEqual(['a']);
-    expect(warnings).toEqual(['package.json: no "name", skipped']);
+    expect(warnings).toEqual([
+      'empty/package.json: no "name" and no dependencies, skipped',
+      'marker/package.json: no "name" and no dependencies, skipped',
+      'package.json: no "name" and no dependencies, skipped',
+    ]);
+  });
+
+  it('a package without a name but with dependencies is a private consumer-only package under a synthetic name', () => {
+    // supabase multiplayer.dev, hack-the-base/dec-24, realtime/assets: nameless apps
+    // importing @supabase/ssr / @supabase/realtime-js. Skipping them hid those uses.
+    pkgJson('package.json', { private: false, main: 'src/index.ts', dependencies: { '@acme/ssr': '^1' }, devDependencies: { vite: '5' } });
+    write('src/index.ts');
+    pkgJson('assets/package.json', { devDependencies: { '@acme/realtime': 'file:../lib' } });
+    write('assets/js/app.js');
+    const logs: string[] = [];
+    const pkgs = readRepoManifests(root, warn, listFiles(root), { log: (l) => logs.push(l) });
+    expect(pkgs).toEqual([
+      {
+        manager: 'npm', name: '_unnamed/.', version: null, visibility: 'private', isLibrary: false, path: '.', manifest: 'package.json',
+        entryPoints: [], unresolvedEntryPoints: [], runtimeEntryPoints: [],
+        deps: [{ name: '@acme/ssr', manager: 'npm', constraint: '^1' }, { name: 'vite', manager: 'npm', constraint: '5', dev: true }],
+      },
+      {
+        manager: 'npm', name: '_unnamed/assets', version: null, visibility: 'private', isLibrary: false, path: 'assets', manifest: 'assets/package.json',
+        entryPoints: [], unresolvedEntryPoints: [], runtimeEntryPoints: [],
+        deps: [{ name: '@acme/realtime', manager: 'npm', constraint: 'file:../lib', dev: true }],
+      },
+    ]);
+    expect(warnings).toEqual([]);
+    expect(logs).toEqual([
+      'assets/package.json: no "name"; indexed as the consumer-only package _unnamed/assets (private, no export surface)',
+      'package.json: no "name"; indexed as the consumer-only package _unnamed/. (private, no export surface)',
+    ]);
+  });
+
+  it('ignores Rust crates\' test_cases/ fixture manifests (supabase/edge-runtime)', () => {
+    pkgJson('crates/base/test_cases/commonjs-workspace/say/package.json', { name: 'say', main: 'index.js' });
+    write('crates/base/test_cases/commonjs-workspace/say/index.js');
+    pkgJson('packages/test_cases/package.json', { name: 'test_cases' }); // a packages/ member named like it: kept
+    write('packages/test_cases/index.ts');
+    expect(readRepoManifests(root, warn).map((p) => p.name)).toEqual(['test_cases']);
   });
 
   it('a malformed package.json is an error (fail closed)', () => {

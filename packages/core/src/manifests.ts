@@ -101,6 +101,8 @@ export const DEFAULT_IGNORE_MANIFEST_DIRS: readonly string[] = Object.freeze([
   'test_fixtures', 'test_fixture', 'testdata', 'test_data', 'golden', 'goldens',
   // dartdoc's testing/test_package*/ fixture packages (one intentionally broken).
   'testing', 'test_packages',
+  // Rust crates' `crates/*/test_cases/*/package.json` fixtures (supabase/edge-runtime).
+  'test_cases',
 ]);
 
 /** True if any directory segment of repo-relative `file` is in `dirs` (the basename is not checked). */
@@ -338,8 +340,10 @@ export interface RepoManifests {
 }
 
 /**
- * Find and parse every manifest in a repo. Packages without a name are skipped with
- * a warning. Manifests under an ignored dir (`opts.ignoreDirs`, isIgnoredManifestPath) or rejected by
+ * Find and parse every manifest in a repo. An npm manifest without a name is a
+ * consumer-only package under a synthetic name (unnamedPackageName) when it declares a
+ * dependency, else skipped with a warning; a pubspec without a name is skipped with a
+ * warning. Manifests under an ignored dir (`opts.ignoreDirs`, isIgnoredManifestPath) or rejected by
  * `opts.ignoreManifest` are skipped as packages, reported in one `opts.log` line.
  */
 export function readRepoManifests(
@@ -457,11 +461,35 @@ export function readNpmPackage(
     throw new Error(`sentei: cannot parse ${manifest}: ${(err as Error).message}`);
   }
   if (!isObject(json)) throw new Error(`sentei: ${manifest} is not a JSON object`);
-  const name = json['name'];
-  if (typeof name !== 'string' || name === '') {
-    warn(`${manifest}: no "name", skipped`);
-    return null;
+  const declaredName = json['name'];
+  if (typeof declaredName !== 'string' || declaredName === '') {
+    // No name: nothing can import it, but it may still USE org packages (an app, a
+    // demo, a Phoenix `assets/` bundle importing @supabase/realtime-js). Skipping it
+    // hid those references (fail open), so with any dependency it is a consumer under
+    // a synthetic name (unnamedPackageName): private, no library, no export surface.
+    // A bare marker (`{"private": true}`, `{"type": "module"}`) declares no
+    // dependency and stays skipped.
+    if (npmDeps(json, manifest, () => {}).length === 0) {
+      warn(`${manifest}: no "name" and no dependencies, skipped`);
+      return null;
+    }
+    const name = unnamedPackageName(dir);
+    log(`${manifest}: no "name"; indexed as the consumer-only package ${name} (private, no export surface)`);
+    return {
+      manager: 'npm',
+      name,
+      version: null,
+      visibility: 'private',
+      isLibrary: false,
+      path: dir,
+      manifest,
+      entryPoints: [],
+      unresolvedEntryPoints: [],
+      runtimeEntryPoints: [],
+      deps: npmDeps(json, manifest, warn),
+    };
   }
+  const name = declaredName;
   const version = typeof json['version'] === 'string' ? json['version'] : null;
 
   const files = repoFiles ?? listFiles(repoRoot);
@@ -502,6 +530,20 @@ export function readNpmPackage(
     deps,
   };
 }
+
+/**
+ * Synthetic name of a package.json without `"name"` at repo-relative `dir`:
+ * `_unnamed/<dir>` (`_unnamed/.` for the repo root). npm names never start with `_`,
+ * so it cannot collide with a real package or a dependency name, and dirs are unique
+ * within a repo, so neither can two of these (package ids are `npm:<repo>:<name>`; the
+ * name holds no ':').
+ */
+export function unnamedPackageName(dir: string): string {
+  return `${UNNAMED_PREFIX}${dir}`;
+}
+
+/** Prefix of every synthetic name (unnamedPackageName). */
+export const UNNAMED_PREFIX = '_unnamed/';
 
 /**
  * npm deps: first non-dev field wins; devDependencies only if the name is nowhere else
