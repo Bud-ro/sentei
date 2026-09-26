@@ -1253,6 +1253,67 @@ wrong standing for 390 rows. Wrong rows and the fixes (what was built, and where
   (section below). **In flight: Dart agent**: one targeted `build_runner`
   attempt when a generated part is missing and the package depends on it.
 
+### Phase 2 runs — supabase, flame-engine, dart-lang (before fix rounds 1–2)
+
+Three more orgs were run at `819f3d2`–`1428262` with read-only spot checks by
+separate agents; the numbers below are what drove fix rounds 1 and 2 (the
+per-fix sections cite them). All three were dominated by artifacts, not by
+wrong policy: every wrong verdict traced to an indexing or discovery gap.
+
+**supabase (mixed: 29 repos, 92 packages, 76 npm + 14 pub + 2 other).** DELETE 2,
+DEPRECATE 19, UNEXPORT 185, PRIV-DEAD 642, REVIEW 1, BLOCKED 239, skew 2572.
+Spot check: DELETE 2/2 right, UNEXPORT 4/4 right, DEPRECATE 4/5 (the wrong one:
+postgres-meta's server, started by `node dist/server/server.js`, was not an entry
+→ `PostgresMeta` dead island + 71 PRIV-DEAD), PRIV-DEAD 235 of 642 were test
+infrastructure under `tests/` / `type-tests/`. All 2572 skew rows were artifacts:
+2553 same-repo refs into supabase-flutter's pub workspace (our overrides broke
+`pub get`, 0 `lib/` documents), 19 npm rows from deep `dist/` imports, alias
+re-exports of the external `cookie` package and a JSON-module symbol. Blockers:
+`@supabase/mcp-server-postgrest` `index_failed` (pnpm@latest → pnpm 12 store
+lock; `mise.toml` pinned 10), the supabase-js core packages opaque (two outDirs,
+`dist/main` + `dist/module`), `@supabase/ssr` ambiguous between `auth-helpers`
+(stale copy) and `ssr`. The witness caught one real gap (pg-topo `analyzeAndSort`
+destructured from a dynamic import namespace).
+
+**flame-engine (Flutter: 20 selected of 49, 69 packages).** repos 3 s, discover
+3.6 s (20 clones, 8 parallel), index 1182 s (18 ok / 48 partial / 3 failed; 47
+partial = "Cannot override workspace packages", flame alone 13 min because each
+member re-resolved the whole workspace), blame 224 s. DELETE 0, DEPRECATE 9,
+UNEXPORT 21, PRIV-DEAD 2, REVIEW 13, BLOCKED 444, skew 1233. The Flutter path
+itself worked (`package:flutter` resolved 3922 times in flame.scip). Spot check:
+DEPRECATE 3 right / 6 wrong — the six were `oxygen`'s name-based `part of` files
+resolved without their library (references between parts lost: fail-open);
+PRIV-DEAD 1/2 wrong (operator expressions emit no references: `BlockOperators`
+`+`); skew 0/2 (tiled/forge2d/gamepads had 0 `lib/` documents because the fork
+skipped explicitly listed workspace members, yet `tiled` reported `ok`). Also:
+conditional imports (`if (dart.library.js_interop)`) leave the alternative
+variant unreachable (fire_atlas, flame_3d web_gpu ~70 symbols); Flutter platform
+runner code (Swift/Kotlin/C++) flagged every app `unindexed_consumer` (313
+blocked, defend_the_donut 306); workspace roots without `lib/` counted as
+published-public.
+
+**dart-lang (31 selected of 41, 264 packages; mixed-version run 8873560..b9b0d09).**
+discover 8 s (31 clones in 4 s), index 3968 s (189 ok / 57 partial / 18 failed:
+66 of the 75 were the workspace override bug), ingest 44 s, blame 1280 s (serial
+unshallow), analyze 40 s. DELETE 34, DEPRECATE 112, UNEXPORT 418, PRIV-DEAD 863,
+REVIEW 12, BLOCKED 2926 (66 %), skew 115. Spot check: DELETE 6/8 right (one
+used only by its own `example/`, one by the user-excluded `sdk` repo); DEPRECATE
+10/10 public API nobody in the org uses (so `org_dead`'s assertion is false for
+this org: these are deprecations); REVIEW 4/4 real uses the index missed;
+PRIV-DEAD wrong in bulk: js_interop_gen 351 rows (a dart2js `main` under
+`lib/src/`), dart_mcp_server 321 rows (vendored `third_party/…/protocol_generated.dart`),
+intl4x 61 rows (conditional imports, pre-fix); skew 2/3 false (a name moved behind
+a conditional export; a member now inherited), 80 real (`web` renamed
+`ElementEventGetters`). New defects: the `test` package itself was dropped
+(`pkgs/test` matched the ignored dir name `test`), public `lib/<subdir>/` libraries
+are not entry points, analyzer `exclude:` files are silently not indexed (199
+files, fail-open), FFI native code (`src/*.c`, `java/`) flagged `unindexed_consumer`
+(673 blocked), dartdoc `testing/*` fixtures counted as packages, `report --view`
+overwrote `sarif/`, 2517-character table lines, and every rerun repeated the 75
+failing `pub get`s. Failures that are real repo problems: dart_ci's pre-2.12 SDK
+bounds, flute's `meta` pin, and one scip-dart crash on jnigen test data
+(`symbol_generator.dart:252`, still open).
+
 ### Phase 2 fix round 1: TS indexer toolchain
 
 From the supabase run (`index.txt`, per-package logs); all in
