@@ -1213,3 +1213,33 @@ discover then analyze, witness and report; views need only report.
   at 8. An hour for 100 clones therefore points at huge HEAD trees or LFS in
   hardware repos (now excluded by size/language, LFS skipped) or at blame's
   unshallow and index installs, not at shallow cloning.
+
+### Phase 2 runs — full Workiva (33 selected of 126 listed, Dart 3.13)
+
+Selection skipped 75 archived, 13 forks and 5 non-Dart repos with readable
+reasons and pulled in the JavaScript-labelled Dart repos; index 584 s, no
+workarounds, codemod and over_react_codemod index on 3.13, 0 ambiguous deps
+(npm/pub pairs in one directory are kept apart by manager). DEPRECATE 183
+(= ORG-DEAD), UNEXPORT 172, PRIV-DEAD 428, REVIEW 16 (all 4 checked real),
+BLOCKED 348, skew 3 (all real: `nameLexeme` pinned at 5.7.0). Spot checks:
+deprecate 1 right / 6 public-API-only / 1 wrong; private_dead 2 right / 2
+wrong standing for 390 rows. Wrong rows and the fixes adopted:
+- `bin/*.dart` that only `export 'package:x/src/executables/X.dart'`: the
+  `main` lives in the export namespace, not the file's top-level functions,
+  so over_react_codemod had 0 entry symbols (dart-surface resolves `main`
+  through the export namespace).
+- A test-support library (`codemod/lib/test.dart`) used by another repo's
+  tests under a regular dependency came out `only_test_refs`: references from
+  test files to test-support code now count (symbols defined in
+  `lib/test.dart`, `lib/testing.dart`, `test_utils`, `mocks`, `testing` paths,
+  or packages named `*_test`/`*_test_utils`).
+- Test/docs/script globs matched inside `lib/` (`lib/over_react_test.dart`,
+  `lib/src/mocks/`, `lib/src/handlers/example/`): for pub packages nothing
+  under `lib/` is test, docs or script code.
+- A private npm bundle consumed only by Dart through `@JS('rtl.…')` got an
+  unexport verdict (fail-open): same-repo packages of another manager are
+  now witness consumers of each other.
+- Blockers: over_react_test (one uncommitted generated part) and todo_client
+  (a pre-2.12 example app) block ~330 findings each; the report now says why
+  and suggests `ignoreManifests`, and missing generated parts trigger one
+  targeted `build_runner` attempt when the package depends on it.
