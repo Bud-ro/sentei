@@ -1063,3 +1063,38 @@ warns about. What remains is toolchain (pnpm 12 and bun in this sandbox, Dart
 ≥3.12 for two Workiva packages, Nuxt apps needing built org packages) and the
 M5 real upload, which needs a repo owner. M6 (nightly runs, false-dead log
 as fixtures) has not started.
+
+## Phase 2 (2026-09-26) — decisions from Budro after using the tool
+
+1. **Package identity is `<manager>:<repo>:<name>`.** Name collisions across
+   repos were the first source of trouble on every real org. PLAN §5.1's
+   "duplicate names are a hard error" is superseded: duplicates are allowed,
+   dependency resolution goes by name with disambiguation (same repo, then
+   published over private), and anything still ambiguous fails closed
+   (`ambiguous_dep` flags on the consumer, targeted at each candidate).
+2. **No user option may require a re-index.** Indexing is the expensive stage
+   and is cached per package by sha and indexer version; discover, ingest,
+   analyze, witness and report are cheap and must absorb every option change.
+3. **`assumeClosedWorld` is removed.** It only turned "deprecate" into
+   "delete" and required re-analysis to compare. The analysis computes one
+   base verdict per symbol plus the package's visibility, and the report offers
+   views over the same index:
+   - `delete`: private packages (nobody outside the org can depend on them),
+     no counted references or test-only references, witness passed;
+   - `deprecate`: published packages, same evidence;
+   - `org-dead` (the old closed-world deletion): the deprecate list read as
+     deletions on the assertion that the org is the only consumer. Same rows,
+     different label; the report and SARIF state the assertion.
+   `trustPrivateRegistry` stays (published-private is closed by definition).
+4. **Repo selection must be easy.** Orgs contain hardware repos, hackathons
+   and archives; discover pre-filters by primary language and manifest probe
+   before cloning, `sentei repos` lists candidates with reasons, and filters
+   persist in the org `sentei.json`.
+5. **Cloning must be parallel and polite**: shallow clones in parallel with a
+   configurable limit; REST calls honour `Retry-After` and the secondary
+   rate-limit headers with backoff. One hour for 100 shallow clones is not
+   acceptable.
+6. **Dart 3.13 and Flutter** are now on the dev box; Flutter packages get
+   `flutter pub get` and the Flutter SDK's package config.
+7. Next dogfood targets: larger Dart orgs (full Workiva, dart-lang, a Flutter
+   org) and an org with a real language mix (supabase), with spot checks.
