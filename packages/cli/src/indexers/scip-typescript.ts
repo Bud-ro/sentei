@@ -494,8 +494,7 @@ export const RUNTIME_TSCONFIG = 'tsconfig.sentei-runtime.json';
 
 /** discover.json `runtimeEntryPoints` (not in the index stage's DiscoveredPackage type; [] when absent). */
 function runtimeEntryPointsOf(pkg: DiscoveredPackage): string[] {
-  const v = (pkg as DiscoveredPackage & { runtimeEntryPoints?: unknown }).runtimeEntryPoints;
-  return Array.isArray(v) ? v.filter((f): f is string => typeof f === 'string') : [];
+  return (pkg.runtimeEntryPoints ?? []).filter((f): f is string => typeof f === 'string');
 }
 
 /**

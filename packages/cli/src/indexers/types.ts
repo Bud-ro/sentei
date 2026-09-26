@@ -51,6 +51,13 @@ export interface DiscoveredPackage {
   visibility?: string;
   /** Entry files relative to the repo root, POSIX. */
   entryPoints: string[];
+  /**
+   * Files a runtime starts (scripts run by `node`/`tsx`/…, a Dockerfile CMD,
+   * framework files loaded by name, `bin`s), relative to the repo root, POSIX.
+   * They seed reachability and are never export surface (discover
+   * `runtimeEntryPoints`). Optional: older discover models have none.
+   */
+  runtimeEntryPoints?: string[];
   deps: DiscoveredDep[];
 }
 
@@ -120,7 +127,12 @@ export type IndexStatus = 'ok' | 'partial' | 'failed';
 
 export interface IndexerResult {
   status: IndexStatus;
-  /** Human-readable lines, prefixed `info:`, `warn:` or `error:`. */
+  /**
+   * Human-readable lines, prefixed `info:`, `warn:` or `error:`. A `cause: <text>`
+   * line is emitted each time the status gets worse (install failure, indexer exit,
+   * missing output, export-surface failure); ingest uses the last one as the
+   * package's flag reason, so the report's hints name the real cause.
+   */
   diagnostics: string[];
   /** Absolute path of the produced `.scip` file (may not exist when failed). */
   scipFile: string;
@@ -192,7 +204,9 @@ export interface ExportsSidecar {
    * value `grade`, so the value looks unused. Function-local declarations are
    * skipped (SCIP gives them `local N` symbols; they are never verdict
    * subjects). Recorded whether or not SCIP linked it; ingest dedupes.
-   * Always `[]` for Dart.
+   * Also carries references to CommonJS require bindings (`const x =
+   * require('m')`; scip-typescript resolves their uses through the alias to
+   * the module, leaving the binding without references). Always `[]` for Dart.
    */
   shorthandRefs: ShorthandRef[];
   /**
