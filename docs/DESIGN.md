@@ -2174,3 +2174,117 @@ lockfile up to the repo root; the adapter makes the real choice) or `linking
 prepared` and `N/M packages done` lines about every tenth (at least every 10
 packages). Not verified on a full dart-lang rerun: the new timings (blame with 8
 repos at once, index with cached failures) are not measured.
+
+### Phase 2 fix round 1: Dart workspaces and fork patches 6–9
+
+Evidence: the flame-engine run (19 repos, 72 packages; `$TMPDIR/dog-flame`),
+supabase-flutter, Workiva. Adapter `1.7.0+sentei.9`; fork patches in
+`packages/indexers/scip-dart/PATCHES.md`.
+
+**Pub workspaces.** The adapter wrote `pubspec_overrides.yaml` into every
+package, members of a pub workspace included; pub refuses any override of a
+workspace package ("Cannot override workspace packages."), so 47 flame-engine
+and 14 supabase-flutter packages were partial (opaque, blocking their
+consumers). A root is a pubspec with top-level `workspace:`, a member one with
+`resolution: workspace`, resolved at the nearest enclosing root inside the
+repo, followed outwards through nested workspaces (`pubWorkspaceOf`). Per
+workspace and index-stage run (memoized on the stage's `options` object):
+sentei overrides left in members are removed, the org deps of all its
+packages that are not its own members are linked in the root's
+`pubspec_overrides.yaml` (a dep named like a member is never linked), one
+`dart pub get` runs at the root (`flutter pub get` when a discovered package
+or an ignored member manifest needs Flutter), with the usual conflict
+retries; then one scip-dart run (fork patch 6, `--package <dir>=<out>`) and one
+dart-surface run (`--batch`) cover every package. Each package still gets its
+own index.json entry, `.scip`, sidecar and log, identical to indexing it
+alone (test: acme_core's workspace index equals a run on it alone; flame: all
+69 sidecars and the report identical to the per-package run), so the
+per-package cache is unchanged; re-indexing one member rewrites the others'
+`.scip` files with the same content.
+
+| flame-engine | before (dog-flame) | scip-dart batched | + dart-surface batched |
+| --- | --- | --- | --- |
+| index stage, 19 repos | 1181.8 s | 987 s | **394 s** |
+| flame workspace, 37 packages | ~13 min, 36 of them partial | 548 s | **75 s** (36 s scip-dart, 39 s dart-surface) |
+| package status | 47 partial, 3 failed | 66 ok, 3 failed | 66 ok, 3 failed |
+
+Measured directly, scip-dart alone on the 37 flame packages: ~570 s one
+process per package (15 s each), 38 s in one run with patches 6–7 (4.3 GB
+RSS), 60–75 s with patch 8 under the same machine load. The 3 failures are
+genuine (crystap: no SDK lower bound; flame_shells: pre-2.12 SDK; flamedeck:
+an `intl` conflict with flutter_localizations). supabase-flutter: all 16
+packages ok (was 14 partial). Report on the local flame copy
+(`minAgeDays: 0`, no blame, so not comparable row for row with dog-flame's
+views): VERSION-SKEW 1233 → 1, BLOCKED 444 → 307.
+
+**Fork patch 7 (explicit member lists).** A member listed by path
+(`workspace: [packages/tiled]`) had its `lib/` in an analysis context of its
+own that `contextFor(member)` does not return: tiled came out `ok` with 0
+`lib/` documents (451 false version-skew rows). Files now come from every
+context overlapping the package (tiled: 0 → 28 `lib/` documents). Adapter:
+a package with `.dart` files under `lib/` and no `lib/` document is `failed`
+(`index_failed`), never `ok`.
+
+**Fork patch 8 (name-based parts).** Parts resolved alone lost every
+reference to their library's other files when `part of oxygen;` could not be
+matched to a library yet (order-dependent). Resolution is now library by
+library (`getResolvedLibrary`, parts included). oxygen: `ComponentManager`
+gets its 7 references from the other parts (0 before); the rows that rested
+on the lost references (`no_refs` on `ComponentManager`, `dead_island` on
+`ComponentBuilder`, `ComponentPool`, `EntityManager`, `EntityPool`) are gone,
+and what remains is `internal_refs_only` (used only inside oxygen, which is
+true). ~15–20% more analyzer CPU.
+
+**Fork patch 9 (operators).** Binary, prefix, postfix, compound-assignment
+and index expressions emit a reference at the operator token for the
+resolved operator (`[]`, `[]=` from an assignment's read/write elements;
+`dart:` operators skipped). flame_3d's `Vector2Extension` / `QuaternionExtension`
+are referenced now. sokobros' `BlockOperators` stays `private_dead`, and that
+is right at HEAD: flame's `Block` now declares `operator +` itself, which wins
+over the extension (the analyzer resolves `turn_manager.dart:86` to
+`Block.+`); the extension is only used against the older flame sokobros pins,
+while sentei links org deps at HEAD. Not an indexer bug.
+
+**dart-surface.** `main` is taken from the export namespace of every library
+outside `lib/` (and of `lib/*.dart` entries), so a `bin/foo.dart` that only
+re-exports its main records the declaration in `lib/src/` as a runtime entry
+symbol: over_react_codemod (Workiva) 390 → 113 private_dead, its 11
+executables' `main`s now seeds. `--batch` computes the sidecars of a whole
+workspace with one analysis context collection.
+
+**Sidecar contract: `conditionalImports`** (additive, Dart only; `types.ts`
+`ConditionalImport`). One entry per `import` / `export` with configurations in
+the package's own files: `{ file, line, col, target, alternatives }`, position
+of the default URI literal, `target` the default URI and `alternatives` each
+`if (…)` URI, resolved against the directive's file to a repo-relative POSIX
+path when the file is in the repo (relative and in-repo `package:` URIs), else
+kept as the `package:` / `dart:` URI. Every Dart sidecar carries the key
+(`[]`); TypeScript sidecars omit it. Ingest (the ingest branch, above) lends
+the default's uses to the alternatives: in the fixture, acme_core's
+`storage_io.dart` / `storage_web.dart` `storageName` are alive end to end.
+**Gap (ingest side):** a conditional *export* of an entry
+(`export 'stub.dart' if (dart.library.io) 'io.dart';`, used from another
+package) is not covered: the alternatives' twins get the external references
+but are not exported or reachable, so they came out `private_dead
+already_unreachable` in a trial fixture; the committed fixture uses a
+conditional import. fire_atlas's case is an import and no longer produces
+rows.
+
+**build_runner.** After a successful pub get, when own Dart files have
+`part` directives for missing `*.g.dart` / `*.freezed.dart` files and the
+pubspec depends on build_runner: `dart run build_runner build
+--delete-conflicting-outputs` in the package (the Flutter SDK's `dart` for
+Flutter; each workspace member in its own dir), time-boxed to 10 minutes,
+output in the package log, one `build_runner: ran|skipped|failed` diagnostic.
+Verified on over_react_codemod (ran, 7 s; first trigger was a `part '…'` line
+inside a test's string literal, now ignored). Not re-verified on the full
+Workiva org (over_react's `*.over_react.g.dart` case). Runs in `prepare`,
+which the stage runs for cached packages too; it finds nothing to do once
+the parts exist, but a package whose build keeps failing pays it again on
+every index run.
+
+**Also.** The adapter applies core's pub `lib/` exemption (nothing under
+`lib/` is a test file) to entry symbols and missing parts. Fixture
+`fixtures/org-dart/repos/dart-workspace` covers each case (README table);
+snapshots were regenerated with Dart 3.13.4 / Flutter 3.47.5 (byte identity on
+3.11.3 not re-checked).
