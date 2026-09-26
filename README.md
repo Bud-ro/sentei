@@ -101,7 +101,7 @@ decides which repos to clone **before cloning**, and `sentei repos` shows that
 decision for every repo without cloning anything:
 
 ```sh
-$S repos --org acme            # table: repo, language, size, pushed, selected, reasons
+$S repos --org acme            # selected and excluded repos: language, HEAD size, manifests, pushed, reasons
 $S repos --org acme --json     # the same as JSON
 # edit sentei.json "repos" (below) until the selection looks right, then:
 $S discover --org acme         # clones only the selected repos
@@ -109,15 +109,28 @@ $S discover --org acme         # clones only the selected repos
 
 Both read `<work>/<org>.lock.json` (or `--lockfile <file>`) when it exists, so the
 second and later runs make no API calls; the first run lists the org and writes
-it. `--update-lockfile` relists (new repos, new head shas). The lockfile records,
-per repo, the listing facts (`language`, `sizeKb`, `pushedAt`, fork/archived/
-template), the manifest probe result (`manifests`), the pinned `headSha`, the
+it. `--update-lockfile` relists (new repos, new head shas). The lockfile
+(`"version": 3`) records, per repo, the listing facts (`language`, `sizeKb` = GitHub's
+full-history size, `pushedAt`, fork/archived/template), what the git tree probe
+found (`manifests`: every `package.json` / `pubspec.yaml` path, `headTreeKb`: the
+HEAD size, `probe`: `tree`, `truncated` or `root`), the pinned `headSha`, the
 decision (`selected`, `reasons`) and the last `cloneError`; its `selection` header
-records the settings used. When the settings change, the decisions are recomputed
-from the recorded facts (pins kept) and the API is only called for what the
-lockfile does not hold yet (a probe, or the head sha of a newly selected repo).
-Lockfiles written by older versions (no `selection` header) still work, with only
-the include/exclude/fork/template rules; `--update-lockfile` upgrades them.
+records the settings used, and `excluded` lists every excluded repo with its reason
+and manifests, for auditing what was skipped. When the settings change, the
+decisions are recomputed from the recorded facts (pins kept) and the API is only
+called for what the lockfile does not hold yet (a tree, or the head sha of a newly
+selected repo). Version 2 lockfiles (root-only manifest probe) are upgraded on the
+next run: each candidate's tree is fetched at its pinned sha. Lockfiles written
+before selection existed (no `selection` header) still work, with only the
+include/exclude/fork/template rules; `--update-lockfile` upgrades them.
+
+`sentei repos` prints the selected repos, then the excluded ones, with language,
+size (the HEAD tree; `api` marks the full-history size when the tree was not read),
+the number of manifests found (`-` = not probed) and the reasons. **Excluded repos
+that carry manifests are named** there, in the selection log and as a report
+warning: they may use org packages, and those uses are invisible to the analysis,
+so an export only they use can come out dead. Include them, or treat findings
+touching what they might use with care.
 
 Rules, first match wins:
 
@@ -127,14 +140,25 @@ Rules, first match wins:
    `--exclude '*' --include 'h3*'` clones just the `h3*` repos.
 2. Empty repos (no commit on the default branch) and repos disabled by GitHub.
 3. Archived repos (`--include-archived`), forks (`--include-forks`), templates.
-4. `repos.maxSizeMb` (default 500) against the API `size`. That is the size of
-   the whole history, so it overstates what a shallow clone downloads.
+4. `repos.maxSizeMb` (default 500) against the **HEAD size**: the sum of the blob
+   sizes in the default branch's tree, about what a shallow clone checks out. The
+   API `size` (the packed full history: supabase/cli is 301 MB there, 26 MB at
+   HEAD) is used only when GitHub truncated the tree (over 100,000 entries or
+   7 MB of listing) or the tree could not be read; `sentei repos` and the reason
+   say which one was used.
 5. `repos.minPushed`: skip repos last pushed before an ISO date or `<n>d` ago.
 6. Language: GitHub's primary language is in `repos.languages` (default
-   TypeScript, JavaScript, Dart), **or** a manifest probe finds `package.json` or
-   `pubspec.yaml` at the repo root (a docs site written mostly in Vue or HTML,
-   a CLI tagged "Shell"). The probe costs 1–2 API requests per repo and only runs
-   for repos no other rule has already excluded.
+   TypeScript, JavaScript, Dart), **or** the repo has a `package.json` or
+   `pubspec.yaml` anywhere in its HEAD tree outside `node_modules/`,
+   `.dart_tool/`, `build/`, `vendor/` and `third_party/` (a docs site written
+   mostly in Vue, an Elixir app with `assets/package.json`, a Rust repo with JS
+   test packages, a Dart monorepo with only `pkgs/*/pubspec.yaml`).
+
+Rules 4 and 6 read one git tree per repo (`GET .../git/trees/<branch>?recursive=1`,
+one request), fetched for every repo rules 2–3 let through and for repos an
+explicit include/exclude matched (so an excluded repo's manifests are known). A
+truncated tree falls back to its partial listing plus a root `package.json` /
+`pubspec.yaml` probe (`probe: truncated`).
 
 Org `sentei.json`:
 
@@ -159,10 +183,10 @@ Org `sentei.json`:
 | `include` | `[]` | globs always cloned (past every automatic rule) |
 | `exclude` | `[]` | globs never cloned (unless included) |
 | `languages` | TypeScript, JavaScript, Dart | primary languages that select a repo; `[]` turns the language rule off |
-| `maxSizeMb` | 500 | skip repos whose API size is larger; `null` for no limit |
+| `maxSizeMb` | 500 | skip repos whose HEAD size (API size when the tree is truncated) is larger; `null` for no limit |
 | `minPushed` | none | ISO date (`"2025-01-01"`) or `"<n>d"` |
 | `includeForks` / `includeArchived` | false | overridden by `--include-forks` / `--include-archived` (and `--no-…`) |
-| `probe` | true | look for a root `package.json` / `pubspec.yaml` when the language does not match |
+| `probe` | true | read each candidate's git tree (manifests anywhere, HEAD size); `false`: language and API size only, no per-repo requests before pinning |
 | `cloneConcurrency` | 8 | parallel clones; overridden by `--clone-concurrency` (1–32) |
 
 CLI flags override the config: `--include`/`--exclude` rank above
@@ -189,10 +213,12 @@ counted, so exports only it uses can be reported as dead.
 
 ### GitHub API limits
 
-Listing costs one request per 100 repos, one per selected repo (its head sha),
-and 1–2 per probed repo: about 150 requests for a 100-repo org, against 5,000 per
-hour for a token. Requests run at most 8 at a time. sentei honours GitHub's rate
-limit headers for all of them together:
+Listing costs one request per 100 repos, one per probed repo (its git tree), and
+one per selected repo (its head sha): at most about 200 requests for a 100-repo
+org, against 5,000 per hour for a token (a truncated tree adds 1–2 root probes,
+and a default branch the trees endpoint does not resolve adds a branch lookup).
+Above 300 probed repos a progress line is printed every 50. Requests run at most 8
+at a time. sentei honours GitHub's rate limit headers for all of them together:
 
 - when `x-ratelimit-remaining` reaches 0, every request waits until
   `x-ratelimit-reset` (one log line with the time); a 403/429 with no remaining
@@ -346,7 +372,9 @@ only `report`.
 
 The report stage prints: the policy line (and the selected views with
 `--view`); a `!!` warning banner (`minAgeDays` 0, repos whose index was partial
-or failed, dependencies on a name several org packages share); a per-package
+or failed, dependencies on a name several org packages share, excluded or
+uncloned repos that carry manifests: the first ten on stdout, all of them in
+`report.json`); a per-package
 table (package name, repo, visibility, private, opaque, one count per view,
 blockers); the **view totals**, with the reasons of the DELETE and DEPRECATE rows
 (`no_refs`, `only_test_refs`, `dead_island`: islands are a reason, not a column)

@@ -1301,3 +1301,59 @@ From the supabase run (`index.txt`, per-package logs); all in
 - The adapter version stays `0.4.0+sentei.5`: the sidecar format is unchanged
   and the packages these fixes rescue were partial or failed, which the index
   cache never reuses (bumping it would also regenerate `fixtures/snapshots`).
+
+### Phase 2 fix round 1: repo selection by git tree
+
+Found on the supabase and Workiva dogfood runs.
+
+- **One recursive git tree per candidate replaces the root probe.** The
+  root-only `contents` probe missed repos whose manifests are all nested
+  (supabase/realtime `assets/package.json`, edge-runtime's JS test packages,
+  Dart `pkgs/*` monorepos). `GET /repos/{o}/{r}/git/trees/{ref}?recursive=1`
+  accepts a branch name (checked against the live API), so it is one request;
+  `ref` is the pinned sha when the lockfile has one. Manifests are every
+  `package.json` / `pubspec.yaml` outside `node_modules`, `.dart_tool`, `.git`,
+  `build`, `vendor`, `third_party` (ALWAYS_SKIP_DIRS from manifests.ts plus
+  three); the example/test/fixture dirs that discover ignores still count, so
+  selection errs toward cloning. Fallbacks: 409 = empty repo; 404 by branch
+  name → branch lookup (404 = empty) and a retry by sha; `truncated: true`
+  (100k entries / 7 MB) → partial tree plus root probe (`probe: truncated`);
+  still no tree → root probe (`probe: root`). Requests: 1 per probed repo + 1
+  per selected repo (pin), as before for selected-by-language repos; the tree
+  and the pin are fetched moments apart by branch name (a push in between
+  only makes the recorded manifests one commit older).
+- **Who is probed:** every repo rules 2–3 let through (so language-matched
+  repos too: the size rule needs the HEAD size), plus repos an explicit
+  include/exclude glob matched (for the record: the excluded-repo warning).
+  Archived, fork, template, empty and disabled repos are not probed; their
+  manifests are unknown (`null`) and they are never in the warning.
+  `repos.probe: false` skips every tree: API size and language only.
+- **Size rule uses the HEAD size** (sum of blob sizes, KB): supabase/cli is
+  301 MB by API `size` (packed history) and 26 MB at HEAD, supabase/supabase
+  2.4 GB vs 740 MB. The API size is the fallback only when the tree was
+  truncated or unreadable; the reason names which one was used. Default
+  threshold unchanged (500).
+- **Lockfile v3** (`"version": 3`): per repo `manifests` (paths), `headTreeKb`,
+  `probe`; plus a derived `excluded` list (repo, joined reasons, manifests or
+  null) for auditing. A rerun makes no API call. v2 files are read with their
+  boolean root-probe results dropped, so each candidate is re-probed once at
+  its pinned sha; a version above 3 is refused. Key order is canonical so
+  unchanged selections never rewrite the file. The committed fixture
+  lockfiles were upgraded with their pins kept.
+- **Excluded repos with manifests are a warning** in the selection log,
+  `sentei repos`, and the report. discover writes every listed repo it does
+  not analyse (exclusions and clone failures skipped with
+  `--allow-clone-failures`) to `excluded_repos (repo, reason, manifests)`; the
+  report names each one with manifests, its exclusion kind and manifest count
+  (report.json: all; stdout: the first ten). supabase/supabase (72 manifests,
+  excluded by config) is the case that motivated it. The table is additive
+  (`CREATE TABLE IF NOT EXISTS`, applied to an existing DB by openDb), so
+  SCHEMA_VERSION stays 11 rather than forcing a rebuild of work DBs.
+- **Live check** (2026-09-26): honojs, unjs and Workiva select the same repos
+  as the old rules would (no repo there has only nested manifests outside a
+  language match); supabase with its dogfood config selects 37 instead of 29:
+  +realtime, edge-runtime, supavisor, etl, benchmarks, slim-services,
+  supabase-swift, pulumi-supabase-analytics (nested manifests only); cli is
+  now selected by its HEAD size (the dogfood run had to force it with
+  `--include`); supabase and productions (excluded by config, 72 and 1
+  manifests) are named in the warning.
