@@ -1107,3 +1107,33 @@ as fixtures) has not started.
    `flutter pub get` and the Flutter SDK's package config.
 7. Next dogfood targets: larger Dart orgs (full Workiva, dart-lang, a Flutter
    org) and an org with a real language mix (supabase), with spot checks.
+
+### Package identity (as built)
+
+**Identity is (repo, path, manager), not the name.** Name collisions across
+repos were the biggest source of trouble on every real org (honojs's
+templates, fixtures and a VS Code extension all named `hono`; Workiva's
+private duplicates). `UNIQUE (manager, name)` forced an abort or a guess. A
+package id is now `<manager>:<repo>:<name>` (`npm:acme/lib-core:@acme/core`,
+`pub:Workiva/w_flux:w_flux`); two repos may publish one name and both get
+findings. Inside one repo a name stays unique per manager (ids would collide):
+private duplicates there are auto-ignored, two public ones are an error.
+
+Manifests and SCIP symbols name packages only by name, so **dependencies are
+resolved per consumer**: the only org package of that name; else the one in
+the consumer's repo (`same-repo`); else the only non-private one
+(`published`, since a private package cannot come from a registry); else
+ambiguous — nothing is resolved and the consumer gets an `ambiguous_dep` flag
+targeted at every candidate, so all of them are `blocked` (fail closed);
+discover warns with `ignoreManifests` suggestions and the report lists each
+such dependency. `package_deps` records `resolution` and `ambiguous`.
+
+Ingest attributes a SCIP reference to a shared name the same way (own name →
+the consumer; unique name → that package; the consumer's resolved dependency →
+it; otherwise dropped and counted, with `ambiguous_dep` rows added if
+discover had none). Because two packages can define byte-identical SCIP
+symbols, a shared name's symbol strings carry the package id in the version
+slot; unshared names are unchanged. `keep` accepts `npm:<name>#sym` (every
+package of that name) and `npm:<org>/<repo>:<name>#sym`. Index slugs are
+`<manager>__<repo>__<name>`. SARIF fingerprints use the new id (existing
+alerts re-key once); old work DBs are refused (schema v10).

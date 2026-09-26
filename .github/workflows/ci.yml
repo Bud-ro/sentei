@@ -15,9 +15,14 @@ concurrency:
 
 jobs:
   test:
-    name: typecheck + test (Node 26, Dart 3.11)
+    name: typecheck + test (Node 26, Dart ${{ matrix.dart }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11.3 guards the vendored fork's SDK floor; 3.13.4 is the dev box.
+        dart: ['3.11.3', '3.13.4']
     steps:
       - uses: actions/checkout@v5
 
@@ -27,10 +32,10 @@ jobs:
           cache: npm
 
       # Dart is needed for the Dart indexer tests (vendored scip-dart fork + dart-surface).
-      # Pinned to the version the snapshots were generated with; see docs/DESIGN.md.
+      # Snapshots are identical across both versions; see docs/DESIGN.md.
       - uses: dart-lang/setup-dart@v1
         with:
-          sdk: 3.11.3
+          sdk: ${{ matrix.dart }}
 
       - run: npm ci
 
