@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_IGNORE_MANIFEST_DIRS, listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
-  dockerfileTargets, runnerTargets, stripJsonc, tsconfigOutDirs,
+  dockerfileTargets, runnerTargets, sourceForBuildOutput, stripJsonc, tsconfigOutDirs,
 } from '../src/manifests.ts';
 
 let root: string;
@@ -439,6 +439,22 @@ describe('npm manifests', () => {
       { outDir: 'c', rootDir: '', config: 'tsconfig.cycle.json' },
     ]);
     expect(stripJsonc('{"a": "// not a comment", /* c */ "b": [1, 2,], } // end')).toBe('{"a": "// not a comment",   "b": [1, 2] } \n');
+  });
+
+  it('sourceForBuildOutput: a deep dist import path to its source (supabase dist/module/lib/types)', () => {
+    pkgJson('pkgs/sb/package.json', { name: '@x/sb', main: 'dist/main/index.js' });
+    write('pkgs/sb/tsconfig.json', '{ "compilerOptions": { "outDir": "dist/main", "rootDir": "src" } }');
+    write('pkgs/sb/tsconfig.module.json', '{ "extends": "./tsconfig.json", "compilerOptions": { "outDir": "dist/module" } }');
+    write('pkgs/sb/src/index.ts');
+    write('pkgs/sb/src/lib/types.ts');
+    write('pkgs/sb/src/lib/helpers/index.ts');
+    // No tsconfig names dist/esm: the one-segment strip.
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/module/lib/types')).toBe('src/lib/types.ts');
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/main/lib/types.d.ts')).toBe('src/lib/types.ts');
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/esm/lib/types.js')).toBe('src/lib/types.ts');
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/module/lib/helpers')).toBe('src/lib/helpers/index.ts');
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/module/lib/gone')).toBeNull();
+    expect(sourceForBuildOutput(root, 'pkgs/sb', '../escape')).toBeNull();
   });
 
   it('a tsconfig rootDir other than src, allowJs sources, and .mjs → .mts', () => {

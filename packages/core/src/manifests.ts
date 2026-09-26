@@ -1100,6 +1100,30 @@ function stemGroups(stem: string, root: string, decl: boolean, exts: readonly st
   return out;
 }
 
+/**
+ * The source file a build-output path of the npm package at `dir` stands for, by the
+ * entry-point rules (resolveEntry: the file itself, Node probing, tsconfig outDir →
+ * rootDir, the dist→src convention, the one-segment strip), package-relative; null
+ * when nothing exists. `rel` is package-relative and may omit the extension, as a deep
+ * import does (`@supabase/supabase-js/dist/module/lib/types` → `dist/module/lib/types`
+ * → `src/lib/types.ts`). For the TypeScript adapter's deep-dist-import handling
+ * (export-surface / the shadow package), which today records such imports as the
+ * unresolved module `*`. `repoFiles` defaults to listFiles(repoRoot).
+ */
+export function sourceForBuildOutput(
+  repoRoot: string, dir: string, rel: string, repoFiles: readonly string[] | null = null,
+): string | null {
+  const n = normalizeRel(rel);
+  if (n === null || n === '') return null;
+  const pkgFiles = packageFiles(dir, repoFiles ?? listFiles(repoRoot));
+  const layout: SourceLayout = { files: new Set(pkgFiles), outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) };
+  const direct = resolveEntry(n, layout);
+  if (direct !== null) return direct;
+  if (posix.extname(n) !== '' && BUILT_EXT.test(n)) return null;
+  // Extension-less: as `<rel>.js` (a module file), then `<rel>/index.js` (a directory).
+  return resolveEntry(`${n}.js`, layout) ?? resolveEntry(`${n}/index.js`, layout);
+}
+
 /** One tsconfig's build mapping, package-relative ('' = the package dir). */
 export interface TsOutDir {
   outDir: string;
