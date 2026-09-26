@@ -68,10 +68,16 @@ opens pull requests.
   package (`opaque_consumer`), so its symbols get no verdict.
 - Dart packages are resolved with `dart pub get` (`flutter pub get` for Flutter
   packages; `flutter` must be on `PATH`), org dependencies source-linked in a
-  `pubspec_overrides.yaml` (an existing one is backed up to `.sentei-backup/`).
+  `pubspec_overrides.yaml` (an existing one is backed up to `.sentei-backup/`;
+  the package's own `dependency_overrides`, from that file or else from
+  `pubspec.yaml`, are kept: pub reads only one of the two). When pub rejects a
+  link (the org package's HEAD conflicts with the consumer's constraints), the
+  links it names are dropped and `pub get` is retried, up to 8 times, one `warn:`
+  per dropped link.
   A pub workspace (root `workspace:`, members `resolution: workspace`) is
   resolved once at its root, with the links there and only for org
-  dependencies outside the workspace, and indexed by one scip-dart run over
+  dependencies outside the workspace that no member overrides itself (pub
+  refuses a name overridden twice), and indexed by one scip-dart run over
   all its packages. When `part '*.g.dart'` / `*.freezed.dart` files are missing
   (neither next to the library nor under `.dart_tool/build/generated/<package>/`,
   where `build_to: cache` builders such as over_react's write them) and the
@@ -104,7 +110,8 @@ opens pull requests.
   outside `lib/src/`, importable as `package:<name>/<path>`) and `bin/`. Kept
   alive although nothing references them: the top-level `main` of every
   library (wherever it is; test files excepted), build.yaml builder factories,
-  dart_dev's `config`, and the Flutter plugin classes a pubspec names
+  grinder tasks (`@Task` / `@DefaultTask`, run by reflection from
+  `tool/grind.dart`), dart_dev's `config`, and the Flutter plugin classes a pubspec names
   (`flutter.plugin.platforms.*.pluginClass` / `dartPluginClass`).
 - Dart conditional imports / exports (`import 'stub.dart' if (dart.library.io)
   'io.dart'`): the index sees only the default; its uses are lent to the
@@ -448,7 +455,9 @@ Test, docs, generated and script files are recognized by path
 `cypress/`, `playwright/`, Flutter `test_driver/` and `integration_test/`, ...),
 except that nothing under a pub package's `lib/` is ever one of them: every file
 there is importable library code. TypeScript files are also generated when a
-comment in their first 20 lines says so (`@generated`, "do not edit", ...), when
+comment in their first 20 lines says so (`@generated`, "do not edit", "do not
+modify by hand", "auto generated", ...), Dart files when their leading comment
+block does (ffigen / jnigen bindings, source_gen output), TypeScript files when
 they sit under a tool-output directory (`.nuxt/`, `.svelte-kit/`, `.prisma/`,
 ...), or when they have the exact shape of `supabase gen types typescript`
 output (which carries no header). Generated globs include ffigen / jnigen style

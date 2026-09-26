@@ -3076,3 +3076,112 @@ dog-workiva3 (analyze + witness on a copy of the DB): `react#isElement` is the
 only change, needs_review → deprecation_candidate; witness 217 checked /
 28 mismatched → 217 / 27; the 11 unexport downgrades are unchanged apart
 from the note (above).
+
+### Phase 2 fix round 5: pub overrides merge; retry cap; extension types; generated Dart headers
+
+Evidence: the dart-lang rerun 2 (`$TMPDIR/dog-dartlang2`, tool 409d7b9,
+adapter `+sentei.11`), defects A–E of its report.md: 225 ok / 4 partial / 34
+failed packages, 54 % of findings blocked (2452 of 4548), VERSION-SKEW 397
+(all false), PRIV-DEAD 495. Adapter `1.7.0+sentei.12`; fork patch 14 in
+`packages/indexers/scip-dart/PATCHES.md`. Measured on copies of the clones
+(`$TMPDIR/r5/v/`, never in place), Dart 3.13.4 / Flutter 3.47.5, `pub get
+--offline`; the full dart-lang pipeline was not re-run.
+
+**A. The overrides file dropped the pubspec's own `dependency_overrides`.**
+Pub reads `dependency_overrides` from one place: `pubspec_overrides.yaml`
+when that file has the key (even empty), else `pubspec.yaml` (checked: an
+overrides file with only a comment keeps the pubspec's; one with
+`dependency_overrides:` and nothing under it drops them). The file sentei
+writes always has the key, and its merge base was only a pre-existing
+overrides file, so dart-lang/native lost `ffigen: {path: pkgs/ffigen}` and
+two workspace members (ffigen ^20 vs ^22) no longer resolved: 14 packages
+`failed`. `writeOverridesFor` now takes the pubspec's `dependency_overrides`
+block into the merge base whenever the user's overrides file (or its
+`.sentei-backup/` copy) has no such key; sentei's links still win for the org
+packages they link (`info: replaced existing dependency_overrides entry`),
+and with a user key the pubspec's are ignored, as pub does. The block is read
+with the same minimal YAML reader (`pubspecDependencyOverrides`); flow style
+or anything it cannot round-trip is a `warn:` (the entries are then lost, as
+before). In a pub workspace pub combines the overrides of every workspace
+package and refuses a name "overridden in both" the root and a member
+(checked), so a dep a member overrides itself (its own overrides file, else
+its pubspec) is no longer linked at the root (`warn: X is overridden by
+workspace member …; not linked`). On a copy of native: status `ok`, the root
+file carries `ffigen` plus the links, one conflict retry (`test`), 7.8 s. The
+standalone `jni` package also had pubspec overrides (code_assets, ffigen,
+hooks, jni_util, native_toolchain_c, record_use) that the old file silently
+replaced; it happened to resolve anyway.
+
+**B. Conflict retries.** Pub names one rejected source link per failed
+resolution, so a consumer needs one retry per conflicting link. pub-dev
+needed a 4th drop (`coverage`) and flute a 4th (`collection`); the cap was 3,
+so pub-dev's 17 packages and flute failed (together about 4000 of the
+blocked-finding attributions: flute 1788, web_app 1490, pub_dev 349, …).
+`MAX_CONFLICT_RETRIES` is 8; every link one failure names is still dropped at
+once (pub never named two in the dart-lang logs, but the parser takes all),
+the no-progress stop stays, each drop is a `warn:`, and hitting the cap is a
+`warn: pub get still rejects source link(s) … after 8 retries; giving up`.
+On copies: pub-dev `ok` after test, build_runner, source_gen, coverage (5 pub
+gets, 6.4 s); flute `ok` after string_scanner, platform, file, collection
+(7.5 s). The reason text no longer keeps pub's `And because` lead-in
+(coverage's sentence).
+
+**C. Extension types (fork patch 14).** All 397 skew rows were jni's
+`JConstructorId#pointer.` referenced from ok_http (346) and cronet_http (51).
+`extension type JConstructorId._fromPointer(JMethodIDPtr pointer)` declares a
+primary constructor and the representation field `pointer`; neither is a
+`Declaration` node in the analyzer AST, so scip-dart defined only the type
+while references resolved to the field and the constructor. A referenced
+symbol no document defines reads as "gone at HEAD". The fork now defines a
+`PrimaryConstructorDeclaration`'s constructor at its name and a declaring
+parameter's field at the parameter's name. On the jni copy:
+`JConstructorId#pointer.` and `JConstructorId#_fromPointer().` are defined at
+`jclass.dart:209`, with 36 references inside jni. No unemittable case is
+left, so `unresolved_ref_classes` is unchanged. Fixture: acme_x (now
+`sdk: ^3.3.0`; the snapshots show no other change) exports
+`extension type Handle.wrap(int raw)`, used by acme_app as
+`Handle.wrap(7).raw`: with the fork before patch 14 the M3 pipeline reports
+`raw` and `wrap` as `version_skew` (checked by reverting the patch).
+
+**D. Generated Dart files by header.** The Dart sidecar had no
+`generatedFiles`, so Dart files were generated only by name
+(`GENERATED_GLOBS`). ffigen / jnigen bindings are named like hand-written code
+(`jni/lib/src/core_bindings.dart`, `ok_http/lib/src/jni/bindings.dart`,
+`cupertino_http/lib/src/native_cupertino_bindings.dart`, ffigen's
+`clang_bindings.dart`). The adapter (not dart-surface) now runs the
+TypeScript sidecar's sniff, `consumer-checks.ts` `isGeneratedFile`, over every
+document of the package's index, so the patterns stay in one list, and writes
+`generatedFiles` into every Dart sidecar; ingest already read the field for
+any sidecar (its comment said Dart had none). The shared patterns gained
+"do not modify by hand" (source_gen's `// GENERATED CODE - DO NOT MODIFY BY
+HAND`) and "auto generated" (unhyphenated); no TypeScript fixture snapshot
+changes. **Deviation:** for Dart the sniff reads only the file's leading
+comment block (comment and blank lines before the first directive or
+declaration, `dartFileHeader`), not every comment of the first 20 lines:
+checked against the report rows, the 20-line rule marked hand-written
+`samples/command_line/lib/src/options.dart` ("/// The command line argument
+parser generated by the `build_cli_annotations` package") and swiftgen's
+`config.dart` ("will be automatically generated") as generated. With the
+leading block, the sniff matches 291 of the 495 PRIV-DEAD rows (ok_http 125,
+cupertino_http 98, cronet_http 30, clang_bindings 27, core_bindings 9,
+jni_flutter generated_plugin 2), 20 of the 58 REVIEW rows (core_bindings 18,
+timezone's generated `lib/data/latest*.dart` 2), the 1 DELETE row, and no
+UNEXPORT or DEPRECATE row. Fixture: `dart-gen/lib/bindings.dart` with the
+build_runner header, an unused export and two privates; without the change
+the pipeline reports a deletion_candidate and two private_dead rows (checked).
+
+**E. `tool/` scripts.** `tool/*.dart` were already indexed (fork patch 10)
+and their documents and `main` seeded; what was missing is grinder: `main(args)
+=> grind(args)` finds the `@Task` / `@DefaultTask` functions by reflection, so
+dart_services' `buildProjectTemplates`, the only user of `ProjectCreator`,
+was unreachable (#13: `ProjectCreator` and 8 more rows private_dead).
+dart-surface now records every top-level function annotated with
+package:grinder's `Task` or `DefaultTask` as a runtime entry symbol (test
+with a stand-in grinder package: grinder is not in the offline pub cache;
+a same-named annotation from another package is not a task). Not re-run on
+dart-pad. Not addressed from E: runtime-by-name entries (`spawnHybridUri`),
+`publish_to`-less `language:corpus`.
+
+Adapter `+sentei.12`: fork patch 14 and the new `generatedFiles` change the
+fixture snapshots (new `scip-dart@1.7.0+sentei.12/` directory, `+sentei.11`
+removed); the grinder entry symbols change no fixture output.
