@@ -230,6 +230,7 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
       ['acme/dart-app', 'ok'],
       ['acme/dart-lib-pub', 'ok'],
       ['acme/dart-lib-x', 'ok'],
+      ['acme/dart-testkit', 'ok'],
       ...(HAS_FLUTTER ? Object.keys(DART_FLUTTER).sort().map((n) => [`acme/${n}`, 'ok']) : []),
     ]);
     expect(rows).toEqual(expectedDart('expected-findings.json'));

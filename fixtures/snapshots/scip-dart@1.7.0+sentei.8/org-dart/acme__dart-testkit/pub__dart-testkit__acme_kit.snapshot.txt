@@ -1,0 +1,74 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/acme_kit.dart
+  // Main library of acme_kit: a normal entry (not test-support by its name).
+//^ definition scip-dart pub acme_kit . lib/`acme_kit.dart`/
+  library;
+
+  export 'src/test_utils/matchers.dart';
+
+  // Expected: deletion_candidate, reasons ["only_test_refs"]. A normal library symbol
+  // used only by another package's tests (acme_app test/kit_test.dart) stays test-only.
+  int kitRealOnlyInTests() => 1;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^^^^^^ definition scip-dart pub acme_kit . lib/`acme_kit.dart`/kitRealOnlyInTests(). enclosing [7:0-7:30]
+
+## lib/src/fakes.dart
+  // Exported through lib/testing.dart: test-support surface.
+//^ definition scip-dart pub acme_kit . lib/src/`fakes.dart`/
+
+  // Expected: alive, no finding. Used only by acme_app's test (test/kit_test.dart),
+  // through a regular dependency: other packages' test uses of test-support count.
+  class FakeServer {
+//      ^^^^^^^^^^ definition scip-dart pub acme_kit . lib/src/`fakes.dart`/FakeServer# enclosing [4:0-7:1]
+    // Expected: alive, no finding (member of a live class).
+    String get url => 'fake://server';
+//  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//             ^^^ definition scip-dart pub acme_kit . lib/src/`fakes.dart`/FakeServer#`<get>url`. enclosing [6:2-6:36]
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (test-support, used nowhere).
+  FakeServer unusedFakeServer() => FakeServer();
+//^^^^^^^^^^ reference scip-dart pub acme_kit . lib/src/`fakes.dart`/FakeServer#
+//           ^^^^^^^^^^^^^^^^ definition scip-dart pub acme_kit . lib/src/`fakes.dart`/unusedFakeServer(). enclosing [10:0-10:46]
+//                                 ^^^^^^^^^^ reference scip-dart pub acme_kit . lib/src/`fakes.dart`/FakeServer#`<constructor>`().
+
+  // Expected: deletion_candidate, reasons ["only_test_refs"]. Used only by acme_kit's
+  // own test: a package's own tests are never its consumers, test-support or not.
+  int ownTestOnlyFake() => 3;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^^^ definition scip-dart pub acme_kit . lib/src/`fakes.dart`/ownTestOnlyFake(). enclosing [14:0-14:27]
+
+## lib/src/test_utils/matchers.dart
+  // Test-support dir (`lib/src/test*/`), re-exported by the main library.
+//^ definition scip-dart pub acme_kit . lib/src/test_utils/`matchers.dart`/
+
+  // Expected: alive, no finding (used by acme_app's test).
+  bool isFake(String url) => url.startsWith('fake:');
+//^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//     ^^^^^^ definition scip-dart pub acme_kit . lib/src/test_utils/`matchers.dart`/isFake(). enclosing [3:0-3:51]
+//            ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                   ^^^ definition local 0 enclosing [3:12-3:22]
+//                           ^^^ reference local 0
+//                               ^^^^^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#startsWith().
+
+## lib/testing.dart
+  // Test-support entry of acme_kit (entry stem `testing`: analyze.sql
+//^ definition scip-dart pub acme_kit . lib/`testing.dart`/
+  // test_support_symbols). Other packages' tests import it.
+  library;
+
+  export 'src/fakes.dart';
+
+## test/fakes_test.dart
+  // acme_kit's own test (no package:test: the fixture resolves offline).
+//^ definition scip-dart pub acme_kit . test/`fakes_test.dart`/
+  import 'package:acme_kit/testing.dart';
+
+  void main() {
+//     ^^^^ definition scip-dart pub acme_kit . test/`fakes_test.dart`/main(). enclosing [3:0-5:1]
+    print(ownTestOnlyFake());
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^^^^ reference scip-dart pub acme_kit . lib/src/`fakes.dart`/ownTestOnlyFake().
+  }

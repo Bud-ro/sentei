@@ -11,7 +11,8 @@ over them).
 | --- | --- | --- | --- |
 | `dart-lib-x` | `acme_x` | private (`publish_to: none`) | lib: entry `lib/acme_x.dart` with `export`, `export ... show`, `part`; entries `lib/syntax.dart`, `lib/builder.dart` |
 | `dart-lib-pub` | `acme_pub` | **published-public** (no `publish_to`) | lib with one unused export |
-| `dart-app` | `acme_app` | private (`publish_to: none`) | consumer (`bin/main.dart`, `bin/shapes.dart`): `path:` dep on `acme_x`, hosted `^1.0.0` dep on `acme_pub` |
+| `dart-app` | `acme_app` | private (`publish_to: none`) | consumer (`bin/main.dart`, `bin/shapes.dart`): `path:` dep on `acme_x`, hosted `^1.0.0` dep on `acme_pub`; `test/kit_test.dart` uses `acme_kit` (regular `path:` dep) |
+| `dart-testkit` | `acme_kit` | private (`publish_to: none`) | test-support library: `lib/testing.dart` entry, `lib/src/test_utils/` |
 | `flutter-widgets` | `acme_widgets` | private (`publish_to: none`) | Flutter lib (`environment.flutter`, `flutter: {sdk: flutter}`): `AcmeButton` (used), `AcmeBanner` (unused) |
 | `flutter-app` | `acme_flutter_app` | private (`publish_to: none`) | Flutter app: `lib/main.dart` `main` calls `runApp` with an `AcmeButton`; `path:` dep on `acme_widgets` |
 
@@ -86,3 +87,18 @@ in `packages/core/src/globs.ts`): it is importable as `package:acme_x/…`.
 | --- | --- | --- |
 | `lib/src/*_test.dart` that is not a test | `dart-lib-x/lib/src/wire_test.dart`, re-exported by the entry `lib/testing.dart` | `wireUnused` deletion_candidate `["no_refs"]`; `_wireIsland` private_dead `already_unreachable` (a test file's symbols never are) |
 | Test-support code in `lib/mocks/` | `dart-lib-x/lib/mocks/fake_clock.dart` `FakeClock`, used by `dart-app/bin/clock.dart` | `FakeClock` alive; its use of `wireTick` counts, so `wireTick` is unexport_candidate `["internal_refs_only"]`, not `only_test_refs` |
+
+### Test-support libraries (Phase 2 fix round 1)
+
+A symbol in a test-support surface (analyze.sql `test_support_symbols`: exported
+through an entry named `test` / `testing` / …, under `lib/src/test*/` and friends,
+or in a package named like `*testkit`, `*_test`) counts other packages' test-file
+uses as references, whatever the dependency kind.
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| Test-support entry used by another package's test through a regular dependency | `dart-testkit/lib/testing.dart` → `FakeServer`, used by `dart-app/test/kit_test.dart` | `FakeServer` alive |
+| Test-support dir | `dart-testkit/lib/src/test_utils/matchers.dart` `isFake` (exported by the main library), used by the same test | alive |
+| Normal library symbol used only by another package's test (negative) | `dart-testkit/lib/acme_kit.dart` `kitRealOnlyInTests` | deletion_candidate `["only_test_refs"]` |
+| Test-support symbol used only by its own package's test | `dart-testkit/lib/src/fakes.dart` `ownTestOnlyFake` | deletion_candidate `["only_test_refs"]` |
+| Test-support symbol used nowhere | `unusedFakeServer` | deletion_candidate `["no_refs"]` |

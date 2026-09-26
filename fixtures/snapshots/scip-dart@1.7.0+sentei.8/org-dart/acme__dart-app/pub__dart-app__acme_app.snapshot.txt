@@ -87,3 +87,25 @@
 //        ^^^^^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/labelOf().
 //                ^^ reference local 1
   }
+
+## test/kit_test.dart
+  // A test of acme_app using acme_kit, declared as a regular dependency (Workiva's
+//^ definition scip-dart pub acme_app . test/`kit_test.dart`/
+  // codemod lib/test.dart case). No package:test: the fixture resolves offline.
+  import 'package:acme_kit/acme_kit.dart';
+  import 'package:acme_kit/testing.dart';
+
+  void main() {
+//     ^^^^ definition scip-dart pub acme_app . test/`kit_test.dart`/main(). enclosing [5:0-9:1]
+    final server = FakeServer();
+//        ^^^^^^ definition local 0 enclosing [6:8-6:29]
+//                 ^^^^^^^^^^ reference scip-dart pub acme_kit . lib/src/`fakes.dart`/FakeServer#`<constructor>`().
+    print(isFake(server.url));
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^ reference scip-dart pub acme_kit . lib/src/test_utils/`matchers.dart`/isFake().
+//               ^^^^^^ reference local 0
+//                      ^^^ reference scip-dart pub acme_kit . lib/src/`fakes.dart`/FakeServer#`<get>url`.
+    print(kitRealOnlyInTests());
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^^^^^^^ reference scip-dart pub acme_kit . lib/`acme_kit.dart`/kitRealOnlyInTests().
+  }

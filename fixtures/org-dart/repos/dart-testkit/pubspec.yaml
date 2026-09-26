@@ -1,0 +1,7 @@
+name: acme_kit
+description: "Org-private test-support library: lib/testing.dart is used by acme_app's tests through a regular dependency."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0

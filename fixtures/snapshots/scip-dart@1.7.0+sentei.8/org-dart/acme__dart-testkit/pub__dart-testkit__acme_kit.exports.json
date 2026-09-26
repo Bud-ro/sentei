@@ -1,0 +1,63 @@
+{
+  "entryPoints": [
+    "lib/acme_kit.dart",
+    "lib/testing.dart"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 11,
+      "entry": "lib/testing.dart",
+      "exportedAs": "unusedFakeServer",
+      "file": "lib/src/fakes.dart",
+      "line": 10,
+      "name": "unusedFakeServer",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_kit.dart",
+      "exportedAs": "kitRealOnlyInTests",
+      "file": "lib/acme_kit.dart",
+      "line": 7,
+      "name": "kitRealOnlyInTests",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/testing.dart",
+      "exportedAs": "ownTestOnlyFake",
+      "file": "lib/src/fakes.dart",
+      "line": 14,
+      "name": "ownTestOnlyFake",
+      "sites": []
+    },
+    {
+      "col": 5,
+      "entry": "lib/acme_kit.dart",
+      "exportedAs": "isFake",
+      "file": "lib/src/test_utils/matchers.dart",
+      "line": 3,
+      "name": "isFake",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "lib/testing.dart",
+      "exportedAs": "FakeServer",
+      "file": "lib/src/fakes.dart",
+      "line": 4,
+      "name": "FakeServer",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-testkit:acme_kit",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}
