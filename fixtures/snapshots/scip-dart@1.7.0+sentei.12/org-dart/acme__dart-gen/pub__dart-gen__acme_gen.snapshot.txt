@@ -37,6 +37,32 @@
 //               ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //                     ^^^^^^^^^^^^^^^ reference scip-dart pub acme_gen . `.dart_tool`/build/generated/acme_gen/lib/`acme_gen.g.dart`/_$parseSettings().
 
+## lib/bindings.dart
+  // GENERATED CODE - DO NOT MODIFY BY HAND
+//^ definition scip-dart pub acme_gen . lib/`bindings.dart`/
+
+  // A generated library named like hand-written code (ffigen / jnigen bindings:
+  // dart-lang's `jni/lib/src/core_bindings.dart`, cupertino_http's
+  // `native_cupertino_bindings.dart`). Only its header says it is generated; the
+  // adapter's generatedFiles (the TypeScript sidecar's header sniff) marks it.
+
+  // Expected: no finding (generated file; exported and unused, it was a deletion_candidate).
+  int nativeVersion() => _versionFromHeader();
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^ definition scip-dart pub acme_gen . lib/`bindings.dart`/nativeVersion(). enclosing [8:0-8:44]
+//                       ^^^^^^^^^^^^^^^^^^ reference scip-dart pub acme_gen . lib/`bindings.dart`/_versionFromHeader().
+
+  // Expected: no finding (generated file).
+  int _versionFromHeader() => 1;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^^^^^^ definition scip-dart pub acme_gen . lib/`bindings.dart`/_versionFromHeader(). enclosing [11:0-11:30]
+
+  // Expected: no finding (generated file; unreachable, it was private_dead).
+  // ignore: unused_element
+  int _unusedBinding() => 2;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^^^ definition scip-dart pub acme_gen . lib/`bindings.dart`/_unusedBinding(). enclosing [15:0-15:26]
+
 ## lib/src/settings_support.dart
   // Not exported: used only by the generated part of lib/acme_gen.dart.
 //^ definition scip-dart pub acme_gen . lib/src/`settings_support.dart`/

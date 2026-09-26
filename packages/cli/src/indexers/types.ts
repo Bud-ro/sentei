@@ -254,7 +254,8 @@ export interface ExportsSidecar {
    * or "code generated". Covers every own code / SFC
    * file (walked like `unindexedImports`) and every own file of the indexed
    * programs. Core excludes their declarations from verdicts / private_dead and
-   * from self-witness scans. Absent for Dart (core's GENERATED_GLOBS cover it).
+   * from self-witness scans. Dart (the scip-dart adapter, not dart-surface): the
+   * same sniff over every document of the package's index.
    */
   generatedFiles?: string[];
   /**

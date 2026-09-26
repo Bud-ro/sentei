@@ -1,7 +1,8 @@
 {
   "conditionalImports": [],
   "entryPoints": [
-    "lib/acme_gen.dart"
+    "lib/acme_gen.dart",
+    "lib/bindings.dart"
   ],
   "entrySymbols": [
     {
@@ -14,6 +15,15 @@
   ],
   "exports": [
     {
+      "col": 4,
+      "entry": "lib/bindings.dart",
+      "exportedAs": "nativeVersion",
+      "file": "lib/bindings.dart",
+      "line": 8,
+      "name": "nativeVersion",
+      "sites": []
+    },
+    {
       "col": 5,
       "entry": "lib/acme_gen.dart",
       "exportedAs": "main",
@@ -24,6 +34,10 @@
     }
   ],
   "flags": [],
+  "generatedFiles": [
+    ".dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart",
+    "lib/bindings.dart"
+  ],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],

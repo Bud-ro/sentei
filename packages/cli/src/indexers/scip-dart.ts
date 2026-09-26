@@ -36,7 +36,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TEST_GLOBS, inSurfaceDir, matchGlob } from '@sentei/core';
 import { readScipIndex } from '@sentei/core/scip';
-import { isExcludedConsumerFile } from './consumer-checks.ts';
+import { isExcludedConsumerFile, isGeneratedFile } from './consumer-checks.ts';
 import { packageDir, packageSlug } from './scip-typescript.ts';
 import type { DiscoveredDep, DiscoveredPackage, DiscoveredRepo, EntrySymbol, ExportsSidecar, Indexer, IndexerInput, IndexerOptions, IndexStatus, IndexerResult, PrepareResult, SourcePosition } from './types.ts';
 import { worstStatus } from './types.ts';
@@ -104,7 +104,8 @@ export const scipDart: Indexer = {
   // documents, build_runner output under .dart_tool/build/generated/ included;
   // a part outside the package makes it partial).
   // sentei.12: fork patch 14 (an extension type's representation field and
-  // primary constructor are definitions: 397 false skew rows on jni).
+  // primary constructor are definitions: 397 false skew rows on jni); the
+  // sidecar's generatedFiles (header sniff over the index's documents).
   version: '1.7.0+sentei.12',
 
   detect({ repo, pkg }) {
@@ -274,21 +275,23 @@ export const scipDart: Indexer = {
         );
       }
     }
+    /** Package-relative POSIX paths of the index's documents. */
+    let documents: string[] = [];
     if (!existsSync(scipFile) || statSync(scipFile).size === 0) {
       status = 'failed';
       diagnostics.push(`error: ${path.basename(scipFile)} missing or empty`);
     } else {
+      try {
+        documents = readScipIndex(scipFile).documents.map((d) => d.relativePath.replaceAll('\\', '/'));
+      } catch (err) {
+        diagnostics.push(`error: ${path.basename(scipFile)} unreadable: ${(err as Error).message.split('\n')[0]}`);
+      }
       // A package with library code whose index has none of it: the analyzer
       // context missed lib/ (fork patch 7 fixed one such case). Every export
       // would look unused and every consumer reference unknown: never `ok`.
       const libFiles = ownLibDartFiles(repo, pkg);
       if (libFiles > 0) {
-        let libDocs = 0;
-        try {
-          libDocs = readScipIndex(scipFile).documents.filter((d) => d.relativePath.replaceAll('\\', '/').startsWith('lib/')).length;
-        } catch (err) {
-          diagnostics.push(`error: ${path.basename(scipFile)} unreadable: ${(err as Error).message.split('\n')[0]}`);
-        }
+        const libDocs = documents.filter((d) => d.startsWith('lib/')).length;
         if (libDocs === 0) {
           status = 'failed';
           diagnostics.push(`error: scip-dart indexed none of the ${libFiles} Dart file(s) under lib/ (the analyzer did not cover lib/); the index is incomplete`);
@@ -341,8 +344,21 @@ export const scipDart: Indexer = {
       return finish();
     }
     const { unresolvedOrgModules, missingParts = [], diagnostics: surfaceDiagnostics, unresolvedOwnUris = 0, ...rest } = out;
+    // Generated documents: the header sniff and path rules of the TypeScript
+    // sidecar (consumer-checks.ts isGeneratedFile, one list of patterns), over
+    // every document of the index. ffigen / jnigen bindings (`// AUTO
+    // GENERATED FILE, DO NOT EDIT.`) are named like hand-written code.
+    const generatedFiles = documents
+      .map((rel) => [path.join(dir, ...rel.split('/')), path.posix.join(pkg.path === '.' ? '' : pkg.path, rel)] as const)
+      .filter(([abs, repoRel]) => isGeneratedFile(abs, repoRel, pkg.path))
+      .map(([, repoRel]) => repoRel)
+      .sort();
+    if (generatedFiles.length > 0) {
+      diagnostics.push(`info: ${generatedFiles.length} generated file(s) (header or path): ${listSome(generatedFiles)}`);
+    }
     const sidecar: ExportsSidecar = {
       ...rest,
+      generatedFiles,
       shorthandRefs: rest.shorthandRefs ?? [],
       namespaceSpreadRefs: [],
       conditionalImports: rest.conditionalImports ?? [],

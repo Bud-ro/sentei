@@ -299,10 +299,20 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(ix('dart-app').packages[0]!.diagnostics.some((d) => d.includes('analyzedFiles'))).toBe(false);
   });
 
+  it('lists the generated documents in the sidecar: header sniff (a hand-written name) and path rules', () => {
+    // lib/bindings.dart: `// GENERATED CODE - DO NOT MODIFY BY HAND` (dart-lang: ffigen / jnigen bindings).
+    expect(sidecar('dart-gen', 'acme_gen').generatedFiles).toEqual(['.dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart', 'lib/bindings.dart']);
+    expect(ix('dart-gen').packages[0]!.diagnostics).toContain(
+      'info: 2 generated file(s) (header or path): .dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart, lib/bindings.dart',
+    );
+    // Every Dart sidecar carries the key.
+    expect(sidecar('dart-lib-x', 'acme_x').generatedFiles).toEqual([]);
+  });
+
   it('indexes a part build_runner wrote only under .dart_tool/build/generated/, with its references (fork patch 13)', () => {
     const scip = readScipIndex(path.join(work, 'index/acme__dart-gen/pub__acme_gen.scip'));
     const file = '.dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart';
-    expect(scip.documents.map((d) => d.relativePath).sort()).toEqual([file, 'lib/acme_gen.dart', 'lib/src/settings_support.dart']);
+    expect(scip.documents.map((d) => d.relativePath).sort()).toEqual([file, 'lib/acme_gen.dart', 'lib/bindings.dart', 'lib/src/settings_support.dart']);
     const part = scip.documents.find((d) => d.relativePath === file)!;
     const refs = part.occurrences.filter((o) => (o.symbolRoles & 1) === 0).map((o) => o.symbol);
     expect(refs).toContain('scip-dart pub acme_gen 1.0.0 lib/src/`settings_support.dart`/splitSettingPairs().');

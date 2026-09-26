@@ -1069,8 +1069,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     }
 
     // Documents (+ synthetic file symbols where the indexer emitted no module symbol).
-    // is_generated: listed in a sidecar's generatedFiles, a GENERATED_GLOBS path (so
-    // Dart, whose adapter has no such field, keeps working), or vendored code in a
+    // is_generated: listed in a sidecar's generatedFiles (TypeScript and, since
+    // scip-dart +sentei.12, Dart: the same header sniff), a GENERATED_GLOBS path (a
+    // Dart index cached by an older adapter has no such list), or vendored code in a
     // VENDORED_GLOBS directory below the package root (treated like generated code).
     const generated = new Set(sidecars.flatMap(({ repo, data }) => (data.generatedFiles ?? []).map((f) => `${repo}\0${f}`)));
     for (const w of docs) {
