@@ -360,7 +360,7 @@ export function readNpmPackage(
   const runtimeEntrySymbols = wranglerRuntimeClasses(repoRoot, dir, files);
   const convention = conventionAll.filter((f) => !resolved.entryPoints.includes(f) && !clientAll.includes(f));
   if (convention.length > 0) {
-    log(`${manifest}: ${convention.length} runtime entry point(s) by convention (wrangler main, functions/, routes/…): ${
+    log(`${manifest}: ${convention.length} runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): ${
       convention.slice(0, 5).join(', ')}${convention.length > 5 ? ', ...' : ''}`);
   }
   const entryPoints = [...new Set([...resolved.entryPoints, ...client, ...convention])].sort(cmp);
@@ -783,7 +783,9 @@ export function wranglerRuntimeClasses(repoRoot: string, dir: string, repoFiles:
 
 /**
  * Runtime entry points by convention (RUNTIME_ENTRY_CONVENTIONS, wrangler `main`, else a
- * `wrangler dev|deploy <file>` script) of the npm package at `dir`, repo-relative, sorted.
+ * `wrangler dev|deploy <file>` script; the file of a `node|tsx|bun|… <file>` script
+ * (runnerTargets) or Dockerfile CMD/ENTRYPOINT (dockerfileTargets), build output mapped
+ * to source) of the npm package at `dir`, repo-relative, sorted.
  * `scripts` = the package.json `scripts` values.
  */
 export function conventionEntryPoints(
@@ -816,12 +818,124 @@ export function conventionEntryPoints(
   };
   const mains = WRANGLER_CONFIGS.filter((f) => fileSet.has(f)).flatMap((cfg) => wranglerMain(read, cfg));
   // No `main` in any config: the entry may be passed on the command line.
-  for (const main of mains.length > 0 ? mains : wranglerScriptMains(scripts)) {
+  // Files a runtime is started on: `node dist/server.js` / `tsx src/x.ts` in any
+  // package.json script, a package-root Dockerfile's CMD / ENTRYPOINT. Build output is
+  // mapped to its source like a declared entry (tsconfig outDirs first).
+  const layout: SourceLayout = { files: fileSet, outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) };
+  const launched = [
+    ...(mains.length > 0 ? mains : wranglerScriptMains(scripts)),
+    ...scripts.flatMap(runnerTargets),
+    ...pkgFiles.filter(isDockerfile).flatMap((f) => dockerfileTargets(read(f))),
+  ];
+  for (const main of launched) {
     const n = normalizeRel(main);
-    const r = n === null || n === '' ? null : resolveEntry(n, { files: fileSet, outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) });
+    const r = n === null || n === '' ? null : resolveEntry(n, layout);
     if (r !== null && ok(r)) out.add(r);
   }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/** Commands that run the file named by their first positional argument. */
+const SCRIPT_RUNNERS = new Set([
+  'node', 'nodejs', 'tsx', 'ts-node', 'ts-node-esm', 'ts-node-script', 'bun', 'deno', 'nodemon', 'vite-node',
+  'esno', 'esr', 'esrun', 'jiti', 'babel-node', 'node-dev', 'ts-node-dev', 'tsnd',
+]);
+/** Runner flags whose value is the next token (`node -r dotenv/config x.js`). */
+const RUNNER_VALUE_FLAGS = new Set([
+  '-r', '--require', '--import', '--loader', '--experimental-loader', '--env-file', '-C', '--conditions',
+  '--watch-path', '--tsconfig', '-P', '--project', '--config', '--ext', '--ignore', '--signal', '--delay',
+]);
+/** nodemon's own value flags (`nodemon -w src -e ts x.ts`; `-e` is not eval there). */
+const NODEMON_VALUE_FLAGS = new Set(['-w', '--watch', '-e', '--ext', '-i', '--ignore', '-d', '--delay', '-s', '--signal', '--config']);
+/** Flags meaning the code is inline, not a file (`node -e "…"`). */
+const RUNNER_EVAL_FLAGS = new Set(['-e', '--eval', '-p', '--print']);
+
+/** Shell-ish tokens of one command line (quotes stripped; no expansion). */
+function shellTokens(cmd: string): string[] {
+  return [...cmd.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3]!);
+}
+
+/**
+ * The code files a script command line starts a runtime on: after every runner token
+ * (SCRIPT_RUNNERS, also as a path `./node_modules/.bin/tsx`) in each `&&` / `||` / `;` /
+ * `|` segment, the first code-looking (CODE_EXT) positional argument, skipping flags
+ * (with their value for RUNNER_VALUE_FLAGS / NODEMON_VALUE_FLAGS) and other positionals
+ * (`tsx watch x.ts`, `bun run x.ts`, `nodemon -w src x.ts`); nothing after `-e` / `-p`
+ * of a non-nodemon runner (inline code). `nodemon --exec node x.ts` works because the
+ * inner `node` stops the scan and is scanned again as a runner. Package-relative as
+ * written. Text scanning: it only ever adds entries (a target must also exist).
+ */
+export function runnerTargets(script: string): string[] {
+  const out: string[] = [];
+  for (const segment of script.split(/&&|\|\||;|\|/)) {
+    const tokens = shellTokens(segment);
+    for (let i = 0; i < tokens.length; i++) {
+      const runner = posix.basename(tokens[i]!);
+      if (!SCRIPT_RUNNERS.has(runner)) continue;
+      const nodemon = runner === 'nodemon';
+      for (let j = i + 1; j < tokens.length; j++) {
+        const t = tokens[j]!;
+        if (SCRIPT_RUNNERS.has(posix.basename(t))) break; // `nodemon --exec node …`: the outer loop takes it
+        if (t.startsWith('-')) {
+          if (nodemon ? NODEMON_VALUE_FLAGS.has(t) : RUNNER_VALUE_FLAGS.has(t)) j++;
+          else if (!nodemon && RUNNER_EVAL_FLAGS.has(t)) break;
+          continue;
+        }
+        if (CODE_EXT.test(t) && !/^[a-z][\w+.-]*:/i.test(t)) {
+          out.push(t);
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** `Dockerfile`, `Dockerfile.prod`, `api.Dockerfile` at the package root. */
+function isDockerfile(f: string): boolean {
+  return !f.includes('/') && /^(?:Dockerfile(?:\.[\w.-]+)?|[\w.-]+\.[Dd]ockerfile)$/.test(f);
+}
+
+/**
+ * Code files a Dockerfile's `CMD` / `ENTRYPOINT` starts (exec form `["node", "dist/x.js"]`
+ * or shell form), as runnerTargets of: the last ENTRYPOINT followed by the last CMD (its
+ * arguments), each alone, and every earlier one. An absolute path under the last
+ * `WORKDIR` is made relative to it (the build context is assumed to be the package
+ * dir); other absolute paths are dropped. `HEALTHCHECK … CMD` lines are not commands.
+ */
+export function dockerfileTargets(text: string): string[] {
+  const lines = text.replace(/\\\r?\n/g, ' ').split(/\r?\n/);
+  let workdir: string | null = null;
+  const cmds: string[] = [];
+  const entries: string[] = [];
+  for (const line of lines) {
+    const m = /^\s*(CMD|ENTRYPOINT|WORKDIR)\s+(.*)$/i.exec(line);
+    if (!m) continue;
+    const kind = m[1]!.toUpperCase();
+    const arg = m[2]!.trim();
+    if (kind === 'WORKDIR') {
+      workdir = arg.replace(/\/+$/, '');
+      continue;
+    }
+    let cmd = arg;
+    if (arg.startsWith('[')) {
+      try {
+        const arr = JSON.parse(arg) as unknown;
+        if (Array.isArray(arr)) cmd = arr.filter((x): x is string => typeof x === 'string').map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(' ');
+      } catch {
+        // Not valid exec form: scan the text as is.
+      }
+    }
+    (kind === 'CMD' ? cmds : entries).push(cmd);
+  }
+  const lines2 = [...entries, ...cmds];
+  if (entries.length > 0 && cmds.length > 0) lines2.push(`${entries.at(-1)} ${cmds.at(-1)}`);
+  const out = new Set<string>();
+  for (const t of lines2.flatMap(runnerTargets)) {
+    if (!t.startsWith('/')) out.add(t);
+    else if (workdir !== null && t.startsWith(`${workdir}/`)) out.add(t.slice(workdir.length + 1));
+  }
+  return [...out];
 }
 
 /**

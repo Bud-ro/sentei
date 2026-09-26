@@ -36,8 +36,9 @@ describe('discoverLocal on fixtures/org-small', () => {
     const logs: string[] = [];
     const model = discoverLocal({ orgDir: FIXTURE, log: (l) => logs.push(l), now: 1_700_000_000 });
     expect(logs).toEqual([
-      'acme/app-worker: package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/…): functions/api/hello.ts, src/worker.ts',
+      'acme/app-worker: package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): functions/api/hello.ts, src/worker.ts',
       'acme/lib-cascade: package.json: client entry points from index.html / vite.config: src/client.ts',
+      'acme/lib-dual: packages/dual-server/package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/dual-server/src/server.ts, packages/dual-server/src/worker.ts',
       'acme/tool-py: npm:acme/tool-py:@acme/tool-py flagged unindexed_consumer (1 .py file(s), e.g. scripts/build.py)',
     ]);
     expect(model.org).toBe('acme');
@@ -65,6 +66,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       // main/module/types under two tsconfig outDirs (dist/main, dist/module), both rootDir src
       { package_id: 'npm:acme/lib-dual:@acme/dual', repo: 'acme/lib-dual', path: 'packages/dual', manager: 'npm', name: '@acme/dual', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual/src/index.ts"]' },
       { package_id: 'npm:acme/lib-dual:@acme/dual-app', repo: 'acme/lib-dual', path: 'packages/dual-app', manager: 'npm', name: '@acme/dual-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-app/src/main.ts"]' },
+      // no main/exports: `npm start` = node dist/server.js and the Dockerfile CMD node /srv/dist/worker.js, mapped to src/ (tsconfig outDir dist)
+      { package_id: 'npm:acme/lib-dual:@acme/dual-server', repo: 'acme/lib-dual', path: 'packages/dual-server', manager: 'npm', name: '@acme/dual-server', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-server/src/server.ts","packages/dual-server/src/worker.ts"]' },
       { package_id: 'npm:acme/lib-dyn:@acme/dyn', repo: 'acme/lib-dyn', path: '.', manager: 'npm', name: '@acme/dyn', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       { package_id: 'npm:acme/lib-lazy-opaque:@acme/lazy-opaque', repo: 'acme/lib-lazy-opaque', path: '.', manager: 'npm', name: '@acme/lazy-opaque', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       { package_id: 'npm:acme/lib-lazy:@acme/lazy', repo: 'acme/lib-lazy', path: '.', manager: 'npm', name: '@acme/lazy', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
@@ -578,7 +581,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 18 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 19 }]);
   });
 });
 

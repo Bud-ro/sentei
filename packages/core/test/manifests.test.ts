@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_IGNORE_MANIFEST_DIRS, listFiles, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
-  stripJsonc, tsconfigOutDirs,
+  dockerfileTargets, runnerTargets, stripJsonc, tsconfigOutDirs,
 } from '../src/manifests.ts';
 
 let root: string;
@@ -572,6 +572,52 @@ describe('npm manifests', () => {
     expect(logs.some((l) => l.startsWith('site/package.json: 3 runtime entry point(s) by convention'))).toBe(true);
     // No "no entry points resolved" warning when a convention supplies them.
     expect(warnings.filter((w) => w.includes('no entry points'))).toEqual([]);
+  });
+
+  it('runnerTargets: the file after node / tsx / ts-node / bun / nodemon, flags and their values skipped', () => {
+    expect(runnerTargets('node dist/server/server.js')).toEqual(['dist/server/server.js']);
+    expect(runnerTargets('PG_META_EXPORT_DOCS=true node --loader ts-node/esm src/server/server.ts > openapi.json')).toEqual(['src/server/server.ts']);
+    expect(runnerTargets('nodemon --exec node --loader ts-node/esm src/server/server.ts | pino-pretty --colorize')).toEqual(['src/server/server.ts']);
+    expect(runnerTargets('nodemon -w src -e ts,json src/main.ts')).toEqual(['src/main.ts']);
+    expect(runnerTargets('tsx watch --clear-screen=false src/index.ts')).toEqual(['src/index.ts']);
+    expect(runnerTargets('bun run src/cli.ts && bun run build')).toEqual(['src/cli.ts']);
+    expect(runnerTargets('cross-env NODE_ENV=production node -r dotenv/config ./build/index.mjs --port 3000')).toEqual(['./build/index.mjs']);
+    expect(runnerTargets('./node_modules/.bin/ts-node "scripts/seed.ts"; deno run -A main.ts')).toEqual(['scripts/seed.ts', 'main.ts']);
+    // Inline code, a script name, a non-runner, a URL: nothing.
+    expect(runnerTargets('node -e "require(\'./x.js\')"')).toEqual([]);
+    expect(runnerTargets('node --test')).toEqual([]);
+    expect(runnerTargets('vite build && tsc -p tsconfig.json')).toEqual([]);
+    expect(runnerTargets('deno run https://deno.land/x/y.ts')).toEqual([]);
+  });
+
+  it('dockerfileTargets: CMD / ENTRYPOINT in exec and shell form, WORKDIR-absolute paths, not HEALTHCHECK', () => {
+    expect(dockerfileTargets([
+      'FROM node:20 AS build', 'WORKDIR /usr/src/app', 'COPY . .', 'RUN npm run build',
+      'FROM node:20', 'WORKDIR /usr/src/app/', 'CMD ["node", "dist/server/server.js"]',
+      'HEALTHCHECK --interval=5s CMD node -e "fetch(\'http://localhost:8080/health\')"',
+    ].join('\n'))).toEqual(['dist/server/server.js']);
+    expect(dockerfileTargets('WORKDIR /app\nENTRYPOINT ["node"]\nCMD ["/app/dist/main.js"]\n')).toEqual(['dist/main.js']);
+    expect(dockerfileTargets('ENTRYPOINT node \\\n  --enable-source-maps lib/run.js\n')).toEqual(['lib/run.js']);
+    // Absolute outside WORKDIR, npm start (the script is scanned itself), invalid exec form.
+    expect(dockerfileTargets('WORKDIR /app\nCMD ["node", "/opt/x.js"]\nCMD npm start\nCMD ["node", "a.js"\n')).toEqual([]);
+  });
+
+  it('script and Dockerfile entries map build output to sources (postgres-meta: node dist/server/server.js)', () => {
+    pkgJson('api/package.json', {
+      name: 'api', private: true, main: 'dist/lib/index.js',
+      scripts: { start: 'node dist/server/server.js', seed: 'tsx scripts/seed.ts', gone: 'node dist/nope.js' },
+    });
+    write('api/tsconfig.json', '{ "include": ["src"], "compilerOptions": { "outDir": "dist", "rootDir": "src" } }');
+    write('api/Dockerfile', 'FROM node:20\nWORKDIR /srv\nCMD ["node", "/srv/dist/worker.js"]\n');
+    write('api/src/lib/index.ts');
+    write('api/src/server/server.ts');
+    write('api/src/worker.ts');
+    write('api/scripts/seed.ts');
+    const logs: string[] = [];
+    const [p] = readRepoManifests(root, warn, undefined, { log: (m) => logs.push(m) });
+    expect(p!.entryPoints).toEqual(['api/scripts/seed.ts', 'api/src/lib/index.ts', 'api/src/server/server.ts', 'api/src/worker.ts']);
+    expect(p!.runtimeEntryPoints).toEqual(['api/scripts/seed.ts', 'api/src/server/server.ts', 'api/src/worker.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
   });
 
   it('Cloudflare Pages functions/ without a wrangler config: a wrangler dependency or a `wrangler pages` script', () => {

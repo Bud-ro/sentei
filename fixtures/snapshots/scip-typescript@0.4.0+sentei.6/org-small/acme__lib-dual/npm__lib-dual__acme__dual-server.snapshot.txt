@@ -1,0 +1,62 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/routes.ts
+  // Helpers of the server entry.
+//^ definition scip-typescript npm @acme/dual-server . src/`routes.ts`/ enclosing [3:0-11:0]
+
+  // Expected: alive, no finding (called by the server entry).
+  export function routeFor(path: string): string {
+//                ^^^^^^^^ definition scip-typescript npm @acme/dual-server . src/`routes.ts`/routeFor(). enclosing [3:0-5:1]
+//                         ^^^^ definition scip-typescript npm @acme/dual-server . src/`routes.ts`/routeFor().(path)
+    return `route:${path}`;
+//                  ^^^^ reference scip-typescript npm @acme/dual-server . src/`routes.ts`/routeFor().(path)
+  }
+
+  // Expected: private_dead already_unreachable (exported, but no package entry point exports it and nothing calls it).
+  export function unusedRoute(): string {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-server . src/`routes.ts`/unusedRoute(). enclosing [8:0-10:1]
+    return 'old';
+  }
+
+## src/server.ts
+  // Started by `npm start` (`node dist/server.js`), the supabase postgres-meta layout: no
+//^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/ enclosing [2:0-15:0]
+  // main / exports, the runtime entry is build output that tsconfig outDir dist maps back here.
+  import { routeFor } from './routes';
+//         ^^^^^^^^ reference scip-typescript npm @acme/dual-server . src/`routes.ts`/routeFor().
+//                         ^^^^^^^^^^ reference scip-typescript npm @acme/dual-server . src/`routes.ts`/
+
+  // Expected: alive, no finding (not exported; called from the entry file top level).
+  function start(): void {
+//         ^^^^^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/start(). enclosing [5:0-7:1]
+    console.log(routeFor('/'));
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//              ^^^^^^^^ reference scip-typescript npm @acme/dual-server . src/`routes.ts`/routeFor().
+  }
+
+  // Expected: private_dead already_unreachable (the package has runtime entries, so it is eligible).
+  function neverCalled(): number {
+//         ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-server . src/`server.ts`/neverCalled(). enclosing [10:0-12:1]
+    return 2;
+  }
+
+  start();
+//^^^^^ reference scip-typescript npm @acme/dual-server . src/`server.ts`/start().
+
+## src/worker.ts
+  // Started by the Dockerfile `CMD ["node", "/srv/dist/worker.js"]` (WORKDIR /srv): a
+//^ definition scip-typescript npm @acme/dual-server . src/`worker.ts`/ enclosing [4:0-9:0]
+  // runtime entry point by convention, mapped from build output to this source.
+
+  // Expected: alive, no finding (not exported; called from the entry file top level).
+  function work(): void {
+//         ^^^^ definition scip-typescript npm @acme/dual-server . src/`worker.ts`/work(). enclosing [4:0-6:1]
+    console.log('work');
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+  }
+
+  work();
+//^^^^ reference scip-typescript npm @acme/dual-server . src/`worker.ts`/work().
