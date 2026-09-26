@@ -1137,3 +1137,19 @@ slot; unshared names are unchanged. `keep` accepts `npm:<name>#sym` (every
 package of that name) and `npm:<org>/<repo>:<name>#sym`. Index slugs are
 `<manager>__<repo>__<name>`. SARIF fingerprints use the new id (existing
 alerts re-key once); old work DBs are refused (schema v10).
+
+### Phase 2 — org survey for the large runs (API listing only)
+
+| Org | Repos | Dart / TS / JS by primary language | Notes |
+|---|---|---|---|
+| dart-lang | 38 | 32 / 0 / 1 | ~200 pub packages in `pkgs/` monorepos (tools 43, native 24, pub-dev 17, build 15, core 14, http 13, test 9, shelf 9); densest cross-repo graph; skip `sdk` (1.6 GB), `site-www`, `co19` |
+| flutter | 24 | 20 / 0 / 0 | `flutter` (88 pubspecs, engine merged in) + `packages` (125 federated plugins) ≈ 215 packages, ~700 MB |
+| flame-engine | 31 | 18 / 0 / 1 | `flame` monorepo (36 pubspecs) + gamepads, forge2d; ~55 packages, ~80 MB |
+| Workiva | 38 | 25 / 2 / 6 | 25 single-package Dart repos with real cross-repo deps (~35 packages) |
+| supabase | 81 | 1 / 29 / 0 | TS monorepos (supabase-js 8, cli 16, supabase 29 packages) + supabase-flutter (14 pubspecs) + Go 13, Rust 9, Python 6, Elixir 4: the language-mix target; skip `supabase/supabase` (2.4 GB) |
+| serverpod | 33 | 22 Dart | one repo with 119 pubspecs, 35 MB: the cheapest large Dart graph |
+
+REST limits observed: 5000 core requests/hour authenticated, 30 searches/minute.
+Chosen runs: dart-lang, flame-engine and Workiva (full Dart set) for Dart;
+supabase for the mix; flutter/flutter + flutter/packages and serverpod as
+stretch targets.
