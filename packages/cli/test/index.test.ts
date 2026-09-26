@@ -2307,9 +2307,10 @@ describe('fix round 3 (runtime entries are not surface, cause lines, empty tscon
     rwork = path.join(root, 'work');
     mkdirSync(rwork);
     writeFileSync(path.join(rwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
-    await index({ work: rwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+    await index({ work: rwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: (l) => logLines.push(l) }, { install: false });
   }, 180_000);
   afterAll(() => rmSync(root, { recursive: true, force: true }));
+  const logLines: string[] = [];
 
   it('D1: runtime entries outside the program are indexed through the runtime tsconfig and never make the package partial', () => {
     const { index: ix, sidecar } = result('runtime');
@@ -2346,6 +2347,10 @@ describe('fix round 3 (runtime entries are not surface, cause lines, empty tscon
       'cause: warn: entry lib/extra.mjs is JavaScript outside the tsconfig program; add it to include (exports: extra)',
     ]);
     expect(statusReason(diags)).toBe('warn: entry lib/extra.mjs is JavaScript outside the tsconfig program; add it to include (exports: extra)');
+    // Fix round 4: the progress line names the cause too (it showed the first warning).
+    expect(logLines.find((l) => l.startsWith('[index] acme/surface npm:acme/surface:@acme/surface: partial'))).toMatch(
+      / — warn: entry lib\/extra\.mjs is JavaScript outside the tsconfig program; add it to include \(exports: extra\)$/,
+    );
   });
 
   it('D4: a tsconfig that matches no file is an empty index, not a failure; own files outside it are still scanned', () => {

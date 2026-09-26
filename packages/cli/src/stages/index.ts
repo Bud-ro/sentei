@@ -214,7 +214,13 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
       result.status = worstStatus(result.status, entry.status);
       if (entry.indexer !== null && !entry.install) result.install = false;
       countPackage(summary, repo.repo, entry, false, logOf(entry));
-      const firstProblem = entry.diagnostics.find((d) => d.startsWith('error:') || d.startsWith('warn:'));
+      // The diagnostic that made the status worse (the adapter's last `cause:` line, as
+      // ingest's statusReason reads it), else the first error / warning. The first
+      // `warn:` alone named e.g. "1 TypeScript error diagnostic(s) (status unaffected)".
+      const cause = entry.diagnostics.findLast((d) => d.startsWith('cause: '));
+      const firstProblem = cause !== undefined
+        ? cause.slice('cause: '.length)
+        : entry.diagnostics.find((d) => d.startsWith('error:') || d.startsWith('warn:'));
       ctx.log(
         `[index] ${repo.repo} ${pkg.packageId}: ${why !== undefined ? `re-indexed (${why}): ` : ''}${entry.status}` +
           (entry.indexer ? ` (${entry.indexer}@${entry.indexerVersion})` : '') +
