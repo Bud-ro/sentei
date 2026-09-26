@@ -57,6 +57,12 @@ opens pull requests.
     pinning another Node major still installs.
   pnpm, yarn and corepack state and caches go under `<work>/.pm/`, not `$HOME`
   (npm keeps its usual cache). `--no-install` skips installs altogether.
+- Org dependencies are source-linked: `node_modules/<name>` is the org package's
+  checkout at HEAD, or a shadow of it whose unbuilt `dist/` entry targets point at
+  the sources. A deep build-output import (`@acme/x/dist/module/lib/types`) is linked
+  to its source through the package's tsconfig outDir→rootDir (or the dist→src
+  convention), and its module counts as package surface; one with no source flags the
+  package (`opaque_consumer`), so its symbols get no verdict.
 - tsconfig `lib`/`target`/`module` values newer than the bundled TypeScript
   5.9 (`ES2025`) are read as its newest (`esnext`, `nodenext`), with an
   `info:` line in the package's index log.

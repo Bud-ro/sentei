@@ -1661,10 +1661,8 @@ summary is in `packages/cli/src/stages/index.ts` and `main.ts`.
 - **Deep dist imports** (`'@supabase/supabase-js/dist/module/lib/types'` in
   auth-helpers): main already classifies the sidecar's `*` row as
   `unindexed_module`, not version skew. `sourceForBuildOutput` maps the path to
-  `src/lib/types.ts` using the rules above. **Not wired**: the use is linked
-  only once the TS adapter's shadow package (for example `typesVersions`
-  `dist/*` → source) or `export-surface.ts` calls it. Those files belong to the
-  TS toolchain.
+  `src/lib/types.ts` using the rules above. Wired into the TS adapter: see
+  "Deep build-output imports" below.
 - **Index summary; `--strict`.** Failed packages already fail closed
   (`index_failed` blocks their consumers), but `sentei index` exited 0 and
   users missed them. `index` now ends with a table of indexed / cached /
@@ -1677,6 +1675,61 @@ summary is in `packages/cli/src/stages/index.ts` and `main.ts`.
   documented codes stay 0/1/2). `index --json` prints `{"summary": …}` on
   stdout, with progress on stderr, like `repos --json`. `index()` returns the
   summary; the `Stage` type is unchanged (`STAGES` wraps it).
+
+#### Deep build-output imports (adapter `+sentei.7`)
+
+A consumer importing `<org pkg>/<subpath>` where the subpath is build output
+(`@supabase/supabase-js/dist/module/lib/types`) resolved nowhere: the source link
+covers only the declared entries. The sidecar recorded an unresolved `*` import,
+which is a diagnostic only, so `GenericSchema` had a real consumer that sentei
+could not see. That is fail-open.
+
+- **Resolution (shadow package).** `prepare` scans the consumer's code files for
+  quoted `<org dep>/<subpath>` strings (a text scan, 20,000-entry budget; it skips
+  build and dot dirs). A subpath is skipped when the dep's `exports` covers it (an
+  exact key or a `*` pattern) or when it exists in the checkout. Otherwise core's
+  `sourceForBuildOutput` maps it: tsconfig outDir → rootDir pairs, the dist→src
+  convention, then the one-segment strip. Every mapped subpath gets a file symlink
+  in the shadow package at `<subpath minus build ext><source ext>`
+  (`dist/module/lib/types.ts` → the checkout's `src/lib/types.ts`), so node10
+  resolution finds it on disk. The shadow package.json also gets an exact
+  `exports` key (sugar `exports` is wrapped as `{".": …}`), because node16 and
+  bundler never fall back to the filesystem. Each `typesVersions` range gets an
+  exact key too, which wins over its patterns. A package that would otherwise be a
+  plain symlink becomes a shadow when it needs links. A build dir that exists in
+  the checkout (a partial `dist/`) is turned into a real dir of symlinks inside the
+  shadow, so nothing is ever written into a checkout. Realpaths stay in the
+  checkout, so scip-typescript emits the lib's own symbols. Links were preferred
+  over tsconfig `paths` because `paths` would mean rewriting every consumer's
+  tsconfig, which may `extends` a chain we do not own. A test checks the
+  result with `ts.resolveModuleName` under both bundler and node10.
+- **Surface.** Reachability is per package: a cross-package reference to a
+  declaration that is not on the export surface did not keep it alive, so a
+  linked `GenericSchema` was `private_dead`. Sidecar `deepImportExports` lists
+  the exports of every org module that a deep import resolved into (any subpath,
+  `src/…` too), keyed by (target, module, exportedAs, name, declaring file). The
+  records are by name and not by position, because the consumer's sidecar may be
+  cached while the target moves on. Ingest puts each matching top-level
+  declaration on the target's export surface (`is_exported`, `symbol_exports`
+  with the module as `entry_file`). A used declaration is then alive, and an
+  unused export of that module is a `deletion_candidate`, like any other surface.
+- **No source.** A deep `dist/` import that still does not resolve stays an
+  unresolved `*` import (report: `unindexed_module`). It also adds a targeted
+  `opaque_consumer` flag (reason `deep import <specifier> has no source`,
+  position = the specifier), which is now a sidecar flag. This blocks every
+  verdict of the target package and leaves the consumer transparent. `prepare`
+  logs `warn: deep import … has no source in …`.
+- Known gap: `sourceForBuildOutput('dist/gone')` (one segment under the build dir)
+  probes `dist/gone/index.js`, and the one-segment strip turns that into
+  `src/index.ts`. The deep import then links to the package entry instead of
+  staying unresolved. This is not fail-open, because the names it imports are
+  looked up in a real module, but it is imprecise. The fix belongs in
+  `manifests.ts`.
+- Fixture: `lib-dual`. `@acme/dual-app` imports
+  `@acme/dual/dist/module/lib/types`: `GenericSchema` has no finding and
+  `UnusedSchema` is a `deletion_candidate`. It also imports
+  `@acme/dual-legacy/dist/esm/internal/gone`, so `legacyUnused` is `blocked` by
+  dual-app's `opaque_consumer`.
 
 ### Phase 2 fix round 1: test-support libraries; cross-manager witness; blocker hints
 
