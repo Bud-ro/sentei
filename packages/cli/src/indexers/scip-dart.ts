@@ -1335,8 +1335,13 @@ export function flutterSdk(): Promise<FlutterSdk> {
   return flutterSdkPromise;
 }
 
-/** At most this many `pub get` retries, each dropping the source links pub rejected. */
-export const MAX_CONFLICT_RETRIES = 3;
+/**
+ * At most this many `pub get` retries, each dropping the source links pub
+ * rejected. Pub names one rejected link per failure: dart-lang/pub-dev needed
+ * 4 drops (test, build_runner, source_gen, coverage) and flute 4 (the cap was
+ * 3, so both failed). Each retry is one offline resolution, seconds.
+ */
+export const MAX_CONFLICT_RETRIES = 8;
 
 /**
  * `dart pub get` (`flutter pub get` with `cmd` = flutter) in `dir`. An org dep's HEAD can require versions the
@@ -1365,9 +1370,14 @@ export async function pubGet(
   log.push(`$ ${cmd} ${args.join(' ')}  (cwd ${dir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
   const excluded = new Set<string>();
   let current = new Set(links.keys());
-  for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES && proc.code !== 0 && current.size > 0; attempt++) {
+  for (let attempt = 0; proc.code !== 0 && current.size > 0; attempt++) {
+    // Every link pub names in this failure is dropped at once.
     const conflicts = parseOverrideConflicts(`${proc.stdout}\n${proc.stderr}`, current).filter((c) => !excluded.has(c.dep));
-    if (conflicts.length === 0) break;
+    if (conflicts.length === 0) break; // no progress: the failure is not (or no longer) a source link
+    if (attempt === MAX_CONFLICT_RETRIES) {
+      diagnostics.push(`warn: pub get still rejects source link(s) ${conflicts.map((c) => c.dep).join(', ')} after ${MAX_CONFLICT_RETRIES} retries; giving up`);
+      break;
+    }
     for (const c of conflicts) {
       excluded.add(c.dep);
       diagnostics.push(`warn: ${c.dep} not source-linked: HEAD conflicts with ${c.pkg ?? pkg.name ?? pkg.packageId}'s constraint (${c.detail})`);

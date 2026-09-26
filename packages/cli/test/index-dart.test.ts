@@ -1040,13 +1040,14 @@ describe('pub get conflict with a source link', () => {
     ]);
   });
 
-  it('retries up to three times, accumulating the rejected links, with one warn each', async () => {
+  it('retries up to MAX_CONFLICT_RETRIES (8) times, accumulating the rejected links, with one warn each', async () => {
     // over_react_analyzer_plugin: dropping over_react surfaced a second conflict (dependency_validator).
     const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-pubget-')));
     try {
-      const names = ['over_react', 'dependency_validator', 'dart_dev', 'w_common', 'plugin'];
+      const libs = ['over_react', 'dependency_validator', 'dart_dev', 'w_common', 'test', 'build_runner', 'source_gen', 'coverage', 'collection', 'meta', 'path'];
+      const names = [...libs, 'plugin'];
       const repos = new Map(names.map((n) => [n, repoOf(root, n, pubPackage(n, [`lib/${n}.dart`]))]));
-      const plugin = repoOf(root, 'plugin', pubPackage('plugin', ['lib/plugin.dart'], names.slice(0, 4).map((n) => orgDep(n, '^1.0.0'))));
+      const plugin = repoOf(root, 'plugin', pubPackage('plugin', ['lib/plugin.dart'], libs.map((n) => orgDep(n, '^1.0.0'))));
       repos.set('plugin', plugin);
       for (const r of repos.values()) mkdirSync(r.localPath, { recursive: true });
       const byId = new Map<string, OrgPackage>([...repos.values()].map((r) => [r.packages[0]!.packageId, { repo: r, pkg: r.packages[0]! }]));
@@ -1089,11 +1090,27 @@ describe('pub get conflict with a source link', () => {
         `$ dart pub get --offline  (cwd ${plugin.localPath}; retry without over_react, dependency_validator)`,
       ]);
 
-      // Four conflicts in a row: three retries, then the last failure stands.
-      const many = await run([conflict('over_react'), conflict('dependency_validator'), conflict('dart_dev'), conflict('w_common')]);
+      // dart-lang/pub-dev: a 4th drop (coverage) resolves; the cap used to be 3.
+      const pubDev = await run(['test', 'build_runner', 'source_gen', 'coverage'].map(conflict));
+      expect(pubDev.proc.code).toBe(0);
+      expect(overridesSeen).toHaveLength(5);
+      expect(pubDev.diagnostics.filter((d) => d.startsWith('warn:')).map((d) => d.split(' ')[1])).toEqual(['test', 'build_runner', 'source_gen', 'coverage']);
+
+      // One failure naming two links drops both at once (one retry, a warn each).
+      const both = await run([`${conflict('meta')}\n${conflict('path')}`]);
+      expect(both.proc.code).toBe(0);
+      expect(overridesSeen).toHaveLength(2);
+      expect(overridesSeen[1]).not.toMatch(/\bmeta:|\bpath:\n/);
+      expect(both.diagnostics.filter((d) => d.startsWith('warn:')).map((d) => d.split(' ')[1])).toEqual(['meta', 'path']);
+
+      // Nine conflicts in a row: eight retries, then the last failure stands.
+      const nine = libs.slice(0, 9);
+      const many = await run(nine.map(conflict));
       expect(many.proc.code).toBe(1);
-      expect(overridesSeen).toHaveLength(4);
-      expect(many.diagnostics.filter((d) => d.startsWith('warn:')).map((d) => d.split(' ')[1])).toEqual(['over_react', 'dependency_validator', 'dart_dev']);
+      expect(overridesSeen).toHaveLength(9);
+      const warns = many.diagnostics.filter((d) => d.startsWith('warn:'));
+      expect(warns.slice(0, 8).map((d) => d.split(' ')[1])).toEqual(nine.slice(0, 8));
+      expect(warns[8]).toBe('warn: pub get still rejects source link(s) collection after 8 retries; giving up');
 
       // The same conflict again (pub names an already-dropped link): no further retry.
       const again = await run([conflict('over_react'), conflict('over_react')]);
