@@ -746,8 +746,41 @@ export function buildReport(opts: BuildReportOptions): Report {
 
 type Align = 'l' | 'r';
 
-/** Plain ASCII table: header, dashed rule, rows; columns padded to the widest cell. */
-export function formatTable(headers: string[], rows: string[][], align: Align[]): string[] {
+/** Widest cell `formatTable` prints; longer cells end in `…` (report.json has the full value). */
+export const MAX_CELL = 80;
+/** Items `capList` names before `… +N more (report.json)`. */
+export const MAX_LIST_ITEMS = 3;
+
+/** A cell of at most `max` characters: longer ones are cut and end in `…`. */
+export function capCell(text: string, max = MAX_CELL): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/**
+ * `a, b … +N more (report.json)`: a list cell of at most `max` items that fits in
+ * `width` characters (as many leading items as fit, at least one; a lone item too
+ * long for the cell is cut by capCell). The dart-lang run listed every blocker id
+ * of a package in one cell: table lines up to 2517 characters.
+ */
+export function capList(items: readonly string[], max = MAX_LIST_ITEMS, width = MAX_CELL): string {
+  const all = items.join(', ');
+  if (items.length <= max && all.length <= width) return all;
+  const suffix = (shown: number): string => ` … +${items.length - shown} more (report.json)`;
+  const fits = (k: number): boolean =>
+    items.slice(0, k).join(', ').length + (k === items.length ? 0 : suffix(k).length) <= width;
+  let shown = 1;
+  while (shown < Math.min(max, items.length) && fits(shown + 1)) shown++;
+  if (shown === items.length) return capCell(all, width);
+  const tail = suffix(shown);
+  return `${capCell(items.slice(0, shown).join(', '), Math.max(1, width - tail.length))}${tail}`;
+}
+
+/**
+ * Plain ASCII table: header, dashed rule, rows; columns padded to the widest cell.
+ * A cell longer than MAX_CELL is cut (capCell), so no column runs off the screen.
+ */
+export function formatTable(headers: string[], rawRows: string[][], align: Align[]): string[] {
+  const rows = rawRows.map((r) => r.map((c) => capCell(c)));
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? '').length)));
   const line = (cells: string[]): string =>
     cells
@@ -829,7 +862,7 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
       p.private ? 'yes' : '',
       p.opaque ? 'yes' : '',
       ...cols.map((v) => String(p.counts[v] ?? 0)),
-      p.blocked_by.join(', '),
+      capList(p.blocked_by),
     ];
   });
   pkgRows.push(['TOTAL', '', '', '', '', ...cols.map((v) => String(totals[v])), '']);
@@ -879,7 +912,7 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
       const shown = report.blockers.slice(0, TOP_BLOCKERS);
       out.push(...formatTable(
         ['BLOCKER', 'REPO', 'FLAGS', 'FINDINGS', 'BLOCKS PACKAGES'],
-        shown.map((b) => [b.blocker_package_id, b.repo ?? '', b.flags.join(','), String(b.blocked_findings), b.blocks_packages.join(', ')]),
+        shown.map((b) => [b.blocker_package_id, b.repo ?? '', b.flags.join(','), String(b.blocked_findings), capList(b.blocks_packages)]),
         ['l', 'l', 'l', 'r', 'l'],
       ));
       if (report.blockers.length > shown.length) out.push(`... and ${report.blockers.length - shown.length} more (see report.json)`);

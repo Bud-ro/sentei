@@ -5,7 +5,7 @@ import { analyzeSql } from '../src/analyze.ts';
 import { defaultOrgConfig } from '../src/config.ts';
 import { openDb } from '../src/db.ts';
 import { writeDiscoverToDb } from '../src/discover.ts';
-import { blockerHint, buildReport, formatSummary, formatTable, ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS } from '../src/report.ts';
+import { blockerHint, buildReport, capCell, capList, formatSummary, formatTable, MAX_CELL, ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS } from '../src/report.ts';
 
 const NOW = 1_700_000_000;
 const VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
@@ -338,8 +338,9 @@ describe('formatSummary', () => {
     expect(lines[3]).toMatch(/^!{78}$/);
     expect(lines[4]).toMatch(/^!! WARNING: minAgeDays is 0/);
     expect(lines[7]).toMatch(/^!{78}$/);
+    // Printable text only (no control codes); the one non-ASCII character is the cut-cell ellipsis.
     // eslint-disable-next-line no-control-regex
-    expect(text).toMatch(/^[\x20-\x7e\n]*$/);
+    expect(text).toMatch(/^[\x20-\x7e\n\u2026]*$/);
 
     const header = lines.indexOf('Packages (7), 15 finding(s)');
     expect(header).toBeGreaterThan(7);
@@ -349,7 +350,8 @@ describe('formatSummary', () => {
     expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +yes +2 +0 +0 +1 +2 +0 +0$/);
     expect(lines.find((l) => l.startsWith('@acme/open '))).toMatch(/^@acme\/open +acme\/lib-pub +published-public +0 +3 +4 +1 +1 +0 +0$/);
     const pub = lines.find((l) => l.startsWith('@acme/pub '));
-    expect(pub).toMatch(/^@acme\/pub +acme\/lib-pub +published-public +0 .*npm:acme\/app-dyn:@acme\/dyn:dynamic_access, npm:acme\/app-dyn:@acme\/dyn:namespace_dynamic$/);
+    // Two blocker ids do not fit in one cell (MAX_CELL): the first, then a count.
+    expect(pub).toMatch(/^@acme\/pub +acme\/lib-pub +published-public +0 .*npm:acme\/app-dyn:@acme\/dyn:dynamic_access … \+1 more \(report\.json\)$/);
     expect(lines.find((l) => l.startsWith('@acme/broken '))).toMatch(/acme\/repo-broken +private +yes +yes +0/);
     expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(/^TOTAL +2 +3 +4 +2 +3 +1 +3$/);
     // Every row of the package table has its BLOCKED BY column at the same offset.
@@ -669,6 +671,53 @@ describe('formatTable', () => {
       'long-name    1',
       'x          100',
     ]);
+  });
+
+  it(`cuts a cell longer than ${MAX_CELL} characters with an ellipsis`, () => {
+    const long = 'x'.repeat(200);
+    const [, , row] = formatTable(['A', 'B'], [[long, '1']], ['l', 'r']);
+    expect(row).toBe(`${'x'.repeat(MAX_CELL - 1)}…  1`);
+    expect(capCell('short')).toBe('short');
+  });
+});
+
+describe('capList', () => {
+  const ids = (n: number, len = 20): string[] => Array.from({ length: n }, (_, i) => `b${i}`.padEnd(len, '.'));
+
+  it('names at most three items, then how many more are in report.json', () => {
+    expect(capList(ids(3))).toBe(ids(3).join(', '));
+    expect(capList(ids(10, 10))).toBe(`${ids(3, 10).join(', ')} … +7 more (report.json)`);
+    expect(capList([])).toBe('');
+  });
+
+  it(`names only as many as fit in ${MAX_CELL} characters, at least one`, () => {
+    // Blocker ids are long (`pub:dart-lang/<repo>:<name>:index_failed`).
+    const long = ids(5, 45);
+    expect(capList(long)).toBe(`${long[0]} … +4 more (report.json)`);
+    expect(capList(ids(2, 45))).toBe(`${ids(2, 45)[0]} … +1 more (report.json)`);
+    const huge = ids(2, 200);
+    const cell = capList(huge);
+    expect(cell.length).toBeLessThanOrEqual(MAX_CELL);
+    expect(cell).toMatch(/^b0\.+… … \+1 more \(report\.json\)$/);
+    expect(capList([huge[0]!])).toHaveLength(MAX_CELL);
+  });
+});
+
+describe('formatSummary: long cells', () => {
+  it('caps BLOCKED BY and BLOCKS PACKAGES; report.json keeps every id (dart-lang: 2517-character lines)', () => {
+    const r = buildReport({ db, now: NOW });
+    const blockers = Array.from({ length: 40 }, (_, i) => `pub:dart-lang/repo${i}:package_${i}:index_failed`);
+    const pkg = r.packages.find((p) => p.name === '@acme/pub')!;
+    pkg.blocked_by = blockers;
+    r.blockers[0]!.blocks_packages = blockers.map((b) => b.replace(/:index_failed$/, ''));
+    const lines = formatSummary(r).split('\n');
+    const row = lines.find((l) => l.startsWith('@acme/pub '))!;
+    expect(row).toContain(`${blockers[0]} … +39 more (report.json)`);
+    const top = lines.indexOf('Top blockers (opaque consumers preventing verdicts; fix these first)');
+    expect(lines[top + 3]).toMatch(/pub:dart-lang\/repo0:package_0 … \+39 more \(report\.json\)$/);
+    // Every table line stays readable: no cell is longer than MAX_CELL.
+    for (const l of lines) expect(l.length).toBeLessThan(400);
+    expect(pkg.blocked_by).toHaveLength(40);
   });
 });
 
