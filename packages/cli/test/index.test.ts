@@ -7,7 +7,7 @@ import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { choosePackageManager, hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -708,8 +708,8 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     expect(await install(dir, dir, diagnostics, [], fakeRunner(['pnpm'], calls), root)).toBe(true);
     const store = ['--store-dir', path.join(root, '.pm/pnpm-store')];
     expect(calls).toEqual([
-      ['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', ...store]],
-      ['npm', [...execFlags(), '--package=pnpm@9.1.0', '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts', ...store]],
+      ['pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', '--config.engine-strict=false', ...store]],
+      ['npm', [...execFlags(), '--package=pnpm@9.1.0', '--', 'pnpm', 'install', '--frozen-lockfile', '--ignore-scripts', '--config.engine-strict=false', ...store]],
     ]);
     expect(diagnostics).toContain(
       'info: pnpm is not installed (spawn pnpm ENOENT); falling back to npm exec --yes --package=pnpm@9.1.0 (version 9.1.0 from packageManager in package.json)',
@@ -721,7 +721,7 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const calls: Array<[string, string[]]> = [];
     const diagnostics: string[] = [];
     await install(plain, plain, diagnostics, [], fakeRunner(['yarn'], calls), root);
-    expect(calls[1]).toEqual(['npm', [...execFlags(), '--package=yarn@1', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts']]);
+    expect(calls[1]).toEqual(['npm', [...execFlags(), '--package=yarn@1', '--', 'yarn', 'install', '--frozen-lockfile', '--ignore-scripts', '--ignore-engines']]);
     expect(diagnostics[0]).toContain('(version 1 default major (yarn.lock names no version sentei knows))');
 
     const berry = repo('yarn-berry', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.10.3' }), 'yarn.lock': '' });
@@ -745,7 +745,7 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const npmRepo = repo('npm-repo', { 'package.json': '{}', 'package-lock.json': '{}' });
     const d2: string[] = [];
     expect(await install(npmRepo, npmRepo, d2, [], fakeRunner(['npm'], []), root)).toBe(false);
-    expect(d2).toEqual(['error: npm ci --ignore-scripts in . could not start (ENOENT: spawn npm ENOENT)']);
+    expect(d2).toEqual(['error: npm ci --ignore-scripts --engine-strict=false in . could not start (ENOENT: spawn npm ENOENT)']);
   });
 
   it('(hermetic) every install subprocess keeps global/state/cache writes in the work dir', async () => {
@@ -913,6 +913,33 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const calls4: Array<[string, string[]]> = [];
     await install(both, both, [], [], fakeRunner(['pnpm'], calls4), root);
     expect(calls4[1]![1]).toContain('--package=pnpm@10.24.0');
+  });
+
+  it('(toolchain 3) every install turns the engines check off with the flag its manager reads', async () => {
+    expect(installArgs('npm', undefined, '/s')).toEqual(['ci', '--ignore-scripts', '--engine-strict=false']);
+    expect(installArgs('pnpm', '10.24.0', '/s')).toEqual(['install', '--frozen-lockfile', '--ignore-scripts', '--config.engine-strict=false', '--store-dir', '/s']);
+    expect(installArgs('yarn', '1', '/s')).toEqual(['install', '--frozen-lockfile', '--ignore-scripts', '--ignore-engines']);
+    expect(installArgs('yarn', undefined, '/s')).toEqual(installArgs('yarn', '1.22.22', '/s'));
+    // berry checks no engines and rejects the classic flags.
+    for (const v of ['4.10.3', '^4.1.0', '>=3', '2']) expect(installArgs('yarn', v, '/s')).toEqual(['install', '--immutable', '--mode=skip-build']);
+    expect(installArgs('bun', '1', '/s')).toEqual(['install', '--frozen-lockfile', '--ignore-scripts']);
+
+    // supabase/evals: pnpm-workspace.yaml `engineStrict: true` beats the env; the flag is on the pnpm command itself.
+    const evals = repo('engine-strict', {
+      'package.json': JSON.stringify({ packageManager: 'pnpm@10.24.0', engines: { node: '24.x' } }),
+      'pnpm-workspace.yaml': 'packages: []\nengineStrict: true\n',
+      'pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+    });
+    const calls: Array<[string, string[]]> = [];
+    await install(evals, evals, [], [], fakeRunner(['pnpm'], calls), root);
+    const pnpmArgs = calls[1]![1].slice(calls[1]![1].indexOf('--') + 2);
+    expect(pnpmArgs).toContain('--config.engine-strict=false');
+
+    // A yarn berry repo with yarn on PATH gets berry flags from the first call on.
+    const berry = repo('berry-on-path', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.5.0' }), 'yarn.lock': '__metadata:\n  version: 8\n' });
+    const calls2: Array<[string, string[]]> = [];
+    await install(berry, berry, [], [], fakeRunner([], calls2), root);
+    expect(calls2).toEqual([['yarn', ['install', '--immutable', '--mode=skip-build']]]);
   });
 
   it('(hermetic) passes HTTP_PROXY to yarn only when set, and never overrides YARN_* proxies', () => {
@@ -1320,7 +1347,7 @@ describe('unjs fixes', () => {
     };
     const diagnostics: string[] = [];
     expect(await install(dir, dir, diagnostics, [], failing, root)).toBe(false);
-    expect(diagnostics).toEqual(['error: npm ci --ignore-scripts in . exited with code 1: npm warn one | line 2 | line 3 | line 4 | line 5 | npm error code EBADENGINE']);
+    expect(diagnostics).toEqual(['error: npm ci --ignore-scripts --engine-strict=false in . exited with code 1: npm warn one | line 2 | line 3 | line 4 | line 5 | npm error code EBADENGINE']);
     expect(envs[0]).toMatchObject({ npm_config_engine_strict: 'false', NPM_CONFIG_ENGINE_STRICT: 'false', pnpm_config_engine_strict: 'false' });
 
     // pnpm prints its errors on stdout: with an empty stderr, the stdout tail is used.

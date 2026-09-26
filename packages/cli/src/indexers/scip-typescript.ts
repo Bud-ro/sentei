@@ -138,13 +138,40 @@ function nearestManagerManifest(repoRoot: string, dir: string): { json: unknown;
   }
 }
 
-/** Install arguments per manager. */
-const LEGACY_ARGS: Record<PackageManager, string[]> = {
-  npm: ['ci', '--ignore-scripts'],
-  pnpm: ['install', '--frozen-lockfile', '--ignore-scripts'],
-  yarn: ['install', '--frozen-lockfile', '--ignore-scripts'],
-  bun: ['install', '--frozen-lockfile', '--ignore-scripts'],
-};
+/** True when a yarn version or range (`4.5.0`, `^4.1.0`, `>=2`, `3`) is berry (2+). */
+function isBerry(version: string | undefined): boolean {
+  return version !== undefined && /^(?:[2-9]|\d{2,})/.test(version.replace(/^[\s^~>=v]+/, ''));
+}
+
+/**
+ * Frozen, script-free install arguments of `pm` (`version`: the yarn version or
+ * range, which picks classic or berry flags; ignored otherwise), with the
+ * engines check off: the checkout is only type-resolved, never run, and a repo
+ * pinning another node major (`engines.node: "24.x"` on node 26) must still
+ * install. The env (`hermeticEnv`) already sets engine-strict=false, but a
+ * repo's own config beats the env in pnpm 10 (`engineStrict: true` in
+ * pnpm-workspace.yaml: supabase/evals, ERR_PNPM_UNSUPPORTED_ENGINE); the CLI
+ * flag beats both. Flags (checked against npm 11, pnpm 8–11, yarn 1.22 and 4.10):
+ *   npm   `--engine-strict=false`;
+ *   pnpm  `--config.engine-strict=false` (and `--store-dir`);
+ *   yarn classic  `--ignore-engines` (it checks the root package's engines too);
+ *   yarn berry  none: engines are not checked ("engine checking isn't a core
+ *     feature anymore"), and it has neither --frozen-lockfile nor
+ *     --ignore-scripts (`--immutable` / `--mode=skip-build` instead);
+ *   bun  none: bun does not enforce engines.
+ */
+export function installArgs(pm: PackageManager, version: string | undefined, storeDir: string): string[] {
+  switch (pm) {
+    case 'npm':
+      return ['ci', '--ignore-scripts', '--engine-strict=false'];
+    case 'pnpm':
+      return ['install', '--frozen-lockfile', '--ignore-scripts', '--config.engine-strict=false', '--store-dir', storeDir];
+    case 'yarn':
+      return isBerry(version) ? ['install', '--immutable', '--mode=skip-build'] : ['install', '--frozen-lockfile', '--ignore-scripts', '--ignore-engines'];
+    case 'bun':
+      return ['install', '--frozen-lockfile', '--ignore-scripts'];
+  }
+}
 
 /** Directories never searched for sources (tsconfig inference, the no-code check). */
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'coverage']);
@@ -653,7 +680,6 @@ export async function install(
     const choice = choosePackageManager(nearestManagerManifest(repoRoot, d)?.json, lockfiles);
     if (choice !== undefined) {
       const { pm, lockfile } = choice;
-      const baseArgs = LEGACY_ARGS[pm];
       const rel = path.relative(repoRoot, d) || '.';
       if (lockfiles.length > 1) {
         diagnostics.push(`info: ${lockfiles.join(', ')} in ${rel}; installing with ${pm} (${lockfile}: ${choice.reason})`);
@@ -667,15 +693,16 @@ export async function install(
         mkdirSync(env[k]!, { recursive: true });
       }
       log.push(`# install env (hermetic, under ${path.resolve(workDir, '.pm')}): ${keys.join(', ')}`);
-      const args = pm === 'pnpm' ? [...baseArgs, '--store-dir', pnpmStoreDir(workDir)] : baseArgs;
+      // The version to fall back to; for yarn it also picks classic or berry flags.
+      const want = pm === 'npm' ? undefined : packageManagerVersion(repoRoot, d, pm, lockfile);
+      const args = installArgs(pm, want?.version, pnpmStoreDir(workDir));
       // Windows: npm/pnpm/yarn are .cmd shims and need a shell.
       const shell = process.platform === 'win32';
       let cmd: string = pm;
       let cmdArgs = args;
       let proc = await run(cmd, cmdArgs, d, env, shell);
       log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
-      if (proc.errno === 'ENOENT' && pm !== 'npm') {
-        const want = packageManagerVersion(repoRoot, d, pm, lockfile);
+      if (proc.errno === 'ENOENT' && want !== undefined) {
         const fb = npmExecFallback(pm, want.version);
         diagnostics.push(
           `info: ${pm} is not installed (spawn ${pm} ENOENT); falling back to npm exec --yes --package=${fb.spec} ` +
@@ -691,7 +718,7 @@ export async function install(
         // (npm exec's run path is the cwd), and pnpm@x lands in npm's npx cache.
         const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
         mkdirSync(execPrefix, { recursive: true });
-        cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...(fb.args ?? args)];
+        cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...args];
         proc = await run(cmd, cmdArgs, d, env, shell);
         log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
       }
@@ -889,16 +916,9 @@ function packageManagerVersion(
   return pinnedVersion(pm, lockfile, lockfile === 'bun.lockb' ? '' : (read(path.join(lockDir, lockfile)) ?? ''));
 }
 
-/**
- * npm package + bin for running `pm` through `npm exec`. Yarn 2+ (berry) ships
- * as `@yarnpkg/cli-dist` and has neither `--frozen-lockfile` nor `--ignore-scripts`
- * (`--immutable` / `--mode=skip-build` instead).
- */
-function npmExecFallback(pm: PackageManager, version: string): { spec: string; bin: string; args?: string[] } {
-  // The major of a version or a range (`^4.1.0`, `>=4`).
-  if (pm === 'yarn' && /^(?:[2-9]|\d{2,})/.test(version.replace(/^[\s^~>=v]+/, ''))) {
-    return { spec: `@yarnpkg/cli-dist@${version}`, bin: 'yarn', args: ['install', '--immutable', '--mode=skip-build'] };
-  }
+/** npm package + bin for running `pm` through `npm exec`. Yarn 2+ (berry) ships as `@yarnpkg/cli-dist`. */
+function npmExecFallback(pm: PackageManager, version: string): { spec: string; bin: string } {
+  if (pm === 'yarn' && isBerry(version)) return { spec: `@yarnpkg/cli-dist@${version}`, bin: 'yarn' };
   return { spec: `${pm}@${version}`, bin: pm };
 }
 
