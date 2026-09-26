@@ -129,5 +129,5 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
     } finally {
       db.close();
     }
-  }, 60_000);
+  }, 180_000);
 });

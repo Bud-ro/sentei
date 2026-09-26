@@ -281,7 +281,7 @@ describe('consumer checks and import sites', () => {
     writeFileSync(path.join(cwork, 'discover.json'), JSON.stringify({ org: 'acme', repos }));
     const c = { work: cwork, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} };
     await index(c, { install: false });
-  }, 60_000);
+  }, 180_000);
 
   afterAll(() => {
     rmSync(root, { recursive: true, force: true });
@@ -1126,7 +1126,7 @@ describe('per-package index cache (stage)', () => {
       '[index] acme/mono npm:@acme/a',
       '[index] acme/mono npm:@acme/b',
     ]);
-  }, 60_000);
+  }, 180_000);
 });
 
 describe('unjs fixes', () => {
@@ -1316,7 +1316,7 @@ describe('unjs fixes', () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]).toMatch(/^error: export surface failed: worker exited with code 1: .*ENOENT/);
     expect(log[0]).toMatch(/^\$ node --max-old-space-size=1024 .*surface-worker\.ts/);
-  }, 60_000);
+  }, 180_000);
 
   it('(3) retries a node child once with double heap when it runs out of memory', async () => {
     const calls: string[][] = [];

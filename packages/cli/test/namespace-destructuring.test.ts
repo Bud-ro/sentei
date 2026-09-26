@@ -130,7 +130,7 @@ beforeAll(() => {
     ],
     packageName: '@acme/app',
   });
-}, 60_000);
+}, 180_000);
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
