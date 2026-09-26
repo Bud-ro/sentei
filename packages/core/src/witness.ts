@@ -142,7 +142,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { analyzeSql, insertPrivateDead, reconcileDeadIslands, requireAnalyzed } from './analyze.ts';
 import { matchGlob } from './glob.ts';
-import { DOCS_GLOBS, GENERATED_GLOBS, TEST_GLOBS } from './globs.ts';
+import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, TEST_GLOBS } from './globs.ts';
 import { listFiles } from './manifests.ts';
 
 /** The part of work/discover.json (DiscoverModel) the witness reads. */
@@ -550,6 +550,8 @@ interface ConsumerLoc {
   pkgPath: string;
   /** Test/docs globs are matched against paths relative to this dir ('.' = repo-relative). */
   globBase: string;
+  /** Package manager of the manifest: files in its SURFACE_DIRS (pub lib/) are never test/docs. */
+  manager: string;
   /** Other org package dirs in the same repo (repo-relative); those nested under pkgPath are skipped. */
   nestedPaths: Set<string>;
 }
@@ -645,6 +647,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         repoDir: r.localPath,
         pkgPath: p.path,
         globBase: '.',
+        manager: p.packageId.slice(0, p.packageId.indexOf(':')),
         nestedPaths: new Set(r.packages.filter((q) => q.packageId !== p.packageId).map((q) => q.path)),
       });
     }
@@ -654,6 +657,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         repoDir: r.localPath,
         pkgPath: m.path,
         globBase: m.path,
+        manager: m.manifest.endsWith('pubspec.yaml') ? 'pub' : 'npm',
         // Org packages nested under the ignored dir are indexed consumers in their own right.
         nestedPaths: new Set(r.packages.map((q) => q.path).filter((q) => q !== m.path)),
       });
@@ -670,8 +674,9 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
 
   const countTests = policyBool(db, 'countTestsAsConsumers');
   const countDocs = policyBool(db, 'countDocsAsConsumers');
-  const excluded = (relFile: string, globBase: string, withTests: boolean): boolean => {
-    const f = globBase === '.' ? relFile : relFile.slice(globBase.length + 1);
+  const excluded = (relFile: string, loc: ConsumerLoc, withTests: boolean): boolean => {
+    if (inSurfaceDir(relFile, loc.manager, loc.pkgPath)) return false; // pub lib/: library code
+    const f = loc.globBase === '.' ? relFile : relFile.slice(loc.globBase.length + 1);
     return (!countTests && !withTests && TEST_GLOBS.some((g) => matchGlob(g, f))) ||
       (!countDocs && DOCS_GLOBS.some((g) => matchGlob(g, f)));
   };
@@ -699,7 +704,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         const nested = [...loc.nestedPaths].filter((q) => q !== loc.pkgPath && q !== '.' && under(q, loc.pkgPath));
         files = all
           .filter((f) => under(f, loc.pkgPath) && !nested.some((q) => under(f, q)))
-          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f, loc.globBase, withTests))
+          .filter((f) => CODE_EXTS.has(extname(f)) && !excluded(f, loc, withTests))
           .sort(cmp);
       }
     }
@@ -1116,7 +1121,7 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         continue;
       }
       const dev = (devOf.get(c, row.package_id) as { dev: number | null } | undefined)?.dev === 1;
-      if (excluded(file, loc.globBase, dev)) continue;
+      if (excluded(file, loc, dev)) continue;
       let text: string;
       try {
         // Comments blanked in code files (not in `.vue` / `.svelte` / `.md`: their

@@ -86,3 +86,34 @@
 //                 ^^^^^^^^ reference scip-typescript npm @acme/core . src/`fns.ts`/unusedFn().
 //                           ^^^^^^^^^^^^^^ reference scip-typescript npm @acme/core . src/`fns.ts`/internalOnlyFn().
 //                                                 ^^^^^^^ reference scip-typescript npm @acme/core . src/`fns.ts`/
+
+## tests/core.test.ts
+  // A test using the helper in tests/helpers.ts.
+//^ definition scip-typescript npm @acme/core . tests/`core.test.ts`/ enclosing [1:0-5:0]
+  import { setupCore } from './helpers';
+//         ^^^^^^^^^ reference scip-typescript npm @acme/core . tests/`helpers.ts`/setupCore().
+//                          ^^^^^^^^^^^ reference scip-typescript npm @acme/core . tests/`helpers.ts`/
+
+  // Expected: no finding (test file).
+  export const coreResult = setupCore();
+//             ^^^^^^^^^^ definition scip-typescript npm @acme/core . tests/`core.test.ts`/coreResult.
+//                          ^^^^^^^^^ reference scip-typescript npm @acme/core . tests/`helpers.ts`/setupCore().
+
+## tests/helpers.ts
+  // Test infrastructure in `tests/` (a TEST_GLOBS directory), used only by the test
+//^ definition scip-typescript npm @acme/core . tests/`helpers.ts`/ enclosing [5:0-13:0]
+  // next to it: nothing here is ever private_dead. (It uses nothing from src/, so no
+  // export of @acme/core gains a test-only reference.)
+
+  // Expected: no finding (test file; module-exported only, used by tests/core.test.ts).
+  export function setupCore(): number {
+//                ^^^^^^^^^ definition scip-typescript npm @acme/core . tests/`helpers.ts`/setupCore(). enclosing [5:0-7:1]
+    return seedValue() + 1;
+//         ^^^^^^^^^ reference scip-typescript npm @acme/core . tests/`helpers.ts`/seedValue().
+  }
+
+  // Expected: no finding (test file; reached only from setupCore).
+  function seedValue(): number {
+//         ^^^^^^^^^ definition scip-typescript npm @acme/core . tests/`helpers.ts`/seedValue(). enclosing [10:0-12:1]
+    return 1;
+  }

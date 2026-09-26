@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { matchGlob } from '../src/glob.ts';
-import { DOCS_GLOBS, GENERATED_GLOBS, SCRIPT_GLOBS, TEST_GLOBS } from '../src/globs.ts';
+import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS } from '../src/globs.ts';
 
 // analyze.sql spells the test/docs globs as SQLite GLOB conditions (it is loaded
 // verbatim). Parse them back and compare with the TypeScript lists the witness uses.
@@ -18,7 +18,8 @@ function viewGlobs(view: string): string[] {
   const out: string[] = [];
   const total = body.split(" GLOB '").length - 1;
   for (const line of body.split('\n')) {
-    const cond = line.replace(/^\s*(?:WHERE|OR)\s+/, '');
+    // `WHERE <surface exemption>` then `AND (<glob>` / `OR <glob>` ... `OR <glob>)`.
+    const cond = line.replace(/^\s*(?:WHERE|OR)\s+/, '').replace(/^\s*AND\s+\(/, '').replace(/\);?$/, '');
     let m: RegExpExecArray | null;
     if ((m = /^(.*) GLOB '([^']*)'$/.exec(cond))) {
       if (m[1] === BASENAME && !m[2]!.includes('/')) out.push(`**/${m[2]}`);
@@ -92,6 +93,78 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
         'lib/h.over_react.g.dart', 'lib/src/b.pb.dart', 'src/__generated__/k.ts', 'src/i.generated.ts', 'test/g.mocks.dart',
       ]);
       expect(inView('doc_files')).toEqual(['demo/d.ts', 'docs/g.ts', 'examples/x/y.ts', 'src/example/z.ts']);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('fix round 1 globs: tests/, type-tests/, Cypress / Playwright, Flutter test dirs, setup files', () => {
+    const tests = [
+      'packages/stack/tests/whole-stack/fixture.ts', 'tests/helpers.ts', 'type-tests/positive.ts', 'internal/testdata/a.ts',
+      'spec/a.ts', 'cypress/support/e2e.ts', 'playwright/auth.ts', 'test_driver/app.dart', 'integration_test/app_test.dart',
+      'integration_test/robot.dart', 'src/db.fixture.ts', 'src/app.e2e.ts', 'vitest.setup.ts', 'jest.setup.js', 'src/setupTests.ts',
+    ];
+    const not = ['src/latest.ts', 'src/contests/a.ts', 'src/testsuite.ts', 'src/specs.ts', 'src/inspect/a.ts', 'src/fixture.ts', 'src/setup.ts', 'vitest.config.ts'];
+    for (const p of tests) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(true);
+    for (const p of not) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(false);
+  });
+});
+
+describe('SURFACE_DIRS: nothing under a pub package lib/ is a test, docs or script file', () => {
+  const docs: Array<[string, string]> = [
+    // pub package at the repo root
+    ['pub:acme/r:rootpkg', 'lib/src/wire_test.dart'],
+    ['pub:acme/r:rootpkg', 'lib/mocks/fake_clock.dart'],
+    ['pub:acme/r:rootpkg', 'lib/src/example/usage.dart'],
+    ['pub:acme/r:rootpkg', 'lib/testing/harness.dart'],
+    ['pub:acme/r:rootpkg', 'lib/src/tool/x.dart'],
+    ['pub:acme/r:rootpkg', 'lib/src/gen.g.dart'],
+    ['pub:acme/r:rootpkg', 'test/a_test.dart'],
+    ['pub:acme/r:rootpkg', 'test/lib/b_test.dart'],
+    ['pub:acme/r:rootpkg', 'example/lib/main.dart'],
+    // pub package in a subdir: its own lib/ only
+    ['pub:acme/r:nested', 'pkgs/nested/lib/mocks/m.dart'],
+    ['pub:acme/r:nested', 'pkgs/nested/test/mocks/m.dart'],
+    // npm: no surface dir; src/ is not exempt
+    ['npm:acme/r:web', 'web/lib/mocks/m.ts'],
+    ['npm:acme/r:web', 'web/src/__tests__/a.ts'],
+    ['npm:acme/r:web', 'web/src/a.test.ts'],
+  ];
+  const pkgPath: Record<string, string> = { 'pub:acme/r:rootpkg': '.', 'pub:acme/r:nested': 'pkgs/nested', 'npm:acme/r:web': 'web' };
+
+  it('globs.ts and analyze.sql state the same rule', () => {
+    expect(SURFACE_DIRS).toEqual({ pub: ['lib'], npm: [] });
+    const start = SQL.indexOf('CREATE VIEW surface_files ');
+    const body = SQL.slice(start, SQL.indexOf(';', start));
+    expect(body).toContain("WHERE p.manager = 'pub'");
+    expect(body).toContain("|| 'lib/'");
+  });
+
+  it('the views and inSurfaceDir agree; pub lib/ files are never test/docs/script, generated still applies (negative)', () => {
+    const db = openDb(':memory:');
+    try {
+      db.exec("INSERT INTO repos (repo) VALUES ('acme/r')");
+      const pkg = db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/r', ?, ?, ?, 'private')");
+      for (const [id, path] of Object.entries(pkgPath)) pkg.run(id, path, id.slice(0, 3), id.slice(id.lastIndexOf(':') + 1));
+      const ins = db.prepare('INSERT INTO documents (package_id, file) VALUES (?, ?)');
+      for (const [id, f] of docs) ins.run(id, f);
+      db.exec(analyzeSql());
+      const inView = (v: string): string[] =>
+        (db.prepare(`SELECT file FROM ${v} ORDER BY file`).all() as Array<{ file: string }>).map((r) => r.file);
+      const surface = docs.filter(([id, f]) => inSurfaceDir(f, id.slice(0, 3), pkgPath[id]!)).map(([, f]) => f).sort();
+      expect(inView('surface_files')).toEqual(surface);
+      expect(surface).toEqual([
+        'lib/mocks/fake_clock.dart', 'lib/src/example/usage.dart', 'lib/src/gen.g.dart', 'lib/src/tool/x.dart',
+        'lib/src/wire_test.dart', 'lib/testing/harness.dart', 'pkgs/nested/lib/mocks/m.dart',
+      ]);
+      // Without the exemption every one of these would match a glob.
+      expect(inView('test_files')).toEqual([
+        'pkgs/nested/test/mocks/m.dart', 'test/a_test.dart', 'test/lib/b_test.dart', 'web/lib/mocks/m.ts', 'web/src/__tests__/a.ts',
+        'web/src/a.test.ts',
+      ]);
+      expect(inView('doc_files')).toEqual(['example/lib/main.dart']);
+      expect(inView('script_files')).toEqual([]);
+      expect(inView('generated_files')).toEqual(['lib/src/gen.g.dart']);
     } finally {
       db.close();
     }

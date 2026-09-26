@@ -168,6 +168,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(s.unresolvedImports).toEqual([]);
     // `void main() {` on line 10: the runtime calls it, nothing references it.
     expect(s.entrySymbols).toEqual([
+      { name: 'main', file: 'bin/clock.dart', line: 4, col: 5, kind: 'runtime' },
       { name: 'main', file: 'bin/main.dart', line: 9, col: 5, kind: 'runtime' },
       { name: 'main', file: 'bin/shapes.dart', line: 4, col: 5, kind: 'runtime' },
     ]);

@@ -2,7 +2,8 @@
   "entryPoints": [
     "lib/acme_x.dart",
     "lib/builder.dart",
-    "lib/syntax.dart"
+    "lib/syntax.dart",
+    "lib/testing.dart"
   ],
   "entrySymbols": [
     {
@@ -110,6 +111,24 @@
       "sites": []
     },
     {
+      "col": 4,
+      "entry": "lib/testing.dart",
+      "exportedAs": "wireTick",
+      "file": "lib/src/wire_test.dart",
+      "line": 6,
+      "name": "wireTick",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/testing.dart",
+      "exportedAs": "wireUnused",
+      "file": "lib/src/wire_test.dart",
+      "line": 9,
+      "name": "wireUnused",
+      "sites": []
+    },
+    {
       "col": 6,
       "entry": "lib/acme_x.dart",
       "exportedAs": "Shown",
@@ -131,6 +150,15 @@
       "file": "lib/syntax.dart",
       "line": 9,
       "name": "Vec",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "lib/testing.dart",
+      "exportedAs": "FakeClock",
+      "file": "lib/mocks/fake_clock.dart",
+      "line": 5,
+      "name": "FakeClock",
       "sites": []
     },
     {

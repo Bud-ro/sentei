@@ -61,8 +61,8 @@ describe.skipIf(!scipTs)('ingestOrg on fixtures/org-small (scip-typescript)', ()
   it('logs counts and no warnings (every sidecar export matched a definition)', () => {
     expect(counts.unmatchedExports).toBe(0);
     expect(counts.warnings).toBe(0);
-    expect(logs.at(-1)).toMatch(/^\[ingest\] documents=4 symbols=\d+ occurrences=\d+ edges=\d+ exported=3 unresolved=0/);
-    expect(counts.documents).toBe(4);
+    expect(logs.at(-1)).toMatch(/^\[ingest\] documents=6 symbols=\d+ occurrences=\d+ edges=\d+ exported=3 unresolved=0/);
+    expect(counts.documents).toBe(6);
   });
 
   it('stores version-normalized symbol strings', () => {
@@ -125,6 +125,8 @@ describe.skipIf(!scipTs)('ingestOrg on fixtures/org-small (scip-typescript)', ()
       { package_id: 'npm:acme/lib-core:@acme/core', file: 'src/fns.ts', is_entry: 0, module: 'src/fns.ts' },
       { package_id: 'npm:acme/lib-core:@acme/core', file: 'src/helper.ts', is_entry: 0, module: 'src/helper.ts' },
       { package_id: 'npm:acme/lib-core:@acme/core', file: 'src/index.ts', is_entry: 1, module: 'src/index.ts' },
+      { package_id: 'npm:acme/lib-core:@acme/core', file: 'tests/core.test.ts', is_entry: 0, module: 'tests/core.test.ts' },
+      { package_id: 'npm:acme/lib-core:@acme/core', file: 'tests/helpers.ts', is_entry: 0, module: 'tests/helpers.ts' },
     ]);
   });
 

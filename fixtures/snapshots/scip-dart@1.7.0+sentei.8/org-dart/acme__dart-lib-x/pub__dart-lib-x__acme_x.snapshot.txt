@@ -112,6 +112,22 @@
 //                               ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
 //                                        ^^^^^^^ definition local 0 enclosing [5:19-5:47]
 
+## lib/mocks/fake_clock.dart
+  // Test-support code under lib/ (`lib/mocks/`): library surface of acme_x, which
+//^ definition scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/
+  // consumers' tests import. Not a test file (SURFACE_DIRS), so its uses count.
+  import '../src/wire_test.dart';
+
+  // Expected: alive, no finding (external ref from acme_app bin/clock.dart).
+  class FakeClock {
+//      ^^^^^^^^^ definition scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/FakeClock# enclosing [5:0-8:1]
+    // Expected: alive, no finding (member of a live class).
+    int now() => wireTick();
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//      ^^^ definition scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/FakeClock#now(). enclosing [7:2-7:26]
+//               ^^^^^^^^ reference scip-dart pub acme_x . lib/src/`wire_test.dart`/wireTick().
+  }
+
 ## lib/src/impl.dart
   // Re-exported whole by lib/acme_x.dart (`export 'src/impl.dart';`).
 //^ definition scip-dart pub acme_x . lib/src/`impl.dart`/
@@ -171,6 +187,30 @@
 //        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
 //               ^^^^^ definition scip-dart pub acme_x . lib/src/`shown.dart`/Hidden#label. enclosing [13:15-13:31]
   }
+
+## lib/src/wire_test.dart
+  // A library file whose name ends in `_test.dart`. Under lib/ it is library code
+//^ definition scip-dart pub acme_x . lib/src/`wire_test.dart`/
+  // (SURFACE_DIRS: nothing in a pub package's lib/ is a test), not a test.
+  // Re-exported whole by lib/testing.dart.
+
+  // Expected: unexport_candidate, reasons ["internal_refs_only"]. Only FakeClock
+  // (lib/mocks/) uses it; were lib/mocks/ a test dir, it would be only_test_refs.
+  int wireTick() => 7;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^ definition scip-dart pub acme_x . lib/src/`wire_test.dart`/wireTick(). enclosing [6:0-6:20]
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (surface via export, referenced nowhere).
+  int wireUnused() => 8;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`wire_test.dart`/wireUnused(). enclosing [9:0-9:22]
+
+  // Expected: private_dead, reasons ["already_unreachable"]. A test file's symbols are
+  // never private_dead; this file is not a test file.
+  // ignore: unused_element
+  int _wireIsland() => 9;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`wire_test.dart`/_wireIsland(). enclosing [14:0-14:23]
 
 ## lib/syntax.dart
   // Second entry library of acme_x (lib/*.dart): declarations whose SCIP symbols
@@ -261,6 +301,16 @@
 //                                        ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#`<constructor>`().
 //                                                ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#label.
 //                                                      ^^^^^ reference local 4
+
+## lib/testing.dart
+  // Entry point for acme_x's test-support API (lib/*.dart). The files it exports have
+//^ definition scip-dart pub acme_x . lib/`testing.dart`/
+  // test-like paths (`lib/src/wire_test.dart`, `lib/mocks/`) but live under lib/, so
+  // they are library code, never test files (SURFACE_DIRS).
+  library;
+
+  export 'mocks/fake_clock.dart';
+  export 'src/wire_test.dart';
 
 ## tool/dart_dev/config.dart
   // dart_dev (Workiva's task runner) convention: `dart run dart_dev` generates a

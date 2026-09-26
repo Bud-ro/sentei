@@ -7,7 +7,8 @@
 // Two shapes only (so the SQL rendering stays mechanical):
 //   `**/<file pattern>`  matched against the base name (no `/` in the pattern)
 //   `**/<dir>/**`        a directory segment anywhere in the path
-// Patterns are matched against repo-relative POSIX paths.
+// Patterns are matched against repo-relative POSIX paths, except inside a package's
+// SURFACE_DIRS (pub `lib/`), where TEST / DOCS / SCRIPT globs never apply.
 
 /**
  * Files that are tests or test support (mocks, fixtures, e2e, stories, vitest type
@@ -34,7 +35,49 @@ export const TEST_GLOBS: readonly string[] = Object.freeze([
   '**/test-utils/**',
   '**/testing/**',
   '**/*.mock.*',
+  // Phase 2 fix round 1 (supabase: 235 private_dead rows were test infrastructure in
+  // `tests/` and `type-tests/`), plus the other conventional JS/TS and Flutter names.
+  '**/tests/**',
+  '**/type-tests/**',
+  '**/testdata/**',
+  '**/spec/**',
+  '**/cypress/**',
+  '**/playwright/**',
+  '**/test_driver/**',
+  '**/integration_test/**',
+  '**/*.fixture.*',
+  '**/*.e2e.*',
+  '**/vitest.setup.*',
+  '**/jest.setup.*',
+  '**/setupTests.*',
 ]);
+
+/**
+ * Package-relative directories that hold a package's library surface by the package
+ * manager's own definition: no TEST / DOCS / SCRIPT glob applies to a file under one
+ * (GENERATED_GLOBS still do). pub: everything under `lib/` is importable as
+ * `package:<name>/…` and tests never live there, so `lib/src/wire_test.dart`,
+ * `lib/src/mocks/`, `lib/testing/` or `lib/src/example/` are library code (a
+ * test-support package's whole API sits in such files; Workiva's were mis-scored as
+ * tests). npm has no such directory: tests legitimately live in `src/` (`*.test.ts`,
+ * `src/__tests__/`, `src/test/`), and the manifest's entry points, the closest npm
+ * analogue, can deliberately be test support or stories (`extraEntryPoints`).
+ * The `surface_files` view in analyze.sql spells the same rule (test/globs.test.ts checks).
+ */
+export const SURFACE_DIRS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  pub: Object.freeze(['lib']),
+  npm: Object.freeze([]),
+});
+
+/**
+ * True when repo-relative `file` lies in a SURFACE_DIRS directory of its package
+ * (`manager`, `pkgPath` repo-relative, '.' for the repo root): TEST / DOCS / SCRIPT
+ * globs never apply to it.
+ */
+export function inSurfaceDir(file: string, manager: string, pkgPath: string): boolean {
+  const base = pkgPath === '.' || pkgPath === '' ? '' : `${pkgPath}/`;
+  return (SURFACE_DIRS[manager] ?? []).some((d) => file.startsWith(`${base}${d}/`));
+}
 
 /** Files that are documentation or examples. */
 export const DOCS_GLOBS: readonly string[] = Object.freeze([

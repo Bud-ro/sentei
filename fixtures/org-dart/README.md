@@ -76,3 +76,13 @@ that must be source-linked.
 | dart_dev's `config` | `dart-lib-x/tool/dart_dev/config.dart` | no finding (sidecar `entrySymbols`) |
 | `main` of a script outside `lib/` that is not a discover entry | `dart-lib-x/benchmark/bench.dart` (`main`, and `work` reached from it) | no finding (sidecar `entrySymbols`) |
 | Public function named only in a dartdoc link (`/// See [docOnly].` on `doubled`) | `dart-lib-x/lib/acme_x.dart` `docOnly` | deletion_candidate `["no_refs"]`: a doc link is not a reference (fork patch 4), so no occurrence and no `internal_refs_only` |
+
+### Test-looking library code under lib/ (Phase 2 fix round 1)
+
+Nothing under a pub package's `lib/` is a test, docs or script file (`SURFACE_DIRS`
+in `packages/core/src/globs.ts`): it is importable as `package:acme_x/…`.
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| `lib/src/*_test.dart` that is not a test | `dart-lib-x/lib/src/wire_test.dart`, re-exported by the entry `lib/testing.dart` | `wireUnused` deletion_candidate `["no_refs"]`; `_wireIsland` private_dead `already_unreachable` (a test file's symbols never are) |
+| Test-support code in `lib/mocks/` | `dart-lib-x/lib/mocks/fake_clock.dart` `FakeClock`, used by `dart-app/bin/clock.dart` | `FakeClock` alive; its use of `wireTick` counts, so `wireTick` is unexport_candidate `["internal_refs_only"]`, not `only_test_refs` |

@@ -1,6 +1,20 @@
 # sentei scip snapshot: scip-dart 1.7.0
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
+## bin/clock.dart
+  // Entry point of acme_app (bin/): uses acme_x's test-support API from lib/mocks/.
+//^ definition scip-dart pub acme_app . bin/`clock.dart`/
+  import 'package:acme_x/testing.dart';
+
+  // Expected: alive, no finding (bin/ entry point).
+  void main() {
+//     ^^^^ definition scip-dart pub acme_app . bin/`clock.dart`/main(). enclosing [4:0-6:1]
+    print(FakeClock().now());
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^ reference scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/FakeClock#`<constructor>`().
+//                    ^^^ reference scip-dart pub acme_x . lib/mocks/`fake_clock.dart`/FakeClock#now().
+  }
+
 ## bin/main.dart
   // Entry point of acme_app (bin/), consumer of acme_x and acme_pub.
 //^ definition scip-dart pub acme_app . bin/`main.dart`/

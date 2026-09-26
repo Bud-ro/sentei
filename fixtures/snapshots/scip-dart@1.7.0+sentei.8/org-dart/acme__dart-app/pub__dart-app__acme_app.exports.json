@@ -1,9 +1,17 @@
 {
   "entryPoints": [
+    "bin/clock.dart",
     "bin/main.dart",
     "bin/shapes.dart"
   ],
   "entrySymbols": [
+    {
+      "col": 5,
+      "file": "bin/clock.dart",
+      "kind": "runtime",
+      "line": 4,
+      "name": "main"
+    },
     {
       "col": 5,
       "file": "bin/main.dart",

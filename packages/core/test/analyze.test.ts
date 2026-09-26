@@ -1006,9 +1006,15 @@ describe.skipIf(!scipTs)('analyzeOrg on fixtures/org-small lib-core + app (scip-
     expect(logs.at(-1)).toMatch(/^\[analyze\] findings=4 needs_review=1 private_dead=2 unexport_candidate=1 reachable=\d+$/);
   });
 
-  it('marks everything but the island reachable', () => {
-    const unreachable = db.prepare('SELECT name FROM symbols WHERE is_entry_reachable = 0 ORDER BY name').all();
-    expect(unreachable).toEqual([{ name: 'islandA' }, { name: 'islandB' }]);
+  it('marks everything but the island and the tests/ files reachable; only the island is private_dead', () => {
+    const unreachable = db.prepare('SELECT name, file FROM symbols WHERE is_entry_reachable = 0 ORDER BY file, name').all() as Array<{ name: string; file: string }>;
+    // tests/ infrastructure (a test file importing a helper) is not reachable from the
+    // package's entries, but it is a test file (TEST_GLOBS `**/tests/**`): not dead code.
+    expect(unreachable.filter((r) => !r.file.startsWith('tests/')).map((r) => r.name)).toEqual(['islandA', 'islandB']);
+    expect(unreachable.filter((r) => r.file.startsWith('tests/')).map((r) => r.name)).toEqual(
+      expect.arrayContaining(['coreResult', 'seedValue', 'setupCore']));
+    const testFiles = db.prepare("SELECT file FROM test_files WHERE package_id = 'npm:acme/lib-core:@acme/core' ORDER BY file").all();
+    expect(testFiles).toEqual([{ file: 'tests/core.test.ts' }, { file: 'tests/helpers.ts' }]);
   });
 
   it('gives a published lib-core the same evidence, as deprecations (unusedFn still goes to the witness)', () => {

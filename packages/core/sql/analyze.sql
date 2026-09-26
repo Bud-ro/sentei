@@ -78,6 +78,7 @@ DROP VIEW IF EXISTS doc_files;
 DROP VIEW IF EXISTS script_files;
 DROP VIEW IF EXISTS generated_files;
 DROP VIEW IF EXISTS test_files;
+DROP VIEW IF EXISTS surface_files;
 DROP VIEW IF EXISTS ref_occurrences;
 DROP VIEW IF EXISTS module_symbols;
 DROP VIEW IF EXISTS analysis_params;
@@ -112,45 +113,75 @@ SELECT symbol_id, package_id, def_package_id, file, line, col, role, enclosing_s
 FROM occurrences
 WHERE (role & 1) = 0 AND is_export_site = 0;
 
+-- Documents in a package's library-surface directory (SURFACE_DIRS in globs.ts; the
+-- same rule, test/globs.test.ts checks): for a pub package everything under
+-- `<package>/lib/` is importable as `package:<name>/…`, so `lib/src/wire_test.dart`,
+-- `lib/mocks/` or `lib/src/example/` are library code, never test / docs / script
+-- files. npm has no such directory (tests live in src/). Generated globs still apply.
+CREATE VIEW surface_files (package_id, file) AS
+SELECT d.package_id, d.file
+FROM documents d
+JOIN packages p ON p.package_id = d.package_id
+WHERE p.manager = 'pub'
+  AND substr(d.file, 1, length(CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) + 4)
+      = (CASE WHEN p.path IN ('.', '') THEN '' ELSE p.path || '/' END) || 'lib/';
+
 -- PLAN.md §6.5 test globs, extended with test support dirs/files (mocks, fixtures,
--- e2e, schemas, specs, stories, vitest type tests, test-utils / testing helpers). The SAME lists as packages/core/src/globs.ts
+-- e2e, schemas, specs, stories, vitest type tests, test-utils / testing helpers, tests/,
+-- type-tests/, Cypress / Playwright, Flutter test_driver / integration_test). The SAME lists as packages/core/src/globs.ts
 -- (TEST_GLOBS / DOCS_GLOBS): test/globs.test.ts parses the GLOB patterns below and
 -- asserts equality, so edit both together. A `**/<file pattern>` glob is matched
 -- against the base name (everything after the last '/'; GLOB's * crosses '/'), a
 -- `**/<dir>/**` glob against '/' || file so a leading segment is optional
--- (test/x.ts and src/test/x.ts both match).
+-- (test/x.ts and src/test/x.ts both match). Documents in surface_files are never test,
+-- docs or script files (the NOT IN below, in doc_files and script_files too).
 CREATE VIEW test_files (package_id, file) AS
 SELECT package_id, file
 FROM documents
-WHERE substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.test.*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*_test.dart'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.spec.*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*_test.*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.stories.*'
-   OR ('/' || file) GLOB '*/test/*'
-   OR ('/' || file) GLOB '*/__tests__/*'
-   OR ('/' || file) GLOB '*/mocks/*'
-   OR ('/' || file) GLOB '*/__mocks__/*'
-   OR ('/' || file) GLOB '*/fixtures/*'
-   OR ('/' || file) GLOB '*/__fixtures__/*'
-   OR ('/' || file) GLOB '*/e2e/*'
-   OR ('/' || file) GLOB '*/test-integration/*'
-   OR ('/' || file) GLOB '*/__schemas__/*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'mocks.*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.test-d.*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'test-utils.*'
-   OR ('/' || file) GLOB '*/test-utils/*'
-   OR ('/' || file) GLOB '*/testing/*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.mock.*';
+WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file FROM surface_files)
+  AND (substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.test.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*_test.dart'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.spec.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*_test.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.stories.*'
+    OR ('/' || file) GLOB '*/test/*'
+    OR ('/' || file) GLOB '*/__tests__/*'
+    OR ('/' || file) GLOB '*/mocks/*'
+    OR ('/' || file) GLOB '*/__mocks__/*'
+    OR ('/' || file) GLOB '*/fixtures/*'
+    OR ('/' || file) GLOB '*/__fixtures__/*'
+    OR ('/' || file) GLOB '*/e2e/*'
+    OR ('/' || file) GLOB '*/test-integration/*'
+    OR ('/' || file) GLOB '*/__schemas__/*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'mocks.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.test-d.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'test-utils.*'
+    OR ('/' || file) GLOB '*/test-utils/*'
+    OR ('/' || file) GLOB '*/testing/*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.mock.*'
+    OR ('/' || file) GLOB '*/tests/*'
+    OR ('/' || file) GLOB '*/type-tests/*'
+    OR ('/' || file) GLOB '*/testdata/*'
+    OR ('/' || file) GLOB '*/spec/*'
+    OR ('/' || file) GLOB '*/cypress/*'
+    OR ('/' || file) GLOB '*/playwright/*'
+    OR ('/' || file) GLOB '*/test_driver/*'
+    OR ('/' || file) GLOB '*/integration_test/*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.fixture.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.e2e.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'vitest.setup.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'jest.setup.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'setupTests.*');
 
 -- Docs globs: docs and in-package examples / demos.
 CREATE VIEW doc_files (package_id, file) AS
 SELECT package_id, file
 FROM documents
-WHERE ('/' || file) GLOB '*/docs/*'
-   OR ('/' || file) GLOB '*/examples/*'
-   OR ('/' || file) GLOB '*/example/*'
-   OR ('/' || file) GLOB '*/demo/*';
+WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file FROM surface_files)
+  AND (('/' || file) GLOB '*/docs/*'
+    OR ('/' || file) GLOB '*/examples/*'
+    OR ('/' || file) GLOB '*/example/*'
+    OR ('/' || file) GLOB '*/demo/*');
 
 -- Generated files: documents ingest marked is_generated (sidecar generatedFiles:
 -- `@generated` / "do not edit" headers), plus build_runner / protoc / freezed / mockito
@@ -182,18 +213,19 @@ WHERE is_generated = 1
 CREATE VIEW script_files (package_id, file) AS
 SELECT package_id, file
 FROM documents
-WHERE ('/' || file) GLOB '*/playground/*'
-   OR ('/' || file) GLOB '*/playgrounds/*'
-   OR ('/' || file) GLOB '*/bench/*'
-   OR ('/' || file) GLOB '*/benchmark/*'
-   OR ('/' || file) GLOB '*/benchmarks/*'
-   OR ('/' || file) GLOB '*/sandbox/*'
-   OR ('/' || file) GLOB '*/scripts/*'
-   OR ('/' || file) GLOB '*/tool/*'
-   OR ('/' || file) GLOB '*/tools/*'
-   OR ('/' || file) GLOB '*/script/*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.config.*'
-   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.workspace.*';
+WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file FROM surface_files)
+  AND (('/' || file) GLOB '*/playground/*'
+    OR ('/' || file) GLOB '*/playgrounds/*'
+    OR ('/' || file) GLOB '*/bench/*'
+    OR ('/' || file) GLOB '*/benchmark/*'
+    OR ('/' || file) GLOB '*/benchmarks/*'
+    OR ('/' || file) GLOB '*/sandbox/*'
+    OR ('/' || file) GLOB '*/scripts/*'
+    OR ('/' || file) GLOB '*/tool/*'
+    OR ('/' || file) GLOB '*/tools/*'
+    OR ('/' || file) GLOB '*/script/*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.config.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.workspace.*');
 
 -- Structural owner of a symbol: its descriptor parent (Foo#bar(). -> Foo#), or the
 -- declaration whose body contains its definition (e.g. an object-literal property
