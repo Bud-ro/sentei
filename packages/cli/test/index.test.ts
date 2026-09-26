@@ -11,6 +11,7 @@ import { statusReason } from '../../core/src/ingest.ts';
 import { failureInputHash, isCached, toolchainVersion } from '../src/indexers/cache.ts';
 import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
 import { choosePackageManager, hermeticEnv, install, installArgs, noFilesIndexed, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { typescriptVersionProblem } from '../src/indexers/export-surface.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, prepareLine, progressStep, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
 
@@ -2453,5 +2454,16 @@ describe('fix round 3 (index error text, pnpm lockfile major)', () => {
       expect(await install(dir, dir, [], [], other, root)).toBe(false);
       expect(calls3).toHaveLength(1);
     });
+  });
+});
+
+describe('export surface: the loaded typescript must be major 5 (fix round 4)', () => {
+  it('names the resolved path and version otherwise', () => {
+    expect(typescriptVersionProblem(ts.version, '/x/typescript/lib/typescript.js')).toBeNull();
+    expect(typescriptVersionProblem('7.0.2', '/repo/node_modules/typescript/lib/typescript.js')).toBe(
+      'the export surface needs TypeScript 5 (the major scip-typescript 0.4.0 bundles), but "typescript" resolved to '
+      + '/repo/node_modules/typescript/lib/typescript.js (version 7.0.2); run `npm ci` so that packages/cli/node_modules/typescript (5.9.3) is installed',
+    );
+    expect(typescriptVersionProblem(undefined, '/r/t.js')).toContain('(version unknown)');
   });
 });

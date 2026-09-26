@@ -5,6 +5,7 @@
 // TypeScript compiler API: the same typescript major/minor scip-typescript
 // bundles (5.9.3), so symbol resolution agrees with the `.scip` file.
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import ts from 'typescript';
 import {
@@ -72,7 +73,33 @@ export interface ExportSurfaceResult {
 /** Cap on compiler diagnostics copied into the result (the full count is always reported). */
 const MAX_REPORTED_DIAGNOSTICS = 20;
 
+/**
+ * Why the loaded `typescript` cannot compute the surface, or null: any major but 5 (the
+ * one scip-typescript 0.4.0 bundles). The root node_modules holds TypeScript 7, whose
+ * package has no compiler API; without the CLI's nested
+ * packages/cli/node_modules/typescript (a checkout without `npm ci`) the import found
+ * it and failed later with "ts.getParsedCommandLineOfConfigFile is not a function".
+ */
+export function typescriptVersionProblem(version: string | undefined, resolvedPath: string): string | null {
+  if (version !== undefined && /^5\./.test(version)) return null;
+  return `the export surface needs TypeScript 5 (the major scip-typescript 0.4.0 bundles), but "typescript" resolved to `
+    + `${resolvedPath} (version ${version ?? 'unknown'}); run \`npm ci\` so that packages/cli/node_modules/typescript (5.9.3) is installed`;
+}
+
+function assertTypescript5(): void {
+  const version = (ts as { version?: unknown }).version;
+  let resolved = '(unresolvable)';
+  try {
+    resolved = createRequire(import.meta.url).resolve('typescript');
+  } catch {
+    /* keep the placeholder */
+  }
+  const problem = typescriptVersionProblem(typeof version === 'string' ? version : undefined, resolved);
+  if (problem !== null) throw new Error(`sentei: ${problem}`);
+}
+
 export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceResult {
+  assertTypescript5();
   const diagnostics: string[] = [];
   let partial = false;
   /**
@@ -617,6 +644,7 @@ const PROGRAM_EXT = /(?<!\.d)\.(?:[cm]?[jt]s|[jt]sx)$/;
  * These are the runtime entries scip-typescript would otherwise not index. Sorted.
  */
 export function filesOutsidePrograms(tsconfig: string, pkgDir: string, candidates: readonly string[]): string[] {
+  assertTypescript5();
   const specs = createPrograms({ tsconfig, pkgDir, repoRoot: pkgDir, entryPoints: [] }, []);
   if (specs === undefined) return []; // an unreadable tsconfig: scip-typescript reports it
   const roots = new Set(specs.flatMap((s) => s.rootNames.map((f) => path.resolve(f))));
