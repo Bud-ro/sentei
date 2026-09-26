@@ -100,6 +100,8 @@ export const GENERATED_GLOBS: readonly string[] = Object.freeze([
   '**/*.pbenum.dart',
   '**/*.pbjson.dart',
   '**/*.pbserver.dart',
+  // Phase 2 fix round 7 (dart-lang labs appengine): protoc-gen-dart's gRPC stubs.
+  '**/*.pbgrpc.dart',
   '**/*.freezed.dart',
   '**/*.mocks.dart',
   '**/*.over_react.g.dart',

@@ -424,7 +424,7 @@ describe('analyzeOrg on hand-built rows', () => {
 
   it('never reports declarations of generated files, while references from generated files still count', () => {
     aliveExport('used');
-    const genFiles = ['lib/src/a.g.dart', 'lib/b.pb.dart', 'lib/c.pbenum.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart',
+    const genFiles = ['lib/src/a.g.dart', 'lib/b.pb.dart', 'lib/c.pbenum.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/l.pbgrpc.dart',
       'lib/f.freezed.dart', 'test/g.mocks.dart', 'lib/h.over_react.g.dart', 'src/i.generated.ts', 'src/generated/j.ts', 'src/__generated__/k.ts'];
     for (const [i, file] of genFiles.entries()) {
       doc(lib, file);

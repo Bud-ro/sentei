@@ -227,6 +227,7 @@ WHERE is_generated = 1
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbenum.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbjson.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbserver.dart'
+   OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.pbgrpc.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.freezed.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.mocks.dart'
    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.over_react.g.dart'

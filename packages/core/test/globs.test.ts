@@ -66,7 +66,7 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
       'src/__tests__/e.ts', 'src/mocks/h.ts', '__mocks__/m.ts', 'fixtures/f.ts', 'a/__fixtures__/f.ts', 'e2e/run.ts',
       'test-integration/i.ts', 'src/__schemas__/s.ts', 'docs/g.ts', 'examples/x/y.ts', 'src/example/z.ts', 'demo/d.ts',
       'src/testing/i.ts', 'src/latest/j.ts', 'x.test/k.ts', 'src/mocksy/a.ts', 'src/spec.ts', 'src/demos/a.ts', 'src/index.ts',
-      'lib/a.g.dart', 'lib/src/b.pb.dart', 'c.pbenum.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart',
+      'lib/a.g.dart', 'lib/src/b.pb.dart', 'c.pbenum.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart', 'lib/v1/api.pbgrpc.dart',
       'test/g.mocks.dart', 'lib/h.over_react.g.dart', 'src/i.generated.ts', 'generated/j.ts', 'src/__generated__/k.ts',
       'lib/g.dart', 'lib/pb.dart', 'src/generator/l.ts', 'src/generated.ts', 'lib/x.g.dart.bak',
       'lib/src/objective_c_bindings_generated.dart', 'lib/generated_bindings.dart', 'lib/src/generated_dart.ts',
@@ -103,7 +103,7 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
       ]);
       expect(inView('generated_files')).toEqual([
         'c.pbenum.dart', 'generated/j.ts', 'lib/a.g.dart', 'lib/d.pbjson.dart', 'lib/e.pbserver.dart', 'lib/f.freezed.dart',
-        'lib/h.over_react.g.dart', 'lib/src/b.pb.dart', 'lib/src/objective_c_bindings_generated.dart', 'src/__generated__/k.ts',
+        'lib/h.over_react.g.dart', 'lib/src/b.pb.dart', 'lib/src/objective_c_bindings_generated.dart', 'lib/v1/api.pbgrpc.dart', 'src/__generated__/k.ts',
         'src/i.generated.ts', 'test/g.mocks.dart',
       ]);
       expect(inView('doc_files')).toEqual(['demo/d.ts', 'docs/g.ts', 'examples/x/y.ts', 'src/example/z.ts']);
