@@ -422,7 +422,7 @@ describe('discoverLocal on a synthetic org', () => {
 
     const logs: string[] = [];
     const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
-    expect(m.policy).toEqual({ minAgeDays: 180, trustPrivateRegistry: true, assumeClosedWorld: false, countTestsAsConsumers: false, countDocsAsConsumers: false });
+    expect(m.policy).toEqual({ minAgeDays: 180, trustPrivateRegistry: true, countTestsAsConsumers: false, countDocsAsConsumers: false });
     expect(m.repos.map((r) => r.repo)).toEqual(['acme/dart', 'acme/mono']);
     const [dart, mono] = m.repos;
     expect(dart!.packages.map((p) => [p.packageId, p.path, p.visibility, p.isLibrary, p.entryPoints])).toEqual([
@@ -473,8 +473,8 @@ describe('discoverLocal on a synthetic org', () => {
     }
     org(['a'], { minAgeDay: 30 });
     expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/unknown key "minAgeDay"/);
-    org(['a'], { assumeClosedWorld: 'yes' });
-    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/"assumeClosedWorld" must be a boolean/);
+    org(['a'], { countTestsAsConsumers: 'yes' });
+    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/"countTestsAsConsumers" must be a boolean/);
     org(['a'], { ignoreManifestDir: ['x'] });
     expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(/unknown key "ignoreManifestDir"/);
     org(['a'], { ignoreManifestDirs: 'fixtures' });
