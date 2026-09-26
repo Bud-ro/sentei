@@ -7,4 +7,6 @@ void main() {
   final server = FakeServer();
   print(isFake(server.url));
   print(kitRealOnlyInTests());
+  print(supportMatcher(server));
+  print(regularOnlyMatcher(1));
 }

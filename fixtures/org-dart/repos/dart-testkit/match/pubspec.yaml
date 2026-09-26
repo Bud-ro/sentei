@@ -1,0 +1,7 @@
+name: acme_match
+description: "Org-private matcher library nested in the dart-testkit repo; acme_kit re-exports parts of it (round 7: re-exports of a same-repo org package)."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0

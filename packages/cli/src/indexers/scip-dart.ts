@@ -109,7 +109,11 @@ export const scipDart: Indexer = {
   // dart-surface: grinder tasks (`@Task` / `@DefaultTask`) are entry symbols.
   // sentei.13: part files are no longer passed as `--entry` (dartLibraryEntries),
   // so the sidecar's entryPoints lists libraries only.
-  version: '1.7.0+sentei.13',
+  // sentei.14: dart-surface records re-exports of same-repo org packages in
+  // `exports` and the `main` / `hybridMain` of libraries named by `package:`
+  // URI literals in `entrySymbols`; the generated-header sniff reads every
+  // leading comment block (Web IDL, protoc "Do not modify").
+  version: '1.7.0+sentei.14',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));

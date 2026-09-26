@@ -4,7 +4,22 @@
     "lib/acme_kit.dart",
     "lib/testing.dart"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "lib/src/hybrid/echo_server.dart",
+      "kind": "runtime",
+      "line": 4,
+      "name": "hybridMain"
+    },
+    {
+      "col": 5,
+      "file": "match/lib/src/remote_server.dart",
+      "kind": "runtime",
+      "line": 4,
+      "name": "hybridMain"
+    }
+  ],
   "exports": [
     {
       "col": 11,
@@ -20,7 +35,7 @@
       "entry": "lib/acme_kit.dart",
       "exportedAs": "kitRealOnlyInTests",
       "file": "lib/acme_kit.dart",
-      "line": 7,
+      "line": 9,
       "name": "kitRealOnlyInTests",
       "sites": []
     },
@@ -36,10 +51,37 @@
     {
       "col": 5,
       "entry": "lib/acme_kit.dart",
+      "exportedAs": "closeish",
+      "file": "match/lib/src/close.dart",
+      "line": 4,
+      "name": "closeish",
+      "sites": []
+    },
+    {
+      "col": 5,
+      "entry": "lib/acme_kit.dart",
       "exportedAs": "isFake",
       "file": "lib/src/test_utils/matchers.dart",
       "line": 3,
       "name": "isFake",
+      "sites": []
+    },
+    {
+      "col": 5,
+      "entry": "lib/acme_kit.dart",
+      "exportedAs": "regularOnlyMatcher",
+      "file": "match/lib/src/close.dart",
+      "line": 9,
+      "name": "regularOnlyMatcher",
+      "sites": []
+    },
+    {
+      "col": 5,
+      "entry": "lib/testing.dart",
+      "exportedAs": "supportMatcher",
+      "file": "match/lib/src/support.dart",
+      "line": 4,
+      "name": "supportMatcher",
       "sites": []
     },
     {

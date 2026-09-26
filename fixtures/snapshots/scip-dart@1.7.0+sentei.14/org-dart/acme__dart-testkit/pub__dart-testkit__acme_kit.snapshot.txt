@@ -7,12 +7,14 @@
   library;
 
   export 'src/test_utils/matchers.dart';
+  // Re-export of a same-repo org package (package:test's `export 'package:matcher/…'`).
+  export 'package:acme_match/src/close.dart';
 
   // Expected: deletion_candidate, reasons ["only_test_refs"]. A normal library symbol
   // used only by another package's tests (acme_app test/kit_test.dart) stays test-only.
   int kitRealOnlyInTests() => 1;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//    ^^^^^^^^^^^^^^^^^^ definition scip-dart pub acme_kit . lib/`acme_kit.dart`/kitRealOnlyInTests(). enclosing [7:0-7:30]
+//    ^^^^^^^^^^^^^^^^^^ definition scip-dart pub acme_kit . lib/`acme_kit.dart`/kitRealOnlyInTests(). enclosing [9:0-9:30]
 
 ## lib/src/fakes.dart
   // Exported through lib/testing.dart: test-support surface.
@@ -40,6 +42,40 @@
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^^^^^^^ definition scip-dart pub acme_kit . lib/src/`fakes.dart`/ownTestOnlyFake(). enclosing [14:0-14:27]
 
+## lib/src/hybrid/echo_server.dart
+  // Spawned by URI from acme_kit's own test/hybrid_test.dart (dart-lang/test's
+//^ definition scip-dart pub acme_kit . lib/src/hybrid/`echo_server.dart`/
+  // spawn_hybrid: `spawnHybridUri('package:spawn_hybrid/emits_numbers.dart')`).
+
+  // Expected: alive, no finding (runtime entry symbol: named by a package: URI literal).
+  void hybridMain(Object? channel) => _echo(channel);
+//     ^^^^^^^^^^ definition scip-dart pub acme_kit . lib/src/hybrid/`echo_server.dart`/hybridMain(). enclosing [4:0-4:51]
+//                ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                        ^^^^^^^ definition local 0 enclosing [4:16-4:31]
+//                                    ^^^^^ reference scip-dart pub acme_kit . lib/src/hybrid/`echo_server.dart`/_echo().
+//                                          ^^^^^^^ reference local 0
+
+  // Expected: alive, no finding (reached from hybridMain).
+  void _echo(Object? channel) => print(channel);
+//     ^^^^^ definition scip-dart pub acme_kit . lib/src/hybrid/`echo_server.dart`/_echo(). enclosing [7:0-7:46]
+//           ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                   ^^^^^^^ definition local 1 enclosing [7:11-7:26]
+//                               ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//                                     ^^^^^^^ reference local 1
+
+## lib/src/hybrid/orphan_server.dart
+  // No string literal names this library.
+//^ definition scip-dart pub acme_kit . lib/src/hybrid/`orphan_server.dart`/
+
+  // Expected: private_dead, reasons ["already_unreachable"]: nothing imports or spawns
+  // it, so its hybridMain is not an entry symbol (negative for URI entries).
+  void hybridMain(Object? channel) => print(channel);
+//     ^^^^^^^^^^ definition scip-dart pub acme_kit . lib/src/hybrid/`orphan_server.dart`/hybridMain(). enclosing [4:0-4:51]
+//                ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                        ^^^^^^^ definition local 0 enclosing [4:16-4:31]
+//                                    ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//                                          ^^^^^^^ reference local 0
+
 ## lib/src/test_utils/matchers.dart
   // Test-support dir (`lib/src/test*/`), re-exported by the main library.
 //^ definition scip-dart pub acme_kit . lib/src/test_utils/`matchers.dart`/
@@ -60,6 +96,7 @@
   library;
 
   export 'src/fakes.dart';
+  export 'package:acme_match/src/support.dart';
 
 ## test/fakes_test.dart
   // acme_kit's own test (no package:test: the fixture resolves offline).
@@ -71,4 +108,26 @@
     print(ownTestOnlyFake());
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^^^^^^^^^^ reference scip-dart pub acme_kit . lib/src/`fakes.dart`/ownTestOnlyFake().
+  }
+
+## test/hybrid_test.dart
+  // acme_kit's test spawning hybrid libraries by URI (no package:test: the fixture
+//^ definition scip-dart pub acme_kit . test/`hybrid_test.dart`/
+  // resolves offline; spawnHybridUri stands in for package:test's).
+  void spawnHybridUri(String uri) => print(uri);
+//     ^^^^^^^^^^^^^^ definition scip-dart pub acme_kit . test/`hybrid_test.dart`/spawnHybridUri(). enclosing [2:0-2:46]
+//                    ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                           ^^^ definition local 0 enclosing [2:20-2:30]
+//                                   ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//                                         ^^^ reference local 0
+
+  void main() {
+//     ^^^^ definition scip-dart pub acme_kit . test/`hybrid_test.dart`/main(). enclosing [4:0-9:1]
+    spawnHybridUri('package:acme_kit/src/hybrid/echo_server.dart');
+//  ^^^^^^^^^^^^^^ reference scip-dart pub acme_kit . test/`hybrid_test.dart`/spawnHybridUri().
+    spawnHybridUri('package:acme_match/src/remote_server.dart');
+//  ^^^^^^^^^^^^^^ reference scip-dart pub acme_kit . test/`hybrid_test.dart`/spawnHybridUri().
+    // Not a Dart library of the repo: nothing.
+    spawnHybridUri('package:acme_kit/src/hybrid/missing_server.dart');
+//  ^^^^^^^^^^^^^^ reference scip-dart pub acme_kit . test/`hybrid_test.dart`/spawnHybridUri().
   }

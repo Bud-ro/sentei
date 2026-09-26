@@ -34,6 +34,7 @@ import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/analysis/session.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/diagnostic/diagnostic.dart';
 import 'package:args/args.dart';
@@ -223,6 +224,8 @@ class Surface {
   ///   - build.yaml builder factories (see [_buildYamlFactories]);
   ///   - Flutter plugin classes named in pubspec.yaml (see [_flutterPluginClasses]);
   ///   - grinder tasks (see [_addGrinderTasks]);
+  ///   - `main` / `hybridMain` of a library named by a `package:` string
+  ///     literal in code (see [_uriEntries]);
   ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
   final entrySymbols = <String, Map<String, Object>>{};
 
@@ -265,6 +268,30 @@ class Surface {
     final rel = p.split(p.relative(f, from: packageRoot));
     if (rel.any((s) => s == '.dart_tool' || s == 'build' || (s.startsWith('.') && s != '.' && s != '..'))) return false;
     return !nested.any((d) => d == f || p.isWithin(d, f));
+  }
+
+  /// A Dart file of ANOTHER org package checked out in this repo (a sibling
+  /// or nested package; not this package's own file, not under a `.dart_tool`,
+  /// `build` or dot dir): [uri] is `package:<org name>/…` and [abs] lies under
+  /// the repo root. Its declarations re-exported by this package's entries
+  /// are exports of those entries too (sidecar `exports`, file = the
+  /// declaration's repo-relative path; ingest matches it like any export):
+  /// `package:test`'s `lib/test.dart` exports matcher's `closeTo`, which
+  /// consumers' tests use through their dev dependency on test. A package
+  /// outside the repo is left out: sidecar positions are repo-relative.
+  bool isOrgRepoFile(String abs, Uri uri) {
+    if (!uri.isScheme('package') || uri.pathSegments.isEmpty) return false;
+    final name = uri.pathSegments.first;
+    if (name == packageName || !orgPackages.contains(name)) return false;
+    return inRepo(abs) && !isOwnFile(abs);
+  }
+
+  /// [abs] lies under the repo root, outside `.dart_tool`, `build` and dot dirs.
+  bool inRepo(String abs) {
+    final f = p.normalize(abs);
+    if (!p.isWithin(repoRoot, f)) return false;
+    final rel = p.split(p.relative(f, from: repoRoot));
+    return !rel.any((s) => s == '.dart_tool' || s == 'build' || (s.startsWith('.') && s != '.' && s != '..'));
   }
 
   Pos position(LibraryFragment fragment, int offset) {
@@ -317,6 +344,7 @@ class Surface {
     }
 
     await _checkOwnFiles();
+    await _uriEntries();
     await _buildYamlFactories();
     await _flutterPluginClasses();
     await _dartDevConfig();
@@ -387,14 +415,20 @@ class Surface {
       if (decl == null) return;
       final fragment = decl.firstFragment;
       final file = fragment.libraryFragment!.source.fullName;
-      if (!isOwnFile(file)) return; // re-exported from another package
+      // Re-exported from another package: recorded only for an org package
+      // checked out in this repo (see [isOrgRepoFile]).
+      if (!isOwnFile(file) && !isOrgRepoFile(file, fragment.libraryFragment!.source.uri)) return;
       final exportedAs = key.endsWith('=') ? key.substring(0, key.length - 1) : key;
       final k = declKey(decl);
       if (!seen.add('$exportedAs\u0000$k')) return;
       final r = ExportRecord(entry, exportedAs, decl.name ?? exportedAs,
           position(fragment.libraryFragment!, fragment.nameOffset!));
       records.add(r);
-      (byKey[k] ??= []).add(r);
+      // Sites only for own declarations: a `show` name of ANOTHER package's
+      // declaration stays a reference from this package, as before re-exports
+      // were recorded (flute's `show VertexMode` keeps engine's VertexMode
+      // exported; fail closed).
+      if (isOwnFile(file)) (byKey[k] ??= []).add(r);
     });
 
     // Sites: identifiers in show/hide combinators of the export directives on the
@@ -505,6 +539,7 @@ class Surface {
           });
         }
         _conditionalDirectives(file, parsed.unit);
+        _collectUriLiterals(parsed.unit);
         final imports = {
           for (final d in parsed.unit.directives.whereType<ImportDirective>()) d.importKeyword.offset: d,
         };
@@ -626,6 +661,67 @@ class Surface {
       if (p.isWithin(repoRoot, abs)) return repoRel(abs);
     }
     return uri.toString();
+  }
+
+  /// `package:<org package>/<path>.dart` string literals in the code of own
+  /// files (directive URIs excluded), see [_uriEntries].
+  final _uriLiterals = <String>{};
+
+  static final _packageDartUri = RegExp(r'^package:([a-z_][a-z0-9_]*)/[^\s]+\.dart$');
+
+  void _collectUriLiterals(CompilationUnit unit) {
+    final visitor = _UriLiteralVisitor();
+    for (final d in unit.declarations) {
+      d.accept(visitor);
+    }
+    for (final v in visitor.values) {
+      final m = _packageDartUri.firstMatch(v);
+      if (m != null && orgPackages.contains(m.group(1))) _uriLiterals.add(v);
+    }
+  }
+
+  /// Libraries loaded by URI at run time: `spawnHybridUri('package:x/a.dart')`
+  /// (package:test runs the library's `hybridMain`), `Isolate.spawnUri(
+  /// Uri.parse('package:x/a.dart'), …)` (its `main`). Any `package:` string
+  /// literal of an own or org package that names a Dart library checked out in
+  /// this repo counts, in any own file, tests included (a test spawning a
+  /// hybrid makes it reachable): that library's top-level `main` and
+  /// `hybridMain` are runtime entry symbols (also in a sibling package: ingest
+  /// matches the position in the repo). Only those two names: code generators
+  /// hold many such literals (`'package:built_value/built_value.dart'`) and
+  /// nothing else in the library is run by name. Cheap and fail closed: it
+  /// only adds seeds. Not handled: URIs built at run time, relative paths,
+  /// `Process.run('dart', ['x.dart'])` (bin/ and tool/ mains are entries
+  /// anyway).
+  Future<void> _uriEntries() async {
+    var n = 0;
+    for (final text in _uriLiterals.toList()..sort()) {
+      final uri = Uri.tryParse(text);
+      if (uri == null) continue;
+      final path = context.currentSession.uriConverter.uriToPath(uri);
+      if (path == null || !inRepo(path) || !File(path).existsSync()) continue;
+      final lib = await context.currentSession.getLibraryByUri(text);
+      if (lib is! LibraryElementResult) continue;
+      for (final fn in lib.element.topLevelFunctions) {
+        if (fn.name != 'main' && fn.name != 'hybridMain') continue;
+        if (_addRepoEntrySymbol(fn, fn.name!)) n++;
+      }
+    }
+    if (n > 0) diagnostics.add('info: $n main/hybridMain function(s) of libraries named by package: URI string literals are entry symbols');
+  }
+
+  /// [addEntrySymbol] for a declaration anywhere in the repo (a sibling
+  /// package's file too); true when it is new.
+  bool _addRepoEntrySymbol(Element element, String why) {
+    final decl = declarationOf(element);
+    if (decl == null) return false;
+    final fragment = decl.firstFragment;
+    final file = fragment.libraryFragment!.source.fullName;
+    if (!inRepo(file)) return false;
+    final pos = position(fragment.libraryFragment!, fragment.nameOffset!);
+    if (entrySymbols.containsKey(pos.key)) return false;
+    entrySymbols[pos.key] = {'name': decl.name ?? why, ...pos.toJson()};
+    return true;
   }
 
   /// Analyzer codes for a directive URI whose file does not exist.
@@ -837,5 +933,15 @@ class Surface {
         unresolvedImports.add({'module': text, 'name': id.name, ...positionIn(file, unit, id.offset).toJson()});
       }
     }
+  }
+}
+
+/// The values of the simple string literals under a node.
+class _UriLiteralVisitor extends RecursiveAstVisitor<void> {
+  final values = <String>[];
+
+  @override
+  void visitSimpleStringLiteral(SimpleStringLiteral node) {
+    if (node.value.startsWith('package:')) values.add(node.value);
   }
 }

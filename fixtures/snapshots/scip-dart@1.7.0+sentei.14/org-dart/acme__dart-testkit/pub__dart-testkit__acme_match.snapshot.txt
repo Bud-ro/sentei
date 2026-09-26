@@ -1,0 +1,73 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/acme_match.dart
+  // Main library of acme_match (package:matcher's role; acme_kit is package:test's).
+//^ definition scip-dart pub acme_match . lib/`acme_match.dart`/
+  library;
+
+  export 'src/close.dart';
+  export 'src/support.dart';
+
+  // Expected: deletion_candidate, reasons ["only_test_refs"]. acme_pub's test uses it
+  // through its dev dependency on acme_kit, but acme_kit does not re-export it and
+  // acme_pub has no dependency on acme_match.
+  bool hiddenMatcher(Object? o) => o == null;
+//^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//     ^^^^^^^^^^^^^ definition scip-dart pub acme_match . lib/`acme_match.dart`/hiddenMatcher(). enclosing [9:0-9:43]
+//                   ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                           ^ definition local 0 enclosing [9:19-9:28]
+//                                 ^ reference local 0
+
+## lib/src/close.dart
+  // Re-exported by acme_kit's main library lib/acme_kit.dart (not a test-support entry).
+//^ definition scip-dart pub acme_match . lib/src/`close.dart`/
+
+  // Expected: alive, no finding. Used only by acme_pub's test, whose dev dependency is
+  // acme_kit, which re-exports it (package:test re-exporting matcher's closeTo).
+  bool closeish(num a, num b) => (a - b).abs() < 0.01;
+//^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//     ^^^^^^^^ definition scip-dart pub acme_match . lib/src/`close.dart`/closeish(). enclosing [4:0-4:52]
+//              ^^^ reference scip-dart pub dart:core . dart:core/`num.dart`/num#
+//                  ^ definition local 0 enclosing [4:14-4:19]
+//                     ^^^ reference scip-dart pub dart:core . dart:core/`num.dart`/num#
+//                         ^ definition local 1 enclosing [4:21-4:26]
+//                                ^ reference local 0
+//                                    ^ reference local 1
+//                                       ^^^ reference scip-dart pub dart:core . dart:core/`num.dart`/num#abs().
+
+  // Expected: deletion_candidate, reasons ["only_test_refs"]. Used only by acme_app's
+  // test, through its REGULAR dependency on acme_kit (whose main library is no
+  // test-support entry): the same rule as for a regular dependency on acme_match itself.
+  bool regularOnlyMatcher(num a) => a > 0;
+//^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//     ^^^^^^^^^^^^^^^^^^ definition scip-dart pub acme_match . lib/src/`close.dart`/regularOnlyMatcher(). enclosing [9:0-9:40]
+//                        ^^^ reference scip-dart pub dart:core . dart:core/`num.dart`/num#
+//                            ^ definition local 2 enclosing [9:24-9:29]
+//                                  ^ reference local 2
+
+## lib/src/remote_server.dart
+  // Spawned by URI from acme_kit's test/hybrid_test.dart (another package of the repo).
+//^ definition scip-dart pub acme_match . lib/src/`remote_server.dart`/
+
+  // Expected: alive, no finding: `hybridMain` of a library named by a package: URI
+  // string literal is a runtime entry symbol (package:test's spawnHybridUri).
+  void hybridMain(Object? channel) => print(channel);
+//     ^^^^^^^^^^ definition scip-dart pub acme_match . lib/src/`remote_server.dart`/hybridMain(). enclosing [4:0-4:51]
+//                ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                        ^^^^^^^ definition local 0 enclosing [4:16-4:31]
+//                                    ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//                                          ^^^^^^^ reference local 0
+
+## lib/src/support.dart
+  // Re-exported by acme_kit's test-support entry lib/testing.dart.
+//^ definition scip-dart pub acme_match . lib/src/`support.dart`/
+
+  // Expected: alive, no finding. Used only by acme_app's test through a regular
+  // dependency on acme_kit: re-exported by a test-support entry, so test-support surface.
+  bool supportMatcher(Object? o) => o != null;
+//^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//     ^^^^^^^^^^^^^^ definition scip-dart pub acme_match . lib/src/`support.dart`/supportMatcher(). enclosing [4:0-4:44]
+//                    ^^^^^^ reference scip-dart pub dart:core . dart:core/`object.dart`/Object#
+//                            ^ definition local 0 enclosing [4:20-4:29]
+//                                  ^ reference local 0

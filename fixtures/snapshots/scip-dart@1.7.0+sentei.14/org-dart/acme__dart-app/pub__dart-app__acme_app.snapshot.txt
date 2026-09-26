@@ -109,7 +109,7 @@
   import 'package:acme_kit/testing.dart';
 
   void main() {
-//     ^^^^ definition scip-dart pub acme_app . test/`kit_test.dart`/main(). enclosing [5:0-9:1]
+//     ^^^^ definition scip-dart pub acme_app . test/`kit_test.dart`/main(). enclosing [5:0-11:1]
     final server = FakeServer();
 //        ^^^^^^ definition local 0 enclosing [6:8-6:29]
 //                 ^^^^^^^^^^ reference scip-dart pub acme_kit . lib/src/`fakes.dart`/FakeServer#`<constructor>`().
@@ -121,4 +121,11 @@
     print(kitRealOnlyInTests());
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^^^^^^^^^^^^^ reference scip-dart pub acme_kit . lib/`acme_kit.dart`/kitRealOnlyInTests().
+    print(supportMatcher(server));
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^^^ reference scip-dart pub acme_match . lib/src/`support.dart`/supportMatcher().
+//                       ^^^^^^ reference local 0
+    print(regularOnlyMatcher(1));
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^^^^^^^ reference scip-dart pub acme_match . lib/src/`close.dart`/regularOnlyMatcher().
   }

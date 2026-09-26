@@ -1,0 +1,55 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [
+    "match/lib/acme_match.dart"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 5,
+      "entry": "match/lib/acme_match.dart",
+      "exportedAs": "closeish",
+      "file": "match/lib/src/close.dart",
+      "line": 4,
+      "name": "closeish",
+      "sites": []
+    },
+    {
+      "col": 5,
+      "entry": "match/lib/acme_match.dart",
+      "exportedAs": "hiddenMatcher",
+      "file": "match/lib/acme_match.dart",
+      "line": 9,
+      "name": "hiddenMatcher",
+      "sites": []
+    },
+    {
+      "col": 5,
+      "entry": "match/lib/acme_match.dart",
+      "exportedAs": "regularOnlyMatcher",
+      "file": "match/lib/src/close.dart",
+      "line": 9,
+      "name": "regularOnlyMatcher",
+      "sites": []
+    },
+    {
+      "col": 5,
+      "entry": "match/lib/acme_match.dart",
+      "exportedAs": "supportMatcher",
+      "file": "match/lib/src/support.dart",
+      "line": 4,
+      "name": "supportMatcher",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-testkit:acme_match",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

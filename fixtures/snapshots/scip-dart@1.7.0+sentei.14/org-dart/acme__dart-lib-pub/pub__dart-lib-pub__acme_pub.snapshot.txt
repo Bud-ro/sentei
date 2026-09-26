@@ -33,3 +33,21 @@
   int pubExampleOnly() => 9;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^^^^^^ definition scip-dart pub acme_pub . lib/`acme_pub.dart`/pubExampleOnly(). enclosing [11:0-11:26]
+
+## test/pub_test.dart
+  // acme_pub's test: acme_kit is a dev dependency (package:test's role), which
+//^ definition scip-dart pub acme_pub . test/`pub_test.dart`/
+  // re-exports acme_match's closeish (matcher's closeTo).
+  import 'package:acme_kit/acme_kit.dart';
+  import 'package:acme_match/acme_match.dart' show hiddenMatcher;
+//                                                 ^^^^^^^^^^^^^ reference scip-dart pub acme_match . lib/`acme_match.dart`/hiddenMatcher().
+
+  void main() {
+//     ^^^^ definition scip-dart pub acme_pub . test/`pub_test.dart`/main(). enclosing [5:0-8:1]
+    print(closeish(1, 1.001));
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^ reference scip-dart pub acme_match . lib/src/`close.dart`/closeish().
+    print(hiddenMatcher(null));
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^^ reference scip-dart pub acme_match . lib/`acme_match.dart`/hiddenMatcher().
+  }

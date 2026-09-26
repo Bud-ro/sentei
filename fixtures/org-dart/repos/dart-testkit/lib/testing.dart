@@ -3,3 +3,4 @@
 library;
 
 export 'src/fakes.dart';
+export 'package:acme_match/src/support.dart';
