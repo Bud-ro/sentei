@@ -211,6 +211,16 @@ describe('packages invariants', () => {
   });
 });
 
+describe('excluded_repos', () => {
+  it('takes a JSON array of manifests or NULL, nothing else', () => {
+    run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/a', 'archived', NULL), ('acme/b', 'size', '[\"package.json\"]')");
+    expect(count('SELECT count(*) AS n FROM excluded_repos')).toBe(2);
+    expect(() => run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/c', 'x', '{}')")).toThrow(REJECTED);
+    expect(() => run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/d', 'x', 'nope')")).toThrow(REJECTED);
+    expect(() => run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/e', NULL, NULL)")).toThrow(REJECTED);
+  });
+});
+
 describe('symbols invariants', () => {
   let lib: string;
   beforeEach(() => {

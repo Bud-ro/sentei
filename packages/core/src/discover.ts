@@ -574,7 +574,8 @@ function unindexedConsumerFlag(
 /**
  * Replace the whole org in the DB from `model`, in one transaction:
  * repos (cascade root, so every derived row goes), packages, package_deps,
- * discover-owned package_flags (unindexed_consumer, discover: opaque_consumer), policy, keep_rules. Throws if PRAGMA foreign_key_check reports anything.
+ * discover-owned package_flags (unindexed_consumer, discover: opaque_consumer), policy, keep_rules,
+ * excluded_repos. Throws if PRAGMA foreign_key_check reports anything.
  */
 export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: (m: string) => void = () => {}): void {
   db.exec('BEGIN');
@@ -585,6 +586,10 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
 
     const insPolicy = db.prepare('INSERT INTO policy (key, value) VALUES (?, ?)');
     for (const [k, v] of Object.entries(model.policy)) insPolicy.run(k, JSON.stringify(v));
+
+    db.exec('DELETE FROM excluded_repos');
+    const insExcluded = db.prepare('INSERT INTO excluded_repos (repo, reason, manifests) VALUES (?, ?, ?)');
+    for (const x of model.excludedRepos ?? []) insExcluded.run(x.repo, x.reason, x.manifests === null ? null : JSON.stringify(x.manifests));
 
     const insRepo = db.prepare(
       'INSERT INTO repos (repo, default_branch, head_sha, indexed_at, index_status) VALUES (?, ?, ?, NULL, NULL)');

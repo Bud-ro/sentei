@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
+import { defaultOrgConfig } from '../src/config.ts';
 import { openDb } from '../src/db.ts';
+import { writeDiscoverToDb } from '../src/discover.ts';
 import { buildReport, formatSummary, formatTable, ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS } from '../src/report.ts';
 
 const NOW = 1_700_000_000;
@@ -469,6 +471,43 @@ describe('buildReport: failed / partial repo warnings name what happened to each
         'repo acme/fonts: index failed for npm:acme/fonts:tools; index partial for npm:acme/fonts:unifont; opaque (discover) for npm:acme/fonts:docs; '
         + 'they are opaque and block verdicts for every org package they depend on',
       );
+    } finally {
+      d.close();
+    }
+  });
+});
+
+describe('buildReport: excluded repos that carry manifests', () => {
+  it('discover persists them; report.json names every one, the summary the first ten', () => {
+    const d = openDb(':memory:');
+    try {
+      const excludedRepos = [
+        // supabase/supabase: excluded by the user, the org's main consumer monorepo.
+        { repo: 'acme/supabase', reason: 'excluded by repos.exclude "supabase"', manifests: ['apps/studio/package.json', 'package.json'] },
+        { repo: 'acme/hw', reason: 'language C not in repos.languages; no package.json or pubspec.yaml in the HEAD tree', manifests: [] },
+        { repo: 'acme/old', reason: 'archived (--include-archived to keep)', manifests: null },
+        ...Array.from({ length: 10 }, (_, i) => ({ repo: `acme/stale${i}`, reason: 'last push 2020-01-01 before repos.minPushed 730d', manifests: ['pubspec.yaml'] })),
+        { repo: 'acme/zz-gone', reason: 'clone failed: git clone: timeout', manifests: ['package.json'] },
+      ];
+      writeDiscoverToDb(d, {
+        org: 'acme', source: { kind: 'github', org: 'acme', apiUrl: 'x', lockfile: null, clonesDir: 'x' }, generatedAt: NOW,
+        policy: defaultOrgConfig().policy, keep: [], repos: [], excludedRepos,
+      });
+      markAnalyzed(d);
+      const report = buildReport({ db: d, now: NOW });
+      const names = ['acme/stale0', 'acme/stale1', 'acme/stale2', 'acme/stale3', 'acme/stale4', 'acme/stale5', 'acme/stale6', 'acme/stale7', 'acme/stale8', 'acme/stale9'];
+      const full = '12 excluded repo(s) have package manifests and may consume org packages (their references are invisible): '
+        + `${names.map((n) => `${n} (minPushed, 1 manifest)`).join(', ')}, acme/supabase (repos.exclude, 2 manifests), acme/zz-gone (clone failed, 1 manifest)`;
+      expect(report.warnings).toEqual([full]);
+      const text = formatSummary(report);
+      expect(text).toContain(`!! WARNING: 12 excluded repo(s) have package manifests and may consume org packages (their references are invisible): `
+        + `${names.map((n) => `${n} (minPushed, 1 manifest)`).join(', ')} … and 2 more (all in report.json warnings)\n`);
+      expect(text).not.toContain('acme/supabase');
+      // A rediscover replaces the rows; no manifests → no warning.
+      writeDiscoverToDb(d, {
+        org: 'acme', source: { kind: 'local', dir: 'x' }, generatedAt: NOW, policy: defaultOrgConfig().policy, keep: [], repos: [],
+      });
+      expect(buildReport({ db: d, now: NOW }).warnings).toEqual([]);
     } finally {
       d.close();
     }

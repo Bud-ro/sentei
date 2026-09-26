@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { requireAnalyzed } from './analyze.ts';
+import { excludedReposWarning, shortenExcludedWarning } from './repo-select.ts';
 import { parseDescriptors, parseScipSymbol } from './scip/read.ts';
 
 /**
@@ -390,6 +391,16 @@ export function buildReport(opts: BuildReportOptions): Report {
         n === 1 ? 'blocks' : 'block'} verdicts for every org package ${n === 1 ? 'it depends' : 'they depend'} on`);
   }
 
+  // Listed repos discover skipped (excluded, or not cloned) that carry manifests:
+  // whatever they use of org packages is invisible, so exports only they use can
+  // look dead. Every repo is named here; the stdout summary shows the first ten.
+  const excludedRows = (db.prepare(`
+    SELECT repo, reason, manifests FROM excluded_repos
+    WHERE manifests IS NOT NULL AND json_array_length(manifests) > 0 ORDER BY repo`).all() as Array<{
+    repo: string; reason: string; manifests: string;
+  }>).map((r) => ({ repo: r.repo, reason: r.reason, manifests: JSON.parse(r.manifests) as string[] }));
+  if (excludedRows.length > 0) warnings.push(excludedReposWarning(excludedRows));
+
   // Dependencies whose name several org packages share (package ids are
   // <manager>:<repo>:<name>): say which one discover picked, or that it could not.
   const multiRows = db.prepare(`
@@ -644,7 +655,7 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
   if (report.warnings.length > 0) {
     const bar = '!'.repeat(78);
     out.push('', bar);
-    for (const w of report.warnings) out.push(`!! WARNING: ${w}`);
+    for (const w of report.warnings) out.push(`!! WARNING: ${shortenExcludedWarning(w)}`);
     out.push(bar);
   }
 

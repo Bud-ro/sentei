@@ -23,6 +23,17 @@ CREATE TABLE IF NOT EXISTS repos (
   index_status   TEXT CHECK (index_status IN ('ok', 'partial', 'failed'))
 ) STRICT;
 
+-- Listed repos this run does not analyse (GitHub source: selection exclusions and
+-- skipped clone failures), written by discover. Not a cascade child of repos: these
+-- repos have no row there. The report warns about the ones with manifests (their
+-- references to org packages are invisible). manifests: JSON array of repo-relative
+-- package.json / pubspec.yaml paths, NULL when the repo was never probed.
+CREATE TABLE IF NOT EXISTS excluded_repos (
+  repo      TEXT PRIMARY KEY,                    -- "org/name"
+  reason    TEXT NOT NULL,
+  manifests TEXT CHECK (manifests IS NULL OR (json_valid(manifests) AND json_type(manifests) = 'array'))
+) STRICT;
+
 -- Org-owned packages (npm package.json / pub pubspec.yaml), one per manifest.
 -- Identity is (repo, path, manager), not the name: two repos may publish the same
 -- name (a fork, a rewrite, a private copy), and both are real packages.
