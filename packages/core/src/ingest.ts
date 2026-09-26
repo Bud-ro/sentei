@@ -255,6 +255,12 @@ export interface IngestCounts {
   conditionalMirroredSymbols: number;
   /** conditionalImports entries or alternatives that are not indexed documents of the repo (warned). */
   unmatchedConditionalImports: number;
+  /**
+   * Definitions not interned because another package already defined the same key (the
+   * first package ingested keeps it). Warned when the symbol is an org package's own;
+   * a third-party symbol two packages declare (module augmentation) is only logged.
+   */
+  sharedDefinitions: number;
   /** Sidecar namespaceSpreadRefs applied (edges to every symbol of the target module). */
   namespaceSpreadRefs: number;
   /** namespaceSpreadRefs whose consumer or target module is not an indexed document (warned). */
@@ -462,9 +468,40 @@ export function symbolKey(norm: string, packageId: string | undefined, shared: b
       continue;
     }
     comps += 1;
-    if (comps === 3) return `${norm.slice(0, i + 1)}${packageId}${norm.slice(i + 2)}`;
+    if (comps === 3) return `${norm.slice(0, i + 1)}${packageId.replaceAll(' ', '  ')}${norm.slice(i + 2)}`;
   }
   return norm;
+}
+
+/**
+ * Interning key of a version-normalized SCIP symbol whose package NAME is the `.`
+ * placeholder (anonymous), attributed to org package `packageId` named `name`: the name
+ * component becomes `name` and the version component `packageId` (both escaped).
+ * scip-typescript names the symbols of every package.json without `"name"` `npm . .`,
+ * so without this `lib/\`utils.ts\`/cn().` of two nameless apps (sentei's
+ * `_unnamed/<dir>` packages, in one repo or in two) was ONE symbol: the first package
+ * ingested owned it and the other's references resolved into it (supabase: 150 of
+ * multiplayer.dev's references landed in hack-the-base `dec-24` files, 93 edges ran
+ * between unnamed packages). A nameless package cannot be imported by name, so its
+ * anonymous symbols are only ever its own. undefined when `norm` does not have the
+ * anonymous name (or does not parse).
+ */
+export function anonymousSymbolKey(norm: string, packageId: string, name: string): string | undefined {
+  // Components: scheme, manager, name, version; spaces inside a component are doubled.
+  const starts: number[] = [0];
+  for (let i = 0; i < norm.length && starts.length < 5; i += 1) {
+    if (norm[i] !== ' ') continue;
+    if (norm[i + 1] === ' ') {
+      i += 1;
+      continue;
+    }
+    starts.push(i + 1);
+  }
+  if (starts.length < 5) return undefined;
+  const nameComp = norm.slice(starts[2]!, starts[3]! - 1);
+  if (nameComp !== '.') return undefined;
+  const esc = (c: string): string => (c === '' ? '.' : c.replaceAll(' ', '  '));
+  return `${norm.slice(0, starts[2]!)}${esc(name)} ${esc(packageId)} ${norm.slice(starts[4]!)}`;
 }
 
 /**
@@ -671,7 +708,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     resolvedUnresolvedImports: 0, deepImportExports: 0,
     unmatchedEntrySymbols: 0, namespaceSpreadRefs: 0, unmatchedNamespaceSpreadRefs: 0, droppedModuleRefs: 0, witnessFiles: 0,
     generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0,
-    ambiguousSymbolRefs: 0, conditionalImports: 0, conditionalMirroredSymbols: 0, unmatchedConditionalImports: 0, warnings: 0,
+    ambiguousSymbolRefs: 0, conditionalImports: 0, conditionalMirroredSymbols: 0, unmatchedConditionalImports: 0, sharedDefinitions: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -902,6 +939,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
      */
     const symbolTarget = (w: DocWork, p: ParsedGlobal, norm: string):
       { pkg: string | undefined; key: string } | { ambiguous: string[]; nameKey: string } => {
+      if (p.name === '') {
+        // Anonymous package (`npm . .`): the document's own package (anonymousSymbolKey).
+        const own = nameKeyOf.get(w.packageId);
+        const key = own === undefined ? undefined : anonymousSymbolKey(norm, w.packageId, own.slice(own.indexOf(':') + 1));
+        if (key !== undefined) return { pkg: w.packageId, key };
+      }
       const nameKey = `${p.manager}:${p.name}`;
       const pkg = resolveName(w.packageId, nameKey);
       if (typeof pkg === 'object') return { ambiguous: pkg.ambiguous, nameKey };
@@ -909,6 +952,14 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     };
     /** `${repo}\0${file}\0${line}\0${col}` of every definition occurrence -> symbol_id. */
     const defPositions = new Map<string, number>();
+    /** Definitions of one interning key in several packages, per (owner, other) pair (pass 1). */
+    const sharedDefs = new Map<string, { owner: string; other: string; count: number; example: string; claimed: boolean }>();
+    const noteSharedDefinition = (owner: string, other: string, norm: string, claimed: boolean): void => {
+      const k = `${owner}\0${other}\0${claimed ? 1 : 0}`;
+      const e = sharedDefs.get(k);
+      if (e) e.count += 1;
+      else sharedDefs.set(k, { owner, other, count: 1, example: norm, claimed });
+    };
 
     const defineSymbol = (w: DocWork, norm: string, p: ParsedGlobal, line: number, col: number, kind: string, isModule: boolean): number => {
       const last = p.descriptors.at(-1)!;
@@ -963,10 +1014,39 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         }
         // Later definitions of the same symbol (overloads, merged declarations) keep
         // the first location but still count for export matching and enclosing lookup.
-        if (row.packageId !== w.packageId) continue;
+        if (row.packageId !== w.packageId) {
+          // Another package already owns this key: w's definition is not interned and
+          // w's references resolve into the other package. Normal for a third-party
+          // symbol both declare (module augmentation, `declare global`) and for round 1
+          // (another org package's symbol, augmented); a bug when w claims the symbol as
+          // its own (the nameless-package collision before anonymousSymbolKey).
+          if (round === 0) noteSharedDefinition(row.packageId, w.packageId, norm, own === w.packageId);
+          continue;
+        }
         defPositions.set(`${w.repo}\0${w.file}\0${start.line}\0${start.col}`, row.symbolId);
         const span = occurrenceEnclosingSpan(o);
         if (span && row.symbolId !== w.moduleSymbolId) w.spans.push({ symbolId: row.symbolId, span });
+      }
+    }
+
+    if (sharedDefs.size > 0) {
+      const cmpStr = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+      const pairs = [...sharedDefs.values()].sort((a, b) => b.count - a.count || cmpStr(a.owner, b.owner) || cmpStr(a.other, b.other));
+      counts.sharedDefinitions = pairs.reduce((n, p) => n + p.count, 0);
+      // Assertion (warned, not thrown: the run stays usable): a package's OWN symbol
+      // (its name, or its anonymous `npm . .` rewritten by anonymousSymbolKey) is never
+      // defined by another package, since every key of a package's own symbols is unique
+      // to it. A third-party symbol two packages declare is only noted.
+      const claimed = pairs.filter((p) => p.claimed);
+      if (claimed.length > 0) {
+        warn(`${claimed.reduce((n, p) => n + p.count, 0)} symbol(s) claimed as their own by two packages; the first package `
+          + `ingested keeps each and the other's references resolve into it: ${claimed.slice(0, 5).map((p) =>
+            `${p.owner} / ${p.other} (${p.count}, e.g. ${p.example})`).join('; ')}${claimed.length > 5 ? `; +${claimed.length - 5} more pair(s)` : ''}`);
+      }
+      const other = pairs.filter((p) => !p.claimed);
+      if (other.length > 0) {
+        log(`[ingest] ${other.reduce((n, p) => n + p.count, 0)} third-party symbol definition(s) in ${other.length} package pair(s) `
+          + 'were already defined by another package (module augmentation, declare global); the first keeps each');
       }
     }
 

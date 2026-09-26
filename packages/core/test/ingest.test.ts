@@ -6,7 +6,7 @@ import { create, toBinary } from '@bufbuild/protobuf';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { analyzeOrg } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { barePackageName, ingestOrg, repoSlug, statusReason, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
+import { anonymousSymbolKey, barePackageName, ingestOrg, repoSlug, statusReason, symbolKey, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
 import { IndexSchema, SymbolInformation_Kind } from '../src/scip/scip_pb.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
@@ -354,6 +354,59 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { target_package_id: FORK }, { target_package_id: MONO_LIB },
       ]);
     });
+  });
+
+  it('keeps the anonymous `npm . .` symbols of two nameless packages apart (fix round 4)', () => {
+    // scip-typescript names every package.json without "name" `npm . .`: both apps'
+    // src/main.ts localHelper() had ONE symbol_str, the first package ingested owned it
+    // and the second's use resolved into it (supabase multiplayer.dev -> dec-24).
+    const ANON = 'scip-typescript npm . . ';
+    const pkgsAnon = ['npm:acme/mono:_unnamed/demo-a', 'npm:acme/mono:_unnamed/demo-b'];
+    for (const [i, p] of pkgsAnon.entries()) {
+      const dir = i === 0 ? 'demo-a' : 'demo-b';
+      db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/mono', ?, 'npm', ?, 'private')")
+        .run(p, dir, `_unnamed/${dir}`);
+      writeScip('acme/mono', `${dir}.scip`, [{
+        path: 'src/main.ts',
+        occurrences: [
+          { range: [0, 0, 0], symbol: `${ANON}src/\`main.ts\`/`, roles: 1 },
+          { range: [1, 9, 20], symbol: `${ANON}src/\`main.ts\`/localHelper().`, roles: 1, enclosing: [1, 0, 3, 1] },
+          { range: [4, 0, 11], symbol: `${ANON}src/\`main.ts\`/localHelper().` },
+        ],
+      }]);
+      writeJson('acme/mono', `${dir}.exports.json`, sidecar(p));
+    }
+    indexJson('acme/mono', [
+      { packageId: 'npm:acme/mono:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
+      { packageId: 'npm:acme/mono:@acme/app', scip: 'app.scip', exports: 'app.exports.json' },
+      { packageId: pkgsAnon[0]!, scip: 'demo-a.scip', exports: 'demo-a.exports.json' },
+      { packageId: pkgsAnon[1]!, scip: 'demo-b.scip', exports: 'demo-b.exports.json' },
+    ]);
+    const d = discover();
+    d.repos[0]!.packages.push(
+      { packageId: pkgsAnon[0]!, path: 'demo-a', entryPoints: [] },
+      { packageId: pkgsAnon[1]!, path: 'demo-b', entryPoints: [] },
+    );
+    const c = run(d);
+    expect(db.prepare(`SELECT s.symbol_str, s.package_id, s.file,
+        (SELECT group_concat(o.package_id || ':' || o.line) FROM occurrences o WHERE o.symbol_id = s.symbol_id AND (o.role & 1) = 0) AS refs
+      FROM symbols s WHERE s.name = 'localHelper' ORDER BY s.package_id`).all()).toEqual(pkgsAnon.map((p, i) => ({
+      symbol_str: `scip-typescript npm _unnamed/demo-${i === 0 ? 'a' : 'b'} ${p} src/\`main.ts\`/localHelper().`,
+      package_id: p, file: `demo-${i === 0 ? 'a' : 'b'}/src/main.ts`, refs: `${p}:4`,
+    })));
+    expect(count(db, `SELECT count(*) AS n FROM edges WHERE from_package_id <> to_package_id AND from_package_id LIKE '%:_unnamed/%'`)).toBe(0);
+    expect(c.sharedDefinitions).toBe(0);
+    expect(logs.some((l) => l.includes('claimed as their own by two packages'))).toBe(false);
+  });
+
+  it('anonymousSymbolKey rewrites only the anonymous package name; symbolKey escapes spaces', () => {
+    expect(anonymousSymbolKey('scip-typescript npm . . lib/`a.ts`/f().', 'npm:acme/r:_unnamed/.', '_unnamed/.'))
+      .toBe('scip-typescript npm _unnamed/. npm:acme/r:_unnamed/. lib/`a.ts`/f().');
+    expect(anonymousSymbolKey('scip-typescript npm . . lib/`a b.ts`/f().', 'npm:acme/r:_unnamed/my app', '_unnamed/my app'))
+      .toBe('scip-typescript npm _unnamed/my  app npm:acme/r:_unnamed/my  app lib/`a b.ts`/f().');
+    expect(anonymousSymbolKey('scip-typescript npm @acme/x . lib/`a.ts`/f().', 'npm:acme/r:@acme/x', '@acme/x')).toBeUndefined();
+    expect(anonymousSymbolKey('local 3', 'npm:acme/r:x', 'x')).toBeUndefined();
+    expect(symbolKey('scip-typescript npm x . a/', 'npm:acme/r:x y', true)).toBe('scip-typescript npm x npm:acme/r:x  y a/');
   });
 
   it('links a consumer pinned to another version, and records unknown org symbols as unresolved_refs', () => {

@@ -2,20 +2,18 @@
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
 ## src/main.ts
-  // A demo app whose package.json has no "name" (supabase multiplayer.dev,
-//^ definition scip-typescript npm . . src/`main.ts`/ enclosing [3:0-12:0]
-  // realtime/assets): nothing imports it, but it uses @acme/dual. sentei indexes it as
-  // the consumer-only package `_unnamed/unnamed-demo`.
+  // A second nameless app (supabase hack-the-base `dec-24` next to multiplayer.dev): the
+//^ definition scip-typescript npm . . src/`main.ts`/ enclosing [3:0-10:0]
+  // same path and the same local function as unnamed-demo's, a different package
+  // (`_unnamed/unnamed-demo-2`).
   import { dualUsedByUnnamed } from '@acme/dual';
 //         ^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsedByUnnamed().
 //                                  ^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/
 
-  // unnamed-demo-2 has the same file with the same local function: scip-typescript names
-  // both `npm . . src/\`main.ts\`/localHelper().`, and each must stay its own package's.
   function localHelper(): string {
-//         ^^^^^^^^^^^ definition scip-typescript npm . . src/`main.ts`/localHelper(). enclosing [7:0-9:1]
-    return dualUsedByUnnamed();
-//         ^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsedByUnnamed().
+//         ^^^^^^^^^^^ definition scip-typescript npm . . src/`main.ts`/localHelper(). enclosing [5:0-7:1]
+    return `2: ${dualUsedByUnnamed()}`;
+//               ^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual . src/`index.ts`/dualUsedByUnnamed().
   }
 
   console.log(localHelper());

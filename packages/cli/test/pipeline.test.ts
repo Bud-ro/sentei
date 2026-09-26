@@ -135,8 +135,27 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
         { file: 'packages/dual-script/bin/cli.cjs', is_entry: 1 },
       ]));
       expect(ctx.db.prepare(`SELECT package_id, name, visibility, is_library FROM packages WHERE repo = 'acme/lib-dual' AND name LIKE '\\_unnamed/%' ESCAPE '\\'`).all())
-        .toEqual([{ package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo', name: '_unnamed/unnamed-demo', visibility: 'private', is_library: 0 }]);
+        .toEqual([
+          { package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo', name: '_unnamed/unnamed-demo', visibility: 'private', is_library: 0 },
+          { package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo-2', name: '_unnamed/unnamed-demo-2', visibility: 'private', is_library: 0 },
+        ]);
+      // Fix round 4: both nameless packages' `npm . . src/\`main.ts\`/localHelper().` are
+      // their own symbols (anonymousSymbolKey), each used only by its own package.
+      const unnamed = ctx.db.prepare(`SELECT s.package_id, s.symbol_str,
+          (SELECT group_concat(DISTINCT o.package_id) FROM occurrences o WHERE o.symbol_id = s.symbol_id) AS users
+        FROM symbols s WHERE s.package_id LIKE 'npm:acme/lib-dual:\\_unnamed/%' ESCAPE '\\' AND s.name = 'localHelper' ORDER BY s.package_id`).all();
+      expect(unnamed).toEqual([
+        { package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo', users: 'npm:acme/lib-dual:_unnamed/unnamed-demo',
+          symbol_str: 'scip-typescript npm _unnamed/unnamed-demo npm:acme/lib-dual:_unnamed/unnamed-demo src/`main.ts`/localHelper().' },
+        { package_id: 'npm:acme/lib-dual:_unnamed/unnamed-demo-2', users: 'npm:acme/lib-dual:_unnamed/unnamed-demo-2',
+          symbol_str: 'scip-typescript npm _unnamed/unnamed-demo-2 npm:acme/lib-dual:_unnamed/unnamed-demo-2 src/`main.ts`/localHelper().' },
+      ]);
+      expect(ctx.db.prepare(`SELECT count(*) AS n FROM edges e JOIN packages a ON a.package_id = e.from_package_id
+        JOIN packages b ON b.package_id = e.to_package_id
+        WHERE e.from_package_id <> e.to_package_id AND a.name LIKE '\\_unnamed/%' ESCAPE '\\' AND b.name LIKE '\\_unnamed/%' ESCAPE '\\'`).get())
+        .toEqual({ n: 0 });
     });
+    expect(lines.some((l) => l.includes('claimed as their own by two packages'))).toBe(false);
     expect(existsSync(path.join(org, 'repos/lib-dual/packages/dual-script/tsconfig.sentei-runtime.json'))).toBe(false);
 
     // Views: filters over the base findings.

@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@acme/dual": "^1.0.0"
+  }
+}
