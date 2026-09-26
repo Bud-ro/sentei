@@ -475,7 +475,16 @@ adopted:
   sidecar now carries `entrySymbols` (the indexer boundary knows what the
   runtime calls) and ingest adds a file → symbol edge, reachable but never
   exported. TypeScript emits an empty list.
-- Flutter packages (`flutter pub get`) are not handled specially yet.
+- Flutter packages (`environment.flutter`, `sdk: flutter` deps, or an org
+  dependency that is itself Flutter) are prepared with `flutter pub get` and
+  indexed with the Flutter SDK's Dart (`--sdk-path <flutterRoot>/bin/cache/dart-sdk`,
+  fork patch 5); the package config `flutter pub get` writes already points
+  `flutter` and `sky_engine` into the SDK, so `package:flutter/material.dart`
+  resolves. Without `flutter` on PATH such packages are `partial` with a clear
+  diagnostic. Dart 3.13.4 needs no dependency changes (analyzer 14.4 covers
+  language 3.14); snapshots are byte-identical between 3.11 and 3.13. Known
+  gap: scip-dart emits no definitions for primary constructors or their
+  fields, so those never get a verdict (errs toward no report).
 
 ### Known remaining noise (from the fixed honojs DB)
 
