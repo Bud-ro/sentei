@@ -361,7 +361,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   // (a program may hold files the walk skips, e.g. Nuxt's `.nuxt/*.d.ts`).
   const generatedFiles = [...new Set([...walked, ...checked].map((abs) => path.resolve(abs)))]
     .map((abs) => [abs, toRepoRel(abs)] as const)
-    .filter(([abs, rel]) => isGeneratedFile(abs, rel))
+    .filter(([abs, rel]) => isGeneratedFile(abs, rel, pkgLocation.path))
     .map(([, rel]) => rel)
     .sort(cmp);
   if (generatedFiles.length > 0) {

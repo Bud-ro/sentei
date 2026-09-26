@@ -2024,11 +2024,19 @@ All five are generated FFI / protocol bindings or vendored copies. dart-lang
 totals (same-code comparison): `private_dead` 946 → 616 (-330), `blocked`
 2922 → 2741 (-181), other verdicts unchanged.
 
-Not done (outside this change's files): the cli's `isGeneratedFile`
-(consumer-checks.ts, export-surface.ts) still uses only GENERATED_GLOBS, so
-the TS adapter's own "generated file" diagnostics and exclusions do not know
-vendored dirs; ingest and analyze do. `VENDORED_GLOBS` / `inVendoredDir` are
-not exported from `@sentei/core`'s index yet.
+Follow-up (same round): `@sentei/core`'s index now exports `GENERATED_GLOBS`,
+`VENDORED_GLOBS` and `inVendoredDir`, and the cli's `isGeneratedFile`
+(consumer-checks.ts) takes the package path and applies `inVendoredDir`, so
+the TS sidecar's `generatedFiles` (and its "generated file(s)" diagnostic)
+marks the same vendored files the `vendored_files` view does, and a package
+whose own root sits under `vendor/` stays org code on both sides. Without a
+package path the vendored rule is not applied (every production caller passes
+one). The cli had read `GENERATED_GLOBS` through the namespace because the
+index did not export it (it resolved to an empty list, so only header,
+tool-dir and name rules ran there); it is a named import now. Core's view
+applied those globs anyway, and no TS fixture has a vendored or glob-only
+generated file, so the sidecar snapshots are unchanged (adapter stays
+`+sentei.7`).
 
 **D7: skew from consumers whose own install failed. Deviation from the
 brief.** The brief asked for an `opaque_consumer` class for consumers with an

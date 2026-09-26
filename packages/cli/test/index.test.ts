@@ -1764,6 +1764,27 @@ describe('unjs final round (scope, SFC, generated files, heap retry, nuxt)', () 
     expect(isGeneratedFile(f('worker-configuration.ts', 'export {}\n'), 'src/worker-configuration.ts')).toBe(false);
   });
 
+  it('treats vendored dirs below the package root as generated, like core `vendored_files`', () => {
+    const f = (rel: string): string => {
+      const abs = path.join(root, 'vend', rel);
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, 'export const a = 1;\n');
+      return abs;
+    };
+    const gen = (rel: string, pkgPath?: string): boolean => isGeneratedFile(f(rel), rel, pkgPath);
+    expect(gen('packages/ui/src/third_party/lodash.ts', 'packages/ui')).toBe(true);
+    expect(gen('packages/ui/vendor/x.ts', 'packages/ui')).toBe(true);
+    expect(gen('src/vendored/y.ts', '.')).toBe(true);
+    expect(gen('packages/ui/src/button.ts', 'packages/ui')).toBe(false);
+    // A package whose own root sits under vendor/ is org code: only dirs BELOW the root count.
+    expect(gen('vendor/fork/src/index.ts', 'vendor/fork')).toBe(false);
+    expect(gen('third_party/lib/index.ts', 'third_party/lib')).toBe(false);
+    // A name merely containing the word is not the dir.
+    expect(gen('packages/ui/src/vendors.ts', 'packages/ui')).toBe(false);
+    // Without a package path the vendored rule is not applied.
+    expect(gen('packages/ui/vendor/z.ts')).toBe(false);
+  });
+
   it('detects headerless `supabase gen types typescript` output by its shape, and nothing that merely resembles it', () => {
     const f = (name: string, body: string): string => {
       const abs = path.join(root, 'sb', name);

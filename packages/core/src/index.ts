@@ -14,6 +14,6 @@ export type { RepoSelection, SelectedRepo } from './github.ts';
 export type { RepoSelectCli } from './repo-select.ts';
 export { runBlame } from './blame.ts';
 export type { BlameDiscoverInput } from './blame.ts';
-export { DOCS_GLOBS, inSurfaceDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS } from './globs.ts';
+export { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS, VENDORED_GLOBS } from './globs.ts';
 export { matchGlob } from './glob.ts';
 export { listFiles, sourceForBuildOutput } from './manifests.ts';
