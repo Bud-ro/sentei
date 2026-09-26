@@ -1,0 +1,10 @@
+{
+  "name": "@acme/three",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "dependencies": {
+    "@acme/dup": "^1.0.0"
+  }
+}

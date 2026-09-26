@@ -25,12 +25,12 @@ function addRepo(repo: string, sha: string | null, status: string | null): void 
 }
 
 function addPackage(name: string, repo: string, visibility = 'private', deps: string[] = []): string {
-  const id = `npm:${name}`;
+  const id = `npm:${repo}:${name}`;
   run('INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    id, repo, '.', 'npm', name, '1.0.0', visibility, '["src/index.ts"]');
+    id, repo, `packages/${name.replace(/^@acme\//, '')}`, 'npm', name, '1.0.0', visibility, '["src/index.ts"]');
   for (const d of deps) {
     run('INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id) VALUES (?, ?, ?, ?, ?)',
-      id, d.slice(4), 'npm', '^1.0.0', d);
+      id, d.slice(d.lastIndexOf(':') + 1), 'npm', '^1.0.0', d);
   }
   return id;
 }
@@ -38,7 +38,7 @@ function addPackage(name: string, repo: string, visibility = 'private', deps: st
 function addSymbol(pkg: string, name: string, opts: { file?: string; line?: number | null; col?: number | null; kind?: string | null; exported?: boolean } = {}): number {
   const file = opts.file ?? 'src/index.ts';
   const r = db.prepare('INSERT INTO symbols (symbol_str, package_id, file, line, col, kind, name, is_exported) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(`scip-typescript npm ${pkg.slice(4)} . src/\`${file.slice(4)}\`/${name}().`, pkg, file,
+    .run(`scip-typescript npm ${pkg.slice(pkg.lastIndexOf(':') + 1)} . src/\`${file.slice(4)}\`/${name}().`, pkg, file,
       opts.line === undefined ? 0 : opts.line, opts.col === undefined ? 0 : opts.col,
       opts.kind === undefined ? 'Function' : opts.kind, name, opts.exported === false ? 0 : 1);
   return Number(r.lastInsertRowid);
@@ -67,12 +67,12 @@ function addSkew(consumer: string, target: string, symbolStr: string, file: stri
 
 /**
  * Org:
- *   acme/lib-core   ok       npm:@acme/util (private; deletion/unexport/private_dead)
- *                            npm:@acme/core (private; consumed by app + broken -> blocked by broken)
- *   acme/lib-pub    ok       npm:@acme/pub (published-public; consumed by dyn -> blocked by dyn)
- *   acme/app        ok       npm:@acme/app (consumer of util + core; version skew rows)
- *   acme/repo-broken failed  npm:@acme/broken (index_failed; consumer of core)
- *   acme/app-dyn    partial  npm:@acme/dyn (namespace_dynamic + dynamic_access; consumer of pub)
+ *   acme/lib-core   ok       npm:acme/lib-core:@acme/util (private; deletion/unexport/private_dead)
+ *                            npm:acme/lib-core:@acme/core (private; consumed by app + broken -> blocked by broken)
+ *   acme/lib-pub    ok       npm:acme/lib-pub:@acme/pub (published-public; consumed by dyn -> blocked by dyn)
+ *   acme/app        ok       npm:acme/app:@acme/app (consumer of util + core; version skew rows)
+ *   acme/repo-broken failed  npm:acme/repo-broken:@acme/broken (index_failed; consumer of core)
+ *   acme/app-dyn    partial  npm:acme/app-dyn:@acme/dyn (namespace_dynamic + dynamic_access; consumer of pub)
  */
 /** What analyzeOrg leaves behind besides findings: the views and the analyzed_at marker. */
 function markAnalyzed(d: DatabaseSync): void {
@@ -108,7 +108,7 @@ function seed(): void {
   addSymbol(util, 'aliveFn');
 
   addFinding(addSymbol(core, 'coreDead'), BLOCKED, ['no_refs'], [`${broken}:index_failed`]);
-  addFinding(addSymbol(core, 'coreMentioned'), 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:3']);
+  addFinding(addSymbol(core, 'coreMentioned'), 'needs_review', ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:3']);
 
   addFinding(addSymbol(pub, 'pubB'), BLOCKED, ['no_refs'], [`${dyn}:dynamic_access`, `${dyn}:namespace_dynamic`]);
   addFinding(addSymbol(pub, 'pubA'), BLOCKED, ['only_test_refs'], [`${dyn}:dynamic_access`, `${dyn}:namespace_dynamic`]);
@@ -123,7 +123,7 @@ function seed(): void {
 beforeEach(() => {
   db = openDb(':memory:');
   try {
-    db.exec("SAVEPOINT probe; INSERT INTO repos (repo) VALUES ('probe/x'); INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:probe', 'probe/x', '.', 'npm', 'probe', 'private'); INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('probe', 'npm:probe', 'f', 'probe'); INSERT INTO findings (symbol_id, verdict) VALUES (last_insert_rowid(), 'blocked'); ROLLBACK TO probe; RELEASE probe;");
+    db.exec("SAVEPOINT probe; INSERT INTO repos (repo) VALUES ('probe/x'); INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:probe/x:probe', 'probe/x', '.', 'npm', 'probe', 'private'); INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('probe', 'npm:probe/x:probe', 'f', 'probe'); INSERT INTO findings (symbol_id, verdict) VALUES (last_insert_rowid(), 'blocked'); ROLLBACK TO probe; RELEASE probe;");
     BLOCKED = 'blocked';
   } catch {
     db.exec('ROLLBACK TO probe; RELEASE probe;');
@@ -149,60 +149,60 @@ describe('buildReport', () => {
         ASSUME_CLOSED_WORLD_WARNING,
         'minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates',
         'repo acme/app-dyn: index partial; its packages are opaque and block verdicts for every org package they depend on',
-        'repo acme/repo-broken: index failed for npm:@acme/broken; it is opaque and blocks verdicts for every org package it depends on',
+        'repo acme/repo-broken: index failed for npm:acme/repo-broken:@acme/broken; it is opaque and blocks verdicts for every org package it depends on',
       ],
       findings: [
-        { package_id: 'npm:@acme/core', repo: 'acme/lib-core', symbol: 'coreDead', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: BLOCKED, reasons: ['no_refs'], blocked_by: ['npm:@acme/broken:index_failed'] },
-        { package_id: 'npm:@acme/core', repo: 'acme/lib-core', symbol: 'coreMentioned', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: 'needs_review', reasons: ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:3'], blocked_by: [] },
-        { package_id: 'npm:@acme/pub', repo: 'acme/lib-pub', symbol: 'pubA', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: BLOCKED, reasons: ['only_test_refs'], blocked_by: ['npm:@acme/dyn:dynamic_access', 'npm:@acme/dyn:namespace_dynamic'] },
-        { package_id: 'npm:@acme/pub', repo: 'acme/lib-pub', symbol: 'pubB', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
-          verdict: BLOCKED, reasons: ['no_refs'], blocked_by: ['npm:@acme/dyn:dynamic_access', 'npm:@acme/dyn:namespace_dynamic'] },
-        { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: '_island', file: 'src/fns.ts', line: null, col: null, kind: 'Function',
+        { package_id: 'npm:acme/lib-core:@acme/core', name: '@acme/core', repo: 'acme/lib-core', symbol: 'coreDead', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+          verdict: BLOCKED, reasons: ['no_refs'], blocked_by: ['npm:acme/repo-broken:@acme/broken:index_failed'] },
+        { package_id: 'npm:acme/lib-core:@acme/core', name: '@acme/core', repo: 'acme/lib-core', symbol: 'coreMentioned', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+          verdict: 'needs_review', reasons: ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:3'], blocked_by: [] },
+        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: '_island', file: 'src/fns.ts', line: null, col: null, kind: 'Function',
           verdict: 'private_dead', reasons: ['already_unreachable'], blocked_by: [] },
-        { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: 'helper', file: 'src/fns.ts', line: 21, col: 10, kind: 'Function',
+        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'helper', file: 'src/fns.ts', line: 21, col: 10, kind: 'Function',
           verdict: 'private_dead', reasons: ['unlocked_by:unusedFn'], blocked_by: [] },
-        { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: 'internalOnly', file: 'src/index.ts', line: 3, col: 17, kind: '',
+        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'internalOnly', file: 'src/index.ts', line: 3, col: 17, kind: '',
           verdict: 'unexport_candidate', reasons: ['internal_refs_only'], blocked_by: [] },
-        { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: 'islandFn', file: 'src/fns.ts', line: 31, col: 17, kind: 'Function',
+        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'islandFn', file: 'src/fns.ts', line: 31, col: 17, kind: 'Function',
           verdict: 'deletion_candidate', reasons: ['internal_refs_only', 'dead_island'], blocked_by: [] },
-        { package_id: 'npm:@acme/util', repo: 'acme/lib-core', symbol: 'unusedFn', file: 'src/fns.ts', line: 9, col: 17, kind: 'Function',
+        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', symbol: 'unusedFn', file: 'src/fns.ts', line: 9, col: 17, kind: 'Function',
           verdict: 'deletion_candidate', reasons: ['no_refs'], blocked_by: [] },
+        { package_id: 'npm:acme/lib-pub:@acme/pub', name: '@acme/pub', repo: 'acme/lib-pub', symbol: 'pubA', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+          verdict: BLOCKED, reasons: ['only_test_refs'], blocked_by: ['npm:acme/app-dyn:@acme/dyn:dynamic_access', 'npm:acme/app-dyn:@acme/dyn:namespace_dynamic'] },
+        { package_id: 'npm:acme/lib-pub:@acme/pub', name: '@acme/pub', repo: 'acme/lib-pub', symbol: 'pubB', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+          verdict: BLOCKED, reasons: ['no_refs'], blocked_by: ['npm:acme/app-dyn:@acme/dyn:dynamic_access', 'npm:acme/app-dyn:@acme/dyn:namespace_dynamic'] },
       ],
       versionSkew: [
-        { package_id: 'npm:@acme/app', repo: 'acme/app', symbol: 'method', file: 'src/other.ts', line: 11, col: 1, target_package_id: 'npm:@acme/util' },
-        { package_id: 'npm:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 4, col: 10, target_package_id: 'npm:@acme/util' },
-        { package_id: 'npm:@acme/dyn', repo: 'acme/app-dyn', symbol: 'oldPub', file: 'src/main.ts', line: null, col: null, target_package_id: 'npm:@acme/pub' },
+        { package_id: 'npm:acme/app-dyn:@acme/dyn', repo: 'acme/app-dyn', symbol: 'oldPub', file: 'src/main.ts', line: null, col: null, target_package_id: 'npm:acme/lib-pub:@acme/pub' },
+        { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'method', file: 'src/other.ts', line: 11, col: 1, target_package_id: 'npm:acme/lib-core:@acme/util' },
+        { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 4, col: 10, target_package_id: 'npm:acme/lib-core:@acme/util' },
       ],
       packages: [
-        { package_id: 'npm:@acme/app', repo: 'acme/app', visibility: 'private', closed_world: true, opaque: false, flags: [],
-          consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
-        { package_id: 'npm:@acme/broken', repo: 'acme/repo-broken', visibility: 'private', closed_world: true, opaque: true,
-          flags: [{ flag: 'index_failed', reason: 'tsconfig.json: invalid JSON', file: null }],
-          consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
-        { package_id: 'npm:@acme/core', repo: 'acme/lib-core', visibility: 'private', closed_world: true, opaque: false, flags: [],
-          consumers: ['npm:@acme/app', 'npm:@acme/broken'], blocked_by: ['npm:@acme/broken:index_failed'],
-          counts: blockedCounts(1, 1), exported: 2, symbols: 2 },
-        { package_id: 'npm:@acme/dyn', repo: 'acme/app-dyn', visibility: 'private', closed_world: true, opaque: true,
+        { package_id: 'npm:acme/app-dyn:@acme/dyn', name: '@acme/dyn', repo: 'acme/app-dyn', visibility: 'private', closed_world: true, opaque: true,
           flags: [
             { flag: 'dynamic_access', reason: "require('@acme/' + name)", file: 'src/load.cts' },
             { flag: 'namespace_dynamic', reason: 'P[key]', file: 'src/main.ts' },
           ],
           consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
-        { package_id: 'npm:@acme/pub', repo: 'acme/lib-pub', visibility: 'published-public', closed_world: true, opaque: false, flags: [],
-          consumers: ['npm:@acme/dyn'], blocked_by: ['npm:@acme/dyn:dynamic_access', 'npm:@acme/dyn:namespace_dynamic'],
-          counts: blockedCounts(2), exported: 2, symbols: 2 },
-        { package_id: 'npm:@acme/util', repo: 'acme/lib-core', visibility: 'private', closed_world: true, opaque: false, flags: [],
-          consumers: ['npm:@acme/app'], blocked_by: [],
+        { package_id: 'npm:acme/app:@acme/app', name: '@acme/app', repo: 'acme/app', visibility: 'private', closed_world: true, opaque: false, flags: [],
+          consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
+        { package_id: 'npm:acme/lib-core:@acme/core', name: '@acme/core', repo: 'acme/lib-core', visibility: 'private', closed_world: true, opaque: false, flags: [],
+          consumers: ['npm:acme/app:@acme/app', 'npm:acme/repo-broken:@acme/broken'], blocked_by: ['npm:acme/repo-broken:@acme/broken:index_failed'],
+          counts: blockedCounts(1, 1), exported: 2, symbols: 2 },
+        { package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', visibility: 'private', closed_world: true, opaque: false, flags: [],
+          consumers: ['npm:acme/app:@acme/app'], blocked_by: [],
           counts: counts({ deletion_candidate: 1, dead_island: 1, unexport_candidate: 1, private_dead: 2 }), exported: 4, symbols: 6 },
+        { package_id: 'npm:acme/lib-pub:@acme/pub', name: '@acme/pub', repo: 'acme/lib-pub', visibility: 'published-public', closed_world: true, opaque: false, flags: [],
+          consumers: ['npm:acme/app-dyn:@acme/dyn'], blocked_by: ['npm:acme/app-dyn:@acme/dyn:dynamic_access', 'npm:acme/app-dyn:@acme/dyn:namespace_dynamic'],
+          counts: blockedCounts(2), exported: 2, symbols: 2 },
+        { package_id: 'npm:acme/repo-broken:@acme/broken', name: '@acme/broken', repo: 'acme/repo-broken', visibility: 'private', closed_world: true, opaque: true,
+          flags: [{ flag: 'index_failed', reason: 'tsconfig.json: invalid JSON', file: null }],
+          consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
       ],
       blockers: [
-        { blocker_package_id: 'npm:@acme/dyn', repo: 'acme/app-dyn', flags: ['dynamic_access', 'namespace_dynamic'],
-          reasons: ["src/load.cts: require('@acme/' + name)", 'src/main.ts: P[key]'], blocks_packages: ['npm:@acme/pub'], blocked_findings: 2 },
-        { blocker_package_id: 'npm:@acme/broken', repo: 'acme/repo-broken', flags: ['index_failed'],
-          reasons: ['tsconfig.json: invalid JSON'], blocks_packages: ['npm:@acme/core'], blocked_findings: 1 },
+        { blocker_package_id: 'npm:acme/app-dyn:@acme/dyn', repo: 'acme/app-dyn', flags: ['dynamic_access', 'namespace_dynamic'],
+          reasons: ["src/load.cts: require('@acme/' + name)", 'src/main.ts: P[key]'], blocks_packages: ['npm:acme/lib-pub:@acme/pub'], blocked_findings: 2 },
+        { blocker_package_id: 'npm:acme/repo-broken:@acme/broken', repo: 'acme/repo-broken', flags: ['index_failed'],
+          reasons: ['tsconfig.json: invalid JSON'], blocks_packages: ['npm:acme/lib-core:@acme/core'], blocked_findings: 1 },
       ],
       repos: [
         { repo: 'acme/app', head_sha: 'sha-app', index_status: 'ok' },
@@ -222,7 +222,7 @@ describe('buildReport', () => {
     expect(report.warnings.some((w) => w.includes('minAgeDays'))).toBe(false);
     expect(report.policy).toMatchObject({ assumeClosedWorld: false, minAgeDays: 180 });
     // published-public @acme/pub is open-world without the override.
-    expect(report.packages.find((p) => p.package_id === 'npm:@acme/pub')?.closed_world).toBe(false);
+    expect(report.packages.find((p) => p.package_id === 'npm:acme/lib-pub:@acme/pub')?.closed_world).toBe(false);
     expect(JSON.parse(JSON.stringify(report))).toEqual(report);
   });
 
@@ -264,24 +264,25 @@ describe('formatSummary', () => {
 
     const header = lines.indexOf('Packages (6), 9 finding(s)');
     expect(header).toBeGreaterThan(8);
-    expect(lines[header + 1]).toMatch(/^PACKAGE +VISIBILITY +WORLD +OPAQUE +DELETE +ISLAND +UNEXPORT +DEPRECATE +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
-    const util = lines.find((l) => l.startsWith('npm:@acme/util '));
-    expect(util).toMatch(/^npm:@acme\/util +private +closed +1 +1 +1 +0 +2 +0 +0$/);
-    const pub = lines.find((l) => l.startsWith('npm:@acme/pub '));
-    expect(pub).toMatch(/published-public +closed .*npm:@acme\/dyn:dynamic_access, npm:@acme\/dyn:namespace_dynamic$/);
-    expect(lines.find((l) => l.startsWith('npm:@acme/broken '))).toMatch(/ +closed +yes +0/);
+    expect(lines[header + 1]).toMatch(/^PACKAGE +REPO +VISIBILITY +WORLD +OPAQUE +DELETE +ISLAND +UNEXPORT +DEPRECATE +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
+    // PACKAGE is the name, REPO the repo: together the package id, readable.
+    const util = lines.find((l) => l.startsWith('@acme/util '));
+    expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +closed +1 +1 +1 +0 +2 +0 +0$/);
+    const pub = lines.find((l) => l.startsWith('@acme/pub '));
+    expect(pub).toMatch(/^@acme\/pub +acme\/lib-pub +published-public +closed .*npm:acme\/app-dyn:@acme\/dyn:dynamic_access, npm:acme\/app-dyn:@acme\/dyn:namespace_dynamic$/);
+    expect(lines.find((l) => l.startsWith('@acme/broken '))).toMatch(/acme\/repo-broken +private +closed +yes +0/);
     expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(BLOCKED === 'blocked' ? /^TOTAL +1 +1 +1 +0 +2 +1 +3$/ : /^TOTAL +1 +1 +1 +0 +2 +4 +0$/);
     const total = lines.findIndex((l) => l.startsWith('TOTAL '));
     expect(lines[total + 1]).toBe('DELETE: exports with no counted use; ISLAND: exports used only by other candidates (delete them together).');
     // Every row of the package table has its BLOCKED BY column at the same offset.
     const col = lines[header + 1]!.indexOf('BLOCKED BY');
-    expect(pub!.indexOf('npm:@acme/dyn:')).toBe(col);
+    expect(pub!.indexOf('npm:acme/app-dyn:@acme/dyn:')).toBe(col);
 
     const top = lines.indexOf('Top blockers (opaque consumers preventing verdicts; fix these first)');
     expect(top).toBeGreaterThan(header);
     expect(lines[top + 1]).toMatch(/^BLOCKER +REPO +FLAGS +FINDINGS +BLOCKS PACKAGES$/);
-    expect(lines[top + 3]).toMatch(/^npm:@acme\/dyn +acme\/app-dyn +dynamic_access,namespace_dynamic +2 +npm:@acme\/pub$/);
-    expect(lines[top + 4]).toMatch(/^npm:@acme\/broken +acme\/repo-broken +index_failed +1 +npm:@acme\/core$/);
+    expect(lines[top + 3]).toMatch(/^npm:acme\/app-dyn:@acme\/dyn +acme\/app-dyn +dynamic_access,namespace_dynamic +2 +npm:acme\/lib-pub:@acme\/pub$/);
+    expect(lines[top + 4]).toMatch(/^npm:acme\/repo-broken:@acme\/broken +acme\/repo-broken +index_failed +1 +npm:acme\/lib-core:@acme\/core$/);
     expect(text.trimEnd().split('\n').at(-1)).toBe('Version skew: 3 reference(s) from 2 package(s) to symbols missing at HEAD');
   });
 
@@ -311,16 +312,38 @@ describe('buildReport guards and skew filtering', () => {
   });
 
   it('drops version skew into a package whose index failed, with a warning counting it', () => {
-    const app = 'npm:@acme/app';
-    const broken = 'npm:@acme/broken';
+    const app = 'npm:acme/app:@acme/app';
+    const broken = 'npm:acme/repo-broken:@acme/broken';
     addSkew(app, broken, 'scip-typescript npm @acme/broken . src/`index.ts`/anything().', 'src/main.ts', 1, 0);
     addSkew(app, broken, 'brokenName', 'src/main.ts', 2, 0);
     const r = buildReport({ db, now: NOW });
     expect(r.versionSkew.map((v) => v.target_package_id)).not.toContain(broken);
     expect(r.versionSkew).toHaveLength(3); // the seed's rows into healthy packages stay
     expect(r.warnings).toContain(
-      '2 unresolved reference(s) into package(s) whose index failed (npm:@acme/broken) not reported as version skew: their definitions are unknown, not missing',
+      '2 unresolved reference(s) into package(s) whose index failed (npm:acme/repo-broken:@acme/broken) not reported as version skew: their definitions are unknown, not missing',
     );
+  });
+});
+
+describe('buildReport: dependencies on a name several org packages share', () => {
+  it('says which package discover picked, or that none could be and the candidates are blocked', () => {
+    addRepo('acme/fork', 'sha-fork', 'ok');
+    const fork = addPackage('@acme/util', 'acme/fork');
+    const util = 'npm:acme/lib-core:@acme/util';
+    const app = 'npm:acme/app:@acme/app';
+    const dyn = 'npm:acme/app-dyn:@acme/dyn';
+    run("UPDATE package_deps SET resolution = 'published' WHERE consumer_package_id = ? AND dep_name = '@acme/util'", app);
+    run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, ambiguous) VALUES (?, '@acme/util', 'npm', 1)", dyn);
+    for (const t of [fork, util]) {
+      run("INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, 'ambiguous_dep', ?, 'package.json', ?)",
+        dyn, `dep @acme/util matches 2 org packages: ${fork}, ${util}`, t);
+    }
+    const r = buildReport({ db, now: NOW });
+    expect(r.warnings).toContain(`${app} depends on @acme/util, which names several org packages; resolved to ${util} (published)`);
+    expect(r.warnings).toContain(`ambiguous dependency: ${dyn} depends on @acme/util, which names several org packages (${fork}, ${util}); `
+      + 'none could be preferred, so their verdicts are blocked (ambiguous_dep); exclude the wrong ones with ignoreManifests');
+    expect(r.blockers.find((b) => b.blocker_package_id === dyn)!.flags).toContain('ambiguous_dep');
+    expect(r.packages.find((p) => p.package_id === fork)!.blocked_by).toEqual([`${dyn}:ambiguous_dep`]);
   });
 });
 
@@ -330,16 +353,16 @@ describe('buildReport: failed / partial repo warnings name what happened to each
     try {
       d.exec(`INSERT INTO repos (repo, index_status) VALUES ('acme/fonts', 'failed');
         INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES
-          ('npm:unifont', 'acme/fonts', '.', 'npm', 'unifont', 'private'),
-          ('npm:tools', 'acme/fonts', 'tools', 'npm', 'tools', 'private'),
-          ('npm:docs', 'acme/fonts', 'docs', 'npm', 'docs', 'private');
+          ('npm:acme/fonts:unifont', 'acme/fonts', '.', 'npm', 'unifont', 'private'),
+          ('npm:acme/fonts:tools', 'acme/fonts', 'tools', 'npm', 'tools', 'private'),
+          ('npm:acme/fonts:docs', 'acme/fonts', 'docs', 'npm', 'docs', 'private');
         INSERT INTO package_flags (package_id, flag, reason) VALUES
-          ('npm:unifont', 'opaque_consumer', 'warn: 3 missing entry points'),
-          ('npm:tools', 'index_failed', 'error: tsc crashed'),
-          ('npm:docs', 'opaque_consumer', 'discover: unresolved entry point ./dist/x.js');`);
+          ('npm:acme/fonts:unifont', 'opaque_consumer', 'warn: 3 missing entry points'),
+          ('npm:acme/fonts:tools', 'index_failed', 'error: tsc crashed'),
+          ('npm:acme/fonts:docs', 'opaque_consumer', 'discover: unresolved entry point ./dist/x.js');`);
       markAnalyzed(d);
       expect(buildReport({ db: d, now: NOW }).warnings).toContain(
-        'repo acme/fonts: index failed for npm:tools; index partial for npm:unifont; opaque (discover) for npm:docs; '
+        'repo acme/fonts: index failed for npm:acme/fonts:tools; index partial for npm:acme/fonts:unifont; opaque (discover) for npm:acme/fonts:docs; '
         + 'they are opaque and block verdicts for every org package they depend on',
       );
     } finally {

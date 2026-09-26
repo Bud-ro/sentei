@@ -1,0 +1,17 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/main.dart
+  // Entry point of acme_flutter_app (lib/main.dart, run by the Flutter engine).
+//^ definition scip-dart pub acme_flutter_app . lib/`main.dart`/
+  import 'package:acme_widgets/acme_widgets.dart';
+  import 'package:flutter/material.dart';
+
+  // Expected: alive, no finding (Flutter runtime entry: nothing references it).
+  void main() => runApp(const MaterialApp(home: AcmeButton(label: 'Go')));
+//     ^^^^ definition scip-dart pub acme_flutter_app . lib/`main.dart`/main(). enclosing [5:0-5:72]
+//               ^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`binding.dart`/runApp().
+//                            ^^^^^^^^^^^ reference scip-dart pub flutter . lib/src/material/`app.dart`/MaterialApp#`<constructor>`().
+//                                        ^^^^ reference scip-dart pub flutter . lib/src/material/`app.dart`/MaterialApp#`<constructor>`().(home)
+//                                              ^^^^^^^^^^ reference scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#`<constructor>`().
+//                                                         ^^^^^ reference scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#`<constructor>`().(label)

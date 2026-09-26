@@ -103,7 +103,7 @@ keys and wrong types are errors, so a typo cannot silently fail open.
 | `assumeClosedWorld` | false | treat every package as closed-world (see below) |
 | `countTestsAsConsumers` | false | references from test files count as uses |
 | `countDocsAsConsumers` | false | references from docs files count as uses |
-| `keep` | `[]` | never report these: `"npm:@acme/foo#sym"`, `"pub:bar#*"` |
+| `keep` | `[]` | never report these: `"npm:@acme/foo#sym"` (every package named `@acme/foo`), `"npm:acme/foo:@acme/foo#sym"` (only the one in repo `acme/foo`), `"pub:bar#*"` |
 | `ignoreManifestDirs` | built-in list | directory names (fixtures, templates, examples, ...) whose manifests are not org packages; replaces the default |
 | `ignoreManifests` | `[]` | globs `"<repo>/<manifest path>"`, e.g. `"vscode/package.json"` |
 
@@ -113,8 +113,35 @@ overrides are rejected.
 | Key | Meaning |
 |---|---|
 | `extraEntryPoints` | repo-relative globs treated as entry points (stories, scripts, codegen inputs) |
-| `extraEdges` | `[{ "from": "file:src/registry.ts", "to": "npm:@acme/plugins#*" }]`; counted as references |
+| `extraEdges` | `[{ "from": "file:src/registry.ts", "to": "npm:@acme/plugins#*" }]`; counted as references (`to` takes the same package forms as `keep`) |
 | `keep` | same syntax as the org `keep` |
+
+## Package identity
+
+A package is identified by where it lives, not by its name: its id is
+`<manager>:<repo>:<name>`, e.g. `npm:acme/lib-core:@acme/core` or
+`pub:Workiva/w_flux:w_flux`. Two repos may publish the same name (a fork, a
+rewrite, a private copy); both are real packages with their own findings. Report
+rows, `blocked_by` entries, blockers, `witness_mismatch` consumers and SARIF
+fingerprints all use this id; the summary table shows the name and the repo in two
+columns. (Within one repo a name must stay unique per manager: a private duplicate
+there is ignored like a template; two public ones are an error.)
+
+Manifests and SCIP symbols name dependencies by name only, so a dependency on a
+name several org packages share is resolved per consumer:
+
+1. the only org package of that name;
+2. otherwise the one in the consumer's own repo (`same-repo`);
+3. otherwise the only one that is not private (`published`: a private package
+   cannot be installed from a registry);
+4. otherwise it is **ambiguous**: no package is picked, the consumer gets an
+   `ambiguous_dep` flag at every candidate, and all of them are `blocked` (fail
+   closed). Discover logs a warning with `ignoreManifests` entries to disambiguate;
+   the report lists each such dependency in its warnings.
+
+Symbol references follow the same rule: a use of a shared name is attributed to the
+consumer's resolved dependency, or dropped (and the candidates blocked) when there
+is none.
 
 ## Verdicts and reasons
 
@@ -134,16 +161,17 @@ id, `self`, `self-string` or `ignored:<repo>/<manifest>`, and `<file>:<line>` ca
 `checkout missing`), `dead_island` (exports used only by other candidates, so they
 go together: a would-be unexport that becomes a deletion), `already_unreachable`
 (an existing private island), `unlocked_by:<symbol>` (dead once that candidate
-goes). `blocked_by` entries are `<package>:<flag>`, with flags
+goes). `blocked_by` entries are `<package id>:<flag>`, with flags
 `opaque_consumer`, `index_failed`, `dynamic_access`, `namespace_dynamic`,
-`unindexed_consumer`. Version skew (a consumer referencing a symbol missing at
+`unindexed_consumer`, `ambiguous_dep`. Version skew (a consumer referencing a symbol missing at
 HEAD) is reported separately, never as a finding.
 
 ## Reading the summary
 
 The report stage prints: the policy line; a `!!` warning banner (assumeClosedWorld,
-`minAgeDays` 0, repos whose index was partial or failed); a per-package table
-(visibility, closed/open world, opaque, counts per verdict, blockers). In that table
+`minAgeDays` 0, repos whose index was partial or failed, dependencies on a name
+several org packages share); a per-package table
+(package name, repo, visibility, closed/open world, opaque, counts per verdict, blockers). In that table
 `deletion_candidate` is split in two columns: DELETE (no counted use) and ISLAND
 (reason `dead_island`: used only by other candidates, delete them together);
 `report.json` keeps the single `deletion_candidate` verdict with the reason. Then **top

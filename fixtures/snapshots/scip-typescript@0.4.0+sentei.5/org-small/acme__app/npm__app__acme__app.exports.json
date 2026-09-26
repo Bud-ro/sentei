@@ -9,7 +9,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/app",
+  "packageId": "npm:acme/app:@acme/app",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

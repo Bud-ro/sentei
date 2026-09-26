@@ -82,8 +82,8 @@ describe.skipIf(!scipTs)('ingestOrg on fixtures/org-small (scip-typescript)', ()
 
   it('records the cross-package reference to usedFn as external', () => {
     expect(count(db, `SELECT count(*) AS n FROM occurrences o JOIN symbols s USING (symbol_id)
-      WHERE s.name = 'usedFn' AND o.package_id = 'npm:@acme/app' AND o.is_external = 1 AND o.file = 'src/main.ts'`)).toBe(2);
-    expect(sym('usedFn').package_id).toBe('npm:@acme/core');
+      WHERE s.name = 'usedFn' AND o.package_id = 'npm:acme/app:@acme/app' AND o.is_external = 1 AND o.file = 'src/main.ts'`)).toBe(2);
+    expect(sym('usedFn').package_id).toBe('npm:acme/lib-core:@acme/core');
   });
 
   it('flags the index.ts re-export identifiers as export sites, and nothing else', () => {
@@ -113,7 +113,7 @@ describe.skipIf(!scipTs)('ingestOrg on fixtures/org-small (scip-typescript)', ()
 
   it('has no edges from export sites (index.ts module reaches only the fns.ts module)', () => {
     const rows = db.prepare(`SELECT t.name FROM edges e JOIN symbols f ON f.symbol_id = e.from_symbol_id
-      JOIN symbols t ON t.symbol_id = e.to_symbol_id WHERE f.kind = '' AND f.name = 'src/index.ts' AND f.package_id = 'npm:@acme/core'`).all();
+      JOIN symbols t ON t.symbol_id = e.to_symbol_id WHERE f.kind = '' AND f.name = 'src/index.ts' AND f.package_id = 'npm:acme/lib-core:@acme/core'`).all();
     expect(rows).toEqual([{ name: 'src/fns.ts' }]);
   });
 
@@ -121,10 +121,10 @@ describe.skipIf(!scipTs)('ingestOrg on fixtures/org-small (scip-typescript)', ()
     const rows = db.prepare(`SELECT d.package_id, d.file, d.is_entry, s.name AS module FROM documents d
       JOIN symbols s ON s.symbol_id = d.module_symbol_id ORDER BY d.package_id, d.file`).all();
     expect(rows).toEqual([
-      { package_id: 'npm:@acme/app', file: 'src/main.ts', is_entry: 1, module: 'src/main.ts' },
-      { package_id: 'npm:@acme/core', file: 'src/fns.ts', is_entry: 0, module: 'src/fns.ts' },
-      { package_id: 'npm:@acme/core', file: 'src/helper.ts', is_entry: 0, module: 'src/helper.ts' },
-      { package_id: 'npm:@acme/core', file: 'src/index.ts', is_entry: 1, module: 'src/index.ts' },
+      { package_id: 'npm:acme/app:@acme/app', file: 'src/main.ts', is_entry: 1, module: 'src/main.ts' },
+      { package_id: 'npm:acme/lib-core:@acme/core', file: 'src/fns.ts', is_entry: 0, module: 'src/fns.ts' },
+      { package_id: 'npm:acme/lib-core:@acme/core', file: 'src/helper.ts', is_entry: 0, module: 'src/helper.ts' },
+      { package_id: 'npm:acme/lib-core:@acme/core', file: 'src/index.ts', is_entry: 1, module: 'src/index.ts' },
     ]);
   });
 
@@ -199,8 +199,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
         repo: 'acme/mono',
         config: { extraEdges },
         packages: [
-          { packageId: 'npm:@acme/lib', path: '.', entryPoints: ['src/index.ts'] },
-          { packageId: 'npm:@acme/app', path: 'apps/app', entryPoints: ['apps/app/src/main.ts'] },
+          { packageId: 'npm:acme/mono:@acme/lib', path: '.', entryPoints: ['src/index.ts'] },
+          { packageId: 'npm:acme/mono:@acme/app', path: 'apps/app', entryPoints: ['apps/app/src/main.ts'] },
         ],
       }],
     };
@@ -216,8 +216,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
     logs = [];
     db = openDb(':memory:');
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/mono')").run();
-    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:@acme/lib', 'acme/mono', '.', 'npm', '@acme/lib', 'private')").run();
-    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:@acme/app', 'acme/mono', 'apps/app', 'npm', '@acme/app', 'private')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/mono:@acme/lib', 'acme/mono', '.', 'npm', '@acme/lib', 'private')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/mono:@acme/app', 'acme/mono', 'apps/app', 'npm', '@acme/app', 'private')").run();
 
     // Root index (run at '.') also sees apps/app files and a node_modules / out-of-repo doc.
     writeScip('acme/mono', 'lib.scip', [
@@ -251,14 +251,14 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { range: [3, 6, 9], symbol: `${APP}src/\`main.ts\`/ghost().` }, // same-package unknown: ignored
       ],
     }]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [
       exp('Foo', 'src/a.ts', 1, 13),
       exp('helper', 'src/a.ts', 8, 9, [{ file: 'src/a.ts', line: 9, col: 0 }]),
     ]));
-    writeJson('acme/mono', 'app.exports.json', sidecar('npm:@acme/app'));
+    writeJson('acme/mono', 'app.exports.json', sidecar('npm:acme/mono:@acme/app'));
     indexJson('acme/mono', [
-      { packageId: 'npm:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
-      { packageId: 'npm:@acme/app', scip: 'app.scip', exports: 'app.exports.json' },
+      { packageId: 'npm:acme/mono:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
+      { packageId: 'npm:acme/mono:@acme/app', scip: 'app.scip', exports: 'app.exports.json' },
     ]);
   });
 
@@ -270,8 +270,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
   it('maps documents by longest package path prefix and skips node_modules / out-of-repo files', () => {
     const c = run();
     expect(db.prepare('SELECT package_id, file, is_entry FROM documents ORDER BY file').all()).toEqual([
-      { package_id: 'npm:@acme/app', file: 'apps/app/src/main.ts', is_entry: 1 },
-      { package_id: 'npm:@acme/lib', file: 'src/a.ts', is_entry: 0 },
+      { package_id: 'npm:acme/mono:@acme/app', file: 'apps/app/src/main.ts', is_entry: 1 },
+      { package_id: 'npm:acme/mono:@acme/lib', file: 'src/a.ts', is_entry: 0 },
     ]);
     expect(c.documents).toBe(2);
     expect(count(db, "SELECT count(*) AS n FROM symbols WHERE name IN ('nm', 'out')")).toBe(0);
@@ -279,16 +279,87 @@ describe('ingestOrg (synthetic SCIP)', () => {
 
   it('creates a synthetic file symbol when the indexer emits no module symbol', () => {
     run();
-    const row = db.prepare("SELECT s.symbol_str, s.kind, s.name, s.line, s.col FROM documents d JOIN symbols s ON s.symbol_id = d.module_symbol_id WHERE d.package_id = 'npm:@acme/app'").get();
-    expect(row).toEqual({ symbol_str: 'sentei file npm:@acme/app apps/app/src/main.ts', kind: 'file', name: 'apps/app/src/main.ts', line: 0, col: 0 });
+    const row = db.prepare("SELECT s.symbol_str, s.kind, s.name, s.line, s.col FROM documents d JOIN symbols s ON s.symbol_id = d.module_symbol_id WHERE d.package_id = 'npm:acme/mono:@acme/app'").get();
+    expect(row).toEqual({ symbol_str: 'sentei file npm:acme/mono:@acme/app apps/app/src/main.ts', kind: 'file', name: 'apps/app/src/main.ts', line: 0, col: 0 });
+  });
+
+  describe('a package name shared by two repos (package ids <manager>:<repo>:<name>)', () => {
+    // acme/fork also has an @acme/lib with the same Foo# symbol string as acme/mono's.
+    const FORK = 'npm:acme/fork:@acme/lib';
+    const MONO_LIB = 'npm:acme/mono:@acme/lib';
+    const APP_ID = 'npm:acme/mono:@acme/app';
+    function withFork(): IngestDiscoverInput {
+      db.prepare("INSERT INTO repos (repo) VALUES ('acme/fork')").run();
+      db.prepare(`INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/fork', '.', 'npm', '@acme/lib', 'private')`).run(FORK);
+      writeScip('acme/fork', 'lib.scip', [{
+        path: 'src/a.ts',
+        occurrences: [
+          { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+          { range: [1, 13, 16], symbol: `${LIB}src/\`a.ts\`/Foo#`, roles: 1, enclosing: [1, 0, 6, 1] },
+          { range: [2, 2, 5], symbol: `${LIB}src/\`a.ts\`/Foo#bar().`, roles: 1, enclosing: [2, 2, 4, 3] },
+        ],
+      }]);
+      writeJson('acme/fork', 'lib.exports.json', sidecar(FORK, [exp('Foo', 'src/a.ts', 1, 13)]));
+      indexJson('acme/fork', [{ packageId: FORK, scip: 'lib.scip', exports: 'lib.exports.json' }]);
+      const d = discover();
+      return { repos: [...d.repos, { repo: 'acme/fork', packages: [{ packageId: FORK, path: '.', entryPoints: ['src/a.ts'] }] }] };
+    }
+    const fooRows = (): unknown[] => db.prepare("SELECT symbol_str, package_id FROM symbols WHERE name = 'Foo' ORDER BY package_id").all();
+
+    it('keeps both packages\' definitions apart (the version slot names the package)', () => {
+      const d = withFork();
+      const c = run(d);
+      expect(fooRows()).toEqual([
+        { symbol_str: `scip-typescript npm @acme/lib ${FORK} src/\`a.ts\`/Foo#`, package_id: FORK },
+        { symbol_str: `scip-typescript npm @acme/lib ${MONO_LIB} src/\`a.ts\`/Foo#`, package_id: MONO_LIB },
+      ]);
+      // The app declares no dependency: its uses of @acme/lib cannot be attributed. They are
+      // dropped (counted) and the app is flagged ambiguous_dep at both candidates (fail closed).
+      expect(c.ambiguousSymbolRefs).toBe(3); // Foo#, goneFn(), Foo#bar(): one per occurrence
+      expect(count(db, 'SELECT count(*) AS n FROM occurrences WHERE package_id = ? AND is_external = 1', APP_ID)).toBe(0);
+      expect(count(db, 'SELECT count(*) AS n FROM unresolved_refs')).toBe(0);
+      const reason = `ingest: uses of @acme/lib match 2 org packages: ${FORK}, ${MONO_LIB}`;
+      expect(db.prepare("SELECT package_id, flag, reason, file, target_package_id FROM package_flags WHERE flag = 'ambiguous_dep' ORDER BY target_package_id").all()).toEqual([
+        { package_id: APP_ID, flag: 'ambiguous_dep', reason, file: 'apps/app/src/main.ts', target_package_id: FORK },
+        { package_id: APP_ID, flag: 'ambiguous_dep', reason, file: 'apps/app/src/main.ts', target_package_id: MONO_LIB },
+      ]);
+      expect(logs.some((l) => l.includes(`warning: ${APP_ID}: uses of @acme/lib match 2 org packages`))).toBe(true);
+      expect(logs.at(-1)).toMatch(/ ambiguousSymbolRefs=3$/);
+      // Rerun: ingest replaces its own ambiguous_dep rows (never duplicates them).
+      run(d);
+      expect(count(db, "SELECT count(*) AS n FROM package_flags WHERE flag = 'ambiguous_dep'")).toBe(2);
+    });
+
+    it('attributes uses through the consumer\'s resolved manifest dependency; discover\'s rows are not duplicated', () => {
+      const d = withFork();
+      db.prepare("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id, resolution) VALUES (?, '@acme/lib', 'npm', ?, 'same-repo')")
+        .run(APP_ID, MONO_LIB);
+      const c = run(d);
+      expect(c.ambiguousSymbolRefs).toBe(0);
+      const monoFoo = id(`scip-typescript npm @acme/lib ${MONO_LIB} src/\`a.ts\`/Foo#`);
+      expect(count(db, 'SELECT count(*) AS n FROM occurrences WHERE symbol_id = ? AND package_id = ? AND is_external = 1', monoFoo, APP_ID)).toBe(1);
+      expect(db.prepare('SELECT consumer_package_id, target_package_id, symbol_str FROM unresolved_refs').all()).toEqual([
+        { consumer_package_id: APP_ID, target_package_id: MONO_LIB, symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/goneFn().' },
+      ]);
+      expect(count(db, "SELECT count(*) AS n FROM package_flags WHERE flag = 'ambiguous_dep'")).toBe(0);
+    });
+
+    it('a sidecar flag naming a shared name the consumer cannot attribute targets every candidate', () => {
+      const d = withFork();
+      writeJson('acme/mono', 'app.exports.json', { ...sidecar(APP_ID), flags: [{ flag: 'namespace_dynamic', reason: 'L[k]', file: 'src/main.ts', targetPackage: '@acme/lib' }] });
+      run(d);
+      expect(db.prepare("SELECT target_package_id FROM package_flags WHERE flag = 'namespace_dynamic' ORDER BY target_package_id").all()).toEqual([
+        { target_package_id: FORK }, { target_package_id: MONO_LIB },
+      ]);
+    });
   });
 
   it('links a consumer pinned to another version, and records unknown org symbols as unresolved_refs', () => {
     run();
-    expect(count(db, `SELECT count(*) AS n FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:@acme/app' AND is_external = 1`,
+    expect(count(db, `SELECT count(*) AS n FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:acme/mono:@acme/app' AND is_external = 1`,
       id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#bar().`))).toBe(1);
     expect(db.prepare('SELECT consumer_package_id, target_package_id, symbol_str, file, line, col FROM unresolved_refs').all()).toEqual([
-      { consumer_package_id: 'npm:@acme/app', target_package_id: 'npm:@acme/lib', symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/goneFn().', file: 'apps/app/src/main.ts', line: 1, col: 0 },
+      { consumer_package_id: 'npm:acme/mono:@acme/app', target_package_id: 'npm:acme/mono:@acme/lib', symbol_str: 'scip-typescript npm @acme/lib . src/`a.ts`/goneFn().', file: 'apps/app/src/main.ts', line: 1, col: 0 },
     ]);
   });
 
@@ -308,7 +379,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const foo = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#`);
     const main = id(`scip-typescript npm @acme/app . src/\`main.ts\`/main().`);
     expect(db.prepare(`SELECT symbol_id, file, line, col, role, enclosing_symbol_id, is_external FROM occurrences
-      WHERE package_id = 'npm:@acme/app' AND (role & 1) = 0`).all()).toEqual([
+      WHERE package_id = 'npm:acme/mono:@acme/app' AND (role & 1) = 0`).all()).toEqual([
       { symbol_id: foo, file: 'apps/app/src/main.ts', line: 3, col: 2, role: 0, enclosing_symbol_id: main, is_external: 1 },
     ]);
     expect(count(db, "SELECT count(*) AS n FROM symbols WHERE name = '<constructor>'")).toBe(0);
@@ -347,13 +418,13 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { range: [8, 6, 19], symbol: `${LIB}src/\`a.ts\`/ErrorBoundary.`, roles: 1 },
       ],
     }]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]));
     run();
     const foo = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#`);
     const bar = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/Foo#bar().`);
     const eb = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/ErrorBoundary.`);
     expect(eb).toBeGreaterThan(0);
-    expect(db.prepare(`SELECT symbol_id, line FROM occurrences WHERE package_id = 'npm:@acme/app' AND (role & 1) = 0 ORDER BY line`).all())
+    expect(db.prepare(`SELECT symbol_id, line FROM occurrences WHERE package_id = 'npm:acme/mono:@acme/app' AND (role & 1) = 0 ORDER BY line`).all())
       .toEqual([
         { symbol_id: foo, line: 3 }, { symbol_id: bar, line: 4 }, { symbol_id: foo, line: 6 }, { symbol_id: foo, line: 7 },
         { symbol_id: eb, line: 8 },
@@ -376,9 +447,9 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { range: [4, 2, 5], symbol: `${LIB}src/\`a.ts\`/Props#`, roles: 1 },
       ],
     }]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib'));
     run();
-    expect(db.prepare("SELECT name, kind FROM symbols WHERE package_id = 'npm:@acme/lib' ORDER BY name").all()).toEqual([
+    expect(db.prepare("SELECT name, kind FROM symbols WHERE package_id = 'npm:acme/mono:@acme/lib' ORDER BY name").all()).toEqual([
       { name: 'Props', kind: '' },
       { name: '__html', kind: 'anonymous-member' },
       { name: 'npm0', kind: 'anonymous-member' },
@@ -415,7 +486,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
   });
 
   it('adds a top-level reference edge from the module symbol when it is not an export site', () => {
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [exp('helper', 'src/a.ts', 8, 9)]));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [exp('helper', 'src/a.ts', 8, 9)]));
     run();
     const mod = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/`);
     const helper = id(`scip-typescript npm @acme/lib . src/\`a.ts\`/helper().`);
@@ -437,18 +508,18 @@ describe('ingestOrg (synthetic SCIP)', () => {
       occurrences: [{ range: [0, 17, 35], symbol: `${LIB_OLD}src/\`anon.ts\`/` }],
     }]);
     const anonExp = (file: string) => ({ ...exp('default', file, 2, 7), note: 'default-keyword' });
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [anonExp('src/anon.ts'), anonExp('src/anon.ts'), anonExp('src/unused.ts')]));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [anonExp('src/anon.ts'), anonExp('src/anon.ts'), anonExp('src/unused.ts')]));
     const c = run();
     expect(c.unmatchedExports).toBe(0);
     const rows = db.prepare(`SELECT s.symbol_str, s.name, s.line, s.col, s.is_exported,
         (SELECT count(*) FROM occurrences o WHERE o.symbol_id = s.symbol_id AND o.is_external = 1) AS ext
       FROM symbols s WHERE s.name = 'default' ORDER BY s.file`).all();
     expect(rows).toEqual([
-      { symbol_str: 'sentei default npm:@acme/lib src/anon.ts', name: 'default', line: 2, col: 7, is_exported: 1, ext: 1 },
-      { symbol_str: 'sentei default npm:@acme/lib src/unused.ts', name: 'default', line: 2, col: 7, is_exported: 1, ext: 0 },
+      { symbol_str: 'sentei default npm:acme/mono:@acme/lib src/anon.ts', name: 'default', line: 2, col: 7, is_exported: 1, ext: 1 },
+      { symbol_str: 'sentei default npm:acme/mono:@acme/lib src/unused.ts', name: 'default', line: 2, col: 7, is_exported: 1, ext: 0 },
     ]);
-    const anonDefault = id('sentei default npm:@acme/lib src/anon.ts');
-    const appModule = id('sentei file npm:@acme/app apps/app/src/main.ts');
+    const anonDefault = id('sentei default npm:acme/mono:@acme/lib src/anon.ts');
+    const appModule = id('sentei file npm:acme/mono:@acme/app apps/app/src/main.ts');
     expect(count(db, 'SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ?', appModule, anonDefault)).toBe(1);
     expect(count(db, 'SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ?',
       anonDefault, id('scip-typescript npm @acme/lib . src/`anon.ts`/'))).toBe(1);
@@ -458,7 +529,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const ref = (line: number, col: number, member: string, targetLine: number, targetCol: number, targetPackage = '@acme/lib') =>
       ({ file: 'apps/app/src/main.ts', line, col, member, targetPackage, targetFile: 'src/a.ts', targetLine, targetCol });
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       namespaceMemberRefs: [
         ref(3, 10, 'helper', 8, 9), //       SCIP emitted `local N` here: inside main() -> edge main -> helper
         ref(3, 2, 'bar', 2, 2), //           SCIP already resolved Foo#bar() at this position
@@ -471,12 +542,12 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const bar = id('scip-typescript npm @acme/lib . src/`a.ts`/Foo#bar().');
     const main = id('scip-typescript npm @acme/app . src/`main.ts`/main().');
     expect(db.prepare(`SELECT package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site, is_external
-      FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:@acme/app'`).all(helper)).toEqual([
-      { package_id: 'npm:@acme/app', def_package_id: 'npm:@acme/lib', file: 'apps/app/src/main.ts', line: 3, col: 10, role: 0,
+      FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:acme/mono:@acme/app'`).all(helper)).toEqual([
+      { package_id: 'npm:acme/mono:@acme/app', def_package_id: 'npm:acme/mono:@acme/lib', file: 'apps/app/src/main.ts', line: 3, col: 10, role: 0,
         enclosing_symbol_id: main, is_export_site: 0, is_external: 1 },
     ]);
     expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", main, helper)).toBe(1);
-    expect(count(db, "SELECT count(*) AS n FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:@acme/app'", bar)).toBe(1);
+    expect(count(db, "SELECT count(*) AS n FROM occurrences WHERE symbol_id = ? AND package_id = 'npm:acme/mono:@acme/app'", bar)).toBe(1);
     expect(c.namespaceMemberRefs).toBe(1);
     expect(c.unmatchedNamespaceMemberRefs).toBe(1);
     expect(c.warnings).toBe(2);
@@ -492,11 +563,11 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const ref = (file: string, line: number, col: number, member: string, targetLine: number, targetCol: number, targetPackage = '@acme/lib') =>
       ({ file, line, col, member, targetPackage, targetFile: 'src/a.ts', targetLine, targetCol });
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       shorthandRefs: [ref('apps/app/src/main.ts', 3, 10, 'helper', 8, 9), ref('apps/app/src/main.ts', 3, 20, 'gone', 40, 0)],
     });
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
+      ...sidecar('npm:acme/mono:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
       // `{ helper }` inside Foo#bar(): a same-package use of helper.
       shorthandRefs: [ref('src/a.ts', 3, 20, 'helper', 8, 9)],
     });
@@ -506,8 +577,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const main = id('scip-typescript npm @acme/app . src/`main.ts`/main().');
     expect(db.prepare('SELECT package_id, line, col, enclosing_symbol_id, is_external FROM occurrences WHERE symbol_id = ? AND role = 0 AND col IN (10, 20) ORDER BY package_id')
       .all(helper)).toEqual([
-      { package_id: 'npm:@acme/app', line: 3, col: 10, enclosing_symbol_id: main, is_external: 1 },
-      { package_id: 'npm:@acme/lib', line: 3, col: 20, enclosing_symbol_id: bar, is_external: 0 },
+      { package_id: 'npm:acme/mono:@acme/app', line: 3, col: 10, enclosing_symbol_id: main, is_external: 1 },
+      { package_id: 'npm:acme/mono:@acme/lib', line: 3, col: 20, enclosing_symbol_id: bar, is_external: 0 },
     ]);
     expect(count(db, "SELECT count(*) AS n FROM edges WHERE from_symbol_id = ? AND to_symbol_id = ? AND source = 'scip'", main, helper)).toBe(1);
     expect(c.shorthandRefs).toBe(2);
@@ -526,7 +597,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
     ]);
     const e = (entry: string, exportedAs: string, name: string, file: string, line: number, col: number, note?: string) =>
       ({ entry, exportedAs, name, file, line, col, sites: [], ...(note ? { note } : {}) });
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [
       e('src/index.ts', 'Foo', 'Foo', 'src/a.ts', 1, 13),
       e('src/index.ts', 'Bar', 'Foo', 'src/a.ts', 1, 13), // export { Foo as Bar }
       e('src/index.ts', 'Bar', 'Foo', 'src/a.ts', 1, 13), // duplicate record
@@ -550,24 +621,24 @@ describe('ingestOrg (synthetic SCIP)', () => {
   });
 
   it('warns about sidecar exports that match no definition', () => {
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13), exp('nope', 'src/a.ts', 40, 0)]));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13), exp('nope', 'src/a.ts', 40, 0)]));
     const c = run();
     expect(c.unmatchedExports).toBe(1);
-    expect(logs.some((l) => /warning: 1 sidecar export\(s\) match no SCIP definition: npm:@acme\/lib nope/.test(l))).toBe(true);
+    expect(logs.some((l) => /warning: 1 sidecar export\(s\) match no SCIP definition: npm:acme\/mono:@acme\/lib nope/.test(l))).toBe(true);
   });
 
   it('flags dynamic_access from sidecar unresolved entries', () => {
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [], [{ file: 'src/index.ts', reason: "export * from 'missing'" }, 'plain reason']));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [], [{ file: 'src/index.ts', reason: "export * from 'missing'" }, 'plain reason']));
     run();
     expect(db.prepare('SELECT package_id, flag, reason, file FROM package_flags ORDER BY reason').all()).toEqual([
-      { package_id: 'npm:@acme/lib', flag: 'dynamic_access', reason: "export * from 'missing'", file: 'src/index.ts' },
-      { package_id: 'npm:@acme/lib', flag: 'dynamic_access', reason: 'plain reason', file: null },
+      { package_id: 'npm:acme/mono:@acme/lib', flag: 'dynamic_access', reason: "export * from 'missing'", file: 'src/index.ts' },
+      { package_id: 'npm:acme/mono:@acme/lib', flag: 'dynamic_access', reason: 'plain reason', file: null },
     ]);
   });
 
   it('records sidecar flags for the sidecar package', () => {
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       flags: [
         { flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib namespace', file: 'apps/app/src/main.ts', line: 3, col: 2 },
         { flag: 'dynamic_access', reason: "require('@acme/' + name)", file: 'apps/app/src/main.ts', line: 4, col: 0 },
@@ -575,8 +646,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
     });
     run();
     expect(db.prepare('SELECT package_id, flag, reason, file FROM package_flags ORDER BY flag').all()).toEqual([
-      { package_id: 'npm:@acme/app', flag: 'dynamic_access', reason: "require('@acme/' + name)", file: 'apps/app/src/main.ts' },
-      { package_id: 'npm:@acme/app', flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib namespace', file: 'apps/app/src/main.ts' },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'dynamic_access', reason: "require('@acme/' + name)", file: 'apps/app/src/main.ts' },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib namespace', file: 'apps/app/src/main.ts' },
     ]);
     // Idempotent: ingest owns these flags and replaces them.
     run();
@@ -585,7 +656,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
 
   it('targets a sidecar flag at another org package when targetPackage names one, else leaves it untargeted', () => {
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       flags: [
         { flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib', file: 'apps/app/src/main.ts', line: 3, col: 2, targetPackage: '@acme/lib' },
         { flag: 'namespace_dynamic', reason: 'X[key] on @acme/app', file: 'apps/app/src/main.ts', line: 4, col: 2, targetPackage: '@acme/app' },
@@ -596,7 +667,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const c = run();
     expect(db.prepare('SELECT flag, reason, target_package_id FROM package_flags ORDER BY reason').all()).toEqual([
       { flag: 'namespace_dynamic', reason: 'X[key] on @acme/app', target_package_id: null },
-      { flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib', target_package_id: 'npm:@acme/lib' },
+      { flag: 'namespace_dynamic', reason: 'X[key] on @acme/lib', target_package_id: 'npm:acme/mono:@acme/lib' },
       { flag: 'namespace_dynamic', reason: 'X[key] on left-pad', target_package_id: null },
       { flag: 'dynamic_access', reason: "require('@acme/' + name)", target_package_id: null },
     ]);
@@ -605,13 +676,13 @@ describe('ingestOrg (synthetic SCIP)', () => {
   });
 
   it('rejects an unknown sidecar flag', () => {
-    writeJson('acme/mono', 'app.exports.json', { ...sidecar('npm:@acme/app'), flags: [{ flag: 'looks_fine', reason: 'x', file: null }] });
+    writeJson('acme/mono', 'app.exports.json', { ...sidecar('npm:acme/mono:@acme/app'), flags: [{ flag: 'looks_fine', reason: 'x', file: null }] });
     expect(() => run()).toThrow(/unknown flag "looks_fine"/);
   });
 
   it('records sidecar unresolvedImports into org packages as unresolved_refs, warning on the rest', () => {
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       unresolvedImports: [
         { module: '@acme/lib/deep/path', name: 'removedFn', file: 'apps/app/src/main.ts', line: 0, col: 9 },
         { module: 'left-pad', name: 'pad', file: 'apps/app/src/main.ts', line: 1, col: 9 },
@@ -620,7 +691,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
     });
     const c = run();
     expect(db.prepare("SELECT target_package_id, symbol_str, file, line, col FROM unresolved_refs WHERE symbol_str = 'removedFn'").all()).toEqual([
-      { target_package_id: 'npm:@acme/lib', symbol_str: 'removedFn', file: 'apps/app/src/main.ts', line: 0, col: 9 },
+      { target_package_id: 'npm:acme/mono:@acme/lib', symbol_str: 'removedFn', file: 'apps/app/src/main.ts', line: 0, col: 9 },
     ]);
     expect(c.unresolved).toBe(2); // + goneFn from the SCIP index
     expect(c.warnings).toBe(2);
@@ -629,12 +700,12 @@ describe('ingestOrg (synthetic SCIP)', () => {
   it('an unresolved import of a name the target exports at HEAD is a use (occurrence + edge), not skew', () => {
     // c12 (nodenext) cannot follow pathe's extensionless `export * from "./_path"`, so its
     // checker reports `resolve` as not exported although pathe exports it at HEAD.
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [
       exp('Foo', 'src/a.ts', 1, 13),
       { ...exp('helper', 'src/a.ts', 8, 9), exportedAs: 'aliasedHelper' }, // export { helper as aliasedHelper }
     ]));
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       unresolvedImports: [
         { module: '@acme/lib', name: 'Foo', file: 'apps/app/src/main.ts', line: 10, col: 9 }, //          exported name
         { module: '@acme/lib/sub', name: 'aliasedHelper', file: 'apps/app/src/main.ts', line: 11, col: 9 }, // alias
@@ -645,9 +716,9 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const c = run();
     const foo = id('scip-typescript npm @acme/lib . src/`a.ts`/Foo#');
     const helper = id('scip-typescript npm @acme/lib . src/`a.ts`/helper().');
-    const appModule = id('sentei file npm:@acme/app apps/app/src/main.ts');
+    const appModule = id('sentei file npm:acme/mono:@acme/app apps/app/src/main.ts');
     expect(db.prepare(`SELECT symbol_id, line, col, role, enclosing_symbol_id, is_external FROM occurrences
-      WHERE package_id = 'npm:@acme/app' AND symbol_id IN (?, ?) AND line >= 10 ORDER BY line`).all(foo, helper)).toEqual([
+      WHERE package_id = 'npm:acme/mono:@acme/app' AND symbol_id IN (?, ?) AND line >= 10 ORDER BY line`).all(foo, helper)).toEqual([
       { symbol_id: foo, line: 10, col: 9, role: 0, enclosing_symbol_id: appModule, is_external: 1 },
       { symbol_id: helper, line: 11, col: 9, role: 0, enclosing_symbol_id: appModule, is_external: 1 },
     ]);
@@ -663,45 +734,45 @@ describe('ingestOrg (synthetic SCIP)', () => {
 
   it('keeps discover\'s opaque_consumer rows (reason prefix "discover: ") and rebuilds its own', () => {
     db.prepare(`INSERT INTO package_flags (package_id, flag, reason, file) VALUES
-      ('npm:@acme/lib', 'opaque_consumer', 'discover: unresolved entry point ./dist/vue.mjs', 'package.json'),
-      ('npm:@acme/lib', 'opaque_consumer', 'stale from an earlier ingest', NULL)`).run();
+      ('npm:acme/mono:@acme/lib', 'opaque_consumer', 'discover: unresolved entry point ./dist/vue.mjs', 'package.json'),
+      ('npm:acme/mono:@acme/lib', 'opaque_consumer', 'stale from an earlier ingest', NULL)`).run();
     run();
     expect(db.prepare('SELECT package_id, flag, reason FROM package_flags').all()).toEqual([
-      { package_id: 'npm:@acme/lib', flag: 'opaque_consumer', reason: 'discover: unresolved entry point ./dist/vue.mjs' },
+      { package_id: 'npm:acme/mono:@acme/lib', flag: 'opaque_consumer', reason: 'discover: unresolved entry point ./dist/vue.mjs' },
     ]);
   });
 
   it('flags partial / failed / missing packages and records repo status', () => {
     indexJson('acme/mono', [
-      { packageId: 'npm:@acme/lib', status: 'partial', scip: 'lib.scip', exports: 'lib.exports.json', diagnostics: ['info: no lockfile', 'error: TS2307: nope\nmore', 'error: second'] },
-      { packageId: 'npm:@acme/app', status: 'failed', diagnostics: ['tsc crashed'] },
+      { packageId: 'npm:acme/mono:@acme/lib', status: 'partial', scip: 'lib.scip', exports: 'lib.exports.json', diagnostics: ['info: no lockfile', 'error: TS2307: nope\nmore', 'error: second'] },
+      { packageId: 'npm:acme/mono:@acme/app', status: 'failed', diagnostics: ['tsc crashed'] },
     ], 'partial');
     run();
     expect(db.prepare('SELECT package_id, flag, reason FROM package_flags ORDER BY package_id').all()).toEqual([
-      { package_id: 'npm:@acme/app', flag: 'index_failed', reason: 'tsc crashed' },
-      { package_id: 'npm:@acme/lib', flag: 'opaque_consumer', reason: 'error: TS2307: nope' },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'index_failed', reason: 'tsc crashed' },
+      { package_id: 'npm:acme/mono:@acme/lib', flag: 'opaque_consumer', reason: 'error: TS2307: nope' },
     ]);
     expect(db.prepare('SELECT index_status FROM repos').get()).toEqual({ index_status: 'partial' });
-    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:@acme/app'")).toBe(0);
-    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:@acme/lib'")).toBe(1);
+    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:acme/mono:@acme/app'")).toBe(0);
+    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:acme/mono:@acme/lib'")).toBe(1);
   });
 
   it('flags every package index_failed when the repo has no index.json', () => {
     rmSync(join(workDir, 'index', 'acme__mono', 'index.json'));
     run();
     expect(db.prepare('SELECT package_id, flag FROM package_flags ORDER BY package_id').all()).toEqual([
-      { package_id: 'npm:@acme/app', flag: 'index_failed' },
-      { package_id: 'npm:@acme/lib', flag: 'index_failed' },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'index_failed' },
+      { package_id: 'npm:acme/mono:@acme/lib', flag: 'index_failed' },
     ]);
     expect(db.prepare('SELECT index_status FROM repos').get()).toEqual({ index_status: 'failed' });
   });
 
   it('inserts overlay edges from a file to named or all exported symbols, warning on unknown targets', () => {
     const c = run(discover([
-      { from: 'file:apps/app/src/main.ts', to: 'npm:@acme/lib#*' },
-      { from: 'file:src/a.ts', to: 'npm:@acme/lib#helper' },
-      { from: 'file:src/a.ts', to: 'npm:@acme/lib#doesNotExist' },
-      { from: 'file:nowhere.ts', to: 'npm:@acme/lib#*' },
+      { from: 'file:apps/app/src/main.ts', to: 'npm:acme/mono:@acme/lib#*' },
+      { from: 'file:src/a.ts', to: 'npm:@acme/lib#helper' }, // name only: every package of that name
+      { from: 'file:src/a.ts', to: 'npm:acme/mono:@acme/lib#doesNotExist' },
+      { from: 'file:nowhere.ts', to: 'npm:acme/mono:@acme/lib#*' },
     ]));
     const rows = db.prepare(`SELECT f.name AS from_name, t.name AS to_name FROM edges e
       JOIN symbols f ON f.symbol_id = e.from_symbol_id JOIN symbols t ON t.symbol_id = e.to_symbol_id
@@ -717,10 +788,10 @@ describe('ingestOrg (synthetic SCIP)', () => {
   it('rolls back everything on failure and refuses packages missing from the DB', () => {
     run();
     const before = tableCounts(db);
-    writeJson('acme/mono', 'lib.exports.json', { ...sidecar('npm:@acme/other') });
-    expect(() => run()).toThrow(/packageId npm:@acme\/other/);
+    writeJson('acme/mono', 'lib.exports.json', { ...sidecar('npm:acme/mono:@acme/other') });
+    expect(() => run()).toThrow(/packageId npm:acme\/mono:@acme\/other/);
     expect(tableCounts(db)).toEqual(before);
-    db.prepare("DELETE FROM packages WHERE package_id = 'npm:@acme/app'").run();
+    db.prepare("DELETE FROM packages WHERE package_id = 'npm:acme/mono:@acme/app'").run();
     expect(() => run()).toThrow(/not in the database; run discover first/);
   });
 
@@ -745,10 +816,10 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const libDoc: DocSpec = { path: 'src/a.ts', occurrences: [{ range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 }] };
     writeScip('acme/mono', 'lib.scip', [libDoc, rootCopy]);
     writeScip('acme/mono', 'app.scip', [ownCopy]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib'));
     const appDocs = () => db.prepare(`SELECT d.file, d.is_entry, s.symbol_str FROM documents d JOIN symbols s ON s.symbol_id = d.module_symbol_id
-      WHERE d.package_id = 'npm:@acme/app'`).all();
-    const appSymbols = () => (db.prepare("SELECT name FROM symbols WHERE package_id = 'npm:@acme/app' ORDER BY name").all() as Array<{ name: string }>).map((r) => r.name);
+      WHERE d.package_id = 'npm:acme/mono:@acme/app'`).all();
+    const appSymbols = () => (db.prepare("SELECT name FROM symbols WHERE package_id = 'npm:acme/mono:@acme/app' ORDER BY name").all() as Array<{ name: string }>).map((r) => r.name);
     const expected = [{ file: 'apps/app/src/main.ts', is_entry: 1, symbol_str: 'scip-typescript npm @acme/app . src/`main.ts`/' }];
 
     // Both indexes: the owner's own index wins although the root index comes first.
@@ -760,8 +831,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
     // Only the root index has it (the app's own index failed): still one module symbol,
     // the SCIP one, marked as the entry; no synthetic file symbol, no orphan.
     indexJson('acme/mono', [
-      { packageId: 'npm:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
-      { packageId: 'npm:@acme/app', status: 'failed', diagnostics: ['error: boom'] },
+      { packageId: 'npm:acme/mono:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
+      { packageId: 'npm:acme/mono:@acme/app', status: 'failed', diagnostics: ['error: boom'] },
     ]);
     c = run();
     expect(appDocs()).toEqual(expected);
@@ -772,32 +843,32 @@ describe('ingestOrg (synthetic SCIP)', () => {
     // The same package's index containing the file twice with different contents warns.
     writeScip('acme/mono', 'app.scip', [ownCopy, { ...ownCopy, occurrences: ownCopy.occurrences.slice(0, 1) }, ownCopy]);
     indexJson('acme/mono', [
-      { packageId: 'npm:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
-      { packageId: 'npm:@acme/app', scip: 'app.scip', exports: 'app.exports.json' },
+      { packageId: 'npm:acme/mono:@acme/lib', scip: 'lib.scip', exports: 'lib.exports.json' },
+      { packageId: 'npm:acme/mono:@acme/app', scip: 'app.scip', exports: 'app.exports.json' },
     ]);
     c = run();
     expect(appSymbols()).toEqual(['apps/app/src/main.ts', 'main']);
     expect(c.warnings).toBe(1);
-    expect(logs.at(-2)).toMatch(/apps\/app\/src\/main\.ts \(npm:@acme\/app\) appears 3 times, with different contents, in the index of npm:@acme\/app/);
+    expect(logs.at(-2)).toMatch(/apps\/app\/src\/main\.ts \(npm:acme\/mono:@acme\/app\) appears 3 times, with different contents, in the index of npm:acme\/mono:@acme\/app/);
   });
 
   it('prefers an error, then a warn diagnostic as the flag reason', () => {
     indexJson('acme/mono', [
-      { packageId: 'npm:@acme/lib', status: 'partial', scip: 'lib.scip', exports: 'lib.exports.json',
+      { packageId: 'npm:acme/mono:@acme/lib', status: 'partial', scip: 'lib.scip', exports: 'lib.exports.json',
         diagnostics: ['info: install skipped', 'warn: entry point not in program\nmore', 'warn: second'] },
-      { packageId: 'npm:@acme/app', status: 'failed', diagnostics: ['info: only info'] },
+      { packageId: 'npm:acme/mono:@acme/app', status: 'failed', diagnostics: ['info: only info'] },
     ], 'partial');
     run();
     expect(db.prepare('SELECT package_id, reason FROM package_flags ORDER BY package_id').all()).toEqual([
-      { package_id: 'npm:@acme/app', reason: 'info: only info' },
-      { package_id: 'npm:@acme/lib', reason: 'warn: entry point not in program' },
+      { package_id: 'npm:acme/mono:@acme/app', reason: 'info: only info' },
+      { package_id: 'npm:acme/mono:@acme/lib', reason: 'warn: entry point not in program' },
     ]);
   });
 
   it('turns sidecar unindexedImports into targeted unindexed_consumer flags, keeping discover\'s untargeted ones', () => {
-    db.prepare("INSERT INTO package_flags (package_id, flag, reason) VALUES ('npm:@acme/app', 'unindexed_consumer', 'build.py')").run();
+    db.prepare("INSERT INTO package_flags (package_id, flag, reason) VALUES ('npm:acme/mono:@acme/app', 'unindexed_consumer', 'build.py')").run();
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       unindexedImports: [
         { file: 'apps/app/eslint.config.mjs', module: '@acme/lib/eslint', targetPackage: '@acme/lib' },
         { file: 'apps/app/eslint.config.mjs', module: 'left-pad', targetPackage: 'left-pad' },
@@ -809,14 +880,14 @@ describe('ingestOrg (synthetic SCIP)', () => {
     });
     const c = run();
     expect(db.prepare('SELECT consumer_package_id AS c, target_package_id AS t, file FROM witness_files ORDER BY file').all()).toEqual([
-      { c: 'npm:@acme/app', t: 'npm:@acme/app', file: 'apps/app/src/main.ts' },
-      { c: 'npm:@acme/app', t: 'npm:@acme/app', file: 'apps/app/vite.config.mjs' },
+      { c: 'npm:acme/mono:@acme/app', t: 'npm:acme/mono:@acme/app', file: 'apps/app/src/main.ts' },
+      { c: 'npm:acme/mono:@acme/app', t: 'npm:acme/mono:@acme/app', file: 'apps/app/vite.config.mjs' },
     ]);
     const rows = () => db.prepare('SELECT package_id, flag, reason, file, target_package_id FROM package_flags ORDER BY target_package_id').all();
     const expected = [
-      { package_id: 'npm:@acme/app', flag: 'unindexed_consumer', reason: 'build.py', file: null, target_package_id: null },
-      { package_id: 'npm:@acme/app', flag: 'unindexed_consumer', reason: 'unindexed file imports @acme/lib/eslint',
-        file: 'apps/app/eslint.config.mjs', target_package_id: 'npm:@acme/lib' },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'unindexed_consumer', reason: 'build.py', file: null, target_package_id: null },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'unindexed_consumer', reason: 'unindexed file imports @acme/lib/eslint',
+        file: 'apps/app/eslint.config.mjs', target_package_id: 'npm:acme/mono:@acme/lib' },
     ];
     expect(rows()).toEqual(expected);
     expect(c.warnings).toBe(1); // left-pad only
@@ -843,14 +914,14 @@ describe('ingestOrg (synthetic SCIP)', () => {
       { range: [2, 9, 13], symbol: `${APP}src/\`main.ts\`/main().`, roles: 1, enclosing: [2, 0, 4, 1] },
     ] }]);
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:@acme/lib', [exp('utils', 'src/index.ts', 1, 13), exp('pkgA', 'src/pkg.ts', 1, 16)]),
+      ...sidecar('npm:acme/mono:@acme/lib', [exp('utils', 'src/index.ts', 1, 13), exp('pkgA', 'src/pkg.ts', 1, 16)]),
       namespaceSpreadRefs: [
         { file: 'src/index.ts', line: 1, col: 40, targetPackage: '@acme/lib', targetFile: 'src/pkg.ts' },
         { file: 'src/index.ts', line: 1, col: 50, targetPackage: '@acme/lib', targetFile: 'src/nope.ts' },
       ],
     });
     const spreadFromApp = { file: 'apps/app/src/main.ts', line: 3, col: 4, targetPackage: '@acme/lib', targetFile: 'src/pkg.ts' };
-    writeJson('acme/mono', 'app.exports.json', { ...sidecar('npm:@acme/app'), namespaceSpreadRefs: [spreadFromApp] });
+    writeJson('acme/mono', 'app.exports.json', { ...sidecar('npm:acme/mono:@acme/app'), namespaceSpreadRefs: [spreadFromApp] });
     const c = run();
     const utils = id(`${'scip-typescript npm @acme/lib . '}src/\`index.ts\`/utils.`);
     const main = id('scip-typescript npm @acme/app . src/`main.ts`/main().');
@@ -862,8 +933,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
     // Same package: an occurrence for the exported top-level pkgA only. Cross-package (no flag): pkgA too.
     const occ = (sid: number): unknown[] => db.prepare('SELECT package_id, file, line, col, enclosing_symbol_id FROM occurrences WHERE symbol_id = ? AND role = 0 ORDER BY package_id').all(sid);
     expect(occ(pkgA!)).toEqual([
-      { package_id: 'npm:@acme/app', file: 'apps/app/src/main.ts', line: 3, col: 4, enclosing_symbol_id: main },
-      { package_id: 'npm:@acme/lib', file: 'src/index.ts', line: 1, col: 40, enclosing_symbol_id: utils },
+      { package_id: 'npm:acme/mono:@acme/app', file: 'apps/app/src/main.ts', line: 3, col: 4, enclosing_symbol_id: main },
+      { package_id: 'npm:acme/mono:@acme/lib', file: 'src/index.ts', line: 1, col: 40, enclosing_symbol_id: utils },
     ]);
     expect(occ(pkgB!)).toEqual([]);
     expect(c.namespaceSpreadRefs).toBe(2);
@@ -873,18 +944,18 @@ describe('ingestOrg (synthetic SCIP)', () => {
     // only with `utils` (itself an unused export here: a candidate).
     db.prepare("INSERT OR REPLACE INTO policy (key, value) VALUES ('minAgeDays', '0')").run();
     analyzeOrg({ db, now: 1_800_000_000, log: () => {} });
-    expect(db.prepare("SELECT s.name, f.reasons FROM findings f JOIN symbols s USING (symbol_id) WHERE f.verdict = 'private_dead' AND s.package_id = 'npm:@acme/lib'").all())
+    expect(db.prepare("SELECT s.name, f.reasons FROM findings f JOIN symbols s USING (symbol_id) WHERE f.verdict = 'private_dead' AND s.package_id = 'npm:acme/mono:@acme/lib'").all())
       .toEqual([{ name: 'pkgB', reasons: '["unlocked_by:utils"]' }]);
 
     // A namespace_dynamic flag of the consumer on the target: edges only (the flag blocks).
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       namespaceSpreadRefs: [spreadFromApp],
       flags: [{ flag: 'namespace_dynamic', reason: 'D[key]', file: 'apps/app/src/main.ts', targetPackage: '@acme/lib' }],
     });
     run();
     expect(occ(id('scip-typescript npm @acme/lib . src/`pkg.ts`/pkgA().'))).toEqual([
-      { package_id: 'npm:@acme/lib', file: 'src/index.ts', line: 1, col: 40, enclosing_symbol_id: id(`scip-typescript npm @acme/lib . src/\`index.ts\`/utils.`) },
+      { package_id: 'npm:acme/mono:@acme/lib', file: 'src/index.ts', line: 1, col: 40, enclosing_symbol_id: id(`scip-typescript npm @acme/lib . src/\`index.ts\`/utils.`) },
     ]);
     expect(edgesFrom(id('scip-typescript npm @acme/app . src/`main.ts`/main().'))).toHaveLength(3);
   });
@@ -908,7 +979,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { range: [2, 13, 19], symbol: `${LIB}src/\`a.ts\`/priv().`, roles: 1, enclosing: [2, 0, 2, 30] },
       ] },
     ]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [{ ...exp('digest', 'src/a.ts', 1, 13), entry: 'src/a.ts' }]));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [{ ...exp('digest', 'src/a.ts', 1, 13), entry: 'src/a.ts' }]));
     const d = discover();
     d.repos[0]!.packages[0]!.entryPoints.push('src/a.ts');
     d.repos[0]!.packages[0]!.runtimeEntryPoints = ['src/a.ts'];
@@ -929,7 +1000,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { range: [1, 13, 20], symbol: `${LIB}src/\`b.ts\`/Counter#`, roles: 1, enclosing: [1, 0, 1, 30] },
       ] },
     ]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib', [
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib', [
       { ...exp('Counter', 'src/a.ts', 1, 13), entry: 'src/a.ts' },
       { ...exp('other', 'src/a.ts', 2, 13), entry: 'src/a.ts' },
       { ...exp('Counter', 'src/b.ts', 1, 13), entry: 'src/b.ts' },
@@ -948,7 +1019,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const d = discover();
     d.repos[0]!.packages[0]!.runtimeEntryPoints = ['src/a.ts'];
     run(d);
-    expect(db.prepare("SELECT file, is_entry FROM documents WHERE package_id = 'npm:@acme/lib' ORDER BY file").all()).toEqual([
+    expect(db.prepare("SELECT file, is_entry FROM documents WHERE package_id = 'npm:acme/mono:@acme/lib' ORDER BY file").all()).toEqual([
       { file: 'src/a.ts', is_entry: 1 },
     ]);
     expect(count(db, 'SELECT count(*) AS n FROM entry_symbols')).toBe(0);
@@ -965,7 +1036,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
       ] },
     ]);
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:@acme/lib', [exp('pub', 'src/a.ts', 5, 13)]),
+      ...sidecar('npm:acme/mono:@acme/lib', [exp('pub', 'src/a.ts', 5, 13)]),
       unindexedImports: [
         { file: 'components/Card.vue', module: 'src/a', targetPackage: '@acme/lib', relative: true },
         { file: 'components/Gone.vue', module: 'src/missing.ts', targetPackage: '@acme/lib', relative: true },
@@ -974,8 +1045,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const c = run();
     expect(c.relativeUnindexedImports).toBe(2);
     expect(db.prepare('SELECT consumer_package_id, target_package_id, file FROM witness_files ORDER BY file').all()).toEqual([
-      { consumer_package_id: 'npm:@acme/lib', target_package_id: 'npm:@acme/lib', file: 'components/Card.vue' },
-      { consumer_package_id: 'npm:@acme/lib', target_package_id: 'npm:@acme/lib', file: 'components/Gone.vue' },
+      { consumer_package_id: 'npm:acme/mono:@acme/lib', target_package_id: 'npm:acme/mono:@acme/lib', file: 'components/Card.vue' },
+      { consumer_package_id: 'npm:acme/mono:@acme/lib', target_package_id: 'npm:acme/mono:@acme/lib', file: 'components/Gone.vue' },
     ]);
     // Top-level non-exported declarations of the imported module: entry_symbols (members and exports not).
     expect(db.prepare('SELECT s.name FROM entry_symbols e JOIN symbols s USING (symbol_id) ORDER BY s.name').all()).toEqual([{ name: 'Api' }, { name: 'shown' }]);
@@ -986,7 +1057,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
 
   it('routes scoped unindexedImports (script/docs/test files) to witness_files instead of flags', () => {
     writeJson('acme/mono', 'app.exports.json', {
-      ...sidecar('npm:@acme/app'),
+      ...sidecar('npm:acme/mono:@acme/app'),
       unindexedImports: [
         { file: 'apps/app/bench/run.ts', module: '@acme/lib', targetPackage: '@acme/lib', scope: 'script' },
         { file: 'apps/app/docs/x.ts', module: '@acme/lib/deep', targetPackage: '@acme/lib', scope: 'docs' },
@@ -995,8 +1066,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
     });
     const c = run();
     expect(db.prepare('SELECT consumer_package_id, target_package_id, file FROM witness_files ORDER BY file').all()).toEqual([
-      { consumer_package_id: 'npm:@acme/app', target_package_id: 'npm:@acme/lib', file: 'apps/app/bench/run.ts' },
-      { consumer_package_id: 'npm:@acme/app', target_package_id: 'npm:@acme/lib', file: 'apps/app/docs/x.ts' },
+      { consumer_package_id: 'npm:acme/mono:@acme/app', target_package_id: 'npm:acme/mono:@acme/lib', file: 'apps/app/bench/run.ts' },
+      { consumer_package_id: 'npm:acme/mono:@acme/app', target_package_id: 'npm:acme/mono:@acme/lib', file: 'apps/app/docs/x.ts' },
     ]);
     expect(db.prepare("SELECT file FROM package_flags WHERE flag = 'unindexed_consumer'").all()).toEqual([{ file: 'apps/app/eslint.config.mjs' }]);
     expect(c.witnessFiles).toBe(2);
@@ -1020,22 +1091,22 @@ describe('ingestOrg (synthetic SCIP)', () => {
       ] },
     ]);
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:@acme/lib', [exp('Gen', 'src/a.ts', 1, 13), exp('Glob', 'src/b.generated.ts', 1, 13), exp('Plain', 'src/c.ts', 1, 13)]),
+      ...sidecar('npm:acme/mono:@acme/lib', [exp('Gen', 'src/a.ts', 1, 13), exp('Glob', 'src/b.generated.ts', 1, 13), exp('Plain', 'src/c.ts', 1, 13)]),
       generatedFiles: ['src/a.ts'],
     });
     const c = run();
     expect(c.generatedDocuments).toBe(2);
-    expect(db.prepare("SELECT file, is_generated FROM documents WHERE package_id = 'npm:@acme/lib' ORDER BY file").all()).toEqual([
+    expect(db.prepare("SELECT file, is_generated FROM documents WHERE package_id = 'npm:acme/mono:@acme/lib' ORDER BY file").all()).toEqual([
       { file: 'src/a.ts', is_generated: 1 }, { file: 'src/b.generated.ts', is_generated: 1 }, { file: 'src/c.ts', is_generated: 0 },
     ]);
     db.prepare("INSERT OR REPLACE INTO policy (key, value) VALUES ('minAgeDays', '0')").run();
     analyzeOrg({ db, now: 1_800_000_000, log: () => {} });
-    expect(db.prepare("SELECT s.name FROM findings f JOIN symbols s USING (symbol_id) WHERE s.package_id = 'npm:@acme/lib' ORDER BY s.name").all()).toEqual([{ name: 'Plain' }]);
+    expect(db.prepare("SELECT s.name FROM findings f JOIN symbols s USING (symbol_id) WHERE s.package_id = 'npm:acme/mono:@acme/lib' ORDER BY s.name").all()).toEqual([{ name: 'Plain' }]);
   });
 
   it('adds module -> symbol edges for sidecar entrySymbols without exporting them, warning on unmatched ones', () => {
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
+      ...sidecar('npm:acme/mono:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
       entrySymbols: [
         { file: 'src/a.ts', line: 2, col: 2, name: 'bar' },
         { file: 'src/a.ts', line: 40, col: 0, name: 'nope' },
@@ -1048,12 +1119,12 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(db.prepare('SELECT is_exported FROM symbols WHERE symbol_id = ?').get(bar)).toEqual({ is_exported: 0 });
     expect(c.unmatchedEntrySymbols).toBe(1);
     expect(db.prepare('SELECT symbol_id FROM entry_symbols').all()).toEqual([{ symbol_id: bar }]);
-    expect(logs.some((l) => /warning: 1 sidecar entry symbol\(s\) match no SCIP definition: npm:@acme\/lib nope at src\/a\.ts:41:1/.test(l))).toBe(true);
+    expect(logs.some((l) => /warning: 1 sidecar entry symbol\(s\) match no SCIP definition: npm:acme\/mono:@acme\/lib nope at src\/a\.ts:41:1/.test(l))).toBe(true);
   });
 
   it('stores sidecar entrySymbols kind (default runtime; runtime wins over ambient) and rejects an unknown kind', () => {
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
+      ...sidecar('npm:acme/mono:@acme/lib', [exp('Foo', 'src/a.ts', 1, 13)]),
       entrySymbols: [
         { file: 'src/a.ts', line: 2, col: 2, name: 'bar', kind: 'ambient' },
         { file: 'src/a.ts', line: 5, col: 2, name: 'baz', kind: 'ambient' },
@@ -1066,7 +1137,7 @@ describe('ingestOrg (synthetic SCIP)', () => {
       { name: 'bar', kind: 'ambient' }, { name: 'baz', kind: 'runtime' }, { name: 'helper', kind: 'runtime' },
     ]);
     writeJson('acme/mono', 'lib.exports.json', {
-      ...sidecar('npm:@acme/lib'),
+      ...sidecar('npm:acme/mono:@acme/lib'),
       entrySymbols: [{ file: 'src/a.ts', line: 2, col: 2, name: 'bar', kind: 'global' }],
     });
     expect(() => run()).toThrow(/unknown entry symbol kind "global"/);
@@ -1099,10 +1170,10 @@ describe('ingestOrg (synthetic SCIP)', () => {
         ],
       },
     ]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib'));
     // Dart: members of a library are never parented by its module namespace.
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/dart')").run();
-    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:d', 'acme/dart', '.', 'pub', 'd', 'private')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:acme/dart:d', 'acme/dart', '.', 'pub', 'd', 'private')").run();
     const D = 'scip-dart pub d 1.0.0 lib/`a.dart`/';
     writeScip('acme/dart', 'd.scip', [{
       path: 'lib/a.dart',
@@ -1114,13 +1185,13 @@ describe('ingestOrg (synthetic SCIP)', () => {
       ],
       symbols: [{ symbol: D, kind: NS }, { symbol: `${D}p.`, kind: NS }],
     }]);
-    writeJson('acme/dart', 'd.exports.json', sidecar('pub:d'));
-    indexJson('acme/dart', [{ packageId: 'pub:d', indexer: 'scip-dart', scip: 'd.scip', exports: 'd.exports.json' }]);
+    writeJson('acme/dart', 'd.exports.json', sidecar('pub:acme/dart:d'));
+    indexJson('acme/dart', [{ packageId: 'pub:acme/dart:d', indexer: 'scip-dart', scip: 'd.scip', exports: 'd.exports.json' }]);
     const d = discover();
-    d.repos.push({ repo: 'acme/dart', packages: [{ packageId: 'pub:d', path: '.', entryPoints: ['lib/a.dart'] }] });
+    d.repos.push({ repo: 'acme/dart', packages: [{ packageId: 'pub:acme/dart:d', path: '.', entryPoints: ['lib/a.dart'] }] });
     run(d);
     const rows = db.prepare(`SELECT s.name, p.name AS parent FROM symbols s LEFT JOIN symbols p ON p.symbol_id = s.parent_symbol_id
-      WHERE s.package_id IN ('npm:@acme/lib', 'pub:d') AND s.kind IS NOT 'file' ORDER BY s.package_id, s.symbol_id`).all();
+      WHERE s.package_id IN ('npm:acme/mono:@acme/lib', 'pub:acme/dart:d') AND s.kind IS NOT 'file' ORDER BY s.package_id, s.symbol_id`).all();
     expect(rows).toEqual([
       { name: 'worker-configuration.d.ts', parent: null },
       { name: 'WebAssembly', parent: null },
@@ -1160,14 +1231,14 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(c.packageErrors).toBe(1);
     expect(c.skippedInvalidOccurrences).toBe(0); // the whole package is skipped, not counted per occurrence
     expect(db.prepare('SELECT package_id, flag, reason FROM package_flags').all()).toEqual([
-      { package_id: 'npm:@acme/app', flag: 'index_failed', reason: `invalid SCIP symbol ${JSON.stringify(BAD[0])} (+1 more)` },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'index_failed', reason: `invalid SCIP symbol ${JSON.stringify(BAD[0])} (+1 more)` },
     ]);
     // Nothing of the failed package (not even its sidecar); the rest of the org is ingested.
-    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:@acme/app'")).toBe(0);
-    expect(count(db, "SELECT count(*) AS n FROM symbols WHERE package_id = 'npm:@acme/app'")).toBe(0);
-    expect(db.prepare("SELECT name FROM symbols WHERE package_id = 'npm:@acme/lib' AND is_exported = 1 ORDER BY name").all())
+    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:acme/mono:@acme/app'")).toBe(0);
+    expect(count(db, "SELECT count(*) AS n FROM symbols WHERE package_id = 'npm:acme/mono:@acme/app'")).toBe(0);
+    expect(db.prepare("SELECT name FROM symbols WHERE package_id = 'npm:acme/mono:@acme/lib' AND is_exported = 1 ORDER BY name").all())
       .toEqual([{ name: 'Foo' }, { name: 'helper' }]);
-    expect(logs.some((l) => l.includes('npm:@acme/app: 2 invalid SCIP symbol(s)'))).toBe(true);
+    expect(logs.some((l) => l.includes('npm:acme/mono:@acme/app: 2 invalid SCIP symbol(s)'))).toBe(true);
     expect(logs.at(-1)).toMatch(/ packageErrors=1$/);
 
     // An undecodable .scip fails its package the same way.
@@ -1175,9 +1246,9 @@ describe('ingestOrg (synthetic SCIP)', () => {
     const c2 = run();
     expect(c2.packageErrors).toBe(1);
     expect(db.prepare('SELECT package_id, flag, reason FROM package_flags').all()).toEqual([
-      { package_id: 'npm:@acme/app', flag: 'index_failed', reason: expect.stringMatching(/^unreadable \.scip: /) },
+      { package_id: 'npm:acme/mono:@acme/app', flag: 'index_failed', reason: expect.stringMatching(/^unreadable \.scip: /) },
     ]);
-    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:@acme/lib'")).toBe(1);
+    expect(count(db, "SELECT count(*) AS n FROM documents WHERE package_id = 'npm:acme/mono:@acme/lib'")).toBe(1);
   });
 
   it('drops occurrences of unparseable third-party symbols (counted) without failing the package', () => {
@@ -1205,8 +1276,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
 
   it('gives a document to the package with the same manager as its index when an npm and a pub package share a dir', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/mix')").run();
-    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:mix', 'acme/mix', '.', 'npm', 'mix', 'private')").run();
-    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:mix', 'acme/mix', '.', 'pub', 'mix', 'private')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/mix:mix', 'acme/mix', '.', 'npm', 'mix', 'private')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:acme/mix:mix', 'acme/mix', '.', 'pub', 'mix', 'private')").run();
     const NPM = 'scip-typescript npm mix 1.0.0 ';
     const PUB = 'scip-dart pub mix 1.0.0 ';
     for (const order of [['npm', 'pub'], ['pub', 'npm']] as const) {
@@ -1218,42 +1289,42 @@ describe('ingestOrg (synthetic SCIP)', () => {
         { range: [0, 0, 0], symbol: `${PUB}lib/\`a.dart\`/`, roles: 1 },
         { range: [1, 5, 11], symbol: `${PUB}lib/\`a.dart\`/dartFn().`, roles: 1 },
       ] }]);
-      writeJson('acme/mix', 'npm.exports.json', sidecar('npm:mix'));
-      writeJson('acme/mix', 'pub.exports.json', sidecar('pub:mix'));
+      writeJson('acme/mix', 'npm.exports.json', sidecar('npm:acme/mix:mix'));
+      writeJson('acme/mix', 'pub.exports.json', sidecar('pub:acme/mix:mix'));
       const entries = {
-        npm: { packageId: 'npm:mix', scip: 'npm.scip', exports: 'npm.exports.json' },
-        pub: { packageId: 'pub:mix', scip: 'pub.scip', exports: 'pub.exports.json' },
+        npm: { packageId: 'npm:acme/mix:mix', scip: 'npm.scip', exports: 'npm.exports.json' },
+        pub: { packageId: 'pub:acme/mix:mix', scip: 'pub.scip', exports: 'pub.exports.json' },
       };
       indexJson('acme/mix', order.map((m) => entries[m]));
-      const pkgsInOrder = order.map((m) => ({ packageId: `${m}:mix`, path: '.', entryPoints: [] }));
+      const pkgsInOrder = order.map((m) => ({ packageId: `${m}:acme/mix:mix`, path: '.', entryPoints: [] }));
       run({ repos: [...discover().repos, { repo: 'acme/mix', packages: pkgsInOrder }] });
       expect(db.prepare("SELECT package_id, file FROM documents WHERE package_id LIKE '%:mix' ORDER BY package_id").all(), order.join()).toEqual([
-        { package_id: 'npm:mix', file: 'web/a.js' },
-        { package_id: 'pub:mix', file: 'lib/a.dart' },
+        { package_id: 'npm:acme/mix:mix', file: 'web/a.js' },
+        { package_id: 'pub:acme/mix:mix', file: 'lib/a.dart' },
       ]);
       expect(db.prepare("SELECT package_id, name FROM symbols WHERE name IN ('jsFn', 'dartFn') ORDER BY name").all()).toEqual([
-        { package_id: 'pub:mix', name: 'dartFn' },
-        { package_id: 'npm:mix', name: 'jsFn' },
+        { package_id: 'pub:acme/mix:mix', name: 'dartFn' },
+        { package_id: 'npm:acme/mix:mix', name: 'jsFn' },
       ]);
     }
     // No same-manager package encloses the document: the longest-prefix rule still applies.
     writeScip('acme/mono', 'lib.scip', [{ path: 'apps/app/src/x.ts', occurrences: [{ range: [0, 0, 0], symbol: `${APP}src/\`x.ts\`/`, roles: 1 }] }]);
     writeScip('acme/mix', 'pub.scip', [{ path: '../tool/b.js', occurrences: [{ range: [0, 0, 0], symbol: `${NPM}tool/\`b.js\`/`, roles: 1 }] }]);
-    db.prepare("DELETE FROM packages WHERE package_id = 'npm:mix'").run();
-    db.prepare("UPDATE packages SET path = 'lib' WHERE package_id = 'pub:mix'").run();
-    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:mix', 'acme/mix', '.', 'npm', 'mix', 'private')").run();
-    indexJson('acme/mix', [{ packageId: 'pub:mix', scip: 'pub.scip', exports: 'pub.exports.json' }, { packageId: 'npm:mix', status: 'failed' }]);
+    db.prepare("DELETE FROM packages WHERE package_id = 'npm:acme/mix:mix'").run();
+    db.prepare("UPDATE packages SET path = 'lib' WHERE package_id = 'pub:acme/mix:mix'").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/mix:mix', 'acme/mix', '.', 'npm', 'mix', 'private')").run();
+    indexJson('acme/mix', [{ packageId: 'pub:acme/mix:mix', scip: 'pub.scip', exports: 'pub.exports.json' }, { packageId: 'npm:acme/mix:mix', status: 'failed' }]);
     run({ repos: [...discover().repos, { repo: 'acme/mix', packages: [
-      { packageId: 'pub:mix', path: 'lib', entryPoints: [] }, { packageId: 'npm:mix', path: '.', entryPoints: [] },
+      { packageId: 'pub:acme/mix:mix', path: 'lib', entryPoints: [] }, { packageId: 'npm:acme/mix:mix', path: '.', entryPoints: [] },
     ] }] });
     // tool/b.js, seen by the pub index run in lib/: no pub package encloses it, the npm one at '.' does.
-    expect(db.prepare("SELECT package_id, file FROM documents WHERE package_id LIKE '%:mix'").all()).toEqual([{ package_id: 'npm:mix', file: 'tool/b.js' }]);
-    expect(db.prepare("SELECT package_id, file FROM documents WHERE file = 'apps/app/src/x.ts'").all()).toEqual([{ package_id: 'npm:@acme/app', file: 'apps/app/src/x.ts' }]);
+    expect(db.prepare("SELECT package_id, file FROM documents WHERE package_id LIKE '%:mix'").all()).toEqual([{ package_id: 'npm:acme/mix:mix', file: 'tool/b.js' }]);
+    expect(db.prepare("SELECT package_id, file FROM documents WHERE file = 'apps/app/src/x.ts'").all()).toEqual([{ package_id: 'npm:acme/mono:@acme/app', file: 'apps/app/src/x.ts' }]);
   });
 
   it('marks scip-dart import prefixes (non-module namespaces) as kind import-prefix, and only those', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/dart')").run();
-    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:d', 'acme/dart', '.', 'pub', 'd', 'private')").run();
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:acme/dart:d', 'acme/dart', '.', 'pub', 'd', 'private')").run();
     const D = 'scip-dart pub d 1.0.0 lib/`a.dart`/';
     const NS = SymbolInformation_Kind.Namespace;
     writeScip('acme/dart', 'd.scip', [{
@@ -1268,8 +1339,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
       ],
       symbols: [{ symbol: D, kind: NS }, { symbol: `${D}$0.`, kind: NS }, { symbol: `${D}p.`, kind: NS }, { symbol: `${D}foo().`, kind: SymbolInformation_Kind.Function }],
     }]);
-    writeJson('acme/dart', 'd.exports.json', sidecar('pub:d'));
-    indexJson('acme/dart', [{ packageId: 'pub:d', indexer: 'scip-dart', scip: 'd.scip', exports: 'd.exports.json' }]);
+    writeJson('acme/dart', 'd.exports.json', sidecar('pub:acme/dart:d'));
+    indexJson('acme/dart', [{ packageId: 'pub:acme/dart:d', indexer: 'scip-dart', scip: 'd.scip', exports: 'd.exports.json' }]);
     // A TypeScript namespace declaration of kind Namespace stays a namespace.
     writeScip('acme/mono', 'lib.scip', [{
       path: 'src/a.ts',
@@ -1279,11 +1350,11 @@ describe('ingestOrg (synthetic SCIP)', () => {
       ],
       symbols: [{ symbol: `${LIB}src/\`a.ts\`/NS/`, kind: NS }],
     }]);
-    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:@acme/lib'));
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib'));
     const d = discover();
-    d.repos.push({ repo: 'acme/dart', packages: [{ packageId: 'pub:d', path: '.', entryPoints: ['lib/a.dart'] }] });
+    d.repos.push({ repo: 'acme/dart', packages: [{ packageId: 'pub:acme/dart:d', path: '.', entryPoints: ['lib/a.dart'] }] });
     run(d);
-    expect(db.prepare("SELECT name, kind FROM symbols WHERE package_id IN ('pub:d', 'npm:@acme/lib') ORDER BY package_id, name").all()).toEqual([
+    expect(db.prepare("SELECT name, kind FROM symbols WHERE package_id IN ('pub:acme/dart:d', 'npm:acme/mono:@acme/lib') ORDER BY package_id, name").all()).toEqual([
       { name: 'NS', kind: 'namespace' },
       { name: 'src/a.ts', kind: '' },
       { name: '$0', kind: 'import-prefix' },
@@ -1308,8 +1379,8 @@ describe('ingestOrg (synthetic SCIP)', () => {
   });
 
   it('leaves discover-owned rows and non-ingest flags alone, and is idempotent', () => {
-    db.prepare("INSERT INTO package_flags (package_id, flag, reason) VALUES ('npm:@acme/app', 'unindexed_consumer', 'build.py')").run();
-    db.prepare("INSERT INTO keep_rules (package_id, symbol_name) VALUES ('npm:@acme/lib', 'Foo')").run();
+    db.prepare("INSERT INTO package_flags (package_id, flag, reason) VALUES ('npm:acme/mono:@acme/app', 'unindexed_consumer', 'build.py')").run();
+    db.prepare("INSERT INTO keep_rules (package_id, symbol_name) VALUES ('npm:acme/mono:@acme/lib', 'Foo')").run();
     run();
     const first = tableCounts(db);
     run();

@@ -8,7 +8,7 @@ import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { blankComments, runWitness, stringLiterals, type WitnessDiscoverInput } from '../src/witness.ts';
 
-// A hand-built org: library P (npm:@acme/lib or pub:lib_pub) with one consumer C
+// A hand-built org: library P (npm:acme/lib:@acme/lib or pub:acme/lib:lib_pub) with one consumer C
 // whose package dir is <repo>/pkg. Every symbol gets a witness_pending finding.
 
 interface OrgSpec {
@@ -56,8 +56,8 @@ function buildOrg(spec: OrgSpec): Org {
   const manager = spec.manager ?? 'npm';
   const libName = manager === 'npm' ? '@acme/lib' : 'lib_pub';
   const appName = manager === 'npm' ? '@acme/app' : 'app_pub';
-  const P = `${manager}:${libName}`;
-  const C = `${manager}:${appName}`;
+  const P = `${manager}:acme/lib:${libName}`;
+  const C = `${manager}:acme/app:${appName}`;
   const root = mkdtempSync(join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-witness-'));
   roots.push(root);
   const libDir = join(root, 'lib');
@@ -79,7 +79,7 @@ function buildOrg(spec: OrgSpec): Org {
   run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/app', 'pkg', ?, ?, 'private')", C, manager, appName);
   // Another org package nested inside the consumer's dir: its files must be skipped.
   const nestedName = manager === 'npm' ? '@acme/nested' : 'nested_pub';
-  run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/app', 'pkg/nested', ?, ?, 'private')", `${manager}:${nestedName}`, manager, nestedName);
+  run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/app', 'pkg/nested', ?, ?, 'private')", `${manager}:acme/app:${nestedName}`, manager, nestedName);
   run('INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id, dev) VALUES (?, ?, ?, ?, ?)', C, libName, manager, P, spec.devDep ? 1 : 0);
   for (const [k, v] of Object.entries(spec.policy ?? {})) run('INSERT OR REPLACE INTO policy (key, value) VALUES (?, ?)', k, JSON.stringify(v));
   for (const k of spec.keep ?? []) run('INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, ?)', P, k);
@@ -111,7 +111,7 @@ function buildOrg(spec: OrgSpec): Org {
         localPath: appDir,
         packages: [
           { packageId: C, path: 'pkg' },
-          { packageId: `${manager}:${nestedName}`, path: 'pkg/nested' },
+          { packageId: `${manager}:acme/app:${nestedName}`, path: 'pkg/nested' },
         ],
       },
     ],
@@ -181,8 +181,8 @@ describe('runWitness', () => {
       files: { 'src/main.ts': "import { liveFn } from '@acme/lib';\n\n// deadFn is gone\nconst x = liveFn(deadFn); /* deadFn */\n" },
     });
     expect(witness(org)).toEqual({ checked: 1, passed: 0, mismatched: 1 });
-    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:4']);
-    expect(org.log.some((l) => l.includes('mismatch npm:@acme/lib#deadFn'))).toBe(true);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:4']);
+    expect(org.log.some((l) => l.includes('mismatch npm:acme/lib:@acme/lib#deadFn'))).toBe(true);
   });
 
   it('passes when the same name appears only in files that do not import P', () => {
@@ -228,10 +228,10 @@ describe('runWitness', () => {
     });
     expect(witness(on)).toEqual({ checked: 2, passed: 0, mismatched: 2 });
     expectMismatch(on, on.ids['testOnly']!, [
-      'witness_mismatch:npm:@acme/app:pkg/src/lib.test.ts:1',
-      'witness_mismatch:npm:@acme/app:pkg/src/lib.test.ts:2',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/lib.test.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/lib.test.ts:2',
     ]);
-    expectMismatch(on, on.ids['docOnly']!, ['witness_mismatch:npm:@acme/app:pkg/docs/example.ts:1']);
+    expectMismatch(on, on.ids['docOnly']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/docs/example.ts:1']);
   });
 
   it('scans test files of a consumer whose dependency on P is dev-only (docs stay skipped)', () => {
@@ -242,8 +242,8 @@ describe('runWitness', () => {
     const org = buildOrg({ symbols: [{ name: 'testOnly' }, { name: 'docOnly' }, { name: 'unnamed' }], files, devDep: true });
     expect(witness(org)).toEqual({ checked: 3, passed: 2, mismatched: 1 });
     expectMismatch(org, org.ids['testOnly']!, [
-      'witness_mismatch:npm:@acme/app:pkg/src/lib.test.ts:1',
-      'witness_mismatch:npm:@acme/app:pkg/src/lib.test.ts:2',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/lib.test.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/lib.test.ts:2',
     ]);
     expectPass(org, org.ids['docOnly']!);
     expectPass(org, org.ids['unnamed']!);
@@ -262,7 +262,7 @@ describe('runWitness', () => {
       files: { 'src/main.ts': "import {\n  liveFn,\n  deadFn,\n} from '@acme/lib';\n" },
     });
     witness(org);
-    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:3']);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:3']);
   });
 
   it('detects require(), import(), side-effect import and export-from forms', () => {
@@ -280,10 +280,10 @@ describe('runWitness', () => {
       },
     });
     expect(witness(org)).toEqual({ checked: 5, passed: 1, mismatched: 4 });
-    expectMismatch(org, org.ids['a']!, ['witness_mismatch:npm:@acme/app:pkg/src/req.cjs:2']);
-    expectMismatch(org, org.ids['b']!, ['witness_mismatch:npm:@acme/app:pkg/src/dyn.ts:2']);
-    expectMismatch(org, org.ids['c']!, ['witness_mismatch:npm:@acme/app:pkg/src/side.ts:2']);
-    expectMismatch(org, org.ids['d']!, ['witness_mismatch:npm:@acme/app:pkg/src/re.ts:1']);
+    expectMismatch(org, org.ids['a']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/req.cjs:2']);
+    expectMismatch(org, org.ids['b']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/dyn.ts:2']);
+    expectMismatch(org, org.ids['c']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/side.ts:2']);
+    expectMismatch(org, org.ids['d']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/re.ts:1']);
     expectPass(org, org.ids['e']!);
   });
 
@@ -293,7 +293,7 @@ describe('runWitness', () => {
       files: { 'src/main.ts': `import { x } from '@acme/lib';\n${'x;\n'.repeat(9)}` },
     });
     witness(org);
-    expectMismatch(org, org.ids['x']!, [1, 2, 3, 4, 5].map((n) => `witness_mismatch:npm:@acme/app:pkg/src/main.ts:${n}`));
+    expectMismatch(org, org.ids['x']!, [1, 2, 3, 4, 5].map((n) => `witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:${n}`));
   });
 
   it('detects pub package: imports and ignores other packages', () => {
@@ -307,8 +307,8 @@ describe('runWitness', () => {
       },
     });
     expect(witness(org)).toEqual({ checked: 3, passed: 1, mismatched: 2 });
-    expectMismatch(org, org.ids['deadWidget']!, ['witness_mismatch:pub:app_pub:pkg/lib/main.dart:3']);
-    expectMismatch(org, org.ids['interpWidget']!, ['witness_mismatch:pub:app_pub:pkg/lib/main.dart:4']);
+    expectMismatch(org, org.ids['deadWidget']!, ['witness_mismatch:pub:acme/app:app_pub:pkg/lib/main.dart:3']);
+    expectMismatch(org, org.ids['interpWidget']!, ['witness_mismatch:pub:acme/app:app_pub:pkg/lib/main.dart:4']);
     expectPass(org, org.ids['otherWidget']!);
   });
 
@@ -321,7 +321,7 @@ describe('runWitness', () => {
       files: { 'src/main.ts': "import * as W from '@acme/lib';\nimport anon from '@acme/lib/anon';\nexport default anon;\nW.x();\n" },
     });
     expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
-    expectMismatch(org, org.ids['src/anon.ts#default']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:2']);
+    expectMismatch(org, org.ids['src/anon.ts#default']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:2']);
     expectPass(org, org.ids['src/unused-anon.ts#default']!);
   });
 
@@ -342,16 +342,16 @@ describe('runWitness', () => {
     });
     expect(witness(org)).toEqual({ checked: 5, passed: 0, mismatched: 5 });
     expectMismatch(org, org.ids['src/b.ts#default']!, [
-      'witness_mismatch:npm:@acme/app:pkg/src/1.ts:1',
-      'witness_mismatch:npm:@acme/app:pkg/src/3.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/1.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/3.ts:1',
     ]);
     expectMismatch(org, org.ids['src/c.ts#default']!, [
-      'witness_mismatch:npm:@acme/app:pkg/src/1.ts:2',
-      'witness_mismatch:npm:@acme/app:pkg/src/3.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/1.ts:2',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/3.ts:1',
     ]);
     expectMismatch(org, org.ids['src/d/index.ts#default']!, [
-      'witness_mismatch:npm:@acme/app:pkg/src/2.ts:1',
-      'witness_mismatch:npm:@acme/app:pkg/src/3.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/2.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/3.ts:1',
     ]);
   });
 
@@ -365,8 +365,8 @@ describe('runWitness', () => {
     });
     expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
     expectMismatch(org, org.ids['internalName']!, [
-      'witness_mismatch:npm:@acme/app:pkg/src/main.ts:1',
-      'witness_mismatch:npm:@acme/app:pkg/src/main.ts:3',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:3',
     ]);
     expectPass(org, org.ids['otherInternal']!);
   });
@@ -388,9 +388,9 @@ describe('runWitness', () => {
       },
     });
     expect(witness(org)).toEqual({ checked: 4, passed: 1, mismatched: 3 });
-    expectMismatch(org, org.ids['pagesPlugin']!, ['witness_mismatch:npm:@acme/app:pkg/src/a.ts:1']);
-    expectMismatch(org, org.ids['workersPlugin']!, ['witness_mismatch:npm:@acme/app:pkg/src/b.ts:1']);
-    expectMismatch(org, org.ids['bunPlugin']!, ['witness_mismatch:npm:@acme/app:pkg/src/c.ts:1']);
+    expectMismatch(org, org.ids['pagesPlugin']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/a.ts:1']);
+    expectMismatch(org, org.ids['workersPlugin']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/b.ts:1']);
+    expectMismatch(org, org.ids['bunPlugin']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/c.ts:1']);
     expectPass(org, org.ids['nodePlugin']!);
   });
 
@@ -403,7 +403,7 @@ describe('runWitness', () => {
       files: { 'src/main.ts': "import lib from '@acme/lib';\nlib.fetch();\n" },
     });
     expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
-    expectMismatch(org, org.ids['app']!, ['witness_mismatch:npm:@acme/app:pkg/src/main.ts:1']);
+    expectMismatch(org, org.ids['app']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:1']);
     expectPass(org, org.ids['named']!);
   });
 
@@ -431,9 +431,9 @@ describe('runWitness', () => {
       },
     });
     witness(org);
-    expectMismatch(org, org.ids['cf']!, ['witness_mismatch:npm:@acme/app:pkg/src/a.ts:1']);
+    expectMismatch(org, org.ids['cf']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/a.ts:1']);
     expectPass(org, org.ids['dn']!);
-    expectMismatch(org, org.ids['pl']!, ['witness_mismatch:npm:@acme/app:pkg/src/b.ts:1']);
+    expectMismatch(org, org.ids['pl']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/b.ts:1']);
     expectPass(org, org.ids['pm']!);
   });
 
@@ -461,7 +461,7 @@ describe('runWitness', () => {
       },
     });
     witness(org);
-    expectMismatch(org, org.ids['usedInBuildPkg']!, ['witness_mismatch:npm:@acme/app:pkg/build/src/x.ts:1']);
+    expectMismatch(org, org.ids['usedInBuildPkg']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/build/src/x.ts:1']);
     expectPass(org, org.ids['onlyInDist']!);
   });
 
@@ -477,21 +477,21 @@ describe('runWitness', () => {
     write(appDir, '.gitignore', 'out/\n');
     execFileSync('git', ['init', '-q'], { cwd: appDir, stdio: 'ignore' });
     witness(org);
-    expectMismatch(org, org.ids['usedInBuild']!, ['witness_mismatch:npm:@acme/app:pkg/build/x.ts:1']);
+    expectMismatch(org, org.ids['usedInBuild']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/build/x.ts:1']);
     expectPass(org, org.ids['onlyInIgnored']!);
   });
 
   it('fails closed when a consumer checkout is missing', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }], missingCheckout: true });
     witness(org);
-    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:@acme/app:checkout missing']);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:acme/app:@acme/app:checkout missing']);
   });
 
   it('fails closed when a consumer is absent from discover.json', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
     org.discover.repos = org.discover.repos.filter((r) => r.repo !== 'acme/app');
     witness(org);
-    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:@acme/app:checkout missing']);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:npm:acme/app:@acme/app:checkout missing']);
   });
 
   it('lets the keep trigger throw on a pending row of a kept package, rolling back', () => {
@@ -795,7 +795,7 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
       },
     });
     for (const f of ['lib/mock.dart', 'lib/src/user.dart', 'lib/src/tags.dart']) {
-      org.db.prepare("INSERT INTO documents (package_id, file) VALUES ('pub:lib_pub', ?)").run(f);
+      org.db.prepare("INSERT INTO documents (package_id, file) VALUES ('pub:acme/lib:lib_pub', ?)").run(f);
     }
     witness(org);
     expectPass(org, org.ids['MockClient']!);
@@ -816,7 +816,7 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
         'tools/run.ts': "import { Real } from '@acme/lib';\nReal();\n",
       },
     });
-    org.db.prepare("INSERT INTO documents (package_id, file, is_generated) VALUES ('npm:@acme/lib', 'src/person.capnp.ts', 1)").run();
+    org.db.prepare("INSERT INTO documents (package_id, file, is_generated) VALUES ('npm:acme/lib:@acme/lib', 'src/person.capnp.ts', 1)").run();
     // An indexed, generated document is skipped by is_generated even though it is indexed.
     witness(org);
     expectPass(org, org.ids['Person']!);
@@ -834,12 +834,12 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
         'nested/bench/other.ts': "import { quiet } from '@acme/lib';\n",
       },
     });
-    const ins = org.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/nested', 'npm:@acme/lib', ?)");
+    const ins = org.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:acme/app:@acme/nested', 'npm:acme/lib:@acme/lib', ?)");
     for (const f of ['pkg/nested/bench/run.ts', 'pkg/nested/docs/x.ts']) ins.run(f);
     witness(org);
     expectMismatch(org, org.ids['benched']!, [
-      'witness_mismatch:npm:@acme/nested:pkg/nested/bench/run.ts:1',
-      'witness_mismatch:npm:@acme/nested:pkg/nested/bench/run.ts:2',
+      'witness_mismatch:npm:acme/app:@acme/nested:pkg/nested/bench/run.ts:1',
+      'witness_mismatch:npm:acme/app:@acme/nested:pkg/nested/bench/run.ts:2',
     ]);
     // docs files do not count (countDocsAsConsumers off); other.ts is not a witness_files row.
     expectPass(org, org.ids['documented']!);
@@ -847,7 +847,7 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
 
     // A self row (an own .vue component importing own code relatively): no import of P needed.
     const sfc = buildOrg({ symbols: [{ name: 'CardProps' }, { name: 'unnamed' }], libFiles: { 'components/Card.vue': "<script setup lang=\"ts\">\nimport { CardProps } from '../src/index';\n</script>\n" } });
-    sfc.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/lib', 'npm:@acme/lib', 'components/Card.vue')").run();
+    sfc.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:acme/lib:@acme/lib', 'npm:acme/lib:@acme/lib', 'components/Card.vue')").run();
     witness(sfc);
     expectMismatch(sfc, sfc.ids['CardProps']!, ['witness_mismatch:self:components/Card.vue:2']);
     expectPass(sfc, sfc.ids['unnamed']!);
@@ -862,10 +862,10 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
         'src/runner.ts': "export const load = () => import('@acme/lib/runners/node').then((m) => m.nodeRunner);\n",
       },
     });
-    const selfIns = selfImp.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/lib', 'npm:@acme/lib', ?)");
+    const selfIns = selfImp.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:acme/lib:@acme/lib', 'npm:acme/lib:@acme/lib', ?)");
     for (const f of ['build.config.ts', 'src/runner.ts']) selfIns.run(f);
-    const m = Number(selfImp.db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('mod r', 'npm:@acme/lib', 'src/runner.ts', 'src/runner.ts', 'file')").run().lastInsertRowid);
-    selfImp.db.prepare("INSERT INTO documents (package_id, file, module_symbol_id) VALUES ('npm:@acme/lib', 'src/runner.ts', ?)").run(m);
+    const m = Number(selfImp.db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('mod r', 'npm:acme/lib:@acme/lib', 'src/runner.ts', 'src/runner.ts', 'file')").run().lastInsertRowid);
+    selfImp.db.prepare("INSERT INTO documents (package_id, file, module_symbol_id) VALUES ('npm:acme/lib:@acme/lib', 'src/runner.ts', ?)").run(m);
     witness(selfImp);
     expectMismatch(selfImp, selfImp.ids['defineBuildConfig']!, ['witness_mismatch:self:build.config.ts:1', 'witness_mismatch:self:build.config.ts:2']);
     expectMismatch(selfImp, selfImp.ids['nodeRunner']!, ['witness_mismatch:self:src/runner.ts:1']);
@@ -873,9 +873,9 @@ describe('runWitness: P as its own consumer, and quoted names (self-string)', ()
 
     // A listed file that is gone from the checkout fails closed.
     const gone = buildOrg({ symbols: [{ name: 'x' }] });
-    gone.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:@acme/nested', 'npm:@acme/lib', 'pkg/nested/bench/gone.ts')").run();
+    gone.db.prepare("INSERT INTO witness_files (consumer_package_id, target_package_id, file) VALUES ('npm:acme/app:@acme/nested', 'npm:acme/lib:@acme/lib', 'pkg/nested/bench/gone.ts')").run();
     witness(gone);
-    expectMismatch(gone, gone.ids['x']!, ['witness_mismatch:npm:@acme/nested:checkout missing']);
+    expectMismatch(gone, gone.ids['x']!, ['witness_mismatch:npm:acme/app:@acme/nested:checkout missing']);
   });
 
   it('the codegen template case: the quoted helper name is a self-string hit (names outside the template are not self hits)', () => {
@@ -946,17 +946,30 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
   it('an ignored manifest depending on P is scanned: a hit downgrades with the ignored:<repo>/<manifest> consumer', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }, { name: 'otherFn' }] });
     withIgnored(org, [
-      { path: 'examples/demo', deps: ['npm:@acme/lib', null], files: { 'src/x.ts': IMPORTS, 'node_modules/y/i.ts': IMPORTS } },
+      { path: 'examples/demo', deps: ['npm:acme/lib:@acme/lib', null], files: { 'src/x.ts': IMPORTS, 'node_modules/y/i.ts': IMPORTS } },
     ]);
     expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
     expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:ignored:acme/lib/examples/demo/package.json:examples/demo/src/x.ts:2']);
     expectPass(org, org.ids['otherFn']!);
   });
 
+  it('an ignored manifest whose dep names several org packages (ambiguous) is scanned for every candidate', () => {
+    const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
+    const lib = org.discover.repos.find((r) => r.repo === 'acme/lib')!;
+    write(lib.localPath, 'examples/demo/src/x.ts', IMPORTS);
+    lib.ignoredManifests = [{
+      path: 'examples/demo',
+      manifest: 'examples/demo/package.json',
+      deps: [{ resolvedPackageId: null, candidates: ['npm:acme/lib:@acme/lib', 'npm:acme/fork:@acme/lib'] }],
+    }];
+    witness(org);
+    expectMismatch(org, org.ids['deadFn']!, ['witness_mismatch:ignored:acme/lib/examples/demo/package.json:examples/demo/src/x.ts:2']);
+  });
+
   it('an ignored manifest that does not depend on P is not scanned (as an ignored consumer)', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
     withIgnored(org, [
-      { path: 'examples/other', deps: [null, 'npm:@acme/app'], files: { 'src/x.ts': IMPORTS } },
+      { path: 'examples/other', deps: [null, 'npm:acme/app:@acme/app'], files: { 'src/x.ts': IMPORTS } },
       { path: 'templates/none', deps: [], files: { 'src/x.ts': IMPORTS } },
     ]);
     witness(org);
@@ -968,7 +981,7 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
   it('fails closed: a missing ignored-manifest dir is a mismatch; unknown deps are scanned for every package', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
     withIgnored(org, [
-      { path: 'examples/gone', deps: ['npm:@acme/lib'] },
+      { path: 'examples/gone', deps: ['npm:acme/lib:@acme/lib'] },
       { path: 'fixtures/bad', deps: [], depsUnknown: true, files: { 'a.ts': IMPORTS } },
     ]);
     witness(org);
@@ -982,10 +995,10 @@ describe('runWitness: ignored manifests (examples/templates/fixtures)', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
     withIgnored(org, [{
       path: 'examples/demo',
-      deps: ['npm:@acme/lib'],
+      deps: ['npm:acme/lib:@acme/lib'],
       files: { 'src/x.test.ts': IMPORTS, 'docs/d.ts': IMPORTS, 'real/src/x.ts': IMPORTS },
     }]);
-    org.discover.repos.find((r) => r.repo === 'acme/lib')!.packages.push({ packageId: 'npm:@acme/real', path: 'examples/demo/real' });
+    org.discover.repos.find((r) => r.repo === 'acme/lib')!.packages.push({ packageId: 'npm:acme/lib:@acme/real', path: 'examples/demo/real' });
     witness(org);
     expectPass(org, org.ids['deadFn']!);
   });
@@ -1008,7 +1021,7 @@ describe('runWitness: round 4 (entry vouching, messages, indexed consumer files)
       files: { 'vite.config.ts': "import dev from '@acme/lib';\nexport default dev();\n" },
     });
     expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
-    expectMismatch(org, org.ids['devServer']!, ['witness_mismatch:npm:@acme/app:pkg/vite.config.ts:1']);
+    expectMismatch(org, org.ids['devServer']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/vite.config.ts:1']);
     expectPass(org, org.ids['bunAdapter']!);
   });
 
@@ -1026,8 +1039,8 @@ describe('runWitness: round 4 (entry vouching, messages, indexed consumer files)
       },
     });
     expect(witness(org)).toEqual({ checked: 3, passed: 1, mismatched: 2 });
-    expectMismatch(org, org.ids['useHead']!, ['witness_mismatch:npm:@acme/app:pkg/src/a.ts:1']);
-    expectMismatch(org, org.ids['defineThing']!, ['witness_mismatch:npm:@acme/app:pkg/src/b.ts:1']);
+    expectMismatch(org, org.ids['useHead']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/a.ts:1']);
+    expectMismatch(org, org.ids['defineThing']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/b.ts:1']);
     expectPass(org, org.ids['notExported']!);
   });
 
@@ -1074,22 +1087,22 @@ describe('runWitness: round 4 (entry vouching, messages, indexed consumer files)
     });
     const { db, ids } = org;
     const run = (sql: string, ...p: Array<string | number>): number => Number(db.prepare(sql).run(...p).lastInsertRowid);
-    const mod = run("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('mod t', 'npm:@acme/app', 'pkg/src/t.ts', 'pkg/src/t.ts', 'file')");
-    run("INSERT INTO documents (package_id, file, module_symbol_id) VALUES ('npm:@acme/app', 'pkg/src/t.ts', ?)", mod);
+    const mod = run("INSERT INTO symbols (symbol_str, package_id, file, name, kind) VALUES ('mod t', 'npm:acme/app:@acme/app', 'pkg/src/t.ts', 'pkg/src/t.ts', 'file')");
+    run("INSERT INTO documents (package_id, file, module_symbol_id) VALUES ('npm:acme/app:@acme/app', 'pkg/src/t.ts', ?)", mod);
     const occ = (symbolId: number, line: number): void => {
       run(`INSERT INTO occurrences (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id)
-        VALUES (?, 'npm:@acme/app', 'npm:@acme/lib', 'pkg/src/t.ts', ?, 10, 8, ?)`, symbolId, line, mod);
+        VALUES (?, 'npm:acme/app:@acme/app', 'npm:acme/lib:@acme/lib', 'pkg/src/t.ts', ?, 10, 8, ?)`, symbolId, line, mod);
     };
     for (const [name, line] of [['findByText', 2], ['getBy', 4], ['findByTestId', 5]] as const) {
-      const other = run("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES (?, 'npm:@acme/lib', 'src/queries.ts', ?)", `ScreenQueries#${name}`, name);
+      const other = run("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES (?, 'npm:acme/lib:@acme/lib', 'src/queries.ts', ?)", `ScreenQueries#${name}`, name);
       occ(other, line);
     }
     occ(ids['getBy']!, 4);
     witness(org);
     expectPass(org, ids['findByTestId']!);
     expectPass(org, ids['findByText']!);
-    expectMismatch(org, ids['queryAll']!, ['witness_mismatch:npm:@acme/app:pkg/src/t.ts:4']);
-    expectMismatch(org, ids['getBy']!, ['witness_mismatch:npm:@acme/app:pkg/src/t.ts:5']);
+    expectMismatch(org, ids['queryAll']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/t.ts:4']);
+    expectMismatch(org, ids['getBy']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/t.ts:5']);
   });
 
   it('the same member access in an unindexed consumer file still counts (the current rule)', () => {
@@ -1098,6 +1111,6 @@ describe('runWitness: round 4 (entry vouching, messages, indexed consumer files)
       files: { 'src/t.ts': "import { screen } from '@acme/lib';\nscreen.findByTestId('x');\n" },
     });
     witness(org);
-    expectMismatch(org, org.ids['findByTestId']!, ['witness_mismatch:npm:@acme/app:pkg/src/t.ts:2']);
+    expectMismatch(org, org.ids['findByTestId']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/t.ts:2']);
   });
 });

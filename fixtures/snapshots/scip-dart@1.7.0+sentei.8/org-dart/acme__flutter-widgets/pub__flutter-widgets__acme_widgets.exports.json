@@ -1,0 +1,35 @@
+{
+  "entryPoints": [
+    "lib/acme_widgets.dart"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 6,
+      "entry": "lib/acme_widgets.dart",
+      "exportedAs": "AcmeBanner",
+      "file": "lib/acme_widgets.dart",
+      "line": 14,
+      "name": "AcmeBanner",
+      "sites": []
+    },
+    {
+      "col": 6,
+      "entry": "lib/acme_widgets.dart",
+      "exportedAs": "AcmeButton",
+      "file": "lib/acme_widgets.dart",
+      "line": 4,
+      "name": "AcmeButton",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/flutter-widgets:acme_widgets",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

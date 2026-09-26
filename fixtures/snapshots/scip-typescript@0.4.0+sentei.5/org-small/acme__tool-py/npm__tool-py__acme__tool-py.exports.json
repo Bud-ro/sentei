@@ -9,17 +9,9 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/app-skew",
+  "packageId": "npm:acme/tool-py:@acme/tool-py",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],
-  "unresolvedImports": [
-    {
-      "col": 9,
-      "file": "src/main.ts",
-      "line": 3,
-      "module": "@acme/widgets",
-      "name": "removedFn"
-    }
-  ]
+  "unresolvedImports": []
 }

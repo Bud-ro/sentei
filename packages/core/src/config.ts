@@ -25,7 +25,10 @@ export const DEFAULT_POLICY: Readonly<Policy> = Object.freeze({
 
 export interface OrgConfig {
   policy: Policy;
-  /** Org-wide keep entries, e.g. "npm:@acme/foo#sym", "pub:bar#*". */
+  /**
+   * Org-wide keep entries, e.g. "npm:@acme/foo#sym" (every package named @acme/foo),
+   * "npm:acme/lib:@acme/foo#sym" (only the one in repo acme/lib), "pub:bar#*".
+   */
   keep: string[];
   /**
    * `ignoreManifestDirs`: dir names (one path segment each) under which a manifest is
@@ -48,7 +51,7 @@ export function defaultOrgConfig(): OrgConfig {
 export interface ExtraEdge {
   /** e.g. "file:src/registry.ts" */
   from: string;
-  /** e.g. "npm:@acme/plugins#*" */
+  /** e.g. "npm:@acme/plugins#*" or "npm:acme/plugins:@acme/plugins#*" (PackageRef + "#<symbol|*>"). */
   to: string;
 }
 
@@ -62,18 +65,64 @@ export interface RepoConfig {
 
 export const EMPTY_REPO_CONFIG: Readonly<RepoConfig> = Object.freeze({ extraEntryPoints: [], extraEdges: [], keep: [] });
 
-/** Keep entry: "<manager>:<name>#<symbol|*>". */
-const KEEP_RE = /^(npm|pub):([^#]+)#([^#]+)$/;
+/**
+ * A reference to org packages in sentei.json (`keep`, `extraEdges[].to`):
+ * `<manager>:<name>` names every org package of that name (several repos may publish
+ * one name), `<manager>:<repo>:<name>` exactly one (repo = `<org>/<repo name>`, the
+ * package_id form).
+ */
+export interface PackageRef {
+  manager: 'npm' | 'pub';
+  /** `<org>/<repo name>`, or null for "every package with this name". */
+  repo: string | null;
+  name: string;
+}
 
+/** `<manager>:[<org>/<repo>:]<name>`; names contain no ':' or '#', repos exactly one '/'. */
+const PACKAGE_REF_RE = /^(npm|pub):(?:([^#:/]+\/[^#:/]+):)?([^#:]+)$/;
+
+export function parsePackageRef(ref: string): PackageRef | null {
+  const m = PACKAGE_REF_RE.exec(ref);
+  if (!m) return null;
+  return { manager: m[1] as 'npm' | 'pub', repo: m[2] ?? null, name: m[3]! };
+}
+
+/** package_id of the package `name` in `repo` (`<org>/<repo name>`): `<manager>:<repo>:<name>`. */
+export function packageIdOf(manager: string, repo: string, name: string): string {
+  return `${manager}:${repo}:${name}`;
+}
+
+/**
+ * Parts of a package_id (`<manager>:<repo>:<name>`; manager, repo and name contain no
+ * ':'), or null for anything else (e.g. an old-format `<manager>:<name>`).
+ */
+export function splitPackageId(id: string): { manager: string; repo: string; name: string } | null {
+  const a = id.indexOf(':');
+  const b = a < 0 ? -1 : id.indexOf(':', a + 1);
+  if (a <= 0 || b < 0 || id.indexOf(':', b + 1) >= 0) return null;
+  const repo = id.slice(a + 1, b);
+  if (!/^[^/]+\/[^/]+$/.test(repo) || b === id.length - 1) return null;
+  return { manager: id.slice(0, a), repo, name: id.slice(b + 1) };
+}
+
+/** Whether `ref` names package `pkg`. */
+export function packageRefMatches(ref: PackageRef, pkg: { manager: string; repo: string; name: string }): boolean {
+  return ref.manager === pkg.manager && ref.name === pkg.name && (ref.repo === null || ref.repo === pkg.repo);
+}
+
+/** Keep entry: "<package ref>#<symbol|*>" (see PackageRef). */
 export interface KeepRule {
-  packageId: string;
+  ref: PackageRef;
   symbolName: string;
 }
 
 export function parseKeepEntry(entry: string): KeepRule | null {
-  const m = KEEP_RE.exec(entry);
-  if (!m) return null;
-  return { packageId: `${m[1]}:${m[2]}`, symbolName: m[3]! };
+  const hash = entry.indexOf('#');
+  if (hash < 0) return null;
+  const ref = parsePackageRef(entry.slice(0, hash));
+  const symbolName = entry.slice(hash + 1);
+  if (!ref || symbolName === '' || symbolName.includes('#')) return null;
+  return { ref, symbolName };
 }
 
 function readJson(file: string): unknown | undefined {
@@ -100,7 +149,7 @@ function keepArray(file: string, v: unknown): string[] {
   const keep = stringArray(file, 'keep', v);
   for (const k of keep) {
     if (!parseKeepEntry(k)) {
-      throw new Error(`sentei: ${file}: keep entry ${JSON.stringify(k)} must look like "npm:<name>#<symbol>" or "pub:<name>#*"`);
+      throw new Error(`sentei: ${file}: keep entry ${JSON.stringify(k)} must look like "npm:<name>#<symbol>", "npm:<org>/<repo>:<name>#<symbol>" or "pub:<name>#*"`);
     }
   }
   return keep;

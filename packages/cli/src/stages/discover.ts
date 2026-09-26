@@ -41,8 +41,10 @@ export async function discover(ctx: StageContext): Promise<void> {
   writeFileSync(out, `${JSON.stringify(model, null, 2)}\n`);
   for (const r of model.repos) {
     const deps = r.packages.flatMap((p) => p.deps);
-    const external = deps.filter((d) => d.resolvedPackageId === null).length;
-    log(`${r.repo}: ${r.packages.length} package(s), ${deps.length} dep(s), ${deps.length - external} org-resolved, ${external} external`);
+    const ambiguous = deps.filter((d) => d.ambiguous === true).length;
+    const external = deps.filter((d) => d.resolvedPackageId === null).length - ambiguous;
+    log(`${r.repo}: ${r.packages.length} package(s), ${deps.length} dep(s), ${deps.length - external - ambiguous} org-resolved, `
+      + `${external} external${ambiguous > 0 ? `, ${ambiguous} ambiguous` : ''}`);
   }
   log(`wrote ${out}`);
 }

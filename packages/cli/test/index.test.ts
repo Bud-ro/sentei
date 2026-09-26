@@ -7,7 +7,7 @@ import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, runNode, runSurfaceWorker, scipTypescript, stderrTail, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, runNode, runSurfaceWorker, scipTypescript, stderrTail, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -49,7 +49,7 @@ beforeAll(async () => {
         headSha: 'sha-lib',
         packages: [
           {
-            packageId: 'npm:@acme/core',
+            packageId: 'npm:acme/lib-core:@acme/core',
             path: '.',
             manager: 'npm',
             name: '@acme/core',
@@ -67,18 +67,18 @@ beforeAll(async () => {
         headSha: 'sha-app',
         packages: [
           {
-            packageId: 'npm:@acme/app',
+            packageId: 'npm:acme/app:@acme/app',
             path: '.',
             manager: 'npm',
             name: '@acme/app',
             version: '1.0.0',
             visibility: 'private',
             entryPoints: ['src/main.ts'],
-            deps: [{ name: '@acme/core', manager: 'npm', constraint: '^1.0.0', resolvedPackageId: 'npm:@acme/core' }],
+            deps: [{ name: '@acme/core', manager: 'npm', constraint: '^1.0.0', resolvedPackageId: 'npm:acme/lib-core:@acme/core' }],
           },
           {
             // No indexer owns pub packages in M1.
-            packageId: 'pub:app_tool',
+            packageId: 'pub:acme/app:app_tool',
             path: 'tool',
             manager: 'pub',
             name: 'app_tool',
@@ -100,7 +100,7 @@ afterAll(() => {
 
 describe('index stage on fixtures/org-small', () => {
   it('writes non-empty .scip files for both packages', () => {
-    for (const f of ['acme__lib-core/npm__acme__core.scip', 'acme__app/npm__acme__app.scip']) {
+    for (const f of ['acme__lib-core/npm__lib-core__acme__core.scip', 'acme__app/npm__app__acme__app.scip']) {
       const p = path.join(work, 'index', f);
       expect(existsSync(p), f).toBe(true);
       expect(statSync(p).size, f).toBeGreaterThan(0);
@@ -112,27 +112,27 @@ describe('index stage on fixtures/org-small', () => {
     expect(lib).toMatchObject({ repo: 'acme/lib-core', headSha: 'sha-lib', status: 'ok' });
     expect(lib.packages).toEqual([
       expect.objectContaining({
-        packageId: 'npm:@acme/core',
+        packageId: 'npm:acme/lib-core:@acme/core',
         indexer: 'scip-typescript',
         indexerVersion: scipTypescript.version,
         status: 'ok',
-        scip: 'npm__acme__core.scip',
-        exports: 'npm__acme__core.exports.json',
+        scip: 'npm__lib-core__acme__core.scip',
+        exports: 'npm__lib-core__acme__core.exports.json',
       }),
     ]);
     const app = readJson<RepoIndex>(work, 'index/acme__app/index.json');
     expect(app.status).toBe('failed');
     expect(app.packages.map((p) => [p.packageId, p.status])).toEqual([
-      ['npm:@acme/app', 'ok'],
-      ['pub:app_tool', 'failed'],
+      ['npm:acme/app:@acme/app', 'ok'],
+      ['pub:acme/app:app_tool', 'failed'],
     ]);
     expect(app.packages[1]!.diagnostics).toEqual(['error: no indexer']);
-    expect(lines.some((l) => l.includes('npm:@acme/core: ok'))).toBe(true);
+    expect(lines.some((l) => l.includes('npm:acme/lib-core:@acme/core: ok'))).toBe(true);
   });
 
   it('lists exactly the lib export surface with export sites in the entry file', () => {
-    const sidecar = readJson<ExportsSidecar>(work, 'index/acme__lib-core/npm__acme__core.exports.json');
-    expect(sidecar.packageId).toBe('npm:@acme/core');
+    const sidecar = readJson<ExportsSidecar>(work, 'index/acme__lib-core/npm__lib-core__acme__core.exports.json');
+    expect(sidecar.packageId).toBe('npm:acme/lib-core:@acme/core');
     expect(sidecar.entryPoints).toEqual(['src/index.ts']);
     expect(sidecar.unresolved).toEqual([]);
     expect(sidecar.exports.map((e) => e.name).sort()).toEqual(['internalOnlyFn', 'unusedFn', 'usedFn']);
@@ -161,9 +161,9 @@ describe('index stage on fixtures/org-small', () => {
     lines = [];
     await index(ctx());
     expect(lines).toEqual([
-      '[index] acme/lib-core npm:@acme/core: cached (ok at sha-lib; use --force to re-index)',
-      '[index] acme/app npm:@acme/app: cached (ok at sha-app; use --force to re-index)',
-      '[index] acme/app pub:app_tool: cached (failed at sha-app; use --force to re-index)',
+      '[index] acme/lib-core npm:acme/lib-core:@acme/core: cached (ok at sha-lib; use --force to re-index)',
+      '[index] acme/app npm:acme/app:@acme/app: cached (ok at sha-app; use --force to re-index)',
+      '[index] acme/app pub:acme/app:app_tool: cached (failed at sha-app; use --force to re-index)',
     ]);
     expect(readFileSync(path.join(work, 'index/acme__app/index.json'), 'utf8')).toBe(before);
   });
@@ -1473,5 +1473,19 @@ describe('unjs final round (scope, SFC, generated files, heap retry, nuxt)', () 
         'warn: nuxt app without .nuxt/tsconfig.json; npm exec --yes -- nuxt prepare was killed by SIGTERM (timeout 10 min)',
       ]);
     });
+  });
+});
+
+describe('packageSlug', () => {
+  const pkg = (packageId: string, manager: string, name: string | null, p = '.') => ({ packageId, manager, name, path: p, entryPoints: [], deps: [] });
+  it('is <manager>__<repo name>__<name>, so same-name packages of two repos never share a file', () => {
+    expect(packageSlug(pkg('npm:acme/lib-core:@acme/core', 'npm', '@acme/core'))).toBe('npm__lib-core__acme__core');
+    expect(packageSlug(pkg('npm:acme/one:@acme/dup', 'npm', '@acme/dup'))).not.toBe(packageSlug(pkg('npm:acme/two:@acme/dup', 'npm', '@acme/dup')));
+    expect(packageSlug(pkg('pub:Workiva/w_flux:w_flux', 'pub', 'w_flux'))).toBe('pub__w_flux__w_flux');
+    // An npm and a pub package in one dir differ by manager; a nameless package uses its path.
+    expect(packageSlug(pkg('npm:acme/x:x', 'npm', 'x'))).not.toBe(packageSlug(pkg('pub:acme/x:x', 'pub', 'x')));
+    expect(packageSlug(pkg('npm:acme/x:x', 'npm', null, 'tools/gen'))).toBe('npm__x__tools__gen');
+    // An old-format id (no repo) keeps the old slug.
+    expect(packageSlug(pkg('npm:@acme/core', 'npm', '@acme/core'))).toBe('npm__acme__core');
   });
 });

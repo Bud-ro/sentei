@@ -1,5 +1,5 @@
-export { DEFAULT_POLICY, isPolicyKey, setPolicyValue } from './config.ts';
-export type { Policy } from './config.ts';
+export { DEFAULT_POLICY, isPolicyKey, packageIdOf, parsePackageRef, setPolicyValue, splitPackageId } from './config.ts';
+export type { PackageRef, Policy } from './config.ts';
 export { discoverLocal, writeDiscoverToDb } from './discover.ts';
 export type { DiscoverModel } from './discover.ts';
 export { runWitness } from './witness.ts';

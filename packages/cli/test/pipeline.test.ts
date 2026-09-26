@@ -15,6 +15,7 @@ import { ingest } from '../src/stages/ingest.ts';
 import { report } from '../src/stages/report.ts';
 import { witness } from '../src/stages/witness.ts';
 import { sarifSchemaErrors } from '../../core/test/helpers/sarif.ts';
+import { dropFlutterRepos, FLUTTER_REPOS, hasFlutter } from '../../../scripts/update-snapshots.ts';
 
 const FIXTURES = path.resolve(import.meta.dirname, '../../../fixtures');
 const NO_NODE_MODULES = { recursive: true, filter: (src: string) => path.basename(src) !== 'node_modules' };
@@ -132,42 +133,67 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
   }, 180_000);
 });
 
-describe('discover on fixtures/org-dup', () => {
-  it('fails on a duplicate org package name, naming the package and both repos', async () => {
+// Package identity is <manager>:<repo>:<name>: repos `one` and `two` both have
+// `@acme/dup` (two's is private), consumer `three` depends on `@acme/dup` and uses a
+// symbol only `one` defines. Resolution must pick `one` (the only published candidate),
+// the report must say so, and `two` is a package of its own with no consumer.
+describe('full pipeline on fixtures/org-dup (same package name in two repos)', () => {
+  it('resolves the consumer to the published package and matches expected-findings.json exactly', async () => {
     const org = copyFixture('org-dup');
-    await withCtx(org, async (ctx) => {
-      const err = await discover(ctx).then(() => null, (e: unknown) => e as Error);
-      expect(err).toBeInstanceOf(Error);
-      expect(err!.message).toContain('@acme/dup');
-      expect(err!.message).toMatch(/acme\/one|\bone\b/);
-      expect(err!.message).toMatch(/acme\/two|\btwo\b/);
-    });
-  });
+    const { rows, report: r, lines } = await runPipeline(org);
+    const want = sortRows(JSON.parse(readFileSync(path.join(FIXTURES, 'org-dup', 'expected-findings.json'), 'utf8')) as ExpectedRow[]);
+    expect(rows).toEqual(want);
+    expect(r.packages.map((p) => [p.package_id, p.name, p.repo, p.consumers])).toEqual([
+      ['npm:acme/one:@acme/dup', '@acme/dup', 'acme/one', ['npm:acme/three:@acme/three']],
+      ['npm:acme/three:@acme/three', '@acme/three', 'acme/three', []],
+      ['npm:acme/two:@acme/dup', '@acme/dup', 'acme/two', []],
+    ]);
+    expect(r.warnings).toContain(
+      'npm:acme/three:@acme/three depends on @acme/dup, which names several org packages; resolved to npm:acme/one:@acme/dup (published)');
+    expect(lines).toContain('[discover] note: 2 org packages are named npm:@acme/dup: npm:acme/one:@acme/dup, npm:acme/two:@acme/dup');
+    expect(lines).toContain(
+      '[discover] acme/three: npm:acme/three:@acme/three dep @acme/dup matches 2 org packages; resolved to npm:acme/one:@acme/dup (published)');
+    expect(r.versionSkew).toEqual([]);
+  }, 180_000);
 });
 
 // M3 acceptance (PLAN.md §10): the same pipeline on fixtures/org-dart (scip-dart).
 const HAS_DART = spawnSync('dart', ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0;
 if (!HAS_DART) console.warn('[pipeline.test] SKIPPING M3 acceptance: `dart` is not on PATH');
+const HAS_FLUTTER = hasFlutter();
+if (HAS_DART && !HAS_FLUTTER) console.warn('[pipeline.test] M3 acceptance WITHOUT the Flutter repos of fixtures/org-dart: `flutter` is not on PATH');
+const DART_FLUTTER = FLUTTER_REPOS['org-dart']!;
+
+/** Copy fixtures/org-dart; without `flutter`, minus its Flutter repos. */
+function copyDartFixture(): string {
+  const org = copyFixture('org-dart');
+  if (!HAS_FLUTTER) dropFlutterRepos('org-dart', org);
+  return org;
+}
 
 function expectedDart(file: string): ExpectedRow[] {
-  return sortRows(JSON.parse(readFileSync(path.join(FIXTURES, 'org-dart', file), 'utf8')) as ExpectedRow[]);
+  const rows = JSON.parse(readFileSync(path.join(FIXTURES, 'org-dart', file), 'utf8')) as ExpectedRow[];
+  const flutterPkgs = new Set(Object.values(DART_FLUTTER));
+  // A package id ends in its pub name (`pub:<name>` or `pub:<repo>:<name>`).
+  return sortRows(HAS_FLUTTER ? rows : rows.filter((r) => !flutterPkgs.has(r.package_id.slice(r.package_id.lastIndexOf(':') + 1))));
 }
 
 describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
   it.skipIf(!HAS_DART)('closed world (sentei.json as checked in) matches expected-findings.json exactly', async () => {
-    const org = copyFixture('org-dart');
+    const org = copyDartFixture();
     const { rows, report: r } = await runPipeline(org);
     expect(r.policy.assumeClosedWorld).toBe(true);
     expect(r.repos.map((x) => [x.repo, x.index_status]).sort()).toEqual([
       ['acme/dart-app', 'ok'],
       ['acme/dart-lib-pub', 'ok'],
       ['acme/dart-lib-x', 'ok'],
+      ...(HAS_FLUTTER ? Object.keys(DART_FLUTTER).sort().map((n) => [`acme/${n}`, 'ok']) : []),
     ]);
     expect(rows).toEqual(expectedDart('expected-findings.json'));
   }, 600_000);
 
   it.skipIf(!HAS_DART)('open world (assumeClosedWorld: false) matches expected-findings.open-world.json exactly', async () => {
-    const org = copyFixture('org-dart');
+    const org = copyDartFixture();
     const cfgPath = path.join(org, 'sentei.json');
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
     writeFileSync(cfgPath, JSON.stringify({ ...cfg, assumeClosedWorld: false }, null, 2));

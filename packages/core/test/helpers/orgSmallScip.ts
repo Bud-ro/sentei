@@ -62,8 +62,8 @@ export function buildOrgSmallInputs(scipTs: string): OrgSmallInputs {
   mkdirSync(join(repos, 'app/node_modules/@acme'), { recursive: true });
   symlinkSync('../../../lib-core', join(repos, 'app/node_modules/@acme/core'));
 
-  const lib = { repo: 'acme/lib-core', dir: join(repos, 'lib-core'), packageId: 'npm:@acme/core', name: '@acme/core', entry: 'src/index.ts' };
-  const app = { repo: 'acme/app', dir: join(repos, 'app'), packageId: 'npm:@acme/app', name: '@acme/app', entry: 'src/main.ts' };
+  const lib = { repo: 'acme/lib-core', dir: join(repos, 'lib-core'), packageId: 'npm:acme/lib-core:@acme/core', name: '@acme/core', entry: 'src/index.ts' };
+  const app = { repo: 'acme/app', dir: join(repos, 'app'), packageId: 'npm:acme/app:@acme/app', name: '@acme/app', entry: 'src/main.ts' };
 
   // Sidecar for @acme/core: `export { usedFn, unusedFn, internalOnlyFn } from './fns'`.
   const exported = ['usedFn', 'unusedFn', 'internalOnlyFn'];

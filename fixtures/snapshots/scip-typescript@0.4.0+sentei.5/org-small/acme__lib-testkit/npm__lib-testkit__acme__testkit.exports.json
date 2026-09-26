@@ -28,7 +28,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/testkit",
+  "packageId": "npm:acme/lib-testkit:@acme/testkit",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

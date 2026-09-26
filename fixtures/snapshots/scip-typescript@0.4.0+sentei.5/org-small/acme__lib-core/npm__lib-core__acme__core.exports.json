@@ -55,7 +55,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/core",
+  "packageId": "npm:acme/lib-core:@acme/core",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

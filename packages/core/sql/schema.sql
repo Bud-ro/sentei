@@ -24,8 +24,10 @@ CREATE TABLE IF NOT EXISTS repos (
 ) STRICT;
 
 -- Org-owned packages (npm package.json / pub pubspec.yaml), one per manifest.
+-- Identity is (repo, path, manager), not the name: two repos may publish the same
+-- name (a fork, a rewrite, a private copy), and both are real packages.
 CREATE TABLE IF NOT EXISTS packages (
-  package_id   TEXT PRIMARY KEY,                 -- "<manager>:<name>"
+  package_id   TEXT PRIMARY KEY,                 -- "<manager>:<repo>:<name>", e.g. "npm:acme/lib-core:@acme/core"
   repo         TEXT NOT NULL REFERENCES repos (repo) ON DELETE CASCADE,
   path         TEXT NOT NULL,                    -- dir of the manifest, POSIX, repo-relative
   manager      TEXT NOT NULL CHECK (manager IN ('npm', 'pub')),
@@ -37,11 +39,16 @@ CREATE TABLE IF NOT EXISTS packages (
   is_library   INTEGER NOT NULL DEFAULT 0 CHECK (is_library IN (0, 1)),
   entry_points TEXT NOT NULL DEFAULT '[]'
                CHECK (json_valid(entry_points) AND json_type(entry_points) = 'array'),
-  UNIQUE (manager, name),
-  CHECK (package_id = manager || ':' || name)
+  UNIQUE (repo, path, manager),
+  CHECK (package_id = manager || ':' || repo || ':' || name)
 ) STRICT;
+CREATE INDEX IF NOT EXISTS packages_name ON packages (manager, name);
 
--- Manifest-declared dependencies (not code references); resolved to org packages when possible.
+-- Manifest-declared dependencies (not code references); resolved to org packages by
+-- name when possible (discover.ts resolveDep): one org package of that name -> it
+-- (resolution 'name'); several -> the one in the consumer's repo ('same-repo'), else
+-- the only non-private one ('published'); otherwise ambiguous = 1, resolved_package_id
+-- NULL, and the consumer gets an `ambiguous_dep` flag targeted at every candidate.
 CREATE TABLE IF NOT EXISTS package_deps (
   consumer_package_id TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
   dep_name            TEXT NOT NULL,
@@ -51,11 +58,16 @@ CREATE TABLE IF NOT EXISTS package_deps (
   -- 1 = declared ONLY as a dev dependency (npm devDependencies / pub dev_dependencies):
   -- the consumer's test files are then real consumers of the target (analyze.sql).
   dev                 INTEGER NOT NULL DEFAULT 0 CHECK (dev IN (0, 1)),
+  resolution          TEXT CHECK (resolution IN ('name', 'same-repo', 'published')),
+  ambiguous           INTEGER NOT NULL DEFAULT 0 CHECK (ambiguous IN (0, 1)),
+  CHECK (ambiguous = 0 OR resolved_package_id IS NULL),
   PRIMARY KEY (consumer_package_id, dep_manager, dep_name)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS package_deps_resolved ON package_deps (resolved_package_id);
 
--- Interned SCIP symbols (definitions); symbol_str is the verbatim SCIP symbol string.
+-- Interned SCIP symbols (definitions); symbol_str is the SCIP symbol string with its
+-- package version replaced by '.', or, when several org packages share the symbol's
+-- package name, by the owning package_id (ingest.ts symbolKey), so it stays unique.
 CREATE TABLE IF NOT EXISTS symbols (
   symbol_id          INTEGER PRIMARY KEY,
   symbol_str         TEXT NOT NULL UNIQUE,
@@ -168,16 +180,19 @@ CREATE INDEX IF NOT EXISTS unresolved_refs_target ON unresolved_refs (target_pac
 -- NULL) makes the package opaque and blocks every package it depends on. A targeted row
 -- says "package_id has code we cannot see that uses target_package_id" (e.g. an
 -- unindexed eslint.config.mjs importing an org config package): it blocks only the
--- target, and does not make package_id itself opaque.
+-- target, and does not make package_id itself opaque. `ambiguous_dep` is always
+-- targeted: package_id names a package (manifest dep, or a SCIP reference) that several
+-- org packages share, and the one it means is unknown, so each candidate is blocked.
 CREATE TABLE IF NOT EXISTS package_flags (
   package_id        TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
   flag              TEXT NOT NULL CHECK (flag IN (
                       'opaque_consumer', 'index_failed', 'dynamic_access',
-                      'namespace_dynamic', 'unindexed_consumer')),
+                      'namespace_dynamic', 'unindexed_consumer', 'ambiguous_dep')),
   reason            TEXT,
   file              TEXT,
   target_package_id TEXT REFERENCES packages (package_id) ON DELETE CASCADE
-                    CHECK (target_package_id IS NOT package_id)
+                    CHECK (target_package_id IS NOT package_id),
+  CHECK (flag <> 'ambiguous_dep' OR target_package_id IS NOT NULL)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS package_flags_package ON package_flags (package_id);
 
@@ -198,6 +213,8 @@ INSERT OR IGNORE INTO policy (key, value) VALUES
   ('countDocsAsConsumers', 'false');
 
 -- `keep` list entries ("<package_id>#<symbol name>"); symbol_name '*' keeps every symbol.
+-- A name-only sentei.json entry ("npm:<name>#sym") is expanded at discover to one row
+-- per package of that name.
 CREATE TABLE IF NOT EXISTS keep_rules (
   package_id  TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
   symbol_name TEXT NOT NULL,

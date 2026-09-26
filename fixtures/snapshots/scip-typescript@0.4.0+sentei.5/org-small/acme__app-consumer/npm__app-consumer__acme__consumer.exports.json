@@ -35,7 +35,7 @@
     }
   ],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/consumer",
+  "packageId": "npm:acme/app-consumer:@acme/consumer",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

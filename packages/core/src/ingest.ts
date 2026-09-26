@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, posix } from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import { parsePackageRef, packageRefMatches } from './config.ts';
 import { DISCOVER_REASON_PREFIX } from './discover.ts';
 import { matchGlob } from './glob.ts';
 import { GENERATED_GLOBS } from './globs.ts';
@@ -255,6 +256,14 @@ export interface IngestCounts {
    * the org (e.g. scip-dart's `dart:core … Map#[]=().`): ingest would drop them anyway.
    */
   skippedInvalidOccurrences: number;
+  /**
+   * Occurrences / sidecar refs dropped because their package NAME belongs to several org
+   * packages and the consumer's manifest deps do not say which one it means (see
+   * resolveName in ingestOrg). The consumer is flagged `ambiguous_dep` at every
+   * candidate (discover already did when it declares the dep; ingest adds the rows,
+   * reason `ingest: …`, when it does not), so the dropped uses cannot make them look dead.
+   */
+  ambiguousSymbolRefs: number;
   warnings: number;
 }
 
@@ -265,10 +274,13 @@ export interface IngestCounts {
  * deletes only the targeted ones, so discover's rows survive every ingest.
  * `opaque_consumer` is shared too: discover writes rows whose reason starts with
  * DISCOVER_REASON_PREFIX (`discover: unresolved entry point …`); ingest deletes only
- * the others.
+ * the others. `ambiguous_dep` likewise: ingest deletes only rows whose reason starts
+ * with INGEST_AMBIGUOUS_PREFIX.
  */
 const INGEST_FLAGS = ['opaque_consumer', 'index_failed', 'dynamic_access', 'namespace_dynamic'] as const;
-type IngestFlag = (typeof INGEST_FLAGS)[number] | 'unindexed_consumer';
+type IngestFlag = (typeof INGEST_FLAGS)[number] | 'unindexed_consumer' | 'ambiguous_dep';
+/** Reason prefix of the `ambiguous_dep` rows ingest writes (and deletes); discover's lack it. */
+const INGEST_AMBIGUOUS_PREFIX = 'ingest: ';
 const SIDECAR_FLAGS: ReadonlySet<string> = new Set(['namespace_dynamic', 'dynamic_access']);
 
 /** Bare package name of a module specifier: `@scope/x/deep` -> `@scope/x`, `x/deep` -> `x`. */
@@ -360,6 +372,30 @@ function rawSymbolPackage(str: string): string | undefined {
   if (comps.length < 3 || comps[0] === '') return undefined;
   const dot = (c: string): string => (c === '.' ? '' : c);
   return `${dot(comps[1]!)}:${dot(comps[2]!)}`;
+}
+
+/**
+ * Interning key of a version-normalized SCIP symbol (`norm`: version already '.') of
+ * org package `packageId`. SCIP names a package only by `<manager> <name>`, and several
+ * org packages may share a name (package ids are `<manager>:<repo>:<name>`): then the
+ * version component is replaced by the package id (it contains no space), so the two
+ * packages' `src/\`index.ts\`/foo().` stay distinct symbols. Unshared names (and
+ * non-org symbols: packageId undefined) keep `norm` as is.
+ */
+export function symbolKey(norm: string, packageId: string | undefined, shared: boolean): string {
+  if (packageId === undefined || !shared) return norm;
+  // norm = scheme ' ' manager ' ' name ' ' '.' ' ' descriptors, spaces in a component doubled.
+  let comps = 0;
+  for (let i = 0; i < norm.length; i += 1) {
+    if (norm[i] !== ' ') continue;
+    if (norm[i + 1] === ' ') {
+      i += 1;
+      continue;
+    }
+    comps += 1;
+    if (comps === 3) return `${norm.slice(0, i + 1)}${packageId}${norm.slice(i + 2)}`;
+  }
+  return norm;
 }
 
 /**
@@ -491,6 +527,43 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
 
   // Packages from discover, cross-checked against the DB (discover owns those rows).
   const pkgs = new Map<string, PkgInfo>();
+  // Name resolution (package ids are `<manager>:<repo>:<name>`; SCIP symbols and sidecar
+  // targets carry only the name): every org package by `<manager>:<name>`, each package's
+  // own name, and each consumer's manifest deps resolved by discover, by target name.
+  const byName = new Map<string, string[]>();
+  const nameKeyOf = new Map<string, string>();
+  for (const r of db.prepare('SELECT package_id, manager, name FROM packages ORDER BY package_id').all() as Array<{
+    package_id: string; manager: string; name: string;
+  }>) {
+    const key = `${r.manager}:${r.name}`;
+    nameKeyOf.set(r.package_id, key);
+    byName.set(key, [...(byName.get(key) ?? []), r.package_id]);
+  }
+  const depByName = new Map<string, Map<string, string>>();
+  for (const r of db.prepare(`SELECT d.consumer_package_id AS c, p.manager || ':' || p.name AS key, d.resolved_package_id AS id
+    FROM package_deps d JOIN packages p ON p.package_id = d.resolved_package_id ORDER BY d.consumer_package_id, d.dep_name`).all() as Array<{
+    c: string; key: string; id: string;
+  }>) {
+    let m = depByName.get(r.c);
+    if (!m) depByName.set(r.c, (m = new Map()));
+    if (!m.has(r.key)) m.set(r.key, r.id);
+  }
+  /** Several org packages have this `<manager>:<name>`. */
+  const sharedName = (key: string): boolean => (byName.get(key)?.length ?? 0) > 1;
+  /**
+   * The org package that consumer `consumer` means by package name `<manager>:<name>`
+   * (`key`): its own name -> itself; the only org package of that name -> it; the
+   * package its manifest dep of that name resolved to (discover: same repo, else the
+   * only published one) -> it. `ambiguous` (with every candidate) when the name is
+   * shared and none of those applies; `undefined` for a non-org name.
+   */
+  const resolveName = (consumer: string, key: string): string | { ambiguous: string[] } | undefined => {
+    const cands = byName.get(key);
+    if (cands === undefined) return undefined;
+    if (nameKeyOf.get(consumer) === key) return consumer;
+    if (cands.length === 1) return cands[0]!;
+    return depByName.get(consumer)?.get(key) ?? { ambiguous: cands };
+  };
   const dbPkgs = new Map(
     (db.prepare('SELECT package_id, repo FROM packages').all() as Array<{ package_id: string; repo: string }>)
       .map((r) => [r.package_id, r.repo]),
@@ -514,7 +587,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, shorthandRefs: 0, unmatchedShorthandRefs: 0, exportAliases: 0,
     resolvedUnresolvedImports: 0,
     unmatchedEntrySymbols: 0, namespaceSpreadRefs: 0, unmatchedNamespaceSpreadRefs: 0, droppedModuleRefs: 0, witnessFiles: 0,
-    generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0, warnings: 0,
+    generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0,
+    ambiguousSymbolRefs: 0, warnings: 0,
   };
 
   db.exec('BEGIN');
@@ -532,8 +606,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     db.exec('DELETE FROM symbols');
     db.prepare(`DELETE FROM package_flags WHERE (flag IN (${INGEST_FLAGS.map((f) => `'${f}'`).join(', ')})
         AND NOT (flag = 'opaque_consumer' AND substr(coalesce(reason, ''), 1, ?) = ?))
-      OR (flag = 'unindexed_consumer' AND target_package_id IS NOT NULL)`)
-      .run(DISCOVER_REASON_PREFIX.length, DISCOVER_REASON_PREFIX);
+      OR (flag = 'unindexed_consumer' AND target_package_id IS NOT NULL)
+      OR (flag = 'ambiguous_dep' AND substr(coalesce(reason, ''), 1, ?) = ?)`)
+      .run(DISCOVER_REASON_PREFIX.length, DISCOVER_REASON_PREFIX, INGEST_AMBIGUOUS_PREFIX.length, INGEST_AMBIGUOUS_PREFIX);
     // Findings are gone, so the DB is no longer analyzed (witness/report check this marker;
     // run_params is created by analyze.sql, so it may not exist yet).
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_params'").get()) {
@@ -563,6 +638,17 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     const addFlag = (packageId: string, flag: IngestFlag, reason: string, file: string | null, target: string | null = null): void => {
       st.flag.run(packageId, flag, reason, file, target);
       counts.flags += 1;
+    };
+    /**
+     * A use by `consumer` of shared package name `key` that cannot be attributed
+     * (resolveName: ambiguous) is dropped; the consumer is then flagged ambiguous_dep at
+     * every candidate once all refs are read ("Ambiguous package names" below), fail closed.
+     */
+    const ambiguousUses = new Map<string, { consumer: string; key: string; candidates: string[]; file: string | null }>();
+    const noteAmbiguous = (consumer: string, key: string, candidates: string[], file: string | null): void => {
+      counts.ambiguousSymbolRefs += 1;
+      const k = `${consumer}\0${key}`;
+      if (!ambiguousUses.has(k)) ambiguousUses.set(k, { consumer, key, candidates, file });
     };
 
     // ---- Load index.json / sidecars, map documents to packages ------------
@@ -637,7 +723,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           counts.packageErrors += 1;
           continue;
         }
-        const { bad, skippedOccurrences } = checkSymbols(index.documents, validSymbols, skippedSymbols, (id) => pkgs.has(id));
+        const { bad, skippedOccurrences } = checkSymbols(index.documents, validSymbols, skippedSymbols, (key) => byName.has(key));
         if (bad.length > 0) {
           const why = `invalid SCIP symbol ${JSON.stringify(bad[0])}${bad.length > 1 ? ` (+${bad.length - 1} more)` : ''}`;
           warn(`${ip.packageId}: ${bad.length} invalid SCIP symbol(s), e.g. ${JSON.stringify(bad[0])}; flagged index_failed, package skipped`);
@@ -732,9 +818,17 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       const last = p?.descriptors.at(-1);
       return last !== undefined && last.suffix !== 'parameter' && last.suffix !== 'type_parameter';
     };
-    const symbolPackage = (p: ParsedGlobal): string | undefined => {
-      const id = `${p.manager}:${p.name}`;
-      return pkgs.has(id) ? id : undefined;
+    /**
+     * The org package symbol `p` belongs to, as seen from document `w` (resolveName), and
+     * its interning key (symbolKey). `ambiguous`: a shared name `w`'s package cannot
+     * attribute (noteAmbiguous).
+     */
+    const symbolTarget = (w: DocWork, p: ParsedGlobal, norm: string):
+      { pkg: string | undefined; key: string } | { ambiguous: string[]; nameKey: string } => {
+      const nameKey = `${p.manager}:${p.name}`;
+      const pkg = resolveName(w.packageId, nameKey);
+      if (typeof pkg === 'object') return { ambiguous: pkg.ambiguous, nameKey };
+      return { pkg, key: symbolKey(norm, pkg, sharedName(nameKey)) };
     };
     /** `${repo}\0${file}\0${line}\0${col}` of every definition occurrence -> symbol_id. */
     const defPositions = new Map<string, number>();
@@ -763,12 +857,19 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         if (!interesting(p)) continue;
         const start = occurrenceStart(o);
         if (!start) continue;
-        const own = symbolPackage(p);
+        const t = symbolTarget(w, p, normalizeSymbolVersion(o.symbol));
+        if ('ambiguous' in t) {
+          // A definition in w of a symbol named for a shared package name w's package
+          // does not own or depend on (module augmentation): not interned.
+          if (round === 0) noteAmbiguous(w.packageId, t.nameKey, t.ambiguous, w.file);
+          continue;
+        }
+        const own = t.pkg;
         if (round === 0 && own !== undefined && own !== w.packageId) {
           deferred.push({ w, o });
           continue;
         }
-        const norm = normalizeSymbolVersion(o.symbol);
+        const norm = t.key;
         let row = symbols.get(norm);
         if (!row) {
           const isModule = p.descriptors.every((d) => d.suffix === 'namespace')
@@ -909,10 +1010,16 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         if (!interesting(p)) continue;
         const start = occurrenceStart(o);
         if (!start) continue;
-        const norm = normalizeSymbolVersion(o.symbol);
+        const plain = normalizeSymbolVersion(o.symbol);
+        const t = symbolTarget(w, p, plain);
+        if ('ambiguous' in t) {
+          if ((o.symbolRoles & DEFINITION) === 0) noteAmbiguous(w.packageId, t.nameKey, t.ambiguous, w.file); // defs: pass 1
+          continue;
+        }
+        const norm = t.key;
         const row = symbols.get(norm) ?? undefinedRefOwner(norm, p, o.symbolRoles);
         if (!row) {
-          const target = symbolPackage(p);
+          const target = t.pkg;
           if (target !== undefined && target !== w.packageId) {
             // A module / namespace symbol (`…/\`utils.d.ts\`/`) names a file, not a
             // declaration: skew residue, not a missing symbol.
@@ -920,7 +1027,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
               counts.droppedModuleRefs += 1;
               continue;
             }
-            st.unresolved.run(w.packageId, target, norm, w.file, start.line, start.col);
+            st.unresolved.run(w.packageId, target, plain, w.file, start.line, start.col);
             counts.unresolved += 1;
           }
           continue;
@@ -951,7 +1058,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         const unmatchedRefs: string[] = [];
         for (const r of refs) {
           const label = `${packageId} ${r.file}:${r.line + 1}:${r.col + 1} ${r.member} -> ${r.targetPackage}/${r.targetFile}:${r.targetLine + 1}:${r.targetCol + 1}`;
-          const target = pkgs.get(`npm:${r.targetPackage}`);
+          const resolved = resolveName(packageId, `npm:${r.targetPackage}`);
+          if (typeof resolved === 'object') {
+            noteAmbiguous(packageId, `npm:${r.targetPackage}`, resolved.ambiguous, r.file);
+            continue;
+          }
+          const target = resolved === undefined ? undefined : pkgs.get(resolved);
           if (!target) {
             warn(`${what} ${label}: target is not an org package, ignored`);
             continue;
@@ -1084,13 +1196,15 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         if (!SIDECAR_FLAGS.has(f.flag)) throw new Error(`sentei: ${packageId} exports sidecar: unknown flag ${JSON.stringify(f.flag)}`);
         // Targeted only at another org package; a self target or a non-org one stays
         // untargeted (fail closed: the package itself is opaque, and blocks its deps).
-        let target: string | null = null;
+        // A shared name the consumer cannot attribute targets every candidate.
+        let targets: Array<string | null> = [null];
         if (f.targetPackage !== undefined) {
-          const t = `npm:${f.targetPackage}`;
-          if (pkgs.has(t) && t !== packageId) target = t;
+          const t = resolveName(packageId, `npm:${f.targetPackage}`);
+          if (typeof t === 'object') targets = t.ambiguous.filter((c) => c !== packageId);
+          else if (t !== undefined && t !== packageId && pkgs.has(t)) targets = [t];
           else if (t !== packageId) warn(`${packageId}: ${f.flag} flag targets ${JSON.stringify(f.targetPackage)}, not an org package; kept untargeted`);
         }
-        addFlag(packageId, f.flag, f.reason, f.file ?? null, target);
+        for (const target of targets) addFlag(packageId, f.flag, f.reason, f.file ?? null, target);
       }
       // Unindexed files importing an org package: we cannot see what they use, so the
       // target gets no verdict (blocked_packages); the consumer itself stays transparent.
@@ -1101,7 +1215,10 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           relativeImports.push({ packageId, repo, file: u.file, module: u.module });
           continue;
         }
-        const target = `npm:${barePackageName(u.module)}`;
+        const resolved = resolveName(packageId, `npm:${barePackageName(u.module)}`);
+        // A shared name the consumer cannot attribute: treated as an import of every candidate.
+        const targets = typeof resolved === 'object' ? resolved.ambiguous : resolved === undefined ? [] : [resolved];
+        const target = targets.length === 1 ? targets[0]! : undefined;
         // A self import by name the program could not follow: an own file outside the
         // program (`build.config.ts`, `eslint.config.mjs`), or an indexed file whose
         // self-import did not resolve (`import('env-runner/runners/x')`): a self
@@ -1111,16 +1228,16 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           counts.witnessFiles += Number(st.witnessFile.run(packageId, packageId, u.file).changes);
           continue;
         }
-        if (!pkgs.has(target)) {
+        if (targets.length === 0) {
           warn(`${packageId}: unindexed import of ${JSON.stringify(u.module)} at ${u.file}`
             + ` does not name another org package, ignored`);
           continue;
         }
-        if (u.scope !== undefined) {
-          counts.witnessFiles += Number(st.witnessFile.run(packageId, target, u.file).changes);
-          continue;
+        for (const t of targets) {
+          if (t === packageId) continue;
+          if (u.scope !== undefined) counts.witnessFiles += Number(st.witnessFile.run(packageId, t, u.file).changes);
+          else addFlag(packageId, 'unindexed_consumer', `unindexed file imports ${u.module}`, u.file, t);
         }
-        addFlag(packageId, 'unindexed_consumer', `unindexed file imports ${u.module}`, u.file, target);
       }
     }
     // ---- Sidecar unresolvedImports (after every sidecar's exports are known) -----
@@ -1140,8 +1257,13 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       for (const { packageId, repo, data } of sidecars) {
         const manager = packageId.slice(0, packageId.indexOf(':'));
         for (const u of data.unresolvedImports ?? []) {
-          const target = `${manager}:${barePackageName(u.module)}`;
-          if (!pkgs.has(target) || target === packageId) {
+          const resolved = resolveName(packageId, `${manager}:${barePackageName(u.module)}`);
+          if (typeof resolved === 'object') {
+            noteAmbiguous(packageId, `${manager}:${barePackageName(u.module)}`, resolved.ambiguous, u.file);
+            continue;
+          }
+          const target = resolved;
+          if (target === undefined || target === packageId) {
             warn(`${packageId}: unresolved import ${JSON.stringify(u.name)} from ${JSON.stringify(u.module)} at ${u.file}`
               + ` does not name another org package, ignored`);
             continue;
@@ -1235,7 +1357,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       for (const { packageId, repo, data } of sidecars) {
         for (const r of data.namespaceSpreadRefs ?? []) {
           const label = `${packageId} ${r.file}:${r.line + 1}:${r.col + 1} ...${r.targetPackage}/${r.targetFile}`;
-          const target = pkgs.get(`npm:${r.targetPackage}`);
+          const resolved = resolveName(packageId, `npm:${r.targetPackage}`);
+          if (typeof resolved === 'object') {
+            noteAmbiguous(packageId, `npm:${r.targetPackage}`, resolved.ambiguous, r.file);
+            continue;
+          }
+          const target = resolved === undefined ? undefined : pkgs.get(resolved);
           if (!target) {
             warn(`namespace spread ref ${label}: target is not an org package, ignored`);
             continue;
@@ -1277,6 +1404,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     // ---- Overlays (sentei.json extraEdges) ---------------------------------
     const docModule = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w.moduleSymbolId]));
     const exportedByPkg = db.prepare('SELECT symbol_id, package_id, name FROM symbols WHERE is_exported = 1 AND package_id = ?');
+    const allPkgRows = db.prepare('SELECT package_id, manager, repo, name FROM packages').all() as Array<{
+      package_id: string; manager: string; repo: string; name: string;
+    }>;
     for (const r of discover.repos) {
       for (const e of r.config?.extraEdges ?? []) {
         const label = `${r.repo} sentei.json extraEdges ${JSON.stringify(e)}`;
@@ -1290,13 +1420,37 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           warn(`${label}: unknown source file or malformed target, ignored`);
           continue;
         }
-        const targets = (exportedByPkg.all(m[1]!) as Array<{ symbol_id: number; package_id: string; name: string }>)
+        // `npm:<name>` names every package of that name (fail closed: more edges), `npm:<org>/<repo>:<name>` one.
+        const ref = parsePackageRef(m[1]!);
+        const toPkgs = ref === null ? [] : allPkgRows.filter((p) => packageRefMatches(ref, p)).map((p) => p.package_id);
+        const targets = toPkgs.flatMap((id) => exportedByPkg.all(id) as Array<{ symbol_id: number; package_id: string; name: string }>)
           .filter((t) => m[2] === '*' || t.name === m[2]);
         if (targets.length === 0) {
           warn(`${label}: target matches no exported symbol, ignored`);
           continue;
         }
         for (const t of targets) edgeRun(st.edge, byId.get(fromId)!, { symbolId: t.symbol_id, packageId: t.package_id }, 'overlay');
+      }
+    }
+
+    // ---- Ambiguous package names (noteAmbiguous) -----------------------------
+    {
+      const flagged = db.prepare(`SELECT 1 FROM package_flags
+        WHERE package_id = ? AND target_package_id = ? AND flag = 'ambiguous_dep' LIMIT 1`);
+      for (const a of ambiguousUses.values()) {
+        const name = a.key.slice(a.key.indexOf(':') + 1);
+        const reason = `${INGEST_AMBIGUOUS_PREFIX}uses of ${name} match ${a.candidates.length} org packages: ${a.candidates.join(', ')}`;
+        let added = 0;
+        for (const c of a.candidates) {
+          if (c === a.consumer || flagged.get(a.consumer, c)) continue;
+          addFlag(a.consumer, 'ambiguous_dep', reason, a.file, c);
+          added += 1;
+        }
+        if (added > 0) {
+          warn(`${a.consumer}: uses of ${name} match ${a.candidates.length} org packages (${a.candidates.join(', ')}) and no `
+            + 'manifest dependency says which; dropped, every candidate blocked (ambiguous_dep). Declare the dependency, or '
+            + 'exclude the other manifests with ignoreManifests in the org sentei.json');
+        }
       }
     }
 
@@ -1318,6 +1472,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     + (counts.witnessFiles > 0 ? ` witnessFiles=${counts.witnessFiles}` : '')
     + (counts.generatedDocuments > 0 ? ` generatedDocuments=${counts.generatedDocuments}` : '')
     + (counts.packageErrors > 0 ? ` packageErrors=${counts.packageErrors}` : '')
-    + (counts.skippedInvalidOccurrences > 0 ? ` skippedInvalidOccurrences=${counts.skippedInvalidOccurrences}` : ''));
+    + (counts.skippedInvalidOccurrences > 0 ? ` skippedInvalidOccurrences=${counts.skippedInvalidOccurrences}` : '')
+    + (counts.ambiguousSymbolRefs > 0 ? ` ambiguousSymbolRefs=${counts.ambiguousSymbolRefs}` : ''));
   return counts;
 }

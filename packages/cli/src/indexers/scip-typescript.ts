@@ -21,6 +21,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { splitPackageId } from '@sentei/core';
 import type { SurfaceJob, SurfaceWorkerResult } from './surface-worker.ts';
 import type { DiscoveredPackage, DiscoveredRepo, ExportsSidecar, Indexer, IndexerInput, IndexerResult, IndexStatus } from './types.ts';
 import { worstStatus } from './types.ts';
@@ -35,15 +36,20 @@ function scipTypescriptBin(): string {
 }
 
 /**
- * Filesystem-safe name for a package's output files, prefixed with the
- * manager so an npm and a pub package in the same dir (a `package.json` next
- * to a `pubspec.yaml`, often with the same name) never share a file:
- * `npm:@acme/core` → `npm__acme__core`, `pub:acme_x` → `pub__acme_x`.
+ * Filesystem-safe name for a package's output files: manager, repo name (without the
+ * org) and package name, so an npm and a pub package in the same dir (a `package.json`
+ * next to a `pubspec.yaml`, often with the same name) never share a file, and two repos
+ * publishing the same name never collide either:
+ * `npm:acme/lib-core:@acme/core` → `npm__lib-core__acme__core`,
+ * `pub:acme/x:acme_x` → `pub__x__acme_x`. A package id without a repo (old
+ * `<manager>:<name>` form) gives `<manager>__<name>`. The Dart adapter uses this too.
  */
 export function packageSlug(pkg: DiscoveredPackage): string {
   const base = pkg.name ?? (pkg.path === '.' ? 'root' : pkg.path);
   const clean = (s: string): string => s.replace(/^@/, '').replace(/\//g, '__').replace(/[^A-Za-z0-9._-]/g, '_');
-  return `${clean(pkg.manager)}__${clean(base)}`;
+  const repo = splitPackageId(pkg.packageId)?.repo;
+  const repoName = repo === undefined ? undefined : repo.slice(repo.indexOf('/') + 1);
+  return [pkg.manager, ...(repoName === undefined ? [] : [repoName]), base].map(clean).join('__');
 }
 
 export function packageDir(repo: DiscoveredRepo, pkg: DiscoveredPackage): string {

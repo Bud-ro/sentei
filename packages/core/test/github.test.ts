@@ -178,7 +178,7 @@ describe('discoverGithub (file:// clones, fake API)', () => {
       ['acme/lib', lib.shas[0], join(clonesDir, 'lib'), 'main'],
     ]);
     // lib was pinned to its first commit: no index.ts yet.
-    expect(model.repos[1]!.packages.map((p) => [p.packageId, p.entryPoints])).toEqual([['npm:@t/lib', []]]);
+    expect(model.repos[1]!.packages.map((p) => [p.packageId, p.entryPoints])).toEqual([['npm:acme/lib:@t/lib', []]]);
     expect(logs).toContain('skipping 1 fork(s) (use --include-forks to keep them)');
     expect(logs).toContain('skipping 1 repo(s) by --include/--exclude');
     expect(logs.filter((l) => / cloned /.test(l)).length).toBe(2);

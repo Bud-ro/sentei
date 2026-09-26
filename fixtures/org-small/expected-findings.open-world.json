@@ -1,15 +1,15 @@
 [
   {
-    "package_id": "npm:@acme/app-skew",
+    "package_id": "npm:acme/app-skew:@acme/app-skew",
     "symbol": "removedFn",
     "file": "src/main.ts",
     "verdict": "version_skew",
     "reasons": [
-      "target:npm:@acme/widgets"
+      "target:npm:acme/lib-widgets:@acme/widgets"
     ]
   },
   {
-    "package_id": "npm:@acme/cascade",
+    "package_id": "npm:acme/lib-cascade:@acme/cascade",
     "symbol": "dropped",
     "file": "src/index.ts",
     "verdict": "deletion_candidate",
@@ -18,7 +18,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/cascade",
+    "package_id": "npm:acme/lib-cascade:@acme/cascade",
     "symbol": "helperB",
     "file": "src/index.ts",
     "verdict": "private_dead",
@@ -27,7 +27,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/cascade",
+    "package_id": "npm:acme/lib-cascade:@acme/cascade",
     "symbol": "initParams",
     "file": "src/index.ts",
     "verdict": "unexport_candidate",
@@ -36,7 +36,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/cascade",
+    "package_id": "npm:acme/lib-cascade:@acme/cascade",
     "symbol": "viewer",
     "file": "src/index.ts",
     "verdict": "needs_review",
@@ -47,7 +47,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/core",
+    "package_id": "npm:acme/lib-core:@acme/core",
     "symbol": "internalOnlyFn",
     "file": "src/fns.ts",
     "verdict": "unexport_candidate",
@@ -56,7 +56,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/core",
+    "package_id": "npm:acme/lib-core:@acme/core",
     "symbol": "islandA",
     "file": "src/fns.ts",
     "verdict": "private_dead",
@@ -65,7 +65,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/core",
+    "package_id": "npm:acme/lib-core:@acme/core",
     "symbol": "islandB",
     "file": "src/fns.ts",
     "verdict": "private_dead",
@@ -74,7 +74,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/core",
+    "package_id": "npm:acme/lib-core:@acme/core",
     "symbol": "unusedFn",
     "file": "src/fns.ts",
     "verdict": "deletion_candidate",
@@ -83,7 +83,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/dyn",
+    "package_id": "npm:acme/lib-dyn:@acme/dyn",
     "symbol": "dynA",
     "file": "src/index.ts",
     "verdict": "blocked",
@@ -91,12 +91,12 @@
       "no_refs"
     ],
     "blocked_by": [
-      "npm:@acme/app-dynamic:dynamic_access",
-      "npm:@acme/app-dynamic:namespace_dynamic"
+      "npm:acme/app-dynamic:@acme/app-dynamic:dynamic_access",
+      "npm:acme/app-dynamic:@acme/app-dynamic:namespace_dynamic"
     ]
   },
   {
-    "package_id": "npm:@acme/dyn",
+    "package_id": "npm:acme/lib-dyn:@acme/dyn",
     "symbol": "dynB",
     "file": "src/index.ts",
     "verdict": "blocked",
@@ -104,12 +104,12 @@
       "no_refs"
     ],
     "blocked_by": [
-      "npm:@acme/app-dynamic:dynamic_access",
-      "npm:@acme/app-dynamic:namespace_dynamic"
+      "npm:acme/app-dynamic:@acme/app-dynamic:dynamic_access",
+      "npm:acme/app-dynamic:@acme/app-dynamic:namespace_dynamic"
     ]
   },
   {
-    "package_id": "npm:@acme/testkit",
+    "package_id": "npm:acme/lib-testkit:@acme/testkit",
     "symbol": "unusedKitHelper",
     "file": "src/index.ts",
     "verdict": "deletion_candidate",
@@ -118,7 +118,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/widgets",
+    "package_id": "npm:acme/lib-widgets:@acme/widgets",
     "symbol": "default",
     "file": "src/unused-anon.ts",
     "verdict": "deprecation_candidate",
@@ -128,7 +128,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/widgets",
+    "package_id": "npm:acme/lib-widgets:@acme/widgets",
     "symbol": "internalUnused",
     "file": "src/internal.ts",
     "verdict": "deprecation_candidate",
@@ -138,7 +138,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/widgets",
+    "package_id": "npm:acme/lib-widgets:@acme/widgets",
     "symbol": "namespaceUnused",
     "file": "src/misc.ts",
     "verdict": "deprecation_candidate",
@@ -148,7 +148,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/widgets",
+    "package_id": "npm:acme/lib-widgets:@acme/widgets",
     "symbol": "testOnlyFn",
     "file": "src/misc.ts",
     "verdict": "deprecation_candidate",
@@ -158,7 +158,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/worker",
+    "package_id": "npm:acme/app-worker:@acme/worker",
     "symbol": "Legacy",
     "file": "src/worker.ts",
     "verdict": "private_dead",
@@ -167,7 +167,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/worker",
+    "package_id": "npm:acme/app-worker:@acme/worker",
     "symbol": "neverCalled",
     "file": "src/worker.ts",
     "verdict": "private_dead",
@@ -176,7 +176,7 @@
     ]
   },
   {
-    "package_id": "npm:@acme/y",
+    "package_id": "npm:acme/lib-y:@acme/y",
     "symbol": "yUnused",
     "file": "src/index.ts",
     "verdict": "blocked",
@@ -184,8 +184,8 @@
       "no_refs"
     ],
     "blocked_by": [
-      "npm:@acme/broken:index_failed",
-      "npm:@acme/tool-py:unindexed_consumer"
+      "npm:acme/repo-broken:@acme/broken:index_failed",
+      "npm:acme/tool-py:@acme/tool-py:unindexed_consumer"
     ]
   }
 ]

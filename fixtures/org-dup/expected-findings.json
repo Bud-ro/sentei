@@ -1,0 +1,5 @@
+[
+  {"package_id": "npm:acme/one:@acme/dup", "symbol": "unusedInOne", "file": "src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "npm:acme/two:@acme/dup", "symbol": "onlyInTwo", "file": "src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "npm:acme/two:@acme/dup", "symbol": "shared", "file": "src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]}
+]

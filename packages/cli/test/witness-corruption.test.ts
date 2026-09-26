@@ -45,7 +45,7 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
       await index(ctx, { install: false });
 
       // Corrupt: drop every usedFn occurrence from app's src/main.ts, keep the rest.
-      const scipPath = path.join(work, 'index', 'acme__app', 'npm__acme__app.scip');
+      const scipPath = path.join(work, 'index', 'acme__app', 'npm__app__acme__app.scip');
       const idx = readScipIndex(scipPath);
       const doc = idx.documents.find((d) => d.relativePath === 'src/main.ts');
       expect(doc).toBeDefined();
@@ -62,15 +62,15 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
       await report(ctx);
 
       const r = JSON.parse(readFileSync(path.join(work, 'report.json'), 'utf8')) as Report;
-      const core = r.findings.filter((f) => f.package_id === 'npm:@acme/core');
+      const core = r.findings.filter((f) => f.package_id === 'npm:acme/lib-core:@acme/core');
       const used = core.filter((f) => f.symbol === 'usedFn');
       expect(used.map((f) => ({ verdict: f.verdict, reasons: f.reasons }))).toEqual([
         {
           verdict: 'needs_review',
           reasons: [
             'no_refs',
-            'witness_mismatch:npm:@acme/app:src/main.ts:2',
-            'witness_mismatch:npm:@acme/app:src/main.ts:6',
+            'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:2',
+            'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:6',
           ],
         },
       ]);
@@ -79,14 +79,14 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
       const usedRows = db
         .prepare(
           `SELECT f.verdict FROM findings f JOIN symbols s ON s.symbol_id = f.symbol_id
-           WHERE s.package_id = 'npm:@acme/core' AND s.name = 'usedFn'`,
+           WHERE s.package_id = 'npm:acme/lib-core:@acme/core' AND s.name = 'usedFn'`,
         )
         .all() as Array<{ verdict: string }>;
       expect(usedRows.map((x) => x.verdict)).toEqual(['needs_review']);
       const okRows = db
         .prepare(
           `SELECT w.symbol_id FROM witness_ok w JOIN symbols s ON s.symbol_id = w.symbol_id
-           WHERE s.package_id = 'npm:@acme/core' AND s.name = 'usedFn'`,
+           WHERE s.package_id = 'npm:acme/lib-core:@acme/core' AND s.name = 'usedFn'`,
         )
         .all();
       expect(okRows).toEqual([]);
@@ -96,7 +96,7 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
       expect(unused.map((f) => ({ verdict: f.verdict, reasons: f.reasons }))).toEqual([
         { verdict: 'deletion_candidate', reasons: ['no_refs'] },
       ]);
-      expect(lines.some((l) => l.includes('[witness] mismatch npm:@acme/core#usedFn'))).toBe(true);
+      expect(lines.some((l) => l.includes('[witness] mismatch npm:acme/lib-core:@acme/core#usedFn'))).toBe(true);
     } finally {
       db.close();
     }

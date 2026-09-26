@@ -1,30 +1,32 @@
 {
   "entryPoints": [
-    "bin/main.dart",
-    "bin/shapes.dart"
+    "lib/main.dart"
   ],
   "entrySymbols": [
     {
       "col": 5,
-      "file": "bin/main.dart",
+      "file": "lib/main.dart",
       "kind": "runtime",
-      "line": 9,
-      "name": "main"
-    },
-    {
-      "col": 5,
-      "file": "bin/shapes.dart",
-      "kind": "runtime",
-      "line": 4,
+      "line": 5,
       "name": "main"
     }
   ],
-  "exports": [],
+  "exports": [
+    {
+      "col": 5,
+      "entry": "lib/main.dart",
+      "exportedAs": "main",
+      "file": "lib/main.dart",
+      "line": 5,
+      "name": "main",
+      "sites": []
+    }
+  ],
   "flags": [],
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "pub:acme_app",
+  "packageId": "pub:acme/flutter-app:acme_flutter_app",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

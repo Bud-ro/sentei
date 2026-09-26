@@ -39,7 +39,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/worker",
+  "packageId": "npm:acme/app-worker:@acme/worker",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

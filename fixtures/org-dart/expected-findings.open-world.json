@@ -1,10 +1,11 @@
 [
-  {"package_id": "pub:acme_pub", "symbol": "pubUnused", "file": "lib/acme_pub.dart", "verdict": "deprecation_candidate", "reasons": ["no_refs", "open_world"]},
-  {"package_id": "pub:acme_x", "symbol": "Hidden", "file": "lib/src/shown.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
-  {"package_id": "pub:acme_x", "symbol": "_islandA", "file": "lib/acme_x.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
-  {"package_id": "pub:acme_x", "symbol": "_islandB", "file": "lib/acme_x.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
-  {"package_id": "pub:acme_x", "symbol": "docOnly", "file": "lib/acme_x.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
-  {"package_id": "pub:acme_x", "symbol": "implUnused", "file": "lib/src/impl.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
-  {"package_id": "pub:acme_x", "symbol": "partUnused", "file": "lib/src/part_a.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
-  {"package_id": "pub:acme_x", "symbol": "unusedFn", "file": "lib/acme_x.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]}
+  {"package_id": "pub:acme/dart-lib-pub:acme_pub", "symbol": "pubUnused", "file": "lib/acme_pub.dart", "verdict": "deprecation_candidate", "reasons": ["no_refs", "open_world"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "Hidden", "file": "lib/src/shown.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "_islandA", "file": "lib/acme_x.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "_islandB", "file": "lib/acme_x.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "docOnly", "file": "lib/acme_x.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "implUnused", "file": "lib/src/impl.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "partUnused", "file": "lib/src/part_a.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "pub:acme/dart-lib-x:acme_x", "symbol": "unusedFn", "file": "lib/acme_x.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "pub:acme/flutter-widgets:acme_widgets", "symbol": "AcmeBanner", "file": "lib/acme_widgets.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]}
 ]

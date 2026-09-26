@@ -24,12 +24,13 @@ function addRepo(repo = 'acme/lib'): void {
 
 function addPackage(
   name: string,
-  opts: { repo?: string; visibility?: string; manager?: string; id?: string } = {},
+  opts: { repo?: string; visibility?: string; manager?: string; id?: string; path?: string } = {},
 ): string {
   const manager = opts.manager ?? 'npm';
-  const id = opts.id ?? `${manager}:${name}`;
+  const repo = opts.repo ?? 'acme/lib';
+  const id = opts.id ?? `${manager}:${repo}:${name}`;
   run('INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    id, opts.repo ?? 'acme/lib', 'packages/x', manager, name, '1.0.0', opts.visibility ?? 'private', '["src/index.ts"]');
+    id, repo, opts.path ?? `packages/${name.replace(/[@/]/g, '_')}`, manager, name, '1.0.0', opts.visibility ?? 'private', '["src/index.ts"]');
   return id;
 }
 
@@ -86,7 +87,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(9);
+    expect(SCHEMA_VERSION).toBe(10);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -94,7 +95,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 9/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 10/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -162,12 +163,15 @@ describe('smoke', () => {
 describe('packages invariants', () => {
   beforeEach(() => addRepo());
 
-  it('rejects duplicate (manager, name)', () => {
-    addPackage('@acme/lib');
-    // package_id is forced to manager:name, so the PK and UNIQUE (manager, name) coincide;
-    // assert the rejection and that the explicit UNIQUE constraint exists.
+  it('accepts the same (manager, name) in two repos: identity is (repo, path, manager)', () => {
+    const a = addPackage('@acme/lib');
     addRepo('acme/other');
-    expect(() => addPackage('@acme/lib', { repo: 'acme/other' })).toThrow(REJECTED);
+    const b = addPackage('@acme/lib', { repo: 'acme/other' });
+    expect([a, b]).toEqual(['npm:acme/lib:@acme/lib', 'npm:acme/other:@acme/lib']);
+    // An npm and a pub package may share a dir; two npm packages may not.
+    addPackage('lib_x', { manager: 'pub', path: 'packages/x' });
+    addPackage('lib-x', { path: 'packages/x' });
+    expect(() => addPackage('lib-y', { path: 'packages/x' })).toThrow(REJECTED);
     const idx = db.prepare("SELECT count(*) AS n FROM pragma_index_list('packages') WHERE \"unique\" = 1 AND origin = 'u'").get() as { n: number };
     expect(idx.n).toBe(1);
   });
@@ -188,13 +192,15 @@ describe('packages invariants', () => {
     expect(() => run('UPDATE packages SET is_library = NULL WHERE package_id = ?', id)).toThrow(REJECTED);
   });
 
-  it('rejects a package_id not shaped <manager>:<name>', () => {
+  it('rejects a package_id not shaped <manager>:<repo>:<name>', () => {
     expect(() => addPackage('@acme/lib', { id: '@acme/lib' })).toThrow(REJECTED);
-    expect(() => addPackage('@acme/lib', { id: 'pub:@acme/lib' })).toThrow(REJECTED);
+    expect(() => addPackage('@acme/lib', { id: 'npm:@acme/lib' })).toThrow(REJECTED);
+    expect(() => addPackage('@acme/lib', { id: 'pub:acme/lib:@acme/lib' })).toThrow(REJECTED);
+    expect(() => addPackage('@acme/lib', { id: 'npm:acme/other:@acme/lib' })).toThrow(REJECTED);
   });
 
   it('rejects entry_points that are not a JSON array', () => {
-    expect(() => run("INSERT INTO packages (package_id, repo, path, manager, name, visibility, entry_points) VALUES ('npm:x', 'acme/lib', '.', 'npm', 'x', 'private', '{}')"))
+    expect(() => run("INSERT INTO packages (package_id, repo, path, manager, name, visibility, entry_points) VALUES ('npm:acme/lib:x', 'acme/lib', '.', 'npm', 'x', 'private', '{}')"))
       .toThrow(REJECTED);
   });
 
@@ -216,7 +222,7 @@ describe('symbols invariants', () => {
   });
 
   it('rejects a symbol whose package does not exist', () => {
-    expect(() => addSymbol('npm:@acme/missing', 'a')).toThrow(REJECTED);
+    expect(() => addSymbol('npm:acme/lib:@acme/missing', 'a')).toThrow(REJECTED);
   });
 
   it('rejects moving a symbol to another package', () => {
@@ -325,7 +331,7 @@ describe('documents invariants', () => {
   });
 
   it('rejects an unknown package or module symbol', () => {
-    expect(() => addDoc('npm:@acme/missing', 'src/index.ts', null)).toThrow(REJECTED);
+    expect(() => addDoc('npm:acme/lib:@acme/missing', 'src/index.ts', null)).toThrow(REJECTED);
     expect(() => addDoc(lib, 'src/index.ts', 9999)).toThrow(REJECTED);
   });
 
@@ -374,8 +380,8 @@ describe('unresolved_refs invariants', () => {
   });
 
   it('rejects unknown consumer or target packages', () => {
-    expect(() => addUnresolved('npm:@acme/missing', lib)).toThrow(REJECTED);
-    expect(() => addUnresolved(app, 'npm:@acme/missing')).toThrow(REJECTED);
+    expect(() => addUnresolved('npm:acme/lib:@acme/missing', lib)).toThrow(REJECTED);
+    expect(() => addUnresolved(app, 'npm:acme/lib:@acme/missing')).toThrow(REJECTED);
   });
 
   it('rejects a same-package unresolved reference', () => {
@@ -404,7 +410,7 @@ describe('occurrences invariants', () => {
   });
 
   it('rejects an unknown package_id', () => {
-    expect(() => addOccurrence(a, 'npm:@acme/missing', lib)).toThrow(REJECTED);
+    expect(() => addOccurrence(a, 'npm:acme/lib:@acme/missing', lib)).toThrow(REJECTED);
   });
 
   it('rejects an unknown enclosing_symbol_id', () => {
@@ -436,8 +442,8 @@ describe('edges invariants', () => {
 
   it('rejects unknown endpoint packages', () => {
     // The edges_packages_match trigger fires before the FK check; either rejection is fine.
-    expect(() => addEdge(a, b, 'npm:@acme/missing', lib)).toThrow(REJECTED);
-    expect(() => addEdge(a, b, lib, 'npm:@acme/missing')).toThrow(REJECTED);
+    expect(() => addEdge(a, b, 'npm:acme/lib:@acme/missing', lib)).toThrow(REJECTED);
+    expect(() => addEdge(a, b, lib, 'npm:acme/lib:@acme/missing')).toThrow(REJECTED);
   });
 
   it('rejects package ids that do not match the endpoint symbols', () => {
@@ -474,7 +480,7 @@ describe('targeted package_flags (target_package_id)', () => {
     app = addPackage('@acme/app');
     for (const dep of [lib, other]) {
       run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, ?, 'npm', ?)",
-        app, dep.slice('npm:'.length), dep);
+        app, dep.slice('npm:acme/lib:'.length), dep);
     }
   });
 
@@ -504,6 +510,23 @@ describe('targeted package_flags (target_package_id)', () => {
     const tool = addPackage('@acme/tool');
     run("INSERT INTO package_flags (package_id, flag, reason, target_package_id) VALUES (?, 'unindexed_consumer', 'x', ?)", tool, lib);
     expect(blocked()).toEqual([{ package_id: lib, blocker_package_id: tool, flag: 'unindexed_consumer' }]);
+  });
+
+  it('ambiguous_dep is always targeted and blocks only its target', () => {
+    expect(() => run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'ambiguous_dep', 'dep x matches 2 org packages')", app))
+      .toThrow(REJECTED);
+    run("INSERT INTO package_flags (package_id, flag, reason, target_package_id) VALUES (?, 'ambiguous_dep', 'dep x', ?)", app, lib);
+    expect(blocked()).toEqual([{ package_id: lib, blocker_package_id: app, flag: 'ambiguous_dep' }]);
+    expect(opaque()).toEqual([]);
+  });
+
+  it('package_deps: an ambiguous dep has no resolved package; resolution is one of the known rules', () => {
+    run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, ambiguous) VALUES (?, 'x', 'npm', 1)", app);
+    expect(() => run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id, ambiguous) VALUES (?, 'y', 'npm', ?, 1)", app, lib))
+      .toThrow(REJECTED);
+    run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id, resolution) VALUES (?, 'z', 'npm', ?, 'published')", app, lib);
+    expect(() => run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id, resolution) VALUES (?, 'w', 'npm', ?, 'guess')", app, lib))
+      .toThrow(REJECTED);
   });
 
   it('rejects an unknown or self target, and cascades when the target goes', () => {

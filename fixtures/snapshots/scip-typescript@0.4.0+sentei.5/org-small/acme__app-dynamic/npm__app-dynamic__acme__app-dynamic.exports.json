@@ -56,7 +56,7 @@
       "targetPackage": "@acme/dyn"
     }
   ],
-  "packageId": "npm:@acme/app-dynamic",
+  "packageId": "npm:acme/app-dynamic:@acme/app-dynamic",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

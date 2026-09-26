@@ -34,7 +34,10 @@ const POLICY_KEYS = ['minAgeDays', 'trustPrivateRegistry', 'assumeClosedWorld', 
 export type ReportPolicy = Record<(typeof POLICY_KEYS)[number], unknown>;
 
 export interface ReportFinding {
+  /** `<manager>:<repo>:<name>`. */
   package_id: string;
+  /** The package name (several repos may publish the same one). */
+  name: string;
   repo: string;
   symbol: string;
   file: string;
@@ -58,6 +61,7 @@ export interface ReportVersionSkew {
 
 export interface ReportPackage {
   package_id: string;
+  name: string;
   repo: string;
   visibility: string;
   closed_world: boolean;
@@ -221,19 +225,41 @@ export function buildReport(opts: BuildReportOptions): Report {
         n === 1 ? 'blocks' : 'block'} verdicts for every org package ${n === 1 ? 'it depends' : 'they depend'} on`);
   }
 
+  // Dependencies whose name several org packages share (package ids are
+  // <manager>:<repo>:<name>): say which one discover picked, or that it could not.
+  const multiRows = db.prepare(`
+    SELECT d.consumer_package_id AS consumer, d.dep_name, d.resolved_package_id AS resolved, d.resolution,
+           (SELECT group_concat(target_package_id, ', ') FROM (
+              SELECT DISTINCT f.target_package_id FROM package_flags f
+              WHERE f.package_id = d.consumer_package_id AND f.flag = 'ambiguous_dep'
+                AND substr(f.reason, 1, length(d.dep_name) + 13) = 'dep ' || d.dep_name || ' matches '
+              ORDER BY f.target_package_id)) AS candidates
+    FROM package_deps d
+    WHERE d.ambiguous = 1 OR d.resolution IN ('same-repo', 'published')
+    ORDER BY d.consumer_package_id, d.dep_name`).all() as Array<{
+    consumer: string; dep_name: string; resolved: string | null; resolution: string | null; candidates: string | null;
+  }>;
+  for (const r of multiRows) {
+    warnings.push(r.resolved === null
+      ? `ambiguous dependency: ${r.consumer} depends on ${r.dep_name}, which names several org packages (${r.candidates ?? '?'}); `
+        + 'none could be preferred, so their verdicts are blocked (ambiguous_dep); exclude the wrong ones with ignoreManifests'
+      : `${r.consumer} depends on ${r.dep_name}, which names several org packages; resolved to ${r.resolved} (${r.resolution})`);
+  }
+
   // ---- findings -----------------------------------------------------------------
   const findingRows = db.prepare(`
-    SELECT s.package_id, p.repo, s.name AS symbol, s.file, s.line, s.col, s.kind,
+    SELECT s.package_id, p.name AS pkg_name, p.repo, s.name AS symbol, s.file, s.line, s.col, s.kind,
            f.verdict, f.reasons, f.blocked_by
     FROM findings f
     JOIN symbols s ON s.symbol_id = f.symbol_id
     JOIN packages p ON p.package_id = s.package_id`).all() as Array<{
-    package_id: string; repo: string; symbol: string; file: string; line: number | null; col: number | null;
+    package_id: string; pkg_name: string; repo: string; symbol: string; file: string; line: number | null; col: number | null;
     kind: string | null; verdict: string; reasons: string; blocked_by: string;
   }>;
   const findings: ReportFinding[] = findingRows
     .map((r) => ({
       package_id: r.package_id,
+      name: r.pkg_name,
       repo: r.repo,
       symbol: r.symbol,
       file: r.file,
@@ -290,14 +316,14 @@ export function buildReport(opts: BuildReportOptions): Report {
 
   // ---- packages ------------------------------------------------------------------
   const pkgRows = db.prepare(`
-    SELECT p.package_id, p.repo, p.visibility,
+    SELECT p.package_id, p.name, p.repo, p.visibility,
            EXISTS (SELECT 1 FROM closed_world_packages c WHERE c.package_id = p.package_id) AS closed_world,
            EXISTS (SELECT 1 FROM opaque_packages o WHERE o.package_id = p.package_id) AS opaque,
            (SELECT count(*) FROM symbols s WHERE s.package_id = p.package_id AND s.is_exported = 1) AS exported,
            (SELECT count(*) FROM symbols s WHERE s.package_id = p.package_id
               AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.module_symbol_id = s.symbol_id)) AS symbols
     FROM packages p`).all() as Array<{
-    package_id: string; repo: string; visibility: string; closed_world: number; opaque: number; exported: number; symbols: number;
+    package_id: string; name: string; repo: string; visibility: string; closed_world: number; opaque: number; exported: number; symbols: number;
   }>;
   const flagRows = db.prepare('SELECT package_id, flag, reason, file FROM package_flags').all() as Array<{
     package_id: string; flag: string; reason: string | null; file: string | null;
@@ -320,6 +346,7 @@ export function buildReport(opts: BuildReportOptions): Report {
       }
       return {
         package_id: p.package_id,
+        name: p.name,
         repo: p.repo,
         visibility: p.visibility,
         closed_world: p.closed_world === 1,
@@ -433,7 +460,8 @@ export function formatSummary(report: Report): string {
   const pkgRows = report.packages.map((p) => {
     for (const v of verdicts) totals[v]! += p.counts[v] ?? 0;
     return [
-      p.package_id,
+      p.name,
+      p.repo,
       p.visibility,
       p.closed_world ? 'closed' : 'open',
       p.opaque ? 'yes' : '',
@@ -441,12 +469,12 @@ export function formatSummary(report: Report): string {
       p.blocked_by.join(', '),
     ];
   });
-  pkgRows.push(['TOTAL', '', '', '', ...verdicts.map((v) => String(totals[v])), '']);
+  pkgRows.push(['TOTAL', '', '', '', '', ...verdicts.map((v) => String(totals[v])), '']);
   out.push('', `Packages (${report.packages.length}), ${report.findings.length} finding(s)`);
   out.push(...formatTable(
-    ['PACKAGE', 'VISIBILITY', 'WORLD', 'OPAQUE', ...verdicts.map((v) => SHORT[v] ?? v.toUpperCase()), 'BLOCKED BY'],
+    ['PACKAGE', 'REPO', 'VISIBILITY', 'WORLD', 'OPAQUE', ...verdicts.map((v) => SHORT[v] ?? v.toUpperCase()), 'BLOCKED BY'],
     pkgRows,
-    ['l', 'l', 'l', 'l', ...verdicts.map((): Align => 'r'), 'l'],
+    ['l', 'l', 'l', 'l', 'l', ...verdicts.map((): Align => 'r'), 'l'],
   ));
   out.push('DELETE: exports with no counted use; ISLAND: exports used only by other candidates (delete them together).');
 

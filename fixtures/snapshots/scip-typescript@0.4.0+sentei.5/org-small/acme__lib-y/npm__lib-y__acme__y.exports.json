@@ -7,19 +7,19 @@
     {
       "col": 16,
       "entry": "src/index.ts",
-      "exportedAs": "dynA",
+      "exportedAs": "yThing",
       "file": "src/index.ts",
       "line": 3,
-      "name": "dynA",
+      "name": "yThing",
       "sites": []
     },
     {
       "col": 16,
       "entry": "src/index.ts",
-      "exportedAs": "dynB",
+      "exportedAs": "yUnused",
       "file": "src/index.ts",
       "line": 8,
-      "name": "dynB",
+      "name": "yUnused",
       "sites": []
     }
   ],
@@ -28,7 +28,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/dyn",
+  "packageId": "npm:acme/lib-y:@acme/y",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

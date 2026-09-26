@@ -12,6 +12,8 @@ per symbol, `expected-findings.json` (closed world, as checked in) and
 | `dart-lib-x` | `acme_x` | private (`publish_to: none`) | lib: entry `lib/acme_x.dart` with `export`, `export ... show`, `part`; entries `lib/syntax.dart`, `lib/builder.dart` |
 | `dart-lib-pub` | `acme_pub` | **published-public** (no `publish_to`) | lib with one unused export |
 | `dart-app` | `acme_app` | private (`publish_to: none`) | consumer (`bin/main.dart`, `bin/shapes.dart`): `path:` dep on `acme_x`, hosted `^1.0.0` dep on `acme_pub` |
+| `flutter-widgets` | `acme_widgets` | private (`publish_to: none`) | Flutter lib (`environment.flutter`, `flutter: {sdk: flutter}`): `AcmeButton` (used), `AcmeBanner` (unused) |
+| `flutter-app` | `acme_flutter_app` | private (`publish_to: none`) | Flutter app: `lib/main.dart` `main` calls `runApp` with an `AcmeButton`; `path:` dep on `acme_widgets` |
 
 No `pubspec.lock` / `.dart_tool` is checked in. To build or index, copy the repos
 somewhere else and run `dart pub get` in each package. `dart-app` depends on
@@ -26,7 +28,10 @@ dependency_overrides:
 ```
 
 This is the Dart equivalent of the npm `node_modules` symlinks. With it in place,
-all three packages pass `dart analyze` with no issues (Dart 3.11.3).
+the three Dart packages pass `dart analyze` with no issues (Dart 3.11.3 and 3.13.4).
+The two Flutter packages need `flutter pub get` instead (then `dart analyze` is
+clean, Flutter 3.47.5). Without `flutter` on PATH the indexer reports them
+`partial` and the tests that need them skip (see `packages/cli/test/index-dart.test.ts`).
 
 Name hygiene for the §9 text witness: the consumer never names the would-be
 deletion candidates, or the extension `IntTimes`. The extension is used only
@@ -49,6 +54,15 @@ through `3.doubled`, so the witness cannot hide a missing reference to it.
 Also covered, beyond the checklist: a class used only through its implicit default
 constructor (`Shown()`), and a hosted constraint on an org package (`acme_pub`)
 that must be source-linked.
+
+### Flutter
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| `package:flutter/material.dart` resolves (`flutter pub get`, the Flutter SDK's Dart SDK) | both Flutter packages | status `ok`, no analyzer errors; references into `pub flutter` symbols |
+| Exported widget used by an org app | `acme_widgets` `AcmeButton`, built in `acme_flutter_app`'s `main` | no finding |
+| Exported widget nobody uses | `acme_widgets` `AcmeBanner` | deletion_candidate `["no_refs"]` (closed and open world: private package) |
+| `main` of `lib/main.dart` (run by the Flutter engine, referenced by nothing) | `flutter-app/lib/main.dart` | no finding (sidecar `entrySymbols`, `lib/*.dart` entry) |
 
 ### Symbol shapes and Dart entry conventions (first Workiva run)
 

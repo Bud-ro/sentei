@@ -3,6 +3,8 @@
   "repos": [
     { "name": "dart-app", "default_branch": "main" },
     { "name": "dart-lib-pub", "default_branch": "main" },
-    { "name": "dart-lib-x", "default_branch": "main" }
+    { "name": "dart-lib-x", "default_branch": "main" },
+    { "name": "flutter-app", "default_branch": "main" },
+    { "name": "flutter-widgets", "default_branch": "main" }
   ]
 }

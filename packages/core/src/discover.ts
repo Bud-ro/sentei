@@ -12,7 +12,9 @@
 import { readFileSync, statSync } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { defaultOrgConfig, parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig } from './config.ts';
+import {
+  defaultOrgConfig, packageIdOf, packageRefMatches, parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig,
+} from './config.ts';
 import { matchGlob } from './glob.ts';
 import {
   DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readRepoManifestsWithIgnored,
@@ -23,11 +25,33 @@ export interface DiscoverDep {
   name: string;
   manager: Manager;
   constraint: string | null;
-  /** Org package this dep points at, or null for third-party deps. */
+  /** Org package this dep points at, or null for third-party deps and ambiguous ones. */
   resolvedPackageId: string | null;
+  /**
+   * How the org package was picked (DepResolution); present iff resolvedPackageId is.
+   * Optional: absent in older discover.json files.
+   */
+  resolution?: DepResolution;
+  /**
+   * Present (true) when several org packages have the dep's name and none could be
+   * preferred: resolvedPackageId is null, `candidates` lists them, and the consumer is
+   * flagged `ambiguous_dep` at each (fail closed).
+   */
+  ambiguous?: true;
+  /** Every org package of the dep's name (sorted), when there is more than one. */
+  candidates?: string[];
   /** Present (true) when declared only as a dev dependency (ManifestDep.dev). */
   dev?: true;
 }
+
+/**
+ * Dependency resolution by name (package ids are `<manager>:<repo>:<name>`, so a name
+ * can belong to several org packages). `name`: the only org package of that name;
+ * `same-repo`: several, the consumer's own repo has one; `published`: several, exactly
+ * one of them is not private (npm `private: true` / pub `publish_to: none` packages
+ * cannot be installed from a registry, so a consumer elsewhere cannot mean them).
+ */
+export type DepResolution = 'name' | 'same-repo' | 'published';
 
 export interface DiscoverPackage {
   packageId: string;
@@ -61,7 +85,7 @@ export interface DiscoverPackage {
    */
   runtimeEntrySymbols?: string[];
   deps: DiscoverDep[];
-  /** package_flags discover owns (`unindexed_consumer`, `opaque_consumer`); [] when none. */
+  /** package_flags discover owns (`unindexed_consumer`, `opaque_consumer`, `ambiguous_dep`); [] when none. */
   flags: DiscoverFlag[];
 }
 
@@ -75,12 +99,17 @@ export interface DiscoverFlag {
   /**
    * `unindexed_consumer`: code in a language we cannot index. `opaque_consumer`: an
    * entry point we cannot resolve, so the package's own surface is unknown (reason
-   * `discover: unresolved entry point <leaf>`). Both untargeted.
+   * `discover: unresolved entry point <leaf>`). Both untargeted. `ambiguous_dep`: a
+   * dependency whose name several org packages share with none preferred (reason
+   * `dep <name> matches <k> org packages: <ids>`), targeted at one candidate (one row
+   * per candidate).
    */
-  flag: 'unindexed_consumer' | 'opaque_consumer';
+  flag: 'unindexed_consumer' | 'opaque_consumer' | 'ambiguous_dep';
   reason: string;
-  /** Repo-relative POSIX path of the first offending file (the manifest for opaque_consumer). */
+  /** Repo-relative POSIX path of the first offending file (the manifest for opaque_consumer / ambiguous_dep). */
   file: string;
+  /** ambiguous_dep only: the candidate package this row blocks. */
+  targetPackageId?: string;
 }
 
 /**
@@ -233,7 +262,7 @@ function npmTargetName(name: string, constraint: string | null): string {
   return at > 0 ? spec.slice(0, at) : spec;
 }
 
-/** Build the org model from a local org directory. Throws on duplicate (manager, name). */
+/** Build the org model from a local org directory. Throws on duplicate (manager, name) within one repo. */
 export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
   const orgDir = resolve(opts.orgDir);
   const listing = readOrgListing(orgDir);
@@ -254,8 +283,9 @@ export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
 
 /**
  * Build the org model from checked-out repos (any source). Walks manifests,
- * applies sentei.json overlays, resolves deps by (manager, name).
- * Throws on a missing checkout or a duplicate (manager, name).
+ * applies sentei.json overlays, resolves deps by (manager, name) (DepResolution).
+ * Throws on a missing checkout or two non-private manifests of one (manager, name)
+ * in the same repo (their package ids would collide).
  */
 export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   const log = opts.log ?? (() => {});
@@ -320,23 +350,24 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     if (!usedIgnoreGlobs.has(g)) log(`warning: org sentei.json ignoreManifests ${JSON.stringify(g)} matched no manifest`);
   }
 
-  // (manager, name) must be unique across the org (PLAN §5.1). Private duplicates
+  // Package identity is (repo, manager, name): the same name in two repos is two
+  // packages (resolveDep below picks one per consumer, or flags the ambiguity). Within
+  // ONE repo the ids would collide, so there the old rule stays: private duplicates
   // (npm `private: true`, pub `publish_to: none`: docs sites, playgrounds, app shells
-  // that reuse a name) are auto-ignored when at most one manifest of the name is not
-  // private: the non-private one (if any) is the package; the private ones become
-  // ignored manifests (not org packages, still witness-scanned). Only a clash between
-  // two non-private manifests is a hard error; report every such clash at once.
+  // that reuse the name) are auto-ignored when at most one manifest of the name is not
+  // private; they become ignored manifests (not org packages, still witness-scanned).
+  // Two non-private manifests of one name in one repo are a hard error.
   type Owner = { r: (typeof repos)[number]; m: ManifestPackage; loc: string; ignoreEntry: string };
-  const byName = new Map<string, Owner[]>();
+  const byRepoName = new Map<string, Owner[]>();
   for (const r of repos) {
     const repoName = r.repo.slice(opts.org.length + 1);
     for (const m of r.manifests) {
-      const id = `${m.manager}:${m.name}`;
-      byName.set(id, [...(byName.get(id) ?? []), { r, m, loc: `${r.repo}:${m.manifest}`, ignoreEntry: `${repoName}/${m.manifest}` }]);
+      const id = packageIdOf(m.manager, r.repo, m.name);
+      byRepoName.set(id, [...(byRepoName.get(id) ?? []), { r, m, loc: `${r.repo}:${m.manifest}`, ignoreEntry: `${repoName}/${m.manifest}` }]);
     }
   }
   const dups: Array<[string, Owner[]]> = [];
-  for (const [id, group] of byName) {
+  for (const [id, group] of byRepoName) {
     if (group.length < 2) continue;
     const open = group.filter((o) => o.m.visibility !== 'private');
     if (open.length > 1) {
@@ -353,16 +384,65 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     }
   }
   if (dups.length > 0) throw new Error(duplicateNamesMessage(dups));
-  const owners = new Set(repos.flatMap((r) => r.manifests.map((m) => `${m.manager}:${m.name}`)));
 
-  // Resolve deps by (manager, name). Path/workspace/file/link deps carry the target's
-  // package name as the dep key, so name matching covers them too.
-  const resolveDep = (d: { name: string; manager: Manager; constraint: string | null; dev?: true }): DiscoverDep => {
+  // Every org package by (manager, name): usually one, several when repos share a name.
+  type Candidate = { id: string; repo: string; isPrivate: boolean; ignoreEntry: string };
+  const byName = new Map<string, Candidate[]>();
+  for (const r of repos) {
+    const repoName = r.repo.slice(opts.org.length + 1);
+    for (const m of r.manifests) {
+      const key = `${m.manager}:${m.name}`;
+      byName.set(key, [...(byName.get(key) ?? []), {
+        id: packageIdOf(m.manager, r.repo, m.name), repo: r.repo, isPrivate: m.visibility === 'private', ignoreEntry: `${repoName}/${m.manifest}`,
+      }]);
+    }
+  }
+  for (const list of byName.values()) list.sort((a, b) => cmp(a.id, b.id));
+  for (const [key, list] of byName) {
+    if (list.length > 1) log(`note: ${list.length} org packages are named ${key}: ${list.map((c) => c.id).join(', ')}`);
+  }
+
+  // Resolve deps by (manager, name) (DepResolution). Path/workspace/file/link deps carry
+  // the target's package name as the dep key, so name matching covers them too.
+  const resolveDep = (
+    d: { name: string; manager: Manager; constraint: string | null; dev?: true }, consumerRepo: string,
+  ): DiscoverDep => {
     const target = d.manager === 'npm' ? npmTargetName(d.name, d.constraint) : d.name;
-    const id = `${d.manager}:${target}`;
-    const out: DiscoverDep = { name: d.name, manager: d.manager, constraint: d.constraint, resolvedPackageId: owners.has(id) ? id : null };
+    const cands = byName.get(`${d.manager}:${target}`) ?? [];
+    const out: DiscoverDep = { name: d.name, manager: d.manager, constraint: d.constraint, resolvedPackageId: null };
+    let pick: Candidate | undefined;
+    if (cands.length === 1) {
+      pick = cands[0]!;
+      out.resolution = 'name';
+    } else if (cands.length > 1) {
+      out.candidates = cands.map((c) => c.id);
+      const sameRepo = cands.filter((c) => c.repo === consumerRepo);
+      const published = cands.filter((c) => !c.isPrivate);
+      if (sameRepo.length === 1) {
+        pick = sameRepo[0]!;
+        out.resolution = 'same-repo';
+      } else if (published.length === 1) {
+        pick = published[0]!;
+        out.resolution = 'published';
+      } else {
+        out.ambiguous = true;
+      }
+    }
+    if (pick) out.resolvedPackageId = pick.id;
     if (d.dev === true) out.dev = true;
     return out;
+  };
+  /** discover log line for a dep that names several org packages. */
+  const logMultiple = (repo: string, who: string, d: DiscoverDep): void => {
+    const target = d.manager === 'npm' ? npmTargetName(d.name, d.constraint) : d.name;
+    const cands = byName.get(`${d.manager}:${target}`) ?? [];
+    if (d.ambiguous === true) {
+      log(`warning: ${repo}: ${who} dep ${d.name} matches ${cands.length} org packages (${cands.map((c) => c.id).join(', ')}); `
+        + 'unresolved, their verdicts are blocked (ambiguous_dep). Keep the one it means and exclude the others in the org '
+        + `sentei.json, e.g. "ignoreManifests": [${cands.map((c) => JSON.stringify(c.ignoreEntry)).join(', ')}] minus the real one`);
+    } else if (d.candidates !== undefined) {
+      log(`${repo}: ${who} dep ${d.name} matches ${cands.length} org packages; resolved to ${d.resolvedPackageId} (${d.resolution})`);
+    }
   };
   for (const r of repos) {
     r.ignoredManifests = r.ignored.map((m): DiscoverIgnoredManifest => ({
@@ -370,11 +450,11 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       manifest: m.manifest,
       manager: m.manager,
       name: m.name,
-      deps: m.deps.map(resolveDep),
+      deps: m.deps.map((d) => resolveDep(d, r.repo)),
       depsUnknown: m.depsUnknown,
     }));
     r.packages = r.manifests.map((m): DiscoverPackage => ({
-      packageId: `${m.manager}:${m.name}`,
+      packageId: packageIdOf(m.manager, r.repo, m.name),
       path: m.path,
       manager: m.manager,
       name: m.name,
@@ -385,7 +465,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       unresolvedEntryPoints: m.unresolvedEntryPoints,
       runtimeEntryPoints: m.runtimeEntryPoints,
       ...(m.runtimeEntrySymbols ? { runtimeEntrySymbols: m.runtimeEntrySymbols } : {}),
-      deps: m.deps.map(resolveDep),
+      deps: m.deps.map((d) => resolveDep(d, r.repo)),
       // An exports/main/types leaf that looks like code but resolves to nothing: an entry
       // point (and every symbol only it exports) is missing from the surface, which would
       // make live exports look dead. Untargeted: the package itself is opaque (fail closed).
@@ -398,9 +478,31 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     for (const p of r.packages) {
       for (const f of p.flags) log(`warning: ${r.repo}: ${p.packageId} flagged opaque_consumer (${f.reason.slice(DISCOVER_REASON_PREFIX.length)})`);
     }
+    for (const m of r.ignoredManifests) {
+      for (const d of m.deps) logMultiple(r.repo, `ignored manifest ${m.manifest}`, d);
+    }
+    // ambiguous_dep (fail closed): a dep naming several org packages with none preferred
+    // may mean any of them, so each candidate is blocked for this consumer.
+    for (const p of r.packages) {
+      const manifest = r.manifests.find((m) => m.path === p.path && m.manager === p.manager)!.manifest;
+      for (const d of p.deps) {
+        logMultiple(r.repo, p.packageId, d);
+        if (d.ambiguous !== true) continue;
+        const cands = d.candidates ?? [];
+        for (const c of cands) {
+          if (c === p.packageId) continue;
+          p.flags.push({
+            flag: 'ambiguous_dep',
+            reason: `dep ${d.name} matches ${cands.length} org packages: ${cands.join(', ')}`,
+            file: manifest,
+            targetPackageId: c,
+          });
+        }
+      }
+    }
     // unindexed_consumer (PLAN §2, M4): an org-package consumer with code we cannot index.
     for (const p of r.packages) {
-      if (!p.deps.some((d) => d.resolvedPackageId !== null)) continue;
+      if (!p.deps.some((d) => d.resolvedPackageId !== null || d.ambiguous === true)) continue;
       const flag = unindexedConsumerFlag(p, r.packages, r.files, ignoreDirs);
       if (flag) {
         p.flags.push(flag);
@@ -419,13 +521,13 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   };
 }
 
-/** The §5.1 duplicate-name error: every location, plus copy-pasteable `ignoreManifests` entries. */
+/** The same-repo duplicate-name error: every location, plus copy-pasteable `ignoreManifests` entries. */
 function duplicateNamesMessage(dups: Array<[string, Array<{ loc: string; ignoreEntry: string }>]>): string {
-  const lines = ['sentei: duplicate org package names (must be unique per manager; private duplicates are ignored automatically, these are not private):'];
+  const lines = ['sentei: duplicate package names within one repo (package ids are <manager>:<repo>:<name>; private duplicates are ignored automatically, these are not private):'];
   for (const [id, locs] of dups) lines.push(`  ${id}: ${locs.map((l) => l.loc).join(', ')}`);
   const entries = dups.flatMap(([, locs]) => locs.map((l) => l.ignoreEntry));
   lines.push(
-    'Exactly one manifest per name may remain. If the others are templates, fixtures or examples',
+    'Exactly one manifest per name may remain in a repo. If the others are templates, fixtures or examples',
     '(not real org packages), exclude them in the org sentei.json. Candidates (keep the real',
     "package's entry OUT of the list):",
     `  "ignoreManifests": [${entries.map((e) => JSON.stringify(e)).join(', ')}]`,
@@ -475,27 +577,37 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
       'INSERT INTO repos (repo, default_branch, head_sha, indexed_at, index_status) VALUES (?, ?, ?, NULL, NULL)');
     const insPkg = db.prepare(
       'INSERT INTO packages (package_id, repo, path, manager, name, version, visibility, is_library, entry_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    const insDep = db.prepare(
-      'INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id, dev) VALUES (?, ?, ?, ?, ?, ?)');
+    const insDep = db.prepare(`INSERT INTO package_deps
+      (consumer_package_id, dep_name, dep_manager, dep_constraint, resolved_package_id, dev, resolution, ambiguous)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
     // Discover-owned flags; ingest deletes and rebuilds only its own flags (for
     // opaque_consumer: those whose reason lacks DISCOVER_REASON_PREFIX), so these survive it.
-    const insFlag = db.prepare('INSERT INTO package_flags (package_id, flag, reason, file) VALUES (?, ?, ?, ?)');
+    const insFlag = db.prepare('INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, ?, ?, ?, ?)');
 
     for (const r of model.repos) {
       insRepo.run(r.repo, r.defaultBranch, r.headSha);
       for (const p of r.packages) {
         insPkg.run(p.packageId, r.repo, p.path, p.manager, p.name, p.version, p.visibility, p.isLibrary === true ? 1 : 0, JSON.stringify(p.entryPoints));
-        for (const f of p.flags) insFlag.run(p.packageId, f.flag, f.reason, f.file);
       }
     }
-    // Deps after all packages so resolved_package_id FKs point at existing rows.
+    // Flags and deps after all packages so target / resolved_package_id FKs point at existing rows.
     for (const r of model.repos) {
       for (const p of r.packages) {
-        for (const d of p.deps) insDep.run(p.packageId, d.name, d.manager, d.constraint, d.resolvedPackageId, d.dev === true ? 1 : 0);
+        for (const f of p.flags) insFlag.run(p.packageId, f.flag, f.reason, f.file, f.targetPackageId ?? null);
+      }
+    }
+    for (const r of model.repos) {
+      for (const p of r.packages) {
+        for (const d of p.deps) {
+          insDep.run(p.packageId, d.name, d.manager, d.constraint, d.resolvedPackageId, d.dev === true ? 1 : 0,
+            d.resolvedPackageId === null ? null : (d.resolution ?? 'name'), d.ambiguous === true ? 1 : 0);
+        }
       }
     }
 
-    const packageIds = new Set(model.repos.flatMap((r) => r.packages.map((p) => p.packageId)));
+    // keep: a name-only entry (`npm:<name>#sym`) applies to every package of that name,
+    // a `npm:<org>/<repo>:<name>#sym` entry to that one package.
+    const allPkgs = model.repos.flatMap((r) => r.packages.map((p) => ({ id: p.packageId, repo: r.repo, manager: p.manager, name: p.name })));
     const rules = new Map<string, { packageId: string; symbolName: string }>();
     const sources: Array<[string, string[]]> = [
       ['org sentei.json', model.keep],
@@ -505,11 +617,12 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
       for (const entry of entries) {
         const rule = parseKeepEntry(entry);
         if (!rule) throw new Error(`sentei: ${source}: malformed keep entry ${JSON.stringify(entry)}`);
-        if (!packageIds.has(rule.packageId)) {
-          warn(`${source}: keep entry ${JSON.stringify(entry)} names unknown package ${rule.packageId}, ignored`);
+        const hits = allPkgs.filter((p) => packageRefMatches(rule.ref, p));
+        if (hits.length === 0) {
+          warn(`${source}: keep entry ${JSON.stringify(entry)} names unknown package ${entry.slice(0, entry.indexOf('#'))}, ignored`);
           continue;
         }
-        rules.set(`${rule.packageId}#${rule.symbolName}`, rule);
+        for (const p of hits) rules.set(`${p.id}#${rule.symbolName}`, { packageId: p.id, symbolName: rule.symbolName });
       }
     }
     const insKeep = db.prepare('INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, ?)');

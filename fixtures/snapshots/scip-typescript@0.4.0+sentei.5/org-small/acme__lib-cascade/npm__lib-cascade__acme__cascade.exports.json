@@ -58,7 +58,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/cascade",
+  "packageId": "npm:acme/lib-cascade:@acme/cascade",
   "shorthandRefs": [],
   "unindexedImports": [
     {

@@ -32,7 +32,7 @@ const symPkg = new Map<number, string>();
 let seq = 0;
 
 function pkg(name: string, visibility = 'private'): string {
-  const id = `npm:${name}`;
+  const id = `npm:acme/${name.replace(/^@acme\//, '')}:${name}`;
   run('INSERT INTO repos (repo) VALUES (?)', `acme/${name.replace(/^@acme\//, '')}`);
   run("INSERT INTO packages (package_id, repo, path, manager, name, version, visibility) VALUES (?, ?, '.', 'npm', ?, '1.0.0', ?)",
     id, `acme/${name.replace(/^@acme\//, '')}`, name, visibility);
@@ -41,7 +41,7 @@ function pkg(name: string, visibility = 'private'): string {
 
 function dep(consumer: string, lib: string): void {
   run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, ?, 'npm', ?)",
-    consumer, lib.slice('npm:'.length), lib);
+    consumer, lib.slice(lib.lastIndexOf(':') + 1), lib);
 }
 
 function insertSymbol(packageId: string, file: string, name: string, kind: string, opts: SymOpts = {}): number {
@@ -497,7 +497,7 @@ describe('analyzeOrg on hand-built rows', () => {
     run("INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, 'kept')", lib);
 
     analyze();
-    const blockedBy = ['npm:@acme/a-dynamic:dynamic_access', 'npm:@acme/a-dynamic:namespace_dynamic', 'npm:@acme/z-broken:index_failed'];
+    const blockedBy = ['npm:acme/a-dynamic:@acme/a-dynamic:dynamic_access', 'npm:acme/a-dynamic:@acme/a-dynamic:namespace_dynamic', 'npm:acme/z-broken:@acme/z-broken:index_failed'];
     // No private_dead in a blocked package either.
     expect(findings()).toEqual([
       f('internal', 'blocked', ['internal_refs_only'], blockedBy),
@@ -509,7 +509,7 @@ describe('analyzeOrg on hand-built rows', () => {
     sym(lib, 'src/fns.ts', 'unused', { exported: true });
     run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'opaque_consumer', 'partial index')", lib);
     analyze();
-    expect(findings()).toEqual([f('unused', 'blocked', ['no_refs'], ['npm:@acme/lib:opaque_consumer'])]);
+    expect(findings()).toEqual([f('unused', 'blocked', ['no_refs'], ['npm:acme/lib:@acme/lib:opaque_consumer'])]);
   });
 
   it('a targeted consumer flag blocks only its target, and leaves the consumer transparent', () => {
@@ -526,7 +526,7 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([
       f('appIsland', 'private_dead', ['already_unreachable']),
       f('appUnused', 'needs_review', DELETE),
-      f('libUnused', 'blocked', ['no_refs'], ['npm:@acme/app:unindexed_consumer']),
+      f('libUnused', 'blocked', ['no_refs'], ['npm:acme/app:@acme/app:unindexed_consumer']),
       f('otherUnused', 'needs_review', DELETE),
     ]);
   });
@@ -685,7 +685,7 @@ describe('analyzeOrg on hand-built rows', () => {
       const base = (JSON.parse(r.reasons) as string[]).filter((x) => x !== 'witness_pending');
       run("DELETE FROM findings WHERE symbol_id = ? AND verdict = 'needs_review'", r.symbol_id);
       run("INSERT INTO findings (symbol_id, verdict, reasons) VALUES (?, 'needs_review', ?)", r.symbol_id,
-        JSON.stringify([...base, 'witness_mismatch:npm:@acme/app:src/main.ts:1']));
+        JSON.stringify([...base, 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']));
     }
     reconcileDeadIslands(db);
     insertPrivateDead(db);
@@ -711,7 +711,7 @@ describe('analyzeOrg on hand-built rows', () => {
     downgradeAndPropagate('dead1');
     // dead1 is a seed again: h1 and shared are alive; dead2 alone no longer unlocks shared.
     expect(findings()).toEqual([
-      f('dead1', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
+      f('dead1', 'needs_review', ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']),
       f('dead2', 'needs_review', DELETE),
     ]);
   });
@@ -747,7 +747,7 @@ describe('analyzeOrg on hand-built rows', () => {
     downgradeAndPropagate('PDFJS');
     expect(findings()).toEqual([
       f('DocumentInitParameters', 'unexport_candidate', ['internal_refs_only']),
-      f('PDFJS', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
+      f('PDFJS', 'needs_review', ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']),
     ]);
   });
 
@@ -759,8 +759,8 @@ describe('analyzeOrg on hand-built rows', () => {
     analyze();
     downgradeAndPropagate('A', 'B');
     expect(findings()).toEqual([
-      f('A', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
-      f('B', 'needs_review', ['internal_refs_only', 'witness_mismatch:npm:@acme/app:src/main.ts:1']),
+      f('A', 'needs_review', ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']),
+      f('B', 'needs_review', ['internal_refs_only', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:1']),
     ]);
   });
 
@@ -793,7 +793,7 @@ describe('analyzeOrg on hand-built rows', () => {
         },
       });
       expect(findings()).toEqual([
-        f('dead1', 'needs_review', ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:2']),
+        f('dead1', 'needs_review', ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:2']),
         f('islandUser', 'unexport_candidate', ['internal_refs_only']),
       ]);
       expect(out.some((l) => l.includes('1 dead island(s) reverted'))).toBe(true);
@@ -975,10 +975,10 @@ describe.skipIf(!scipTs)('analyzeOrg on fixtures/org-small lib-core + app (scip-
     const rows = db.prepare(`SELECT s.package_id, s.name AS symbol, s.file, f.verdict, f.reasons, f.blocked_by
       FROM findings f JOIN symbols s USING (symbol_id) ORDER BY s.package_id, s.name, f.verdict`).all();
     expect(rows).toEqual([
-      { package_id: 'npm:@acme/core', symbol: 'internalOnlyFn', file: 'src/fns.ts', verdict: 'unexport_candidate', reasons: '["internal_refs_only"]', blocked_by: '[]' },
-      { package_id: 'npm:@acme/core', symbol: 'islandA', file: 'src/fns.ts', verdict: 'private_dead', reasons: '["already_unreachable"]', blocked_by: '[]' },
-      { package_id: 'npm:@acme/core', symbol: 'islandB', file: 'src/fns.ts', verdict: 'private_dead', reasons: '["already_unreachable"]', blocked_by: '[]' },
-      { package_id: 'npm:@acme/core', symbol: 'unusedFn', file: 'src/fns.ts', verdict: 'needs_review', reasons: '["no_refs","witness_pending"]', blocked_by: '[]' },
+      { package_id: 'npm:acme/lib-core:@acme/core', symbol: 'internalOnlyFn', file: 'src/fns.ts', verdict: 'unexport_candidate', reasons: '["internal_refs_only"]', blocked_by: '[]' },
+      { package_id: 'npm:acme/lib-core:@acme/core', symbol: 'islandA', file: 'src/fns.ts', verdict: 'private_dead', reasons: '["already_unreachable"]', blocked_by: '[]' },
+      { package_id: 'npm:acme/lib-core:@acme/core', symbol: 'islandB', file: 'src/fns.ts', verdict: 'private_dead', reasons: '["already_unreachable"]', blocked_by: '[]' },
+      { package_id: 'npm:acme/lib-core:@acme/core', symbol: 'unusedFn', file: 'src/fns.ts', verdict: 'needs_review', reasons: '["no_refs","witness_pending"]', blocked_by: '[]' },
     ]);
     expect(logs.at(-1)).toMatch(/^\[analyze\] findings=4 needs_review=1 private_dead=2 unexport_candidate=1 reachable=\d+$/);
   });
@@ -989,7 +989,7 @@ describe.skipIf(!scipTs)('analyzeOrg on fixtures/org-small lib-core + app (scip-
   });
 
   it('keeps unusedFn alive when the org is not closed-world, as a deprecation', () => {
-    run("UPDATE packages SET visibility = 'published-public' WHERE package_id = 'npm:@acme/core'");
+    run("UPDATE packages SET visibility = 'published-public' WHERE package_id = 'npm:acme/lib-core:@acme/core'");
     analyze();
     const rows = db.prepare(`SELECT s.name, f.verdict, f.reasons FROM findings f JOIN symbols s USING (symbol_id)
       WHERE s.is_exported = 1 ORDER BY s.name`).all();
@@ -997,6 +997,6 @@ describe.skipIf(!scipTs)('analyzeOrg on fixtures/org-small lib-core + app (scip-
       { name: 'internalOnlyFn', verdict: 'deprecation_candidate', reasons: '["internal_refs_only","open_world"]' },
       { name: 'unusedFn', verdict: 'deprecation_candidate', reasons: '["no_refs","open_world"]' },
     ]);
-    run("UPDATE packages SET visibility = 'private' WHERE package_id = 'npm:@acme/core'");
+    run("UPDATE packages SET visibility = 'private' WHERE package_id = 'npm:acme/lib-core:@acme/core'");
   });
 });

@@ -66,8 +66,8 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
     const db = openDb(':memory:');
     try {
       db.exec("INSERT INTO repos (repo) VALUES ('acme/a')");
-      db.exec("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:a', 'acme/a', '.', 'npm', 'a', 'private')");
-      const ins = db.prepare("INSERT INTO documents (package_id, file) VALUES ('npm:a', ?)");
+      db.exec("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/a:a', 'acme/a', '.', 'npm', 'a', 'private')");
+      const ins = db.prepare("INSERT INTO documents (package_id, file) VALUES ('npm:acme/a:a', ?)");
       for (const p of paths) ins.run(p);
       db.exec(analyzeSql());
       const inView = (v: string): string[] =>

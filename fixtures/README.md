@@ -24,7 +24,8 @@ same org with `assumeClosedWorld: false` (published-public `@acme/widgets` gets
 `deprecation_candidate` instead of deletion/unexport, and the helper its deletion
 would unlock is no longer `private_dead`).
 
-Findings rows: `package_id`, `symbol`, `file` (repo-relative), `verdict`,
+Findings rows: `package_id` (`<manager>:<repo>:<name>`, e.g.
+`npm:acme/lib-core:@acme/core`), `symbol`, `file` (repo-relative), `verdict`,
 `reasons`, `blocked_by` (only when non-empty), sorted by package_id, symbol, verdict.
 
 | Repo | Package | Visibility | Role |
@@ -66,16 +67,16 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | JSX `<Foo />` | `app-consumer/src/view.tsx` → `Widget` | alive |
 | Used only in `*.test.ts` of another repo → `only_test_refs` | `app-consumer/src/widgets.test.ts` → `testOnlyFn` | deletion_candidate `["only_test_refs"]` |
 | Used only in a test file of a consumer that declares the package only in `devDependencies` → counts | `app-consumer/src/widgets.test.ts` → `@acme/testkit#renderHelper`; `unusedKitHelper` never used | `renderHelper` alive; `unusedKitHelper` deletion_candidate `["no_refs"]` (the witness scans the test file too) |
-| Duplicate org package name | `fixtures/org-dup` (`one`, `two` both non-private `@acme/dup`) | discover fails, listing both locations and `ignoreManifests` suggestions; duplicates that are private (`private: true` / `publish_to: none`) are auto-ignored instead and still witness-scanned (`packages/core/test/discover.test.ts`) |
+| Same package name in two repos | `fixtures/org-dup` (`one` publishes `@acme/dup`, `two` has a private `@acme/dup`, `three` depends on `@acme/dup`) | both are packages (`npm:acme/one:@acme/dup`, `npm:acme/two:@acme/dup`); `three` resolves to `one` (the only published candidate) and the report warns which one it picked; see [`org-dup/README.md`](org-dup/README.md). The ambiguous case (no candidate preferred: every one `blocked`, `ambiguous_dep`) and same-repo duplicates (private ones auto-ignored, public ones an error) are unit tests in `packages/core/test/discover.test.ts` / `ingest.test.ts` |
 | Consumer pinned to old P, refs symbol gone at HEAD → `version_skew` | `app-skew/src/main.ts` → `removedFn` | version_skew row on `@acme/app-skew`; `internalUsed` still alive |
 | Private circular island | `lib-core/src/fns.ts` `islandA`/`islandB` | private_dead `already_unreachable` |
 | Private helper unlocked by a candidate | `lib-widgets/src/internal.ts` `unusedHelper` | private_dead `unlocked_by:internalUnused` (closed world only) |
 | Export used internally only → `unexport_candidate` | `lib-core/src/fns.ts` `internalOnlyFn` | unexport_candidate |
 | `"private": true` vs published-public → verdict differs | `@acme/core` (private) vs `@acme/widgets` (public); compare the two expected files | public ones become deprecation_candidate in open world |
-| Repo whose index fails → dependents' verdicts blocked naming it | `repo-broken` (invalid `tsconfig.json`) → `@acme/y#yUnused` | blocked, `blocked_by` includes `"npm:@acme/broken:index_failed"` (see `unindexed_consumer` below for the second blocker) |
+| Repo whose index fails → dependents' verdicts blocked naming it | `repo-broken` (invalid `tsconfig.json`) → `@acme/y#yUnused` | blocked, `blocked_by` includes `"npm:acme/repo-broken:@acme/broken:index_failed"` (see `unindexed_consumer` below for the second blocker) |
 | Symbol younger than `minAgeDays` | — | TODO (M2: needs git history / blame) |
-| `keep` list suppresses a finding | `sentei.json` keep `npm:@acme/widgets#keptFn` (`lib-widgets/src/misc.ts`) | no row |
-| Non-indexed-language consumer → `unindexed_consumer` | `tool-py/scripts/build.py` (flag set by discover; `.sh`/YAML/JSON/Markdown do not count) → `@acme/y#yUnused` | blocked, `blocked_by ["npm:@acme/broken:index_failed", "npm:@acme/tool-py:unindexed_consumer"]` |
+| `keep` list suppresses a finding | `sentei.json` keep `npm:@acme/widgets#keptFn` (name-only form: every package of that name; `npm:acme/lib-widgets:@acme/widgets#keptFn` would name just this one) (`lib-widgets/src/misc.ts`) | no row |
+| Non-indexed-language consumer → `unindexed_consumer` | `tool-py/scripts/build.py` (flag set by discover; `.sh`/YAML/JSON/Markdown do not count) → `@acme/y#yUnused` | blocked, `blocked_by ["npm:acme/repo-broken:@acme/broken:index_failed", "npm:acme/tool-py:@acme/tool-py:unindexed_consumer"]` |
 | Witness: corrupted `.scip` drops a ref → `needs_review` / `witness_mismatch` | — | TODO (needs checked-in `.scip` snapshots) |
 | Witness downgrade propagates: a candidate kept by the witness stops unlocking its helpers, and the dead island it alone used reverts to an unexport | `lib-cascade/src/index.ts`: `viewer` (named by the unindexed `bin/viewer.mjs`, which imports the package by name) uses `initParams`, `helperC`; `initParams` uses `helperA` | `viewer` needs_review `witness_mismatch:self:bin/viewer.mjs:*`; `initParams` unexport_candidate (a dead island at analyze time); `helperA`/`helperC` alive; control `dropped` deletion_candidate + `helperB` private_dead `unlocked_by:dropped` |
 | `exports` entry with one unresolvable condition | `lib-cascade/package.json` `"."`: `import` → `src/index.ts`, `require` → unbuilt `dist/cjs/index.cjs` | not `opaque_consumer` (one condition resolves) |

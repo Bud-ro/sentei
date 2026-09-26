@@ -39,6 +39,35 @@ export function hasDart(): boolean {
   return spawnSync('dart', ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0;
 }
 
+export function hasFlutter(): boolean {
+  return spawnSync('flutter', ['--version', '--machine'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0;
+}
+
+/** Fixture repos that need the Flutter SDK (repo name -> pub package name), per org. */
+export const FLUTTER_REPOS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  'org-dart': { 'flutter-app': 'acme_flutter_app', 'flutter-widgets': 'acme_widgets' },
+};
+
+/**
+ * Without `flutter` on PATH: removes the org's Flutter repos from a fixture
+ * copy (org.json and repos/), so the rest of the org indexes as before.
+ */
+export function dropFlutterRepos(orgName: string, orgDir: string): void {
+  const drop = Object.keys(FLUTTER_REPOS[orgName] ?? {});
+  if (drop.length === 0) return;
+  const orgJson = path.join(orgDir, 'org.json');
+  const cfg = JSON.parse(readFileSync(orgJson, 'utf8')) as { repos: Array<{ name: string }> };
+  cfg.repos = cfg.repos.filter((r) => !drop.includes(r.name));
+  writeFileSync(orgJson, JSON.stringify(cfg, null, 2));
+  for (const r of drop) rmSync(path.join(orgDir, 'repos', r), { recursive: true, force: true });
+}
+
+/** A snapshot key (`<indexer>/<org>/<owner>__<repo>/...`) of one of the org's Flutter repos. */
+export function isFlutterSnapshot(orgName: string, rel: string): boolean {
+  const repoSlug = rel.split('/')[2] ?? '';
+  return Object.keys(FLUTTER_REPOS[orgName] ?? {}).some((r) => repoSlug.endsWith(`__${r}`));
+}
+
 /** Skip installed deps and pub state a manual run may have left in the fixture. */
 const SKIP = new Set(['node_modules', '.dart_tool', 'pubspec.lock', 'pubspec_overrides.yaml']);
 
@@ -65,11 +94,16 @@ function canonical(v: unknown): unknown {
  * Index one fixture org in a temp copy and return its snapshot files, keyed by
  * POSIX path relative to fixtures/snapshots.
  */
-export async function generateOrgSnapshots(org: FixtureOrg, log: (l: string) => void = () => {}): Promise<Map<string, string>> {
+export async function generateOrgSnapshots(
+  org: FixtureOrg,
+  log: (l: string) => void = () => {},
+  flutter: boolean = hasFlutter(),
+): Promise<Map<string, string>> {
   const tmp = realpathSync(mkdtempSync(path.join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-snapshots-')));
   try {
     const orgDir = path.join(tmp, org.name);
     cpSync(path.join(FIXTURES, org.name), orgDir, { recursive: true, filter: (src) => !SKIP.has(path.basename(src)) });
+    if (!flutter) dropFlutterRepos(org.name, orgDir);
     const work = path.join(tmp, 'work');
     mkdirSync(work);
     const dbPath = path.join(work, 'sentei.db');
@@ -127,10 +161,10 @@ export function checkedInFiles(org: string, root = SNAPSHOTS): Map<string, strin
 }
 
 /** Write `files` under `root` and delete this org's files that were not produced. */
-function writeOrg(org: string, files: Map<string, string>, root: string): { written: number; deleted: string[] } {
+function writeOrg(org: string, files: Map<string, string>, root: string, keep: (rel: string) => boolean = () => false): { written: number; deleted: string[] } {
   const deleted: string[] = [];
   for (const rel of checkedInFiles(org, root).keys()) {
-    if (!files.has(rel)) {
+    if (!files.has(rel) && !keep(rel)) {
       rmSync(path.join(root, rel));
       deleted.push(rel);
     }
@@ -155,15 +189,19 @@ function writeOrg(org: string, files: Map<string, string>, root: string): { writ
 
 async function main(): Promise<void> {
   const dart = hasDart();
+  const flutter = hasFlutter();
   for (const org of ORGS) {
     if (org.dart && !dart) {
       console.warn(`[snapshots] SKIPPING ${org.name}: \`dart\` is not on PATH (its snapshots are left untouched)`);
       continue;
     }
+    if (!flutter && FLUTTER_REPOS[org.name] !== undefined) {
+      console.warn(`[snapshots] ${org.name}: \`flutter\` is not on PATH; its Flutter repos' snapshots are left untouched`);
+    }
     const files = await generateOrgSnapshots(org, (l) => {
       if (l.startsWith('[index]')) console.log(l);
-    });
-    const { written, deleted } = writeOrg(org.name, files, SNAPSHOTS);
+    }, flutter);
+    const { written, deleted } = writeOrg(org.name, files, SNAPSHOTS, (rel) => !flutter && isFlutterSnapshot(org.name, rel));
     console.log(`[snapshots] ${org.name}: wrote ${written} file(s)${deleted.length ? `, deleted ${deleted.join(', ')}` : ''}`);
   }
   console.log('[snapshots] review with `git diff fixtures/snapshots`');

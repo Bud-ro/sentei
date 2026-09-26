@@ -175,7 +175,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "npm:@acme/widgets",
+  "packageId": "npm:acme/lib-widgets:@acme/widgets",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

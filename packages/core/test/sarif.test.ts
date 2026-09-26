@@ -8,7 +8,7 @@ import { sarifSchemaErrors } from './helpers/sarif.ts';
 
 function finding(o: Partial<ReportFinding> & Pick<ReportFinding, 'symbol' | 'verdict'>): ReportFinding {
   return {
-    package_id: 'npm:@acme/util', repo: 'acme/lib-core', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
+    package_id: 'npm:acme/lib-core:@acme/util', name: '@acme/util', repo: 'acme/lib-core', file: 'src/index.ts', line: 1, col: 1, kind: 'Function',
     reasons: ['no_refs'], blocked_by: [], ...o,
   };
 }
@@ -24,17 +24,17 @@ function report(): Report {
     findings: [
       finding({ symbol: 'unusedFn', verdict: 'deletion_candidate', file: 'src/fns.ts', line: 9, col: 17 }),
       finding({ symbol: 'internalOnly', verdict: 'unexport_candidate', reasons: ['internal_refs_only'], line: 3, col: 17 }),
-      finding({ package_id: 'npm:@acme/pub', repo: 'acme/lib-pub', symbol: 'oldApi', verdict: 'deprecation_candidate' }),
+      finding({ package_id: 'npm:acme/lib-pub:@acme/pub', repo: 'acme/lib-pub', symbol: 'oldApi', verdict: 'deprecation_candidate' }),
       finding({ symbol: 'helper', verdict: 'private_dead', file: 'src/fns.ts', line: 21, col: 10, reasons: ['unlocked_by:unusedFn'] }),
       finding({ symbol: '_island', verdict: 'private_dead', file: 'src/fns.ts', line: null, col: null, reasons: ['already_unreachable'] }),
-      finding({ symbol: 'mentioned', verdict: 'needs_review', reasons: ['no_refs', 'witness_mismatch:npm:@acme/app:src/main.ts:3'] }),
-      finding({ package_id: 'npm:@acme/pub', repo: 'acme/lib-pub', symbol: 'pubB', verdict: 'blocked', line: 5, col: null,
-        blocked_by: ['npm:@acme/dyn:dynamic_access', 'npm:@acme/dyn:namespace_dynamic'] }),
+      finding({ symbol: 'mentioned', verdict: 'needs_review', reasons: ['no_refs', 'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:3'] }),
+      finding({ package_id: 'npm:acme/lib-pub:@acme/pub', repo: 'acme/lib-pub', symbol: 'pubB', verdict: 'blocked', line: 5, col: null,
+        blocked_by: ['npm:acme/dyn:@acme/dyn:dynamic_access', 'npm:acme/dyn:@acme/dyn:namespace_dynamic'] }),
       finding({ symbol: 'weird name', verdict: 'deletion_candidate', file: 'src/a dir/x#y.ts', line: 2, col: 1 }),
     ],
     versionSkew: [
-      { package_id: 'npm:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 4, col: 10, target_package_id: 'npm:@acme/util' },
-      { package_id: 'npm:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 9, col: 3, target_package_id: 'npm:@acme/util' },
+      { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 4, col: 10, target_package_id: 'npm:acme/lib-core:@acme/util' },
+      { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', symbol: 'removedFn', file: 'src/main.ts', line: 9, col: 3, target_package_id: 'npm:acme/lib-core:@acme/util' },
     ],
     packages: [],
     blockers: [],
@@ -119,19 +119,19 @@ describe('buildSarif', () => {
       ruleId: 'sentei/deletion',
       ruleIndex: 0,
       level: 'warning',
-      message: { text: '`unusedFn` in npm:@acme/util is a deletion candidate (reasons: no_refs).' },
+      message: { text: '`unusedFn` in npm:acme/lib-core:@acme/util is a deletion candidate (reasons: no_refs).' },
       locations: [{ physicalLocation: { artifactLocation: { uri: 'src/fns.ts', uriBaseId: '%SRCROOT%' }, region: { startLine: 9, startColumn: 17 } } }],
-      partialFingerprints: { [SARIF_FINGERPRINT_KEY]: sha('npm:@acme/util#unusedFn#src/fns.ts') },
-      properties: { packageId: 'npm:@acme/util', symbol: 'unusedFn', kind: 'Function', verdict: 'deletion_candidate', reasons: ['no_refs'], blockedBy: [] },
+      partialFingerprints: { [SARIF_FINGERPRINT_KEY]: sha('npm:acme/lib-core:@acme/util#unusedFn#src/fns.ts') },
+      properties: { packageId: 'npm:acme/lib-core:@acme/util', symbol: 'unusedFn', kind: 'Function', verdict: 'deletion_candidate', reasons: ['no_refs'], blockedBy: [] },
     });
     for (const x of results(lib)) expect(rules[x.ruleIndex]!.id).toBe(x.ruleId);
   });
 
   it('names blockers in the message and omits unknown positions', () => {
     const b = bySymbol(logs.get('acme/lib-pub'), 'pubB');
-    expect(b.message.text).toBe('`pubB` in npm:@acme/pub is blocked from a verdict (reasons: no_refs); blocked by npm:@acme/dyn:dynamic_access, npm:@acme/dyn:namespace_dynamic.');
+    expect(b.message.text).toBe('`pubB` in npm:acme/lib-pub:@acme/pub is blocked from a verdict (reasons: no_refs); blocked by npm:acme/dyn:@acme/dyn:dynamic_access, npm:acme/dyn:@acme/dyn:namespace_dynamic.');
     expect(b.locations[0]!.physicalLocation.region).toEqual({ startLine: 5 });
-    expect(b.properties.blockedBy).toEqual(['npm:@acme/dyn:dynamic_access', 'npm:@acme/dyn:namespace_dynamic']);
+    expect(b.properties.blockedBy).toEqual(['npm:acme/dyn:@acme/dyn:dynamic_access', 'npm:acme/dyn:@acme/dyn:namespace_dynamic']);
     const island = bySymbol(logs.get('acme/lib-core'), '_island');
     expect(island.locations[0]!.physicalLocation).toEqual({ artifactLocation: { uri: 'src/fns.ts', uriBaseId: '%SRCROOT%' } });
   });
@@ -145,10 +145,10 @@ describe('buildSarif', () => {
     expect(skew.map((r) => [r.ruleId, r.locations[0]!.physicalLocation.region?.startLine])).toEqual([
       ['sentei/version-skew', 4], ['sentei/version-skew', 9],
     ]);
-    expect(skew[0]!.message.text).toContain('npm:@acme/util');
+    expect(skew[0]!.message.text).toContain('npm:acme/lib-core:@acme/util');
     const fps = skew.map((r) => r.partialFingerprints[SARIF_FINGERPRINT_KEY]);
     expect(new Set(fps).size).toBe(2);
-    expect(fps[0]).toBe(sha('npm:@acme/app#removedFn#src/main.ts#npm:@acme/util'));
+    expect(fps[0]).toBe(sha('npm:acme/app:@acme/app#removedFn#src/main.ts#npm:acme/lib-core:@acme/util'));
   });
 
   it('sorts results by ruleId, uri, line, symbol', () => {

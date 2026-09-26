@@ -66,13 +66,13 @@ function makeDb(repos: string[], syms: Sym[]): { db: DatabaseSync; ids: Record<s
   for (const repo of repos) {
     db.prepare("INSERT INTO repos (repo, index_status) VALUES (?, 'ok')").run(repo);
     db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, ?, '.', 'npm', ?, 'private')")
-      .run(`npm:${repo}`, repo, repo);
+      .run(`npm:${repo}:${repo}`, repo, repo);
   }
   for (const s of syms) {
     const file = s.file ?? 'src/index.ts';
     const r = db
       .prepare('INSERT INTO symbols (symbol_str, package_id, file, line, name, is_exported) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(`sym ${s.repo} ${file} ${s.name}`, `npm:${s.repo}`, file, s.line, s.name, s.exported === false ? 0 : 1);
+      .run(`sym ${s.repo} ${file} ${s.name}`, `npm:${s.repo}:${s.repo}`, file, s.line, s.name, s.exported === false ? 0 : 1);
     ids[`${s.repo}:${s.name}`] = Number(r.lastInsertRowid);
   }
   return { db, ids };

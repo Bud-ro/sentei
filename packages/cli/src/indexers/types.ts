@@ -41,7 +41,7 @@ export interface DiscoveredIgnoredManifest {
 }
 
 export interface DiscoveredPackage {
-  /** `<manager>:<name>`, e.g. `npm:@acme/core`. */
+  /** `<manager>:<repo>:<name>`, e.g. `npm:acme/lib-core:@acme/core` (repo = `<org>/<repo name>`). */
   packageId: string;
   /** Package dir relative to the repo root, POSIX (`.` for the root). */
   path: string;
@@ -58,8 +58,20 @@ export interface DiscoveredDep {
   name: string;
   manager: string;
   constraint?: string | null;
-  /** Set when the dep is an org package. */
+  /**
+   * Set when the dep is an org package discover could pick (by name: the only one, the
+   * one in this repo, or the only published one; see `resolution`). Link / override
+   * only this one, never by bare name: several org packages may share the name.
+   */
   resolvedPackageId: string | null;
+  /** How resolvedPackageId was picked (discover DepResolution). Optional. */
+  resolution?: 'name' | 'same-repo' | 'published';
+  /** true: several org packages have this name and none could be preferred; resolvedPackageId is null. */
+  ambiguous?: true;
+  /** Every org package of this name, when there is more than one. */
+  candidates?: string[];
+  /** true: declared only as a dev dependency. */
+  dev?: true;
 }
 
 /** An org package together with the repo that holds it. */

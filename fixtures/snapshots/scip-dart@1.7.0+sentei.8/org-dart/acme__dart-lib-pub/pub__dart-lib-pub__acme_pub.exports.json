@@ -27,7 +27,7 @@
   "missingEntryPoints": [],
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
-  "packageId": "pub:acme_pub",
+  "packageId": "pub:acme/dart-lib-pub:acme_pub",
   "shorthandRefs": [],
   "unindexedImports": [],
   "unresolved": [],

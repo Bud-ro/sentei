@@ -1,0 +1,58 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/acme_widgets.dart
+  // Entry library of acme_widgets: Flutter widgets for acme_flutter_app.
+//^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/
+  import 'package:flutter/material.dart';
+
+  // Expected: alive, no finding (acme_flutter_app's main builds it).
+  class AcmeButton extends StatelessWidget {
+//      ^^^^^^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton# enclosing [4:0-11:1]
+//                         ^^^^^^^^^^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`framework.dart`/StatelessWidget#
+    const AcmeButton({super.key, required this.label});
+//        ^^^^^^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#`<constructor>`(). enclosing [5:2-5:53]
+//                          ^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#`<constructor>`().(key) enclosing [5:20-5:29]
+//                                             ^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#`<constructor>`().(label) enclosing [5:31-5:50]
+//                                             ^^^^^ reference scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#label.
+
+    final String label;
+//        ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//               ^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#label. enclosing [7:15-7:20]
+
+    @override
+//   ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`annotations.dart`/override.
+    Widget build(BuildContext context) => ElevatedButton(onPressed: null, child: Text(label));
+//  ^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`framework.dart`/Widget#
+//         ^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#build(). enclosing [9:2-10:92]
+//               ^^^^^^^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`framework.dart`/BuildContext#
+//                            ^^^^^^^ definition local 0 enclosing [10:15-10:35]
+//                                        ^^^^^^^^^^^^^^ reference scip-dart pub flutter . lib/src/material/`elevated_button.dart`/ElevatedButton#`<constructor>`().
+//                                                       ^^^^^^^^^ reference scip-dart pub flutter . lib/src/material/`elevated_button.dart`/ElevatedButton#`<constructor>`().(onPressed)
+//                                                                        ^^^^^ reference scip-dart pub flutter . lib/src/material/`elevated_button.dart`/ElevatedButton#`<constructor>`().(child)
+//                                                                               ^^^^ reference scip-dart pub flutter . lib/src/widgets/`text.dart`/Text#`<constructor>`().
+//                                                                                    ^^^^^ reference scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeButton#label.
+  }
+
+  // Expected: deletion_candidate ["no_refs"] (exported, no org package uses it).
+  class AcmeBanner extends StatelessWidget {
+//      ^^^^^^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeBanner# enclosing [14:0-19:1]
+//                         ^^^^^^^^^^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`framework.dart`/StatelessWidget#
+    const AcmeBanner({super.key});
+//        ^^^^^^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeBanner#`<constructor>`(). enclosing [15:2-15:32]
+//                          ^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeBanner#`<constructor>`().(key) enclosing [15:20-15:29]
+
+    @override
+//   ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`annotations.dart`/override.
+    Widget build(BuildContext context) => const MaterialBanner(content: Text('acme'), actions: [SizedBox.shrink()]);
+//  ^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`framework.dart`/Widget#
+//         ^^^^^ definition scip-dart pub acme_widgets . lib/`acme_widgets.dart`/AcmeBanner#build(). enclosing [17:2-18:114]
+//               ^^^^^^^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`framework.dart`/BuildContext#
+//                            ^^^^^^^ definition local 1 enclosing [18:15-18:35]
+//                                              ^^^^^^^^^^^^^^ reference scip-dart pub flutter . lib/src/material/`banner.dart`/MaterialBanner#`<constructor>`().
+//                                                             ^^^^^^^ reference scip-dart pub flutter . lib/src/material/`banner.dart`/MaterialBanner#`<constructor>`().(content)
+//                                                                      ^^^^ reference scip-dart pub flutter . lib/src/widgets/`text.dart`/Text#`<constructor>`().
+//                                                                                    ^^^^^^^ reference scip-dart pub flutter . lib/src/material/`banner.dart`/MaterialBanner#`<constructor>`().(actions)
+//                                                                                              ^^^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`basic.dart`/SizedBox#
+//                                                                                                       ^^^^^^ reference scip-dart pub flutter . lib/src/widgets/`basic.dart`/SizedBox#shrink().
+  }

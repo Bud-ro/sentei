@@ -84,7 +84,7 @@
 // Any hit (or a consumer dir we cannot read) → needs_review with reasons
 //   witness_mismatch:<consumer>:<file>:<line>      (1-based line, repo-relative file)
 //   witness_mismatch:<consumer>:checkout missing
-// where <consumer> is either a package id (`npm:<name>` / `pub:<name>`), `self` (P's
+// where <consumer> is either a package id (`npm:<org>/<repo>:<name>` / `pub:…`), `self` (P's
 // own generated-import files, or own files importing P by name), `self-string` (a quoted
 // name in P's own files), or, for an ignored manifest, `ignored:<repo>/<manifest>`
 // with <repo> = `<org>/<name>` and <manifest> the repo-relative manifest file (ending in
@@ -151,7 +151,11 @@ export interface WitnessDiscoverInput {
     ignoredManifests?: Array<{
       path: string;
       manifest: string;
-      deps: Array<{ resolvedPackageId: string | null }>;
+      /**
+       * `candidates` (optional): every org package of an ambiguous dep's name (discover
+       * DiscoverDep); the ignored manifest is then scanned for each of them (fail closed).
+       */
+      deps: Array<{ resolvedPackageId: string | null; candidates?: string[] }>;
       /** Unparseable manifest: scanned for every package. Default false. */
       depsUnknown?: boolean;
     }>;
@@ -649,10 +653,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
       });
       if (m.depsUnknown === true) ignoredAnyPackage.push(key);
       for (const d of m.deps) {
-        if (d.resolvedPackageId === null) continue;
-        let set = ignoredConsumers.get(d.resolvedPackageId);
-        if (!set) ignoredConsumers.set(d.resolvedPackageId, (set = new Set()));
-        set.add(key);
+        for (const target of d.resolvedPackageId !== null ? [d.resolvedPackageId] : (d.candidates ?? [])) {
+          let set = ignoredConsumers.get(target);
+          if (!set) ignoredConsumers.set(target, (set = new Set()));
+          set.add(key);
+        }
       }
     }
   }
