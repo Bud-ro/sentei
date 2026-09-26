@@ -41,10 +41,53 @@
   // reference between the parts was lost (flame-engine/oxygen, fork patch 8).
   library acme_core;
 
+  export 'src/storage.dart';
   export 'src/vec.dart';
 
   part '_parts/engine.dart';
   part '_parts/helper.dart';
+
+## lib/src/storage.dart
+  // A conditional import (fire_atlas storage, flame_3d backends): the analyzer
+//^ definition scip-dart pub acme_core . lib/src/`storage.dart`/
+  // resolves `storageName` to one variant only, so the index sees only the
+  // default's; the dart-surface sidecar lists every variant in
+  // `conditionalImports` and ingest lends the default's uses to the others.
+  import 'storage_stub.dart'
+      if (dart.library.io) 'storage_io.dart'
+      if (dart.library.js_interop) 'storage_web.dart';
+
+  // Expected: alive, no finding (external ref from acme_tools).
+  String storageLabel() => 'storage: ${storageName()}';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^^^^^ definition scip-dart pub acme_core . lib/src/`storage.dart`/storageLabel(). enclosing [9:0-9:53]
+//                                     ^^^^^^^^^^^ reference scip-dart pub acme_core . lib/src/`storage_stub.dart`/storageName().
+
+## lib/src/storage_io.dart
+  // dart.library.io variant of src/storage.dart's conditional import.
+//^ definition scip-dart pub acme_core . lib/src/`storage_io.dart`/
+  // Expected: alive, no finding: the index sees only the default variant; the
+  // sidecar's conditionalImports lends it the uses of storage_stub.dart's twin.
+  String storageName() => 'io';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^^^^ definition scip-dart pub acme_core . lib/src/`storage_io.dart`/storageName(). enclosing [3:0-3:29]
+
+## lib/src/storage_stub.dart
+  // Default variant of src/storage.dart's conditional import.
+//^ definition scip-dart pub acme_core . lib/src/`storage_stub.dart`/
+  // Expected: alive, no finding (called by storageLabel).
+  String storageName() => 'stub';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^^^^ definition scip-dart pub acme_core . lib/src/`storage_stub.dart`/storageName(). enclosing [2:0-2:31]
+
+## lib/src/storage_web.dart
+  // dart.library.js_interop variant of src/storage.dart's conditional import.
+//^ definition scip-dart pub acme_core . lib/src/`storage_web.dart`/
+  // Expected: alive, no finding: the index sees only the default variant; the
+  // sidecar's conditionalImports lends it the uses of storage_stub.dart's twin.
+  String storageName() => 'web';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^^^^ definition scip-dart pub acme_core . lib/src/`storage_web.dart`/storageName(). enclosing [3:0-3:30]
 
 ## lib/src/vec.dart
   // Operators are used without naming anything: `a & b` never names `Vec2Ops`,

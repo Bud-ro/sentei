@@ -252,5 +252,8 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
     // acme_pub is published-public: its unused export is a deprecation, and org_dead reads it as a deletion.
     expect(r.views.deprecate.rows.map((f) => `${f.package_id}#${f.symbol}`)).toContain('pub:acme/dart-lib-pub:acme_pub#pubUnused');
     expect(r.views.org_dead.rows).toEqual(r.views.deprecate.rows);
+    // acme_core's conditional import: the index resolves `storageName` to the default
+    // storage_stub.dart only; the sidecar's conditionalImports keeps the io/web variants alive.
+    expect(rows.filter((x) => x.symbol === 'storageName')).toEqual([]);
   }, 600_000);
 });

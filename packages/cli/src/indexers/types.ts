@@ -279,6 +279,15 @@ export interface ExportsSidecar {
    * be cached while the target changes. TypeScript only; absent for Dart.
    */
   deepImportExports?: DeepImportExport[];
+  /**
+   * Dart (dart-surface): every `import` / `export` directive with
+   * configurations (`import 'a.dart' if (dart.library.io) 'b.dart' if
+   * (dart.library.js_interop) 'c.dart';`) in the package's own files. The
+   * analyzer (so the index) follows one variant only, so the others' code
+   * looks unused (fire_atlas storage/desktop.dart vs web.dart, flame_3d's
+   * web_gpu backend). Absent for TypeScript and in older Dart sidecars.
+   */
+  conditionalImports?: ConditionalImport[];
 }
 
 export interface DeepImportExport {
@@ -292,6 +301,19 @@ export interface DeepImportExport {
   name: string;
   /** File declaring it, relative to the target package dir (POSIX). */
   file: string;
+}
+
+/** One configurable directive; its position is the default URI's string literal. */
+export interface ConditionalImport extends SourcePosition {
+  /**
+   * The default (unconditional) URI, resolved against the directive's file:
+   * the repo-relative POSIX path of the file it names when that is inside the
+   * repo (relative URIs, and `package:` URIs of packages checked out in the
+   * repo), else the absolute URI (`dart:io`, `package:other/x.dart`).
+   */
+  target: string;
+  /** Each configured URI (`if (…) 'b.dart'`), in source order, resolved like `target`. */
+  alternatives: string[];
 }
 
 export interface EntrySymbol extends SourcePosition {

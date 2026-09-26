@@ -5,6 +5,7 @@
 // reference between the parts was lost (flame-engine/oxygen, fork patch 8).
 library acme_core;
 
+export 'src/storage.dart';
 export 'src/vec.dart';
 
 part '_parts/engine.dart';

@@ -1,4 +1,5 @@
 {
+  "conditionalImports": [],
   "entryPoints": [
     "lib/acme_kit.dart",
     "lib/testing.dart"

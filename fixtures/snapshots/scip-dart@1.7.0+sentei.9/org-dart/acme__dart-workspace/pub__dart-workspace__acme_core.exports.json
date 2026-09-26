@@ -1,4 +1,16 @@
 {
+  "conditionalImports": [
+    {
+      "alternatives": [
+        "packages/acme_core/lib/src/storage_io.dart",
+        "packages/acme_core/lib/src/storage_web.dart"
+      ],
+      "col": 7,
+      "file": "packages/acme_core/lib/src/storage.dart",
+      "line": 4,
+      "target": "packages/acme_core/lib/src/storage_stub.dart"
+    }
+  ],
   "entryPoints": [
     "packages/acme_core/lib/acme_core.dart"
   ],
@@ -38,6 +50,15 @@
       "file": "packages/acme_core/lib/src/vec.dart",
       "line": 5,
       "name": "Vec2",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/acme_core/lib/acme_core.dart",
+      "exportedAs": "storageLabel",
+      "file": "packages/acme_core/lib/src/storage.dart",
+      "line": 9,
+      "name": "storageLabel",
       "sites": []
     }
   ],

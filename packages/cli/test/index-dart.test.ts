@@ -472,7 +472,10 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
 
   it('indexes every package in one scip-dart run, each with its own member-relative documents (lib/ of members listed by path)', () => {
     expect(docs('acme_ws')).toEqual([]);
-    expect(docs('acme_core')).toEqual(['lib/_parts/engine.dart', 'lib/_parts/helper.dart', 'lib/acme_core.dart', 'lib/src/vec.dart']);
+    expect(docs('acme_core')).toEqual([
+      'lib/_parts/engine.dart', 'lib/_parts/helper.dart', 'lib/acme_core.dart',
+      'lib/src/storage.dart', 'lib/src/storage_io.dart', 'lib/src/storage_stub.dart', 'lib/src/storage_web.dart', 'lib/src/vec.dart',
+    ]);
     expect(docs('acme_tools')).toEqual(['bin/acme_tools.dart', 'lib/src/cli.dart']);
     const runs = (pkg: string) => readFileSync(path.join(work, 'index/acme__dart-workspace', `pub__${pkg}.log`), 'utf8')
       .split('\n').filter((l) => l.startsWith('$ dart run scip_dart'));
@@ -504,6 +507,18 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
     ]));
     // `v + d` inside acme_core: the private extension `_Shift` is used only so.
     expect(occ('acme_core', 'lib/src/vec.dart')).toContain('30:33 lib/src/`vec.dart`/_Shift#+().');
+  });
+
+  it('lists every conditional import with its default target and alternatives (sidecar conditionalImports)', () => {
+    const side = (pkg: string) => readJson<ExportsSidecar>(work, 'index/acme__dart-workspace', `pub__${pkg}.exports.json`);
+    expect(side('acme_core').conditionalImports).toEqual([
+      {
+        file: 'packages/acme_core/lib/src/storage.dart', line: 4, col: 7,
+        target: 'packages/acme_core/lib/src/storage_stub.dart',
+        alternatives: ['packages/acme_core/lib/src/storage_io.dart', 'packages/acme_core/lib/src/storage_web.dart'],
+      },
+    ]);
+    expect(side('acme_tools').conditionalImports).toEqual([]);
   });
 
   it('a bin/ library that only re-exports main records that main, at its declaration, as a runtime entry symbol', () => {
@@ -930,6 +945,29 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     // `1 + 2` (line 19) and Object.== are SDK operators: no occurrence.
     const sdk = readScipIndex(r.scipFile).documents[0]!.occurrences.filter((o) => o.range[0] === 19 && o.symbol.includes('dart:core'));
     expect(sdk).toEqual([]);
+  }, 300_000);
+
+  it('resolves conditional directive URIs to repo paths, else keeps the package:/dart: URI', async () => {
+    write({
+      'cond/pubspec.yaml': pubspec('acme_cond', '1.0.0'),
+      'cond/lib/acme_cond.dart': [
+        "import 'dart:math' if (dart.library.io) 'src/io.dart' as impl;",
+        "export 'package:acme_cond/src/io.dart' if (dart.library.js_interop) 'package:path/path.dart';",
+        '',
+        'num pick() => impl.max(1, 2);',
+        '',
+      ].join('\n'),
+      'cond/lib/src/io.dart': 'num max(num a, num b) => a;\n',
+    });
+    const repos = [repoOf(root, 'cond', pubPackage('acme_cond', ['lib/acme_cond.dart']))];
+    repos[0]!.localPath = path.join(root, 'cond');
+    const out = path.join(root, 'out-cond');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor(repos, repos[0]!), out);
+    expect(readJson<ExportsSidecar>(r.exportsFile).conditionalImports).toEqual([
+      { file: 'lib/acme_cond.dart', line: 0, col: 7, target: 'dart:math', alternatives: ['lib/src/io.dart'] },
+      { file: 'lib/acme_cond.dart', line: 1, col: 7, target: 'lib/src/io.dart', alternatives: ['package:path/path.dart'] },
+    ]);
   }, 300_000);
 
   it('a package with Dart files under lib/ but no lib/ document in its index fails (never ok)', async () => {

@@ -1,4 +1,5 @@
 {
+  "conditionalImports": [],
   "entryPoints": [
     "bin/clock.dart",
     "bin/main.dart",

@@ -9,6 +9,7 @@ void main() {
   print(shifted(a, 1).x);
   print(Engine().run());
   print(_banner(usedFn()));
+  print(storageLabel());
 }
 
 // Expected: alive, no finding (reached from main).

@@ -82,7 +82,8 @@ export const scipDart: Indexer = {
   // fork patch 6), fork patch 7 (the lib/ of a member listed by path), fork
   // patch 8 (parts resolved in their library), fork patch 9 (operator
   // references), a package with lib/ code but no lib/ document fails;
-  // dart-surface: a `main` re-exported by a script is an entry symbol.
+  // dart-surface: a `main` re-exported by a script is an entry symbol, and
+  // `conditionalImports`.
   version: '1.7.0+sentei.9',
 
   detect({ repo, pkg }) {
@@ -279,6 +280,7 @@ export const scipDart: Indexer = {
       ...rest,
       shorthandRefs: rest.shorthandRefs ?? [],
       namespaceSpreadRefs: [],
+      conditionalImports: rest.conditionalImports ?? [],
       // A test's `main` is run by the test runner; test files never get verdicts.
       // Nothing under a pub package's lib/ is a test file (core SURFACE_DIRS, as in the SQL views).
       // dart-surface emits no kind: every Dart entry symbol is invoked by the runtime or a tool.

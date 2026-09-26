@@ -17,7 +17,7 @@
   // Expected: alive, no finding: run through bin/acme_tools.dart's
   // `export 'package:acme_tools/src/cli.dart';` (sidecar entrySymbols).
   void main() {
-//     ^^^^ definition scip-dart pub acme_tools . lib/src/`cli.dart`/main(). enclosing [5:0-11:1]
+//     ^^^^ definition scip-dart pub acme_tools . lib/src/`cli.dart`/main(). enclosing [5:0-12:1]
     final a = Vec2(1, 2) & Vec2(3, 4);
 //        ^ definition local 0 enclosing [6:8-6:35]
 //            ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
@@ -41,12 +41,15 @@
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^^ reference scip-dart pub acme_tools . lib/src/`cli.dart`/_banner().
 //                ^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/usedFn().
+    print(storageLabel());
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^ reference scip-dart pub acme_core . lib/src/`storage.dart`/storageLabel().
   }
 
   // Expected: alive, no finding (reached from main).
   String _banner(int n) => 'acme_tools $n';
 //^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-//       ^^^^^^^ definition scip-dart pub acme_tools . lib/src/`cli.dart`/_banner(). enclosing [14:0-14:41]
+//       ^^^^^^^ definition scip-dart pub acme_tools . lib/src/`cli.dart`/_banner(). enclosing [15:0-15:41]
 //               ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//                   ^ definition local 1 enclosing [14:15-14:20]
+//                   ^ definition local 1 enclosing [15:15-15:20]
 //                                      ^ reference local 1

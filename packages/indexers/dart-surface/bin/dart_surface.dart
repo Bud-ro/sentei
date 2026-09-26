@@ -4,7 +4,8 @@
 // (packages/cli/src/indexers/scip-dart.ts) runs this next to scip-dart and
 // writes its output as `<slug>.exports.json`. Output (stdout, JSON) is the
 // sidecar shape of packages/cli/src/indexers/types.ts `ExportsSidecar` (incl.
-// `entrySymbols`, see [Surface.entrySymbols]), plus three adapter-only keys the
+// `entrySymbols`, see [Surface.entrySymbols], and `conditionalImports`, see
+// [Surface.conditionalImports]), plus adapter-only keys the
 // adapter strips before writing the sidecar:
 //   - `unresolvedOrgModules`: org (or own relative) import/export URIs that do
 //     not resolve; references through them vanish silently → status partial;
@@ -132,6 +133,13 @@ class Surface {
   final unresolvedImports = <Map<String, Object>>[];
   final unresolvedOrgModules = <Map<String, Object>>[];
   final missingParts = <Map<String, Object>>[];
+
+  /// Every `import`/`export` with configurations (`if (dart.library.io) 'b.dart'`)
+  /// in the package's own files: the analyzer follows one variant only, so the
+  /// others look unused. `target` is the default URI, `alternatives` the
+  /// configured ones, each resolved by [_uriTarget]. Positions are the default
+  /// URI's string literal.
+  final conditionalImports = <Map<String, Object>>[];
 
   /// Own `package:<self>/...` directive URIs that did not resolve after a
   /// failed pub get: the package config does not map the package itself (it
@@ -271,6 +279,7 @@ class Surface {
       'entrySymbols': entrySymbols.values.toList()..sort(_byPosition),
       'unresolvedOrgModules': unresolvedOrgModules,
       'missingParts': missingParts,
+      'conditionalImports': conditionalImports..sort(_byPosition),
       'unresolvedOwnUris': unresolvedOwnUris.length,
       'diagnostics': diagnostics,
     };
@@ -414,6 +423,7 @@ class Surface {
             ...positionIn(file, parsed.unit, d.uri.offset).toJson(),
           });
         }
+        _conditionalDirectives(file, parsed.unit);
         final imports = {
           for (final d in parsed.unit.directives.whereType<ImportDirective>()) d.importKeyword.offset: d,
         };
@@ -452,6 +462,45 @@ class Surface {
     if (c != 0) return c;
     final l = (a['line'] as int) - (b['line'] as int);
     return l != 0 ? l : (a['col'] as int) - (b['col'] as int);
+  }
+
+  /// Records the configurable import/export directives of [file] in [conditionalImports].
+  void _conditionalDirectives(String file, CompilationUnit unit) {
+    Uri? base;
+    for (final d in unit.directives.whereType<NamespaceDirective>()) {
+      if (d.configurations.isEmpty) continue;
+      final text = d.uri.stringValue;
+      if (text == null) continue;
+      base ??= context.currentSession.uriConverter.pathToUri(file) ?? Uri.file(file);
+      conditionalImports.add({
+        ...positionIn(file, unit, d.uri.offset).toJson(),
+        'target': _uriTarget(base, text),
+        'alternatives': [
+          for (final c in d.configurations)
+            if (c.uri.stringValue case final alt?) _uriTarget(base, alt),
+        ],
+      });
+    }
+  }
+
+  /// A directive URI resolved against the file's own URI: the repo-relative
+  /// POSIX path of the file it names when that is inside the repo (relative
+  /// URIs, and `package:` URIs of packages checked out in the repo), else the
+  /// absolute URI (`dart:io`, `package:other/x.dart`).
+  String _uriTarget(Uri base, String text) {
+    final Uri uri;
+    try {
+      uri = base.resolve(text);
+    } on FormatException {
+      return text;
+    }
+    if (uri.isScheme('dart')) return uri.toString();
+    final path = context.currentSession.uriConverter.uriToPath(uri) ?? (uri.isScheme('file') ? uri.toFilePath() : null);
+    if (path != null) {
+      final abs = p.normalize(path);
+      if (p.isWithin(repoRoot, abs)) return repoRel(abs);
+    }
+    return uri.toString();
   }
 
   /// Analyzer codes for a directive URI whose file does not exist.

@@ -1,4 +1,5 @@
 {
+  "conditionalImports": [],
   "entryPoints": [
     "bin/main.dart"
   ],
