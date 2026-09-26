@@ -2619,3 +2619,149 @@ them apart), so it is reviewed although the example may not use the extension.
 Fixture: org-dart `acme_x` `inExample` (used by `_privateFn`, named by the
 ignored example) → needs_review with the note; `wireTick` stays an unexport.
 
+
+### Phase 2 fix round 3: Dart public subdirectories; main anywhere; analyzer excludes; jnigen crash
+
+Evidence: the dart-lang run (`$TMPDIR/dog-dartlang/run1`, 31 repos, 264
+packages, adapter `+sentei.8`) and the flame-engine verification rerun on
+`7441b3f` (`$TMPDIR/dog-flame2`). Adapter `1.7.0+sentei.10`; fork patches
+10–12 in `packages/indexers/scip-dart/PATCHES.md`. Measured on copies of the
+clones (never in place) with Dart 3.13.4 / Flutter 3.47.5.
+
+**Public libraries under `lib/<subdir>/` (discover, `pubPublicLibraries`).**
+In Dart every `.dart` file under `lib/` outside `lib/src/` is importable as
+`package:<name>/<path>`, so it is public API; pub entry points were only
+`lib/*.dart` and `bin/`. Now: every such file (dot dirs and packages nested
+under `lib/` skipped), plus `bin/`; `isLibrary` follows. A `part of` file
+stays an entry point as before (dart-surface says "not a library" and
+exports nothing from it; its document is a seed, which only adds liveness).
+On the dart-lang clones: **564 new entry points in 16 packages** (was "no
+entry points" for two):
+
+| Repo | Package | New entry points |
+| --- | --- | --- |
+| pub-dev | pub_dev (`app/lib/**`) | 300 |
+| dart-pad | dartpad_frontend | 98 |
+| dart-pad | dartpad_ui | 39 |
+| pub-dev | _pub_shared | 38 |
+| webdev | dwds (`lib/data/*`) | 20 |
+| build | built_value_chat_example | 15 |
+| build | build_daemon (`lib/data/*`) | 14 |
+| i18n | messages_builder | 12 |
+| setup-dart | setup_dart | 7 |
+| build | _benchmark | 5 |
+| pub-dev | pub_integration | 5 |
+| i18n | intl_translation (`lib/visitors/*`) | 3 |
+| labs | timezone (`lib/data/latest*.dart`) | 3 |
+| labs | gcloud (`lib/db/metamodel.dart`) | 1 |
+| test | regression_tests (had none) | 2 |
+| tools | sse (`lib/client/`, `lib/server/`; had none) | 2 |
+
+Their declarations were `private_dead` (unexported) or invisible to the
+export surface; they are now exports with the usual verdicts. Fixture:
+`dart-lib-x/lib/extras/extras.dart` (`extrasUnused`: deletion_candidate, was
+private_dead).
+
+**`main` anywhere (dart-surface).** Round 1 took `main` from libraries outside
+`lib/` and from `lib/*.dart` entries. A top-level `main` exists to be run and
+nothing references it, wherever it is: js_interop_gen's
+`lib/src/dart_main.dart` is compiled with dart2js from a string in `cli.dart`
+(351 false private_dead rows). Every own library's `main` (declared or
+re-exported) is now a runtime entry symbol; test files are still dropped by
+the adapter. On js_interop_gen the sidecar gains
+`lib/src/dart_main.dart:28 main`. That alone did not help end to end: the
+package also has an npm package (`package.json`) in `lib/src/`, and the
+adapter passed every nested package's dir to dart-surface as "not ours", so
+all of `lib/src/` was skipped. The nested list now holds only pub packages
+and ignored manifests with a `pubspec.yaml`, as scip-dart's does. On a copy of
+the web clone (index, ingest, analyze of that repo alone, `minAgeDays: 0`):
+**js_interop_gen private_dead 351 → 16** (the 16 left, e.g. `cli.dart`
+`runNodeWithResult` and unused `typescript.types.dart` bindings, not
+spot-checked). Fixture:
+`dart-lib-x/lib/src/worker_main.dart` (`main` keeps `_workerHelper` alive).
+
+**Analyzer excludes (fork patch 10).** The fork indexed
+`contextRoot.analyzedFiles()`, which honours `analyzer: exclude:`. Now every
+`.dart` file under `lib/`, `bin/`, `test/`, `example/`, `tool/`, `benchmark/`,
+`web/`, `integration_test/`, `test_driver/` (dot dirs, `build/`, symlinked dirs,
+nested packages skipped) is indexed too, resolved in the context whose root
+contains it (`contextFor` throws for an excluded file; `getResolvedLibrary`
+works for it, verified: its imports resolve and its references are the same as
+unexcluded). scip-dart reports per package on stderr
+(`sentei-scip-dart: {"package", "excludedIndexed", "unresolved"}`); the adapter
+writes an `info:` line for the first and makes the package `partial` for any
+file that did not resolve (fail closed; none so far). dart-surface scans the
+same files. On the dart-lang run's `ok` packages, **198 files in 8 packages**
+were missing from their `.scip` (the run's count said 199; this walk skips
+`build/` and dot dirs): ffigen 155 (`test/code_generator_tests/expected_bindings/`),
+dart_syntax_highlight 20 (`test/test_files/`), jnigen 8 (`tool/snippets/`),
+mv3_extension 6, dwds 4 (`lib/src/handlers/injected_client_js.dart`,
+`test/integration/fixtures/{context,server,utilities}.dart`), jni 3,
+cronet_http 1 (`lib/src/jni/jni_bindings.dart`), mobile_test 1. Rerun with
+patch 10 on copies: dwds 4 and cronet_http 1 and ffigen 155 files indexed, 0
+unresolved (ffigen 11 s). The adapter's "lib/ has Dart files but no lib/
+document → failed" check stays (any other cause), but an `exclude: lib/**` no
+longer reaches it (its test now checks the files are indexed). Fixture:
+`dart-lib-x/analysis_options.yaml` excludes `lib/src/excluded/**`;
+`lib/bindings.dart` re-exports `lib/src/excluded/bindings_gen.dart`, whose
+`bindingsCall` keeps the unexported `bindingsBackend` alive.
+
+**jnigen crash (fork patch 11).** `native`'s `pkgs/jnigen/android_test_runner`
+(`android_integration_test`) imports
+`../../test/jackson_core_test/runtime_test_registrant.dart` of jnigen, which
+is not in its package config; scip-dart threw at `symbol_generator.dart:252`
+and exited 255. Reproduced on a copy of the clone, then fixed: a file in no
+package of the package config gets the package of its nearest enclosing
+`pubspec.yaml`, so the symbol is the one jnigen's own index defines
+(`scip-dart pub jnigen 1.0.1-wip test/jackson_core_test/`runtime_test_registrant.dart`/registerTests().`,
+checked against the run's jnigen `.scip`); with no pubspec above it the
+element is `local`. Each such file is logged once (`WARN: … is in no package
+of the package config`) and listed in an `info:` diagnostic. The copy now
+indexes in 9 s, exit 0.
+
+**Flutter plugin classes (dart-surface; flame-engine rerun item A).** Flutter's
+generated plugin registrant instantiates the classes a pubspec names
+(`GamepadsWeb.registerWith(registrar)`); gamepads_web's `GamepadsWeb` came out
+DEPRECATE / ORG-DEAD. Every `pluginClass` / `dartPluginClass` under
+`flutter.plugin.platforms.<platform>` (and legacy `flutter.plugin.pluginClass`)
+that is a Dart class of the package is a runtime entry symbol, looked up in
+the platform's `fileName` library (default `lib/<package>.dart`), then in every
+own `lib/` library. A native platform's `pluginClass` (Kotlin, Swift, C++) is
+skipped quietly; a missing web `pluginClass` or `dartPluginClass` warns.
+Fixture: new repo `flutter-plugin` (`acme_plugin`, like gamepads_web; dropped
+with the other Flutter repos when `flutter` is not on PATH).
+
+**Type annotations of variables (fork patch 12; flame-engine rerun item B).**
+The `enclosing_range` of a top-level variable or field was its
+`VariableDeclaration`, which starts at the name, so the type in jenny's
+`final Map<…, BinaryOperatorBuilder> _builders = …` (`operators/_common.dart:39`)
+was a use by the file, not by `_builders`: the reachable variable did not keep
+its typedef alive (private_dead). The range now starts at the declaration
+(doc comment, metadata, modifiers, type). Fixture:
+`dart-lib-x/lib/src/builders.dart` (`_Doubler`; private_dead with the old fork,
+checked by reverting the patch). Snapshots: every field's and top-level
+variable's `enclosing` starts earlier, nothing else.
+
+**Open item: conditional exports (ingest).** `export 'stub.dart' if
+(dart.library.io) 'io.dart';` in a library: ingest lends the default's
+references and incoming edges to the alternatives' twins (round 1), but the
+twins are not exported, so nothing seeds them and they (and what only they
+use) come out `private_dead already_unreachable`. The sidecar's
+`conditionalImports` entries now say `directive: 'import' | 'export'`
+(`types.ts` `ConditionalImport.directive`, optional, additive). Rule for
+ingest, in the conditionalImports pass after the mirroring: for an entry with
+`directive = 'export'` in file A, default target T and in-repo alternative B,
+for each symbol X of T and its twin X' in B (the same matching as the
+mirroring: the same descriptors after the module path, else B's top-level
+symbol of the same name), copy X's export surface to X':
+`INSERT OR IGNORE INTO symbol_exports (symbol_id, entry_file, exported_as)
+SELECT X', entry_file, exported_as FROM symbol_exports WHERE symbol_id = X`
+and, when that inserted anything, `UPDATE symbols SET is_exported = 1 WHERE
+symbol_id = X'`. X' is then a seed and gets the same verdict logic as X (its
+external references are X's, mirrored). When T is not an indexed document
+(no twins to match), make every public top-level symbol of B an entry symbol
+(`runtime`: alive, no verdict), fail closed. A conditional `import` keeps
+today's behaviour. Fixture ready, not asserted:
+`fixtures/org-dart/pending/conditional-export/` (outside `org.json`; its
+README lists today's three wrong rows, `platformName` ×2 and `_ioDetail`, and
+how to enable it).

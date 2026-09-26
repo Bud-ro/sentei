@@ -85,6 +85,18 @@ opens pull requests.
   `tsconfig.sentei-runtime.json` next to it (it `extends` the package tsconfig and
   is removed after the run); they never make the package opaque. A `main` /
   `exports` / `types` entry outside the tsconfig still does.
+
+  of them is `failed`, never `ok`. Every `.dart` file of the package's `lib/`,
+  `bin/`, `test/`, `example/`, `tool/`, `benchmark/`, `web/`,
+  `integration_test/` and `test_driver/` is indexed, including files
+  `analysis_options.yaml` excludes (an `info:` line lists them; one that does
+  not resolve makes the package `partial`).
+- Dart entry points: every public library (each `.dart` file under `lib/`
+  outside `lib/src/`, importable as `package:<name>/<path>`) and `bin/`. Kept
+  alive although nothing references them: the top-level `main` of every
+  library (wherever it is; test files excepted), build.yaml builder factories,
+  dart_dev's `config`, and the Flutter plugin classes a pubspec names
+  (`flutter.plugin.platforms.*.pluginClass` / `dartPluginClass`).
 - tsconfig `lib`/`target`/`module` values newer than the bundled TypeScript
   5.9 (`ES2025`) are read as its newest (`esnext`, `nodenext`), with an
   `info:` line in the package's index log.
