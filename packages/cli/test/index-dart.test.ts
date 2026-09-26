@@ -585,6 +585,8 @@ describe('build_runner for missing generated parts', () => {
     'example/pubspec.yaml': 'name: example\n',
     'example/lib/e.dart': "part 'e.g.dart';\n", // a nested package: not ours
     'web/demo.dart': "part 'demo.over_react.g.dart';\n",
+    // A codemod's test input: a string, not a directive (over_react_codemod).
+    'test/codemod_test.dart': "const input = '''\npart '$name.over_react.g.dart';\n''';\n",
   };
 
   it('lists own missing *.g.dart / *.freezed.dart parts only', () => {

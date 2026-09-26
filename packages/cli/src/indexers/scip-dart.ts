@@ -722,7 +722,8 @@ export function missingGeneratedParts(dir: string): string[] {
         }
         for (const m of text.matchAll(/^[ \t]*part[ \t]+(['"])([^'"\n]+)\1[ \t]*;/gm)) {
           const uri = m[2]!;
-          if (uri.includes(':') || !GENERATED_PART.test(uri)) continue;
+          // `$` only in a string that looks like a directive (a codemod's test input).
+          if (uri.includes(':') || uri.includes('$') || !GENERATED_PART.test(uri)) continue;
           if (!existsSync(path.resolve(path.dirname(p), ...uri.split('/')))) {
             out.push(`${path.relative(dir, p).split(path.sep).join('/')}: '${uri}'`);
           }
