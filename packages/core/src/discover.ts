@@ -321,7 +321,18 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     const warn = (m: string): void => log(`warning: ${repo}: ${m}`);
     const config = readRepoConfig(localPath);
     const files = listFiles(localPath);
-    const { packages: manifests, ignored } = readRepoManifestsWithIgnored(localPath, warn, files, {
+    const hasLibDir = (dir: string): boolean => {
+      const prefix = dir === '.' ? 'lib/' : `${dir}/lib/`;
+      return files.some((f) => f.startsWith(prefix));
+    };
+    // A pub package without lib/ (a workspace root, a bin-only tool) has nothing to
+    // import: "no entry points" is expected there, not a warning (handled below).
+    const manifestWarn = (m: string): void => {
+      const hit = /^(?:(.*)\/)?pubspec\.yaml: no entry points/.exec(m);
+      if (hit && !hasLibDir(hit[1] ?? '.')) return;
+      warn(m);
+    };
+    const { packages: manifests, ignored } = readRepoManifestsWithIgnored(localPath, manifestWarn, files, {
       ignoreDirs: ignoreDirList,
       ignoreManifest: (manifest) => {
         const hit = orgConfig.ignoreManifests.find((g) => matchGlob(g, `${r.name}/${manifest}`));
@@ -330,6 +341,15 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       },
       log: (m) => log(`${repo}: ${m}`),
     });
+    // No lib/ at all: nothing another package can import (package: URIs resolve under
+    // lib/), so it is no library and nobody outside can depend on its code, whatever
+    // publish_to says (pub workspace roots named `_` or `*_workspace`, bin-only tools).
+    for (const m of manifests) {
+      if (m.manager !== 'pub' || hasLibDir(m.path)) continue;
+      if (m.visibility !== 'private') log(`${repo}: ${m.manifest}: no lib/ directory, treated as private (not importable)`);
+      m.visibility = 'private';
+      m.isLibrary = false;
+    }
 
     // Overlay extraEntryPoints (PLAN §7): each matched file joins its owning package's entry points.
     for (const glob of config.extraEntryPoints) {

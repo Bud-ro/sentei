@@ -247,6 +247,34 @@ describe('discoverLocal on a synthetic org', () => {
     expect(all('SELECT package_id FROM opaque_packages')).toEqual([{ package_id: 'npm:acme/lib:@acme/lib' }]);
   });
 
+  it('pub: a package without lib/ (workspace root, bin-only tool) is private and no library, without a "no entry points" warning', () => {
+    org(['flame', 'tools']);
+    // A pub workspace root (forge2d_workspace, `_`) without publish_to: nothing to import.
+    write('org/repos/flame/pubspec.yaml', 'name: _\nworkspace:\n  - packages/flame\n');
+    write('org/repos/flame/packages/flame/pubspec.yaml', 'name: flame\n');
+    write('org/repos/flame/packages/flame/lib/flame.dart', '');
+    write('org/repos/tools/pubspec.yaml', 'name: gen\n');
+    write('org/repos/tools/bin/gen.dart', '');
+    // lib/src only: still importable (package:srconly/src/x.dart), left as it is.
+    write('org/repos/tools/srconly/pubspec.yaml', 'name: srconly\n');
+    write('org/repos/tools/srconly/lib/src/x.dart', '');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    const pkgs = m.repos.flatMap((r) => r.packages.map((p) => [p.packageId, p.visibility, p.isLibrary]));
+    expect(pkgs).toEqual([
+      ['pub:acme/flame:_', 'private', false],
+      ['pub:acme/flame:flame', 'published-public', true],
+      ['pub:acme/tools:gen', 'private', false],
+      ['pub:acme/tools:srconly', 'published-public', false],
+    ]);
+    expect(logs).toContain('acme/flame: pubspec.yaml: no lib/ directory, treated as private (not importable)');
+    expect(logs).toContain('acme/tools: pubspec.yaml: no lib/ directory, treated as private (not importable)');
+    expect(logs.filter((l) => l.includes('no entry points'))).toEqual(['warning: acme/tools: srconly/pubspec.yaml: no entry points (no lib/*.dart or bin/**/*.dart)']);
+    writeDiscoverToDb(db, m);
+    expect(all("SELECT package_id, visibility, is_library FROM packages WHERE package_id = 'pub:acme/flame:_'"))
+      .toEqual([{ package_id: 'pub:acme/flame:_', visibility: 'private', is_library: 0 }]);
+  });
+
   it('the same-repo clash message lists every location and copy-pasteable ignoreManifests suggestions', () => {
     org(['hono', 'starter', 'vscode']);
     write('org/repos/hono/package.json', { name: 'hono' });
