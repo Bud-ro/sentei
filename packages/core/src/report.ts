@@ -310,7 +310,8 @@ export const VIEW_DESCRIPTIONS: Readonly<Record<ReportViewName, string>> = Objec
     + 'Valid only under the assertion.',
   unexport: 'Exports used only inside their own package: remove the export, keep the declaration. '
     + 'rows: private packages; published: published packages, where removing an export is a breaking change '
-    + '(deprecate the export first).',
+    + '(deprecate the export first). Never proposed for a private app nothing in the org depends on (its exports '
+    + 'are judged as private symbols) nor for a type named in the signature of public API.',
   private_dead: 'Non-exported declarations unreachable from live code: already_unreachable, or unlocked_by:<symbol> '
     + 'once the delete / unexport candidates of their package are gone. Helpers of a published package that only '
     + 'deprecate rows unlock are in org_dead.private_dead instead.',

@@ -3185,3 +3185,164 @@ dart-pad. Not addressed from E: runtime-by-name entries (`spawnHybridUri`),
 Adapter `+sentei.12`: fork patch 14 and the new `generatedFiles` change the
 fixture snapshots (new `scip-dart@1.7.0+sentei.12/` directory, `+sentei.11`
 removed); the grinder entry symbols change no fixture output.
+
+### Phase 2 fix round 6: bundler entries; unexport policy
+
+From the flame-engine final rerun (`$TMPDIR/dog-flame3`: REPORT.md,
+`work/report.json`, `work/sentei.db`, the clones). **Measured** where noted by
+re-running analyze + witness on copies of the round's DB with the base commit
+(`95892d5`) and with this branch (same `now` as the run, 1790429625; the witness
+reads the run's discover.json and the clones, read only). Scripts: `rerun.ts` /
+`diff.ts` in the session scratchpad (`f6/`).
+
+**F. Webpack, inline `<script>` bodies, Electron windows (manifests
+`clientEntryPoints`).** ignite is an Electron app built by webpack 4 with no
+`entry` in `webpack.config.js`: webpack's default `./src/index.js` becomes
+`dist/main.js`, which `index.html` loads through an inline
+`<script>require('./dist/main.js')</script>`, and `main.js` (package.json `main`)
+opens `index.html` with `BrowserWindow.loadFile`. `clientEntryPoints` read only
+`<script src>` and vite `input`, so ignite's only entry was `main.js` (4 of 140
+symbols reachable) and its whole `src/` tree was 34 PRIV-DEAD rows. It now adds,
+as runtime entries (never surface):
+- webpack: the `entry:` literals of a package-root `webpack.config.*` /
+  `webpack.<x>.config.*` (string, array, object values, `{ import: … }`
+  descriptors; an expression such as `getEntries()` yields nothing), or webpack's
+  default `./src/index.{js,ts,jsx,tsx}` when a config has no readable entry;
+- `rollup.config.*` `input` (the vite parser; a scalar value may now be a call,
+  `resolve(__dirname, 'src/x.ts')`, read to its closing parenthesis);
+- the modules an inline `<script>` body (no `src`) loads: `require('…')`,
+  `import('…')`, `import … from '…'`, relative or root-absolute only;
+- HTML files an Electron main process opens: the literal of `loadFile('x.html')`
+  (relative to the package root) and the path after `file://`, `${__dirname}` or
+  `__dirname + '` in `loadURL(…)` (relative to the calling file, then to the
+  root); their scripts are then scanned like a root HTML file's.
+A script target resolves like `<script src>`: the file itself, else the tsconfig
+outDir / dist→src mapping, else, when it is named `<name>.js`, the webpack entry
+of that chunk name (default `output.filename` is `[name].js`, a string or array
+entry is `main`), so `./dist/main.js` reaches `src/index.js` even when no
+tsconfig maps `dist/`. An `electron` dependency is not required (it may live in a
+workspace root); the `loadFile|loadURL` text filter keeps the extra read cheap.
+The discover log line now says "client entry points from HTML / vite / rollup /
+webpack config". Not done (optional in the brief): esbuild / tsup /
+electron-builder configs.
+Verified on a copy of the ignite clone (`readRepoManifests`): entry points
+`main.js`, `renderer.js`, `src/index.js` (runtime: the last two). On a copy of the
+flame DB, reachability seeded from those three documents (same edges; the clone's
+tsconfig is `allowJs`, so every file was already indexed) reaches **30 of the 34**
+ignite PRIV-DEAD rows; the 4 left (`IconBase`, `FileIcon`, `FolderIcon`,
+`SaveIcon` in `src/components/Icons/index.js`, a module nothing imports) are
+genuinely dead. Not verified: a real re-index + ingest of ignite. Fixture:
+`lib-dual/packages/dual-webpack` (`entry: './src/app.js'`, index.html's inline
+require of `./dist/main.js`) and `dual-electron` (no `entry`, `loadFile`,
+`renderer.js`): `renderPage`, `formatTitle`, `rendererBanner` have no finding
+(private_dead without the change, checked), `webpackUnused` / `electronUnused`
+stay private_dead. Only new snapshots.
+
+**H. Private apps get no unexport rows (analyze.sql
+`unexport_exempt_packages`, `unexport_dropped`).** Since round 3 every `lib/**`
+file of a pub package is a public library, so every internal-only export of an
+app is an unexport. On flame all **359** `unexport_candidate` rows came from 13
+private apps with no dependents (fire_atlas_editor 72, lightrunners 66,
+doc_flame_examples 59, sokobros 45, klondike 39, defend_the_donut 29,
+flame_devtools 17, ember_quest 14, tutorials_space_shooter 12, four with 1–2).
+Rule: a package with visibility `private` that nothing in the org depends on or
+uses (no `package_deps` row resolves to it, no flag targets it, no witness file,
+no unresolved ref names it, no cross-package edge reaches it) gets no unexport
+row; its internal-only exports are judged like private symbols. Mechanics: the
+base verdicts still classify them `unexport_candidate` and are staged as
+candidates, so `reachable_after` is computed without them as seeds; `verdicts`
+then drops the row of each one that is reachable (alive: its package's entries
+reach it) and keeps a dead island as a would-be deletion (needs_review +
+dead_island → the witness). `published-private` packages count as published here
+(the brief: "keep unexport for published packages"), whatever
+`trustPrivateRegistry` says. Ignored manifests (examples) are not in the DB (only
+in discover.json), so they cannot mark a package as having dependents; that is
+safe because nothing becomes a deletion without the witness, which reads them.
+**Deviation (ownership):** `reconcileDeadIslands` in `core/src/analyze.ts` (not in
+this unit's file list) gained a `dropped` column: a dead island of a dropped
+unexport that the witness made reachable again is deleted (alive) instead of
+reverted to `unexport_candidate`. Without it the witness stage would re-create
+app unexports. The witness log line "N dead island(s) reverted to
+unexport_candidate" counts those deletions too (witness.ts, unchanged; for
+routing).
+Expected findings: org-dart `acmeBridge` (npm `acme-js-src`, private, used only by
+the Dart app through `@JS`) was an unexport the cross-manager witness moved to
+needs_review; it now has no row (alive). The cross-manager unexport re-check keeps
+its unit test (witness.test.ts). No org-small row changed: its unexports are in
+libraries with dependents. Tests (analyze.test.ts): an app's reachable exports
+have no row, a mutual pair is a dead island, a witness-revived island is deleted;
+the same package with a dependent, as `published-private`, or used through a
+cross-package edge keeps its unexports.
+
+**G. Types named in a public signature (analyze.sql `signature_refs`,
+`signature_pinned`).** gamepads_platform_interface `GamepadState` (`final state =
+GamepadState();` in the public `GamepadController`) and flame_texturepacker
+`TexturePackerAtlas` (`Future<TexturePackerAtlas> atlasFromAssets(` in the
+extension `TexturepackerLoader`) were unexport candidates (published form:
+deprecation_candidate `[internal_refs_only]`). An internal-only export S is now
+pinned when a reference to it sits in the signature of a declaration E of the
+same package whose exported declaration T (E, or an exported ancestor) is not
+itself internal-only (T has external refs, is kept, a runtime entry, a would-be
+deletion, too young …) or is pinned (transitively); E is not S, not nested in S (a
+type's own static factory names it) and not a private member. Pinned symbols join
+`unexport_dropped`: no unexport / published-unexport / blocked row unless they are
+a dead island. **What the index can tell:** `occurrences.enclosing_symbol_id` is
+the innermost definition whose SCIP enclosing range contains the reference, and
+that range is the whole declaration, body included (`atlasFromAssets` encloses
+both its return type on line 10 and `TexturePackerAtlas.fromAtlas` in its body on
+line 17), so body and signature cannot be told apart from the index. The brief's
+fallback ("referenced from an exported alive symbol") would drop every helper a
+public function calls (org-dart `wireTick`, called in `int now() => wireTick();`
+of the public `FakeClock`, lost its unexport row in a first attempt), so the
+signature is **approximated from positions** instead: the header of a type
+declaration (a reference whose innermost enclosing symbol is the class /
+extension / type itself; by kind or `#` descriptor); a field / variable's
+definition line (its type, or the initializer the type is inferred from); a
+function / method's definition line before its name (Dart return type); in npm
+packages (scip-typescript leaves `kind` empty and writes annotations after the
+name) any TYPE (`#`) on the definition line. Missed, so still an unexport: Dart
+parameter types, signature continuation lines. Over-read, so no row: a same-line
+initializer that does not decide the type, a TS class instantiated in a one-line
+body. A type named only by a would-be deletion stays a dead island (it goes if its
+user goes); once the witness keeps the user, the island is deleted instead of
+reverted (TexturePackerAtlas's path: its user, the extension, has no indexed use;
+the example apps use it).
+Measured on flame (G and H together, analyze + witness, base vs branch): findings
+925 → 421. Dropped rows: 359 `unexport_candidate` (342 by H alone, 17 also
+pinned), 63 published `deprecation_candidate [internal_refs_only]` (G), 4
+`needs_review` unexports the witness had downgraded (G: oxygen `Component`,
+flame_3d `Object3D`, `FlameGame3D`, flame_behaviors `CollisionBehavior`), 78
+`blocked` internal-only rows (G, all in `flame`). No other row changed (deletion
+9, private_dead 47, the other needs_review and blocked rows identical);
+`GamepadState` and `TexturePackerAtlas` have no row. Spot check of 14 random
+pinned symbols against the clones: all are signature uses (`final Suit suit;`,
+`final Map<int, ModelJoint> joints;`, `class GlowEffect extends Effect with
+EffectTarget<PaintProvider>`, `CustomProperties getProperties() {`,
+`ImmutableVector3 get immutable => …`; behavior_tree `NodeStatus` through the
+public `status` getter / setter of `BaseNode` and two typedefs). Analyze +
+witness on the flame DB copy: 5.3 s.
+Fixture: lib-dual `@acme/dual` `DualReport` (return type of `dualReport`, now
+imported by dual-app) has no finding; `DualScratch` (only in a private function's
+body) is an `unexport_candidate`. Unit tests: return type, inferred field type, a
+class header chain, body and after-the-name references (not pinned), a private
+user, an internal-only user, the type's own member, the would-be-deletion path.
+
+**4. Part files are not `--entry` (scip-dart adapter `dartLibraryEntries`).**
+Every `lib/**` file is a discover entry, part files included, and dart-surface
+logged "not a library" for each (flamedeck: 2). The adapter now drops entries
+whose text has a top-level `part of` at the start of a statement
+(`isDartPartFile`: the comment- and string-aware lexer of `dartPartUris`, so a doc
+comment saying "part of the API" or a string does not count; an unreadable file is
+kept). Ingest takes `is_entry` from discover.json, so reachability is unchanged;
+only the sidecar's echoed `entryPoints` lose the parts (org-dart acme_core
+`lib/_parts/engine.dart`, `helper.dart`). That is indexer output of an existing
+fixture: adapter **`1.7.0+sentei.13`**, Dart snapshots moved to the new directory
+(`+sentei.12` removed), PATCHES.md updated (outside this unit's file list: the
+version note lives there). Not re-run on flamedeck.
+
+**Open (for routing).**
+- witness.ts: the "reverted to unexport_candidate" log line also counts islands
+  deleted by the new rule.
+- esbuild / tsup / electron-builder entry conventions (optional F(b)) not added.
+- G misses Dart parameter types and multi-line signatures; a signature range in
+  the sidecar (dart-surface / export-surface) would make it exact.

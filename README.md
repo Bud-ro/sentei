@@ -99,7 +99,15 @@ opens pull requests.
   `exports` / `types` entry outside the tsconfig still does. A code file the
   package's own source names relative to itself, `new URL('./worker.ts',
   import.meta.url)` or `path.join(__dirname, 'x.js')` (a bundler, worker or
-  subprocess input), is such an entry too.
+  subprocess input), is such an entry too. So are browser / bundler inputs: the
+  `<script src>` and the modules an inline `<script>` body `require`s / `import`s
+  in a package-root HTML file or in one an Electron window opens
+  (`loadFile('index.html')`, ``loadURL(`file://${__dirname}/x.html`)``), the
+  `input` of `vite.config.*` / `rollup.config.*`, and the `entry` of
+  `webpack.config.*` / `webpack.<x>.config.*` (webpack's default
+  `./src/index.{js,ts,jsx,tsx}` without one). A script that loads build output
+  (`./dist/main.js`) is mapped to its source like a declared entry, or to the
+  webpack entry its `[name].js` names.
 
   of them is `failed`, never `ok`. Every `.dart` file of the package's `lib/`,
   `bin/`, `test/`, `example/`, `tool/`, `benchmark/`, `web/`,
@@ -393,10 +401,29 @@ the result is a [view](#views) over the same findings.
 |---|---|
 | `deletion_candidate` | private package, no counted references (or only test references), old enough, not kept, witness found nothing |
 | `deprecation_candidate` | published package, same evidence (the witness ran too); or, with reason `internal_refs_only`, an export used only inside its published package |
-| `unexport_candidate` | private package, only used inside its own package: drop the `export` |
+| `unexport_candidate` | private package with dependents in the org, only used inside its own package: drop the `export` (see below for what never gets one) |
 | `private_dead` | not exported, unreachable from the package's entry points (now, or once the candidates it names are gone) |
 | `needs_review` | would be a candidate (or an unexport) but the witness found a textual mention |
 | `blocked` | would have had a verdict, but an opaque package prevents it (`blocked_by`) |
+
+No unexport (and no published `deprecation_candidate [internal_refs_only]`) is
+proposed for:
+- an export of a **private app**: a `private` package (npm `"private": true`, pub
+  `publish_to: none`) that nothing in the org depends on or uses (no resolved
+  manifest dependency, no flag or witness file targeting it, no cross-package
+  reference). Its exports have no audience, so they are judged like private
+  symbols: alive when its entry points reach them, a `dead_island` would-be
+  deletion (through the witness) when not. A published package, or a private one
+  with dependents, keeps its unexport candidates.
+- a type **named in the signature of public API**: an internal-only export used in
+  the signature of an exported symbol of the same package that is itself not an
+  internal-only export (the return type of a public function, the type of a public
+  field, a class header's `extends` / `implements`), directly or through another
+  such type. The index has no signature range, so "signature" is positional: the
+  header of a type declaration, a field's definition line, the part of a function's
+  definition line before its name (Dart return type), and, in npm packages, any type
+  on the definition line. Parameter types and continuation lines are missed (the
+  symbol then stays an unexport candidate).
 
 Reasons: `no_refs`, `internal_refs_only`, `only_test_refs` (delete the tests
 too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
@@ -476,7 +503,7 @@ own root is under such a directory is still org code).
 | `delete` | `deletion_candidate` | DELETE | `sentei/delete` (warning) |
 | `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `only_docs_refs` / `dead_island` | DEPRECATE | `sentei/deprecate` (note) |
 | `org_dead` | the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion** | ORG-DEAD (rows plus the unlocked helpers; the total line carries a footnote) | `sentei/org-dead` (warning), only with `--view org_dead` |
-| `unexport` | `unexport_candidate`, plus (`published`) `deprecation_candidate` with only `internal_refs_only` | UNEXPORT | `sentei/unexport` (note) |
+| `unexport` | `unexport_candidate`, plus (`published`) `deprecation_candidate` with only `internal_refs_only`; never for a private app nothing in the org depends on, nor for a type in a public signature | UNEXPORT | `sentei/unexport` (note) |
 | `private_dead` | `private_dead`, minus the helpers listed under `org_dead` | PRIV-DEAD | `sentei/private-dead` (note) |
 | `needs_review` | `needs_review` | REVIEW | `sentei/needs-review` (note) |
 | `blocked` | `blocked` | BLOCKED | `sentei/blocked` (note) |
