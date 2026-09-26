@@ -330,7 +330,9 @@ the result is a [view](#views) over the same findings.
 | `blocked` | would have had a verdict, but an opaque package prevents it (`blocked_by`) |
 
 Reasons: `no_refs`, `internal_refs_only`, `only_test_refs` (delete the tests
-too), `witness_pending` (analyze output before `witness` runs),
+too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
+`example/`, which count as consumers only with `countDocsAsConsumers`; next to
+`only_test_refs` when both exist), `witness_pending` (analyze output before `witness` runs),
 `witness_mismatch:<consumer>:<file>:<line>` (1-based; `<consumer>` is a package
 id, `self`, `self-string` or `ignored:<repo>/<manifest>`, and `<file>:<line>` can be
 `checkout missing`), `dead_island` (exports used only by other candidates, so they
@@ -350,10 +352,12 @@ separately, never as a finding. Only references that can be skew count
 (analyze.sql `unresolved_ref_classes`): a reference into a package of the same
 repo whose dependency admits HEAD (workspace, path, a range HEAD satisfies), into
 an opaque or export-less package, or into a module no index defines (a deep
-`dist/` import, a JSON module) is an indexing gap instead, counted per target
+`dist/` import, a JSON module) is an indexing gap instead; a reference to a name
+the target still defines at HEAD, in another file or as a member inherited from
+a supertype (`moved_at_head`), is not skew either. Both are counted per target
 package under `report.json` `diagnostics` (`unresolved_same_repo`,
-`unresolved_opaque_target`, `unresolved_unindexed_module`) and summarized under
-the version skew line.
+`unresolved_opaque_target`, `unresolved_unindexed_module`,
+`unresolved_moved_at_head`) and summarized under the version skew line.
 
 **Test-support code** is meant to be used by other packages' tests, so their
 test-file uses of it count as references even under a regular dependency
@@ -382,7 +386,11 @@ there is importable library code. TypeScript files are also generated when a
 comment in their first 20 lines says so (`@generated`, "do not edit", ...), when
 they sit under a tool-output directory (`.nuxt/`, `.svelte-kit/`, `.prisma/`,
 ...), or when they have the exact shape of `supabase gen types typescript`
-output (which carries no header).
+output (which carries no header). Generated globs include ffigen / jnigen style
+`*_generated.dart`. Vendored code, in a `third_party/`, `vendor/` or `vendored/`
+directory below the package root, is treated like generated code: nothing
+defined there gets a verdict, references from it still count (a package whose
+own root is under such a directory is still org code).
 
 ## Views
 
@@ -392,7 +400,7 @@ output (which carries no header).
 | View | Rows | Summary column | SARIF rule (level) |
 |---|---|---|---|
 | `delete` | `deletion_candidate` | DELETE | `sentei/delete` (warning) |
-| `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `dead_island` | DEPRECATE | `sentei/deprecate` (note) |
+| `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `only_docs_refs` / `dead_island` | DEPRECATE | `sentei/deprecate` (note) |
 | `org_dead` | the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion** | ORG-DEAD (rows plus the unlocked helpers; the total line carries a footnote) | `sentei/org-dead` (warning), only with `--view org_dead` |
 | `unexport` | `unexport_candidate`, plus (`published`) `deprecation_candidate` with only `internal_refs_only` | UNEXPORT | `sentei/unexport` (note) |
 | `private_dead` | `private_dead`, minus the helpers listed under `org_dead` | PRIV-DEAD | `sentei/private-dead` (note) |
@@ -447,7 +455,8 @@ uncloned repos that carry manifests, manifests excluded by `ignoreManifests`:
 the first ten on stdout, all of them in `report.json`); a per-package
 table (package name, repo, visibility, private, opaque, one count per view,
 blockers); the **view totals**, with the reasons of the DELETE and DEPRECATE rows
-(`no_refs`, `only_test_refs`, `dead_island`: islands are a reason, not a column)
+(`no_refs`, `only_test_refs`, `only_docs_refs`, `dead_island`: islands are a
+reason, not a column)
 and ORG-DEAD printed once as "= DEPRECATE" with the assertion as a footnote; then
 **top blockers**, the opaque packages preventing the most verdicts, the "fix that
 repo's tsconfig first" list (the top 10; all of them are in `report.json`),

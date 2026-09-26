@@ -1909,3 +1909,128 @@ would drop Python / Go / Rust / C too, but JS-family consumers npm cannot index
 consumer checks, so removing the rest would leave the npm flag with no input;
 that is a policy change for the npm orgs (honojs, unjs) this run gives no
 evidence on.
+
+### Phase 2 fix round 2: vendored code; skew from broken consumers; docs-only reason
+
+Numbers below come from re-running analyze on copies of the dart-lang
+(`dog-dartlang/run1`), supabase and flame-engine DBs, once with the code
+before this change and once after (no witness on either side, so would-be
+deletions stay `needs_review [witness_pending]`; compare like with like).
+
+**D6: vendored code and `*_generated.dart`.** dart_mcp_server's
+`lib/src/third_party/language_server_protocol/` (the LSP protocol bindings,
+copied from the Dart SDK) produced 330 `private_dead` findings in the DB (321 rows in the report brief), and ffigen /
+jnigen output named `*_bindings_generated.dart` was scored as source:
+`**/*.generated.*` does not match `_generated`. GENERATED_GLOBS gains
+`**/*_generated.dart` (`**/*.generated.dart` was already covered by
+`**/*.generated.*`, so it was not added twice). New `VENDORED_GLOBS`
+(`third_party/`, `vendor/`, `vendored/`) are spelled by a `vendored_files`
+view that `generated_files` includes (globs.test.ts parses it back like the
+other lists), and ingest marks such documents `is_generated`, so the witness,
+which reads `documents.is_generated`, skips them as scan targets too.
+
+Why vendored code is generated code: it is maintained upstream and
+re-copied, not edited, so its unused declarations are upstream's business and
+deleting them only makes the next re-vendoring harder: nothing defined in it
+gets a verdict or a `private_dead` row. It still runs, so its references
+count like any file's (a vendored shim calling an org export keeps it alive,
+fail closed).
+
+Guard: unlike every other glob list, VENDORED_GLOBS match the
+**package-relative** path (`inVendoredDir(file, pkgPath)`; the view strips
+`<package path>/` first). A package whose own root sits under such a
+directory (`third_party/forked/pubspec.yaml`) is org code and keeps its
+verdicts; only a directory below the package root counts (negative tests in
+globs.test.ts and analyze.test.ts). `external/` (mentioned in the defect) was
+not added: no document of the three DBs sits under one, and `lib/src/external/`
+is a plausible name for real API code.
+
+Reclassified documents: dart-lang 75 (jnigen 54, of which the test bindings
+under `test/jackson_core_test/third_party/` were already test files; pana 5,
+dart_mcp_server 4, grpc_cronet 3, jni 3, objective_c 3, pub_dev 2, workspace
+1), supabase 0, flame 0. No document matched a vendored directory only above
+its package root. Top 5 by findings removed:
+
+| Document (dart-lang) | Findings before |
+| --- | --- |
+| `ai: pkgs/dart_mcp_server/lib/src/third_party/language_server_protocol/lib/protocol_generated.dart` | 247 private_dead |
+| `native: pkgs/objective_c/lib/src/objective_c_bindings_generated.dart` | 167 blocked |
+| `ai: pkgs/dart_mcp_server/lib/src/third_party/language_server_protocol/lib/protocol_custom_generated.dart` | 74 private_dead |
+| `ai: pkgs/dart_mcp_server/lib/src/third_party/language_server_protocol/lib/protocol_special.dart` | 7 private_dead |
+| `grpc_cronet: lib/grpc_cronet_bindings_generated.dart` | 6 blocked |
+
+All five are generated FFI / protocol bindings or vendored copies. dart-lang
+totals (same-code comparison): `private_dead` 946 → 616 (-330), `blocked`
+2922 → 2741 (-181), other verdicts unchanged.
+
+Not done (outside this change's files): the cli's `isGeneratedFile`
+(consumer-checks.ts, export-surface.ts) still uses only GENERATED_GLOBS, so
+the TS adapter's own "generated file" diagnostics and exclusions do not know
+vendored dirs; ingest and analyze do. `VENDORED_GLOBS` / `inVendoredDir` are
+not exported from `@sentei/core`'s index yet.
+
+**D7: skew from consumers whose own install failed. Deviation from the
+brief.** The brief asked for an `opaque_consumer` class for consumers with an
+untargeted flag or a partial index, keeping `web_app → web` as skew because
+"web_app indexed fine". On the dart-lang DB it did not: of the 8 consumer →
+target pairs with skew rows, 6 consumers (web_app included) carry the same
+untargeted `opaque_consumer` flag from a failed per-package `dart pub get`
+(`Cannot override workspace packages` / `dart_flutter_team_lints is
+overridden in both`), their repos are `partial`, and all resolved through the
+workspace root's `.dart_tool/package_config.json` and lockfile (web 1.1.1,
+fixnum 1.1.1, web_socket_channel 2.4.0). The class would have moved the real
+web_app rows out of skew along with the false ones.
+
+The false rows have a different common cause: the name still exists at
+HEAD, under another SCIP symbol. fixnum's `Int64` moved from `int64.dart` to
+`int64_native.dart` (behind a conditional export);
+`IOWebSocketChannel#sink` is now inherited from `AdapterWebSocketChannel`;
+`WebSocketChannel#stream` comes from `StreamChannelMixin` / `StreamChannel` in
+the stream_channel package; `window.`, `document.`, `clock.`,
+`timeZoneDatabase.` are referenced as variables but defined as getters
+(`` `<get>window`. ``). None of these would break on upgrade. So
+`unresolved_ref_classes` gains **`moved_at_head`** (after same_repo,
+opaque_target and unindexed_module, before version_skew):
+
+- the reference's descriptor after its file (the text after the last `/`,
+  backticks and `<get>` / `<set>` removed) equals some HEAD symbol's in the
+  target (never for an empty descriptor: a missing file stays skew); or
+- it is `Owner#member`, Owner exists at HEAD, and `member` is a member of
+  Owner or of a type Owner's declaration names, transitively (`edges` from a
+  type symbol to a top-level symbol whose descriptor ends in `#`, any
+  package): the supertype chain, as far as the index shows it. A member of an
+  unrelated class with the same name does not count (negative test:
+  `IOWebSocketChannel#close()` stays skew next to `Other#close()`).
+
+Reported under `report.json` `diagnostics.unresolved_moved_at_head` and one
+summary line under the version skew line, like the other classes; never a
+verdict. dart-lang: version skew 115 → 79, all web_app → web
+(`ElementEventGetters` / `WindowEventGetters` / `HTMLCanvasElementGlue`,
+renamed at HEAD); `moved_at_head` 36 (built_value / _built_value_end_to_end_test
+→ fixnum 13, build_daemon / build_runner → web_socket_channel 19, http → web
+`window`, intl4x → timezone, pub_worker → clock, web_app → web `document`).
+supabase and flame had no skew rows and keep none. The view computes the
+descriptor keys once (materialized CTEs) and walks supertypes only from the
+owners of unresolved member references (~0.25 s on dart-lang).
+
+Not done: a consumer-opacity class. If a case appears where a broken
+consumer resolves a version it would not resolve when healthy, it needs the
+resolved version (package_config) recorded at index time; the DB does not
+have it.
+
+**D8: `only_docs_refs`.** With `countDocsAsConsumers=false` a pub package's
+own `example/` is a docs file, so `extension_methods getTeam` (used only in
+`example/fluid_api.dart:10`) was reported with reason `no_refs`. The policy
+is unchanged; a `docs_only_refs` view (the docs twin of `test_only_refs`,
+which is untouched: symbols with an excluded docs use and no counted external
+reference) gives reason `only_docs_refs` in place of `no_refs`, after
+`only_test_refs` when both exist, and after `internal_refs_only` like
+`only_test_refs`. It flows through `base_verdicts` → findings → report.json,
+the SARIF message (`reasons: only_test_refs, only_docs_refs`) and the
+summary's reason breakdown (one count per row, precedence dead_island >
+only_test_refs > only_docs_refs > no_refs). Fixture: org-dart `acme_pub`
+`pubExampleOnly`, used by `example/example.dart`: deprecation_candidate
+`["only_docs_refs"]`. dart-lang (non-private_dead rows): `only_docs_refs` 156
+(136 of them next to `only_test_refs`), `no_refs` 572 → 561, `only_test_refs`
+888 → 888; getTeam is `["only_docs_refs", "witness_pending"]`. supabase: 2,
+flame: 5.

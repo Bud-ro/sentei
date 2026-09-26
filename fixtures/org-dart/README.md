@@ -77,6 +77,7 @@ that must be source-linked.
 | build.yaml `builder_factories` | `dart-lib-x/build.yaml` → `lib/builder.dart` `acmeBuilder` | no finding: exported but called by build_runner by name (sidecar `entrySymbols`) |
 | dart_dev's `config` | `dart-lib-x/tool/dart_dev/config.dart` | no finding (sidecar `entrySymbols`) |
 | `main` of a script outside `lib/` that is not a discover entry | `dart-lib-x/benchmark/bench.dart` (`main`, and `work` reached from it) | no finding (sidecar `entrySymbols`) |
+| Export used only by its own package's `example/` (a docs file) | `dart-lib-pub/example/example.dart` calls `pubExampleOnly` | deprecation_candidate `["only_docs_refs"]` (not `no_refs`; the policy is unchanged) |
 | Public function named only in a dartdoc link (`/// See [docOnly].` on `doubled`) | `dart-lib-x/lib/acme_x.dart` `docOnly` | deletion_candidate `["no_refs"]`: a doc link is not a reference (fork patch 4), so no occurrence and no `internal_refs_only` |
 
 ### Test-looking library code under lib/ (Phase 2 fix round 1)
