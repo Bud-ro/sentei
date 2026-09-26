@@ -5,9 +5,9 @@
   "entrySymbols": [
     {
       "col": 5,
-      "file": "packages/acme_tools/bin/acme_tools.dart",
+      "file": "packages/acme_tools/lib/src/cli.dart",
       "kind": "runtime",
-      "line": 4,
+      "line": 5,
       "name": "main"
     }
   ],

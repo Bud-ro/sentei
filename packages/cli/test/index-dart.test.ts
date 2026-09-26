@@ -473,7 +473,7 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
   it('indexes every package in one scip-dart run, each with its own member-relative documents (lib/ of members listed by path)', () => {
     expect(docs('acme_ws')).toEqual([]);
     expect(docs('acme_core')).toEqual(['lib/_parts/engine.dart', 'lib/_parts/helper.dart', 'lib/acme_core.dart', 'lib/src/vec.dart']);
-    expect(docs('acme_tools')).toEqual(['bin/acme_tools.dart']);
+    expect(docs('acme_tools')).toEqual(['bin/acme_tools.dart', 'lib/src/cli.dart']);
     const runs = (pkg: string) => readFileSync(path.join(work, 'index/acme__dart-workspace', `pub__${pkg}.log`), 'utf8')
       .split('\n').filter((l) => l.startsWith('$ dart run scip_dart'));
     const run = runs('acme_core');
@@ -496,14 +496,20 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
       .documents.find((d) => d.relativePath === file)!
       .occurrences.filter((o) => (o.symbolRoles & 1) === 0)
       .map((o) => `${o.range[0]}:${o.range[1]} ${o.symbol.split(' ').pop()}`);
-    // `final a = Vec2(1, 2) & Vec2(3, 4);` and `print((a % 2)[0]);` in acme_tools' bin.
-    expect(occ('acme_tools', 'bin/acme_tools.dart')).toEqual(expect.arrayContaining([
-      '5:23 lib/src/`vec.dart`/Vec2Ops#`&`().',
-      '6:11 lib/src/`vec.dart`/Vec2Ops#`%`().',
-      '6:15 lib/src/`vec.dart`/Vec2Ops#`[]`().',
+    // `final a = Vec2(1, 2) & Vec2(3, 4);` and `print((a % 2)[0]);` in acme_tools' lib/src/cli.dart.
+    expect(occ('acme_tools', 'lib/src/cli.dart')).toEqual(expect.arrayContaining([
+      '6:23 lib/src/`vec.dart`/Vec2Ops#`&`().',
+      '7:11 lib/src/`vec.dart`/Vec2Ops#`%`().',
+      '7:15 lib/src/`vec.dart`/Vec2Ops#`[]`().',
     ]));
     // `v + d` inside acme_core: the private extension `_Shift` is used only so.
     expect(occ('acme_core', 'lib/src/vec.dart')).toContain('30:33 lib/src/`vec.dart`/_Shift#+().');
+  });
+
+  it('a bin/ library that only re-exports main records that main, at its declaration, as a runtime entry symbol', () => {
+    // bin/acme_tools.dart is `export 'package:acme_tools/src/cli.dart';` (over_react_codemod's executables).
+    const s = readJson<ExportsSidecar>(work, 'index/acme__dart-workspace/pub__acme_tools.exports.json');
+    expect(s.entrySymbols).toEqual([{ name: 'main', file: 'packages/acme_tools/lib/src/cli.dart', line: 5, col: 5, kind: 'runtime' }]);
   });
 
   it('a package of a workspace run gets the index a run on it alone produces', () => {

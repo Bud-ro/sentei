@@ -154,7 +154,8 @@ class Surface {
   ///   - `main` of a `lib/*.dart` entry (Flutter's lib/main.dart);
   ///   - `main` of every library outside `lib/` (bin/, tool/, benchmark/,
   ///     example/, web/, root scripts, ...): these are run directly
-  ///     (`dart run`, `dart <file>`). Test files are dropped by the adapter;
+  ///     (`dart run`, `dart <file>`), declared there or re-exported (its
+  ///     export namespace, see [_addMain]). Test files are dropped by the adapter;
   ///   - build.yaml builder factories (see [_buildYamlFactories]);
   ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
   final entrySymbols = <String, Map<String, Object>>{};
@@ -456,8 +457,18 @@ class Surface {
   /// Analyzer codes for a directive URI whose file does not exist.
   static const _missingUriCodes = {'uri_has_not_been_generated', 'uri_does_not_exist'};
 
-  /// Top-level `main` declared in [library] (in one of its own files).
+  /// The `main` the runtime calls when [library] is run: the one in its
+  /// export namespace, declared in the library or re-exported
+  /// (`bin/foo.dart` = `export 'package:foo/src/foo.dart';`, Workiva's
+  /// executables), recorded at its declaration when that is one of this
+  /// package's files. Nothing references a re-exported main either: without
+  /// it everything the program reaches looked unreachable.
   void _addMain(LibraryElement library) {
+    final main = library.exportNamespace.get2('main');
+    if (main is TopLevelFunctionElement) {
+      addEntrySymbol(main, 'main');
+      return;
+    }
     for (final fn in library.topLevelFunctions) {
       if (fn.name == 'main') addEntrySymbol(fn, 'main');
     }

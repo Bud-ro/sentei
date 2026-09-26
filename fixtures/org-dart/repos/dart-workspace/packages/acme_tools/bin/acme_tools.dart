@@ -1,11 +1,4 @@
-import 'package:acme_core/acme_core.dart';
-import 'package:acme_x/acme_x.dart' show usedFn;
-
-// Expected: alive, no finding (bin/ entry point).
-void main() {
-  final a = Vec2(1, 2) & Vec2(3, 4);
-  print((a % 2)[0]);
-  print(shifted(a, 1).x);
-  print(Engine().run());
-  print(usedFn());
-}
+// The executable only re-exports its main (over_react_codemod's bin/*.dart):
+// nothing references `main`, dart-surface finds it in this library's export
+// namespace and records it, at its declaration, as a runtime entry symbol.
+export 'package:acme_tools/src/cli.dart';

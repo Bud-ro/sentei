@@ -81,7 +81,8 @@ export const scipDart: Indexer = {
   // sentei.9: pub workspaces (resolved once at the root, indexed by one run,
   // fork patch 6), fork patch 7 (the lib/ of a member listed by path), fork
   // patch 8 (parts resolved in their library), fork patch 9 (operator
-  // references), a package with lib/ code but no lib/ document fails.
+  // references), a package with lib/ code but no lib/ document fails;
+  // dart-surface: a `main` re-exported by a script is an entry symbol.
   version: '1.7.0+sentei.9',
 
   detect({ repo, pkg }) {

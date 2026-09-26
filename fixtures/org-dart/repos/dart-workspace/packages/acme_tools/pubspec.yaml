@@ -1,5 +1,5 @@
 name: acme_tools
-description: "Pub workspace member CLI."
+description: "Workspace member CLI: bin/ re-exports main from lib/src/ (Workiva pattern)."
 version: 1.0.0
 publish_to: none
 
