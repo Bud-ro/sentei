@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TEST_GLOBS, matchGlob } from '@sentei/core';
+import { TEST_GLOBS, inSurfaceDir, matchGlob } from '@sentei/core';
 import { isExcludedConsumerFile } from './consumer-checks.ts';
 import { packageDir, packageSlug } from './scip-typescript.ts';
 import type { DiscoveredPackage, DiscoveredRepo, EntrySymbol, ExportsSidecar, Indexer, IndexerInput, IndexStatus, IndexerResult, SourcePosition } from './types.ts';
@@ -228,9 +228,10 @@ export const scipDart: Indexer = {
       shorthandRefs: rest.shorthandRefs ?? [],
       namespaceSpreadRefs: [],
       // A test's `main` is run by the test runner; test files never get verdicts.
+      // Nothing under a pub package's lib/ is a test file (core SURFACE_DIRS, as in the SQL views).
       // dart-surface emits no kind: every Dart entry symbol is invoked by the runtime or a tool.
       entrySymbols: rest.entrySymbols
-        .filter((e) => !TEST_GLOBS.some((g) => matchGlob(g, e.file)))
+        .filter((e) => inSurfaceDir(e.file, 'pub', pkg.path) || !TEST_GLOBS.some((g) => matchGlob(g, e.file)))
         .map((e) => ({ ...e, kind: e.kind ?? 'runtime' })),
     };
     writeFileSync(exportsFile, `${JSON.stringify(sidecar satisfies ExportsSidecar, null, 2)}\n`);
@@ -252,7 +253,7 @@ export const scipDart: Indexer = {
     let incomplete = 0;
     for (const m of missingParts) {
       const at = `${m.file}:${m.line + 1}:${m.col + 1}`;
-      if (isExcludedConsumerFile(m.file, input.policy)) {
+      if (!inSurfaceDir(m.file, 'pub', pkg.path) && isExcludedConsumerFile(m.file, input.policy)) {
         diagnostics.push(`warn: missing part '${m.uri}' at ${at} (not generated?); ignored: a test/docs file that does not count as a consumer`);
         continue;
       }

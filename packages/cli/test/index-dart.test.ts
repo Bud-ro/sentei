@@ -661,6 +661,24 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(gentest.diagnostics.some((d) => d.startsWith("warn: missing part 'gen_test.over_react.g.dart' at test/gen_test.dart:1:6"))).toBe(true);
   }, 300_000);
 
+  it('nothing under lib/ is a test file: a lib/ main stays an entry symbol, a missing part there makes it partial', async () => {
+    // lib/mocks.dart matches `**/mocks.*`, lib/testing/ `**/testing/**`: core
+    // SURFACE_DIRS exempts a pub package's lib/ from the test globs, as the SQL views do.
+    write({
+      'libtest/pubspec.yaml': pubspec('acme_libtest', '1.0.0'),
+      'libtest/lib/mocks.dart': 'void main() {}\n',
+      'libtest/lib/testing/fake.dart': "part 'fake.g.dart';\n\nint fake() => 1;\n",
+    });
+    const repos = [repoOf(root, 'libtest', pubPackage('acme_libtest', ['lib/mocks.dart']))];
+    repos[0]!.localPath = path.join(root, 'libtest');
+    const out = path.join(root, 'out-libtest');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor(repos, repos[0]!), out);
+    expect(r.status).toBe('partial');
+    expect(r.diagnostics.some((d) => d.startsWith("error: missing generated part 'fake.g.dart' at lib/testing/fake.dart:1:6"))).toBe(true);
+    expect(readJson<ExportsSidecar>(r.exportsFile).entrySymbols).toEqual([{ name: 'main', file: 'lib/mocks.dart', line: 0, col: 5, kind: 'runtime' }]);
+  }, 300_000);
+
   it('a missing part only makes the package partial in lib/ or bin/, not in web/ demo code', async () => {
     // over_react: 19 ungenerated `*.over_react.g.dart` parts under web/ made the whole package partial.
     write({
