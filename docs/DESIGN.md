@@ -1357,3 +1357,19 @@ Found on the supabase and Workiva dogfood runs.
   now selected by its HEAD size (the dogfood run had to force it with
   `--include`); supabase and productions (excluded by config, 72 and 1
   manifests) are named in the warning.
+
+### Phase 2 fix round 1: discover on flame-engine
+
+- **Platform and native code of a pub package is not a consumer.**
+  `unindexed_consumer` skips, for pub packages only, files under the
+  package's `android`, `ios`, `macos`, `linux`, `windows`, `web`, `darwin`
+  and `native` dirs and under `.plugin_symlinks` / `ephemeral`: Flutter
+  runners, generated plugin registrants, federated plugin implementations and
+  FFI shims reach Dart over method channels or FFI and cannot import a Dart
+  library. The flag had blocked 313 flame-engine findings (306 in
+  defend_the_donut). Unindexed code elsewhere in a pub package still flags it.
+- **A pub package without `lib/` is private, `is_library = 0`**, whatever
+  `publish_to` says (workspace roots `_` / `forge2d_workspace`, bin-only
+  tools): package URIs resolve under `lib/`, so nothing can import it. Its
+  "no entry points" warning is dropped. `lib/src/`-only packages stay as read.
+  Done in discover (it has the file list) so manifests.ts is unchanged.
