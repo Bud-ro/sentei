@@ -76,6 +76,7 @@ DROP VIEW IF EXISTS internal_ref_occurrences;
 DROP VIEW IF EXISTS external_refs;
 DROP VIEW IF EXISTS overlay_refs;
 DROP VIEW IF EXISTS external_ref_occurrences;
+DROP VIEW IF EXISTS reexporting_packages;
 DROP VIEW IF EXISTS test_support_symbols;
 DROP VIEW IF EXISTS test_support_names;
 DROP VIEW IF EXISTS owner_ref_occurrences;
@@ -323,7 +324,16 @@ VALUES ('test'), ('testing'), ('testkit'), ('*testkit'), ('test_utils'), ('test-
 --   * it is defined under a test-support dir of its package (package-relative):
 --     `lib/src/test*/`, `lib/src/mock/`, `lib/src/mocks/`, `lib/testing/`, `lib/mocks/`,
 --     `src/testing/`, `src/test-utils/`, `src/test_utils/`, or
---   * its package's name matches test_support_names (a whole test-support package).
+--   * its package's name matches test_support_names (a whole test-support package), or
+--   * it is defined in a pub package's `lib/` library whose file stem matches
+--     test_support_names (round 7: native's `lib/src/code_assets/testing.dart`
+--     `testCodeBuildHook`, exported through the main library `lib/code_assets.dart`;
+--     in Dart every lib/ file is a library of its own, importable by that name. npm
+--     module files are not: `src/other/testing.ts` stays ordinary code).
+-- Entries of another org package of the same repo count too: dart-surface records
+-- re-exports of such packages (`package:test`'s `lib/test.dart` exports matcher's
+-- `closeTo`), so a re-exported symbol is test-support surface when the re-exporting
+-- entry's stem matches.
 -- external_refs then counts other packages' test-file uses of it. Only cross-package
 -- uses: a test-support helper used only by its own package's tests is still
 -- only_test_refs, and nothing here changes private_dead (the package's own tests are
@@ -364,22 +374,53 @@ SELECT s.symbol_id
 FROM symbols s
 JOIN packages p ON p.package_id = s.package_id
 JOIN test_support_names n
-  ON (CASE WHEN instr(p.name, '/') > 0 THEN substr(p.name, instr(p.name, '/') + 1) ELSE p.name END) GLOB n.pattern;
+  ON (CASE WHEN instr(p.name, '/') > 0 THEN substr(p.name, instr(p.name, '/') + 1) ELSE p.name END) GLOB n.pattern
+UNION
+-- (matched per document, then the document's symbols: GLOB per symbol took seconds)
+SELECT s.symbol_id
+FROM symbols s
+WHERE s.package_id || char(0) || s.file IN (
+  SELECT sf.package_id || char(0) || sf.file
+  FROM surface_files sf
+  JOIN test_support_names n
+    ON substr(sf.file, length(rtrim(sf.file, replace(sf.file, '/', ''))) + 1) GLOB n.pattern || '.dart');
+
+-- Org packages that re-export a symbol of ANOTHER org package from one of their
+-- entries: a symbol_exports row whose entry file is a document of a different package
+-- of the symbol's repo (dart-surface records re-exports of same-repo org packages only;
+-- entry_file is repo-relative, so the repo pins the exporter). `package:test` exports
+-- matcher's `closeTo` (and test_core's / test_api's API) from `lib/test.dart`.
+CREATE VIEW reexporting_packages (symbol_id, exporter_package_id) AS
+SELECT DISTINCT x.symbol_id, d.package_id
+FROM symbol_exports x
+JOIN symbols s ON s.symbol_id = x.symbol_id
+JOIN packages ps ON ps.package_id = s.package_id
+JOIN documents d ON d.file = x.entry_file AND d.package_id <> s.package_id
+JOIN packages pe ON pe.package_id = d.package_id AND pe.repo = ps.repo;
 
 -- Cross-package uses (members count for their owners), tagged with whether the using
 -- file is a test / docs file, whether the consumer declares the symbol's package ONLY
--- as a dev dependency (package_deps.dev = 1), and whether the symbol is test-support
--- surface (test_support_symbols): a test-support library's whole purpose is its
--- consumers' tests, so those test uses count (external_refs).
+-- as a dev dependency (package_deps.dev = 1) -- or a dev-only dependency on an org
+-- package that re-exports the symbol (reexporting_packages: consumers' tests use
+-- matcher's `closeTo` through their dev dependency on `test`) --, and whether the
+-- symbol is test-support surface (test_support_symbols): a test-support library's
+-- whole purpose is its consumers' tests, so those test uses count (external_refs).
+-- A REGULAR dependency on the re-exporter counts only through test_support_symbols
+-- (an exporting entry named like `test.dart`), as for the symbol's own package.
 CREATE VIEW external_ref_occurrences AS
 SELECT r.symbol_id, r.member_symbol_id, r.package_id AS consumer_package_id, r.file, r.line, r.col,
        t.file IS NOT NULL AS in_test,
        d.file IS NOT NULL AS in_docs,
-       EXISTS (SELECT 1 FROM symbols s
-               JOIN package_deps pd ON pd.resolved_package_id = s.package_id
-               WHERE s.symbol_id = r.symbol_id
-                 AND pd.consumer_package_id = r.package_id
-                 AND pd.dev = 1) AS dev_dep,
+       (EXISTS (SELECT 1 FROM symbols s
+                JOIN package_deps pd ON pd.resolved_package_id = s.package_id
+                WHERE s.symbol_id = r.symbol_id
+                  AND pd.consumer_package_id = r.package_id
+                  AND pd.dev = 1)
+        OR r.symbol_id || char(0) || r.package_id IN (
+             SELECT rp.symbol_id || char(0) || pd.consumer_package_id
+             FROM reexporting_packages rp
+             JOIN package_deps pd ON pd.resolved_package_id = rp.exporter_package_id
+             WHERE pd.dev = 1)) AS dev_dep,
        r.symbol_id IN (SELECT symbol_id FROM test_support_symbols) AS test_support
 FROM owner_ref_occurrences r
 LEFT JOIN test_files t ON t.package_id = r.package_id AND t.file = r.file

@@ -331,6 +331,94 @@ describe('analyzeOrg on hand-built rows', () => {
     ]);
   });
 
+  describe('re-exports of another org package of the same repo (round 7)', () => {
+    // dart-lang/test: consumers' tests use matcher's closeTo through `package:test`
+    // (dev dependency), whose lib/test.dart re-exports matcher.
+    let matcher: string;
+    let testPkg: string;
+    function pubPkg(repo: string, name: string, path: string): string {
+      const id = `pub:${repo}:${name}`;
+      run('INSERT OR IGNORE INTO repos (repo) VALUES (?)', repo);
+      run("INSERT INTO packages (package_id, repo, path, manager, name, version, visibility) VALUES (?, ?, ?, 'pub', ?, '1.0.0', 'published-public')",
+        id, repo, path, name);
+      return id;
+    }
+    const reexport = (symbolId: number, entry: string): void =>
+      run('INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) SELECT symbol_id, ?, name FROM symbols WHERE symbol_id = ?', entry, symbolId);
+    beforeEach(() => {
+      matcher = pubPkg('acme/test', 'acme_matcher', 'pkgs/matcher');
+      testPkg = pubPkg('acme/test', 'acme_runner', 'pkgs/runner');
+      doc(matcher, 'pkgs/matcher/lib/acme_matcher.dart', true);
+      doc(testPkg, 'pkgs/runner/lib/acme_runner.dart', true);
+      doc(testPkg, 'pkgs/runner/lib/test.dart', true);
+    });
+
+    it('a dev dependency on a package that re-exports the symbol makes test uses count; a regular one does not', () => {
+      const close = sym(matcher, 'pkgs/matcher/lib/acme_matcher.dart', 'closeish', { exported: true });
+      const regular = sym(matcher, 'pkgs/matcher/lib/acme_matcher.dart', 'regularOnly', { exported: true });
+      const hidden = sym(matcher, 'pkgs/matcher/lib/acme_matcher.dart', 'hiddenMatcher', { exported: true });
+      for (const x of [close, regular, hidden]) reexport(x, 'pkgs/matcher/lib/acme_matcher.dart');
+      reexport(close, 'pkgs/runner/lib/acme_runner.dart'); // not a test-support entry
+      reexport(regular, 'pkgs/runner/lib/acme_runner.dart');
+      dep(app, testPkg);
+      run('UPDATE package_deps SET dev = 1 WHERE consumer_package_id = ? AND resolved_package_id = ?', app, testPkg);
+      const other = pkg('@acme/other');
+      dep(other, testPkg); // regular dependency on the re-exporter
+      const appTest = doc(app, 'src/a.test.ts');
+      use(appTest, close, 'src/a.test.ts');
+      use(appTest, hidden, 'src/a.test.ts'); // not re-exported by acme_runner
+      const otherTest = doc(other, 'src/b.test.ts');
+      use(otherTest, regular, 'src/b.test.ts');
+      analyze();
+      expect(db.prepare('SELECT symbol_id, exporter_package_id FROM reexporting_packages ORDER BY symbol_id').all())
+        .toEqual([{ symbol_id: close, exporter_package_id: testPkg }, { symbol_id: regular, exporter_package_id: testPkg }]);
+      expect(findings().map((r) => [r.name, r.reasons])).toEqual([
+        ['hiddenMatcher', ['only_test_refs', 'witness_pending']],
+        ['regularOnly', ['only_test_refs', 'witness_pending']],
+      ]);
+    });
+
+    it('a re-export through a test-support entry makes the symbol test-support surface', () => {
+      const support = sym(matcher, 'pkgs/matcher/lib/acme_matcher.dart', 'supportMatcher', { exported: true });
+      reexport(support, 'pkgs/matcher/lib/acme_matcher.dart');
+      reexport(support, 'pkgs/runner/lib/test.dart');
+      const other = pkg('@acme/other');
+      dep(other, testPkg); // regular dependency
+      use(doc(other, 'src/b.test.ts'), support, 'src/b.test.ts');
+      analyze();
+      expect(db.prepare('SELECT count(*) AS n FROM test_support_symbols WHERE symbol_id = ?').get(support)).toEqual({ n: 1 });
+      expect(findings()).toEqual([]);
+    });
+
+    it('an entry file of another repo with the same path is no re-exporter (negative)', () => {
+      const close = sym(matcher, 'pkgs/matcher/lib/acme_matcher.dart', 'closeish', { exported: true });
+      reexport(close, 'pkgs/matcher/lib/acme_matcher.dart');
+      // A package of ANOTHER repo with a document at the same repo-relative path.
+      const elsewhere = pubPkg('acme/elsewhere', 'acme_elsewhere', 'pkgs/matcher');
+      doc(elsewhere, 'pkgs/matcher/lib/acme_matcher.dart', true);
+      dep(app, elsewhere);
+      run('UPDATE package_deps SET dev = 1 WHERE consumer_package_id = ? AND resolved_package_id = ?', app, elsewhere);
+      use(doc(app, 'src/a.test.ts'), close, 'src/a.test.ts');
+      analyze();
+      expect(db.prepare('SELECT count(*) AS n FROM reexporting_packages').get()).toEqual({ n: 0 });
+      expect(findings().map((r) => [r.name, r.reasons])).toEqual([['closeish', ['only_test_refs', 'witness_pending']]]);
+    });
+
+    it('a pub lib/ library named like test support is test-support surface; an npm module file is not', () => {
+      doc(matcher, 'pkgs/matcher/lib/src/code/testing.dart');
+      doc(matcher, 'pkgs/matcher/lib/src/code/testing_helpers.dart');
+      doc(matcher, 'pkgs/matcher/test/testing.dart');
+      doc(lib, 'src/code/testing.ts');
+      const a = sym(matcher, 'pkgs/matcher/lib/src/code/testing.dart', 'testCodeHook', { exported: true });
+      const b = sym(matcher, 'pkgs/matcher/lib/src/code/testing_helpers.dart', 'notByStem', { exported: true });
+      const c = sym(matcher, 'pkgs/matcher/test/testing.dart', 'ownTestHelper');
+      const d = sym(lib, 'src/code/testing.ts', 'npmHelper', { exported: true });
+      analyze();
+      const ids = (db.prepare('SELECT symbol_id FROM test_support_symbols WHERE symbol_id IN (?, ?, ?, ?) ORDER BY symbol_id').all(a, b, c, d) as Array<{ symbol_id: number }>).map((r) => r.symbol_id);
+      expect(ids).toEqual([a]);
+    });
+  });
+
   describe('test-support surface (test_support_symbols)', () => {
     function exportVia(symbolId: number, entry: string, as?: string): void {
       run('INSERT INTO symbol_exports (symbol_id, entry_file, exported_as) VALUES (?, ?, ?)', symbolId, entry,
