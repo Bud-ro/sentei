@@ -1,0 +1,8 @@
+{
+  "name": "@acme/dual",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main/index.js",
+  "module": "dist/module/index.js",
+  "types": "dist/module/index.d.ts"
+}

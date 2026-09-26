@@ -45,6 +45,7 @@ Findings rows: `package_id` (`<manager>:<repo>:<name>`, e.g.
 | `app-skew` | `@acme/app-skew` | private | pinned to widgets `1.0.0`, names a removed export |
 | `repo-broken` | `@acme/broken` | private | invalid `tsconfig.json` → index fails |
 | `tool-py` | `@acme/tool-py` | private | consumer of y with a Python file (`scripts/build.py`) → `unindexed_consumer` |
+| `lib-dual` | `@acme/dual`, `@acme/dual-app` | private | two-package repo: `dual` declares only build output under two tsconfig outDirs (`dist/main`, `dist/module`, both rootDir `src`: the supabase auth-js layout), `dual-app` consumes it. Entry points map to `src/index.ts`, so `dualUnused` is a `deletion_candidate` rather than blocked by `opaque_consumer` |
 | `lib-cascade` | `@acme/cascade` | private | no org consumer; exercises the witness → analyze cascade, `exports` conditions, the `imports` map and a Vite `index.html` entry (see below) |
 | `lib-lazy` | `@acme/lazy` | private | lib whose only consumer (`app-lazy`) destructures it from dynamic `import()` namespaces |
 | `lib-lazy-opaque` | `@acme/lazy-opaque` | private | lib whose only consumer takes a rest element of its namespace and passes the namespace to a function |

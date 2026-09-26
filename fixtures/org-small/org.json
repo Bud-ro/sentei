@@ -9,6 +9,7 @@
     { "name": "app-worker", "default_branch": "main" },
     { "name": "lib-cascade", "default_branch": "main" },
     { "name": "lib-core", "default_branch": "main" },
+    { "name": "lib-dual", "default_branch": "main" },
     { "name": "lib-dyn", "default_branch": "main" },
     { "name": "lib-lazy", "default_branch": "main" },
     { "name": "lib-lazy-opaque", "default_branch": "main" },

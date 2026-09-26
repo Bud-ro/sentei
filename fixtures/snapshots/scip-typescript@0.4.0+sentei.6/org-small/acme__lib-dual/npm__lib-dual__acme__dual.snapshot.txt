@@ -1,0 +1,20 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/index.ts
+  // Package entry point for @acme/dual. package.json points at build output only
+//^ definition scip-typescript npm @acme/dual . src/`index.ts`/ enclosing [5:0-13:0]
+  // (main dist/main/index.js, module/types under dist/module/), which exists in no
+  // checkout; the two tsconfig outDirs map both back to src/.
+
+  // Expected: alive, no finding (imported by @acme/dual-app).
+  export function dualUsed(): string {
+//                ^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/dualUsed(). enclosing [5:0-7:1]
+    return 'used';
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (not blocked: the entry points resolve, so the package is not opaque).
+  export function dualUnused(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual . src/`index.ts`/dualUnused(). enclosing [10:0-12:1]
+    return 'unused';
+  }
