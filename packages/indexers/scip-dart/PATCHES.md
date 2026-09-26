@@ -1136,6 +1136,170 @@ Diff against the state after patch 9:
        final unit = await session.getResolvedUnit(file);
 ```
 
+## 11. A file outside the package config gets its enclosing package (`lib/src/symbol_generator.dart`)
+
+A relative import can reach a file that no package of the package config
+contains: dart-lang/native's `pkgs/jnigen/android_test_runner` (its own
+package, nested in jnigen) imports
+`../../test/jackson_core_test/runtime_test_registrant.dart` of jnigen, which
+is not one of its dependencies. Upstream threw for any element declared
+there ("Could not find package for …. Have you run pub get?",
+`symbol_generator.dart:252`), scip-dart exited 255 and the package was
+`failed`. Now the package of such a file is the one of the nearest
+enclosing `pubspec.yaml` (name from it, version from it as for any
+package), so the symbol is exactly the one that package's own index
+defines and the reference links (verified on a copy of the native clone:
+exit 0, the three `registerTests()` references carry
+`scip-dart pub jnigen 1.0.1-wip test/…/registerTests().`, the symbol jnigen's
+index defines). With no enclosing pubspec either, the element gets a
+`local N` symbol (nothing could define it globally). Each such file is
+logged once on stderr (`WARN: <path> is in no package of the package
+config; …`, printed whatever `--verbose` says); the adapter lists them in an
+`info:` diagnostic. Fail closed: the reference now links where it used to
+kill the whole index.
+
+Upstreamable: a crash on valid code.
+
+```diff
+--- a/lib/src/symbol_generator.dart
++++ b/lib/src/symbol_generator.dart
+@@ -1,7 +1,10 @@
+ // Modified by sentei (see PATCHES.md); original: Workiva/scip-dart 1.7.0, Apache-2.0.
+ 
++import 'dart:io';
++
+ import 'package:analyzer/dart/ast/ast.dart';
+ import 'package:analyzer/dart/element/element.dart';
++import 'package:path/path.dart' as p;
+ import 'package:pubspec_parse/pubspec_parse.dart';
+ import 'package:package_config/package_config.dart';
+ import 'package:scip_dart/src/flags.dart';
+@@ -163,6 +166,10 @@ class SymbolGenerator {
+       // named parameter of a generic function type. No global symbol can
+       // address it, so it is document-local.
+       return _localSymbolFor(element);
++    } on _NoPackage {
++      // Declared in a file that belongs to no pub package at all: no global
++      // symbol could match its definition anywhere, so it is document-local.
++      return _localSymbolFor(element);
+     }
+     if (descriptor == null) return null;
+ 
+@@ -170,6 +177,57 @@ class SymbolGenerator {
+     return ['scip-dart', _getPackage(element), descriptor].join(' ');
+   }
+ 
++  /// The pub package declaring [sourcePath], as `(name, root)` with `root`
++  /// the package dir ending in a separator: its package in the package
++  /// config, else (sentei patch 11) the package of the nearest enclosing
++  /// `pubspec.yaml`. A file outside every package of the package config is
++  /// reachable by a relative import: dart-lang/native's
++  /// jnigen/android_test_runner imports `../../test/.../x.dart` of jnigen,
++  /// which is not one of its dependencies, and upstream threw ("Could not
++  /// find package for ..."), failing the whole package. With its own
++  /// package's name and version the symbol is the one that package's index
++  /// defines, so the reference links. Null (no pubspec either): [_NoPackage].
++  ({String name, String root})? _packageOf(String sourcePath) {
++    final package = _packageConfig.packageOf(Uri.file(sourcePath));
++    if (package != null) {
++      return (name: package.name, root: package.root.toFilePath());
++    }
++    final found = _enclosingPubspec(p.dirname(p.normalize(sourcePath)));
++    if (_reportedOutside.add(sourcePath)) {
++      stderr.writeln(
++        'WARN: $sourcePath is in no package of the package config; '
++        '${found == null ? 'no enclosing pubspec.yaml either: its symbols are local' : 'symbols use the enclosing package ${found.name} at ${found.root}'}',
++      );
++    }
++    return found;
++  }
++
++  /// Files [_packageOf] warned about (once each).
++  static final _reportedOutside = <String>{};
++
++  /// Nearest `pubspec.yaml` at or above [dir] with a name, by dir (cached).
++  static final _pubspecAbove = <String, ({String name, String root})?>{};
++
++  static ({String name, String root})? _enclosingPubspec(String dir) {
++    if (_pubspecAbove.containsKey(dir)) return _pubspecAbove[dir];
++    ({String name, String root})? found;
++    final file = File(p.join(dir, 'pubspec.yaml'));
++    if (file.existsSync()) {
++      try {
++        final name = Pubspec.parse(file.readAsStringSync()).name;
++        found = (name: name, root: dir.endsWith(p.separator) ? dir : '$dir${p.separator}');
++      } on Object {
++        found = null;
++      }
++    }
++    if (found == null) {
++      final parent = p.dirname(dir);
++      found = parent == dir ? null : _enclosingPubspec(parent);
++    }
++    _pubspecAbove[dir] = found;
++    return found;
++  }
++
+   String fileSymbolFor(String path) {
+     return [
+       'scip-dart',
+@@ -199,18 +257,13 @@ class SymbolGenerator {
+       return 'pub $packageName $packageVersion';
+     }
+ 
+-    final package = _packageConfig.packageOf(
+-      Uri.file(element.source!.fullName),
+-    );
+-    if (package == null) {
+-      // this should only happen if the source references a package that is not defined
+-      // in the pubspec (as a main or transitive dep)
+-      throw Exception('Unable to find package within packageConfig');
+-    }
++    // Not in the package config: the nearest enclosing pubspec's package
++    // (patch 11). [_getDescriptor] ran first and threw [_NoPackage] when
++    // there is none, so the element is local and never gets here.
++    final package = _packageOf(element.source!.fullName);
++    if (package == null) throw const _NoPackage();
+ 
+-    final packageVersion = PackageVersionCache.versionFor(
+-      package.root.toFilePath(),
+-    );
++    final packageVersion = PackageVersionCache.versionFor(package.root);
+     return 'pub ${package.name} $packageVersion';
+   }
+ 
+@@ -247,14 +300,10 @@ class SymbolGenerator {
+     if (_isInSdk(element)) {
+       filePath = _pathForSdkElement(element);
+     } else {
+-      final config = _packageConfig.packageOf(Uri.file(sourcePath));
+-      if (config == null) {
+-        throw Exception(
+-          'Could not find package for $sourcePath. Have you run pub get?',
+-        );
+-      }
++      final package = _packageOf(sourcePath);
++      if (package == null) throw const _NoPackage();
+ 
+-      filePath = sourcePath.substring(config.root.toFilePath().length);
++      filePath = sourcePath.substring(package.root.length);
+     }
+ 
+     final namespace = _escapeNamespacePath(filePath);
+@@ -401,3 +450,11 @@ class SymbolGenerator {
+ class _NamelessElement implements Exception {
+   const _NamelessElement();
+ }
++
++/// Thrown by [SymbolGenerator._getDescriptor] for an element declared in a
++/// file that belongs to no pub package (not in the package config, no
++/// enclosing pubspec.yaml); [SymbolGenerator.symbolFor] then emits a
++/// `local N` symbol instead of failing the whole index (sentei patch 11).
++class _NoPackage implements Exception {
++  const _NoPackage();
++}
+```
+
 ## Trim: no dev dependencies (`pubspec.yaml`)
 
 Not a behaviour change. The dev dependencies serve upstream's tests and CI,

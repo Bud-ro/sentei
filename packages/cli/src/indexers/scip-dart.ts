@@ -7,7 +7,8 @@
 //     no occurrences for dartdoc `[Name]` links; `--package`, one run for the
 //     packages of a pub workspace; every analysis context's files; files
 //     resolved library by library; operator expressions are references;
-//     files the analyzer excludes are indexed too);
+//     files the analyzer excludes are indexed too; a file outside the
+//     package config gets its enclosing pubspec's package);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar
 //     (`--batch`: every package of a pub workspace in one run).
@@ -91,7 +92,8 @@ export const scipDart: Indexer = {
   // sentei.10: every public library (lib/**, not lib/src/) is a discover entry
   // point, so dart-surface computes its export surface; dart-surface: the main
   // of every library is an entry symbol; fork patch 10 (files the analyzer
-  // excludes are indexed; an unresolvable file makes the package partial).
+  // excludes are indexed; an unresolvable file makes the package partial),
+  // fork patch 11 (no crash on a file outside the package config).
   version: '1.7.0+sentei.10',
 
   detect({ repo, pkg }) {
@@ -232,6 +234,15 @@ export const scipDart: Indexer = {
       if (files.unresolved.length > 0) {
         status = worstStatus(status, 'partial');
         diagnostics.push(`error: scip-dart could not resolve ${files.unresolved.length} file(s); references in them are unknown: ${listSome(files.unresolved)}`);
+      }
+      // Fork patch 11: a file reached by a relative import that no package of
+      // the package config contains (dart-lang/native: jnigen's test/ from its
+      // android_test_runner) gets its enclosing pubspec's package, not a crash.
+      const outside = outsidePackageConfig(proc.stderr).map((f) => repoRelative(repoRoot, f));
+      if (outside.length > 0) {
+        diagnostics.push(
+          `info: scip-dart${ws !== undefined ? ' (workspace run)' : ''}: ${outside.length} referenced file(s) outside the package config, symbols from the enclosing pubspec's package: ${listSome(outside)}`,
+        );
       }
     }
     if (!existsSync(scipFile) || statSync(scipFile).size === 0) {
@@ -700,6 +711,21 @@ export function scipDartFileReport(stderr: string, dir: string): { excludedIndex
     }
   }
   return { excludedIndexed: [], unresolved: [] };
+}
+
+/** Files scip-dart (fork patch 11) warned are in no package of the package config, absolute, sorted. */
+export function outsidePackageConfig(stderr: string): string[] {
+  const out = new Set<string>();
+  for (const line of stderr.split('\n')) {
+    const m = /^WARN: (.+) is in no package of the package config; /.exec(line);
+    if (m) out.add(m[1]!);
+  }
+  return [...out].sort();
+}
+
+function repoRelative(repoRoot: string, abs: string): string {
+  const rel = path.relative(repoRoot, abs);
+  return rel.startsWith('..') || path.isAbsolute(rel) ? abs : rel.split(path.sep).join('/');
 }
 
 /** The first few items of a list, comma-separated, with a count of the rest. */

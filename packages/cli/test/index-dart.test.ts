@@ -23,6 +23,7 @@ import {
   pubspecWorkspaceKeys,
   pubWorkspaceOf,
   SCIP_DART_DIR,
+  outsidePackageConfig,
   scipDart,
   scipDartFileReport,
   setFlutterSdkForTests,
@@ -1137,6 +1138,37 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(sidecar.exports.map((e) => e.name)).toEqual(['a']);
   }, 300_000);
 
+  it('a relatively imported file outside the package config gets its enclosing package, not a crash (fork patch 11)', async () => {
+    // dart-lang/native: jnigen/android_test_runner/integration_test imports
+    // `../../test/.../runtime_test_registrant.dart` of jnigen, not one of its
+    // dependencies; scip-dart threw "Could not find package for ..." (exit 255).
+    write({
+      'outer/pubspec.yaml': pubspec('acme_outer', '2.0.0'),
+      'outer/lib/acme_outer.dart': 'int outer() => 1;\n',
+      'outer/test/reg.dart': 'void registerAll() {}\n',
+      'outer/runner/pubspec.yaml': pubspec('acme_runner', '1.0.0'),
+      'outer/runner/lib/acme_runner.dart': 'int run() => 1;\n',
+      'outer/runner/integration_test/run_test.dart': "import '../../test/reg.dart';\nimport '../../../loose/loose.dart';\n\nvoid main() {\n  registerAll();\n  looseFn();\n}\n",
+      'loose/loose.dart': 'void looseFn() {}\n',
+    });
+    const pkg: DiscoveredPackage = { ...pubPackage('acme_runner', ['runner/lib/acme_runner.dart']), path: 'runner' };
+    const repo: DiscoveredRepo = { repo: 'acme/outer', localPath: path.join(root, 'outer'), defaultBranch: 'main', headSha: null, packages: [pkg] };
+    const out = path.join(root, 'out-outer');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor([repo], repo), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(r.diagnostics).toContain(
+      `info: scip-dart: 2 referenced file(s) outside the package config, symbols from the enclosing pubspec's package: ${path.join(root, 'loose/loose.dart')}, test/reg.dart`,
+    );
+    const doc = readScipIndex(r.scipFile).documents.find((d) => d.relativePath === 'integration_test/run_test.dart')!;
+    const refs = doc.occurrences.filter((o) => (o.symbolRoles & 1) === 0).map((o) => o.symbol);
+    // The symbol acme_outer's own index defines for test/reg.dart.
+    expect(refs).toContain('scip-dart pub acme_outer 2.0.0 test/`reg.dart`/registerAll().');
+    // No pubspec above loose/: a document-local symbol.
+    const loose = doc.occurrences.find((o) => o.range[0] === 5 && o.range[1] === 2)!;
+    expect(loose.symbol).toMatch(/^local \d+$/);
+  }, 300_000);
+
   it('reads the per-package file report scip-dart writes to stderr (fork patch 10)', () => {
     const stderr = [
       'some analyzer noise',
@@ -1147,6 +1179,11 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(scipDartFileReport(stderr, '/r/ws/packages/a')).toEqual({ excludedIndexed: ['lib/src/gen.dart'], unresolved: [] });
     expect(scipDartFileReport(stderr, '/r/ws/packages/b')).toEqual({ excludedIndexed: [], unresolved: ['test/broken.dart'] });
     expect(scipDartFileReport(stderr, '/r/ws/packages/c')).toEqual({ excludedIndexed: [], unresolved: [] });
+    expect(outsidePackageConfig([
+      'WARN: /r/b/test/x.dart is in no package of the package config; symbols use the enclosing package b at /r/b/',
+      'WARN: /r/a.dart is in no package of the package config; no enclosing pubspec.yaml either: its symbols are local',
+      'WARN: something else',
+    ].join('\n'))).toEqual(['/r/a.dart', '/r/b/test/x.dart']);
   });
 
   it('a missing part only makes the package partial in lib/ or bin/, not in web/ demo code', async () => {
