@@ -23,10 +23,12 @@ you can query.
 
 Pre-release and under active development: the CLI, the config keys, the database
 schema and the report format can still change without notice. It has been
-dogfooded on three public orgs (unjs and honojs for TypeScript, Workiva for Dart;
-lockfiles in `fixtures/orgs/`). Findings only see consumers inside the org (the
-`org_dead` view states outright that it assumes there are no others), so treat
-them as candidates to review, not instructions. sentei only reports: it never edits, deletes or pushes code and never
+dogfooded on public orgs (unjs and honojs for TypeScript; supabase for a
+TypeScript / Dart mix; Workiva, flame-engine and dart-lang for Dart and Flutter;
+lockfiles in `fixtures/orgs/`), with spot checks against the clones recorded in
+`docs/DESIGN.md` ("Phase 2 verification reruns"). Findings only see consumers
+inside the org (the `org_dead` view states outright that it assumes there are no
+others), so treat them as candidates to review, not instructions. sentei only reports: it never edits, deletes or pushes code and never
 opens pull requests.
 
 ## Requirements
