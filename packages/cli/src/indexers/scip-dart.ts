@@ -10,6 +10,11 @@
 // Org dependencies are source-linked with a `pubspec_overrides.yaml`
 // (`dependency_overrides: {<dep>: {path: ...}}`), the pub equivalent of the npm
 // node_modules symlinks: consumer references then carry the lib's own symbols.
+// Flutter packages (see [flutterReason]) are resolved with `flutter pub get`,
+// whose package_config.json points `flutter` and `sky_engine` (dart:ui, via its
+// _embedder.yaml) into the Flutter SDK; both tools then analyze against the
+// Flutter SDK's own Dart SDK (`--sdk-path <flutterRoot>/bin/cache/dart-sdk`),
+// which is a no-op when the `dart` on PATH is Flutter's.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -18,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { TEST_GLOBS, matchGlob } from '@sentei/core';
 import { isExcludedConsumerFile } from './consumer-checks.ts';
 import { packageDir, packageSlug } from './scip-typescript.ts';
-import type { EntrySymbol, ExportsSidecar, Indexer, IndexerInput, IndexStatus, IndexerResult, SourcePosition } from './types.ts';
+import type { DiscoveredPackage, DiscoveredRepo, EntrySymbol, ExportsSidecar, Indexer, IndexerInput, IndexStatus, IndexerResult, SourcePosition } from './types.ts';
 import { worstStatus } from './types.ts';
 
 const INDEXERS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../indexers');
@@ -44,8 +49,14 @@ interface SurfaceOutput extends Omit<ExportsSidecar, 'namespaceSpreadRefs' | 'en
   unresolvedOwnUris?: number;
 }
 
-/** The `prepare` diagnostic for a failed `dart pub get` (see [pubGetFailed]). */
-const PUB_GET_FAILED = /^error: dart pub get(?: --offline)? exited with /;
+/** The `prepare` diagnostic for a failed `dart pub get` / `flutter pub get` (see [pubGetFailed]). */
+const PUB_GET_FAILED = /^error: (?:dart|flutter) pub get(?: --offline)? exited with /;
+
+/** The `prepare` diagnostic for a Flutter package when `flutter` is not on PATH. */
+const NO_FLUTTER = /^error: Flutter package .* `flutter` is not on PATH/;
+
+/** Dependencies that only the Flutter SDK provides. */
+const FLUTTER_SDK_DEPS = new Set(['flutter', 'flutter_test', 'flutter_web_plugins', 'flutter_driver', 'flutter_localizations', 'integration_test']);
 
 export const scipDart: Indexer = {
   name: 'scip-dart',
@@ -58,7 +69,9 @@ export const scipDart: Indexer = {
   // sentei.6: entrySymbols[].kind (`runtime`, set by the adapter).
   // sentei.7: fork patch 4 (dartdoc `[Name]` links are not references); after
   // a failed pub get, unresolved own `package:` URIs collapse into one error.
-  version: '1.7.0+sentei.7',
+  // sentei.8: Flutter packages (`flutter pub get`, fork patch 5 `--sdk-path`
+  // and dart-surface `--sdk-path` pointing at the Flutter SDK's Dart SDK).
+  version: '1.7.0+sentei.8',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
@@ -77,15 +90,30 @@ export const scipDart: Indexer = {
     // 1. Source-link org dependencies (before `pub get`, which reads the overrides).
     const links = writeOverrides(input, dir, diagnostics);
     // 2. Resolve. Offline when installs are disabled: path deps and anything
-    //    already in the pub cache still resolve.
+    //    already in the pub cache still resolve. A Flutter package needs `flutter pub get`.
     const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
-    const proc = await pubGet(input, dir, args, links, diagnostics, log);
+    const flutter = flutterReason(input);
+    let cmd = 'dart';
+    if (flutter !== undefined) {
+      const sdk = await flutterSdk();
+      log.push(...sdk.log);
+      if (sdk.root === undefined) {
+        diagnostics.push(
+          `error: Flutter package (${flutter}) but \`flutter\` is not on PATH: not resolved; install the Flutter SDK to index it` +
+            (sdk.error ? ` (${sdk.error})` : ''),
+        );
+        return { status: 'partial', diagnostics, log };
+      }
+      cmd = 'flutter';
+      diagnostics.push(`info: Flutter package (${flutter}); Flutter SDK ${sdk.version ?? '?'} at ${sdk.root}`);
+    }
+    const proc = await pubGet(input, dir, args, links, diagnostics, log, exec, cmd);
     if (proc.code !== 0) {
       status = 'partial';
       const why = firstLine(proc.stderr) ?? firstLine(proc.stdout) ?? '';
-      diagnostics.push(`error: dart ${args.join(' ')} exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
+      diagnostics.push(`error: ${cmd} ${args.join(' ')} exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
     } else {
-      diagnostics.push(`info: ran dart ${args.join(' ')}`);
+      diagnostics.push(`info: ran ${cmd} ${args.join(' ')}`);
     }
     return { status, diagnostics, log };
   },
@@ -106,6 +134,13 @@ export const scipDart: Indexer = {
       return { status, diagnostics, scipFile, exportsFile };
     };
     if (status === 'failed') return finish();
+    // A Flutter package without `flutter`: nothing resolves `package:flutter`
+    // or dart:ui, so there is no index to build (ingest flags it index_failed too).
+    if (prepared.diagnostics.some((d) => NO_FLUTTER.test(d))) {
+      rmSync(scipFile, { force: true });
+      rmSync(exportsFile, { force: true });
+      return finish();
+    }
 
     const tools = await ensureTools(options.install);
     log.push(...tools.log);
@@ -118,10 +153,14 @@ export const scipDart: Indexer = {
     const repoRoot = realpathSync(repo.localPath);
     const dir = realpathSync(packageDir(repo, pkg));
 
+    // Flutter packages: analyze against the Flutter SDK's Dart SDK.
+    const sdk = flutterReason(input) !== undefined ? await flutterSdk() : undefined;
+    const sdkArgs = sdk?.dartSdk !== undefined ? ['--sdk-path', sdk.dartSdk] : [];
+
     // 3. Index. scip-dart exits 0 on type errors and on unresolved imports; it
     //    fails only without .dart_tool/package_config.json (i.e. pub get failed).
     rmSync(scipFile, { force: true });
-    const scipArgs = ['run', 'scip_dart', '--private-symbols', '--output', scipFile, dir];
+    const scipArgs = ['run', 'scip_dart', '--private-symbols', ...sdkArgs, '--output', scipFile, dir];
     const proc = await exec('dart', scipArgs, SCIP_DART_DIR);
     log.push(`$ dart ${scipArgs.join(' ')}  (cwd ${SCIP_DART_DIR})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
     if (proc.code !== 0) {
@@ -156,6 +195,8 @@ export const scipDart: Indexer = {
       '--repo-root', repoRoot,
       '--package-root', dir,
       '--package-id', pkg.packageId,
+      ...(pkg.name !== null && pkg.name !== undefined ? ['--package-name', pkg.name] : []),
+      ...sdkArgs,
       '--org-packages', orgNames.join(','),
       ...pkg.entryPoints.flatMap((e) => ['--entry', e]),
       ...[...nested, ...ignored].flatMap((d) => ['--nested', d]),
@@ -322,11 +363,99 @@ export function writeOverrides(
   return links;
 }
 
+// ---- Flutter ---------------------------------------------------------------
+
+/**
+ * Why a package needs the Flutter SDK, or undefined: its pubspec has
+ * `environment.flutter` or depends on a Flutter SDK package (`flutter`,
+ * `flutter_test`, ... or any `sdk: flutter` dependency, dev deps included:
+ * pub resolves those too), or an org dependency (source-linked, followed
+ * transitively) is a Flutter package.
+ */
+export function flutterReason(input: Pick<IndexerInput, 'repo' | 'pkg' | 'lookup'>): string | undefined {
+  const seen = new Set<string>();
+  const visit = (repo: DiscoveredRepo, pkg: DiscoveredPackage, via: string | undefined): string | undefined => {
+    if (seen.has(pkg.packageId)) return undefined;
+    seen.add(pkg.packageId);
+    const own = pubspecFlutterReason(repo, pkg);
+    if (own !== undefined) return via === undefined ? own : `org dependency ${via}: ${own}`;
+    for (const dep of pkg.deps) {
+      if (dep.resolvedPackageId === null || dep.resolvedPackageId === undefined) continue;
+      const target = input.lookup(dep.resolvedPackageId);
+      if (target === undefined || target.pkg.manager !== 'pub') continue;
+      const r = visit(target.repo, target.pkg, via ?? target.pkg.name ?? dep.name);
+      if (r !== undefined) return r;
+    }
+    return undefined;
+  };
+  return visit(input.repo, input.pkg, undefined);
+}
+
+function pubspecFlutterReason(repo: DiscoveredRepo, pkg: DiscoveredPackage): string | undefined {
+  const sdkDep = pkg.deps.find((d) => FLUTTER_SDK_DEPS.has(d.name) || d.constraint === 'sdk:flutter');
+  if (sdkDep !== undefined) return `depends on ${sdkDep.name}`;
+  let text: string;
+  try {
+    text = readFileSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'), 'utf8');
+  } catch {
+    return undefined;
+  }
+  // `environment:` block with a `flutter:` key.
+  const env = /^environment:[ \t]*(?:#.*)?\r?\n((?:(?:[ \t]+.*|[ \t]*)(?:\r?\n|$))*)/m.exec(text);
+  if (env !== null && /^[ \t]+["']?flutter["']?[ \t]*:/m.test(env[1]!)) return 'environment.flutter';
+  // Discover may not list every dependency section (e.g. dependency_overrides): `sdk: flutter` anywhere.
+  if (/^[ \t]+sdk:[ \t]*["']?flutter["']?[ \t]*(?:#.*)?$/m.test(text)) return 'an sdk: flutter dependency';
+  return undefined;
+}
+
+export interface FlutterSdk {
+  /** FLUTTER_ROOT; undefined when `flutter` is not on PATH (or does not answer). */
+  root?: string;
+  /** `<root>/bin/cache/dart-sdk` when it exists. */
+  dartSdk?: string;
+  version?: string;
+  error?: string;
+  log: string[];
+}
+
+let flutterSdkPromise: Promise<FlutterSdk> | undefined;
+
+/** Tests: pretend `flutter` is (or is not) installed; undefined restores detection. */
+export function setFlutterSdkForTests(sdk: Omit<FlutterSdk, 'log'> | undefined): void {
+  flutterSdkPromise = sdk === undefined ? undefined : Promise.resolve({ ...sdk, log: [] });
+}
+
+/** Locates the Flutter SDK once per process with `flutter --version --machine`. */
+export function flutterSdk(): Promise<FlutterSdk> {
+  flutterSdkPromise ??= (async (): Promise<FlutterSdk> => {
+    const proc = await exec('flutter', ['--version', '--machine'], process.cwd());
+    const log = [`$ flutter --version --machine`, proc.stdout, proc.stderr];
+    if (proc.code !== 0) {
+      return { error: proc.code === -1 ? undefined : `flutter --version exited with ${proc.code ?? proc.signal}`, log };
+    }
+    try {
+      // Older Flutter versions may print a banner before the JSON.
+      const json = JSON.parse(proc.stdout.slice(proc.stdout.indexOf('{'))) as { flutterRoot?: string; frameworkVersion?: string; dartSdkVersion?: string };
+      if (typeof json.flutterRoot !== 'string') return { error: 'flutter --version --machine printed no flutterRoot', log };
+      const dartSdk = path.join(json.flutterRoot, 'bin', 'cache', 'dart-sdk');
+      return {
+        root: json.flutterRoot,
+        ...(existsSync(dartSdk) ? { dartSdk } : {}),
+        version: `${json.frameworkVersion ?? '?'} (Dart ${json.dartSdkVersion ?? '?'})`,
+        log,
+      };
+    } catch (err) {
+      return { error: `flutter --version --machine printed invalid JSON: ${(err as Error).message}`, log };
+    }
+  })();
+  return flutterSdkPromise;
+}
+
 /** At most this many `pub get` retries, each dropping the source links pub rejected. */
 export const MAX_CONFLICT_RETRIES = 3;
 
 /**
- * `dart pub get` in `dir`. An org dep's HEAD can require versions the
+ * `dart pub get` (`flutter pub get` with `cmd` = flutter) in `dir`. An org dep's HEAD can require versions the
  * consumer's own constraints exclude (HEAD moved to analyzer 14, the consumer
  * pins analyzer 5). Each time pub names rejected source links, they are
  * dropped (accumulating, user overrides restored) and pub get is retried, up
@@ -343,10 +472,11 @@ export async function pubGet(
   diagnostics: string[],
   log: string[],
   run: (cmd: string, args: string[], cwd: string) => Promise<ExecResult> = exec,
+  cmd = 'dart',
 ): Promise<ExecResult> {
   const { pkg } = input;
-  let proc = await run('dart', args, dir);
-  log.push(`$ dart ${args.join(' ')}  (cwd ${dir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+  let proc = await run(cmd, args, dir);
+  log.push(`$ ${cmd} ${args.join(' ')}  (cwd ${dir})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
   const excluded = new Set<string>();
   let current = new Set(links.keys());
   for (let attempt = 0; attempt < MAX_CONFLICT_RETRIES && proc.code !== 0 && current.size > 0; attempt++) {
@@ -357,8 +487,8 @@ export async function pubGet(
       diagnostics.push(`warn: ${c.dep} not source-linked: HEAD conflicts with ${c.pkg ?? pkg.name ?? pkg.packageId}'s constraint (${c.detail})`);
     }
     current = new Set(writeOverrides(input, dir, diagnostics, excluded).keys());
-    proc = await run('dart', args, dir);
-    log.push(`$ dart ${args.join(' ')}  (cwd ${dir}; retry without ${[...excluded].join(', ')})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+    proc = await run(cmd, args, dir);
+    log.push(`$ ${cmd} ${args.join(' ')}  (cwd ${dir}; retry without ${[...excluded].join(', ')})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
   }
   return proc;
 }

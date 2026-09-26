@@ -14,10 +14,16 @@ class Flags {
   bool get privateSymbols => _privateSymbols;
   bool _privateSymbols = false;
 
+  /// Dart SDK for the analyzer (`--sdk-path`), e.g. the Flutter SDK's
+  /// `bin/cache/dart-sdk`; null: the SDK running scip-dart.
+  String? get sdkPath => _sdkPath;
+  String? _sdkPath;
+
   void init(ArgResults results) {
     _verbose = results['verbose'] as bool? ?? false;
     _performance = results['performance'] as bool? ?? false;
     _privateSymbols = results['private-symbols'] as bool? ?? false;
+    _sdkPath = results['sdk-path'] as String?;
   }
 
   static Flags get instance => _instance;

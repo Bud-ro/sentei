@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { parseDescriptors, parseScipSymbol, readScipIndex } from '@sentei/core/scip';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { OVERRIDES_HEADER, parseOverrideConflicts, parseYamlBlock, pubGet, scipDart, writeOverrides } from '../src/indexers/scip-dart.ts';
+import { flutterReason, OVERRIDES_HEADER, parseOverrideConflicts, parseYamlBlock, pubGet, scipDart, setFlutterSdkForTests, writeOverrides } from '../src/indexers/scip-dart.ts';
 import type { DiscoverFile, DiscoveredPackage, DiscoveredRepo, ExportsSidecar, IndexerInput, OrgPackage } from '../src/indexers/types.ts';
 import { scipTypescript } from '../src/indexers/scip-typescript.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
@@ -16,6 +16,8 @@ import { index, type RepoIndex } from '../src/stages/index.ts';
 const FIXTURE = path.resolve(import.meta.dirname, '../../../fixtures/org-dart');
 const HAS_DART = spawnSync('dart', ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0;
 if (!HAS_DART) console.warn('[index-dart.test] SKIPPING scip-dart indexing tests: `dart` is not on PATH');
+const HAS_FLUTTER = spawnSync('flutter', ['--version', '--machine'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0;
+if (!HAS_FLUTTER) console.warn('[index-dart.test] SKIPPING Flutter indexing tests (fixtures/org-dart flutter-*): `flutter` is not on PATH');
 
 /** Copy options that never carry pub state left in the fixture by a manual run. */
 const NO_PUB_STATE = {
@@ -98,7 +100,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.7',
+        indexerVersion: '1.7.0+sentei.8',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -252,6 +254,133 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       { module: 'package:acme_x/acme_x.dart', name: 'removedFn', file: 'bin/main.dart', line: 0, col: 49 },
     ]);
     expect(lines.some((l) => l.includes('pub:acme_bad: partial'))).toBe(true);
+  });
+});
+
+describe.skipIf(!HAS_DART || !HAS_FLUTTER)(`index stage with scip-dart on the Flutter packages of fixtures/org-dart${HAS_FLUTTER ? '' : ' (skipped: `flutter` is not on PATH)'}`, () => {
+  let tmp: string;
+  let work: string;
+  const flutterDep = { name: 'flutter', manager: 'pub', constraint: 'sdk:flutter', resolvedPackageId: null };
+
+  beforeAll(async () => {
+    tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-index-flutter-')));
+    for (const r of ['flutter-widgets', 'flutter-app']) cpSync(path.join(FIXTURE, 'repos', r), path.join(tmp, 'repos', r), NO_PUB_STATE);
+    work = path.join(tmp, 'work');
+    mkdirSync(work);
+    const discover: DiscoverFile = {
+      org: 'acme',
+      repos: [
+        repoOf(tmp, 'flutter-app', pubPackage('acme_flutter_app', ['lib/main.dart'], [flutterDep, orgDep('acme_widgets', 'path:../flutter-widgets')])),
+        repoOf(tmp, 'flutter-widgets', pubPackage('acme_widgets', ['lib/acme_widgets.dart'], [flutterDep])),
+      ],
+    };
+    writeFileSync(path.join(work, 'discover.json'), JSON.stringify(discover, null, 2));
+    await index({ work, dbPath: '', db: undefined as unknown as DatabaseSync, log: () => {} }, { install: false });
+  }, 600_000);
+
+  afterAll(() => {
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const ix = (repo: string) => readJson<RepoIndex>(work, 'index', `acme__${repo}`, 'index.json');
+  const sidecar = (repo: string, pkg: string) => readJson<ExportsSidecar>(work, 'index', `acme__${repo}`, `pub__${pkg}.exports.json`);
+
+  it('resolves both with flutter pub get; package:flutter and dart:ui resolve (no analyzer errors)', () => {
+    for (const [repo, pkg] of [['flutter-widgets', 'acme_widgets'], ['flutter-app', 'acme_flutter_app']] as const) {
+      const p = ix(repo).packages[0]!;
+      expect(p.status, `${repo}: ${JSON.stringify(p.diagnostics)}`).toBe('ok');
+      expect(p.packageId).toBe(`pub:${pkg}`);
+      expect(p.diagnostics).toContain('info: ran flutter pub get --offline');
+      expect(p.diagnostics.some((d) => d.startsWith('info: Flutter package (depends on flutter); Flutter SDK '))).toBe(true);
+      expect(p.diagnostics.filter((d) => d.startsWith('warn:') || d.startsWith('error:'))).toEqual([]);
+      const log = readFileSync(path.join(work, 'index', `acme__${repo}`, `pub__${pkg}.log`), 'utf8');
+      expect(log).toMatch(/\$ dart run scip_dart --private-symbols --sdk-path \S+[\/\\]bin[\/\\]cache[\/\\]dart-sdk /);
+    }
+    // Flutter's package config points into the SDK (no pub-cache copy of flutter).
+    const config = readJson<{ packages: Array<{ name: string; rootUri: string }> }>(tmp, 'repos/flutter-app/.dart_tool/package_config.json');
+    expect(config.packages.find((x) => x.name === 'flutter')?.rootUri).toMatch(/\/packages\/flutter\/?$/);
+    expect(config.packages.find((x) => x.name === 'sky_engine')?.rootUri).toMatch(/\/bin\/cache\/pkg\/sky_engine\/?$/);
+  });
+
+  it('exports both widgets; lib/main.dart main is a runtime entry symbol', () => {
+    expect(sidecar('flutter-widgets', 'acme_widgets').exports.map((e) => [e.exportedAs, e.file, e.line, e.col])).toEqual([
+      ['AcmeBanner', 'lib/acme_widgets.dart', 14, 6],
+      ['AcmeButton', 'lib/acme_widgets.dart', 4, 6],
+    ]);
+    const app = sidecar('flutter-app', 'acme_flutter_app');
+    expect(app.exports.map((e) => e.exportedAs)).toEqual(['main']);
+    expect(app.entrySymbols).toEqual([{ name: 'main', file: 'lib/main.dart', line: 5, col: 5, kind: 'runtime' }]);
+  });
+
+  it('consumer references carry acme_widgets symbols and resolve into the Flutter framework', () => {
+    const app = readScipIndex(path.join(work, 'index/acme__flutter-app/pub__acme_flutter_app.scip'));
+    const refs = new Set(app.documents.flatMap((d) => d.occurrences.map((o) => o.symbol)));
+    expect(refs).toContain('scip-dart pub acme_widgets 1.0.0 lib/`acme_widgets.dart`/AcmeButton#`<constructor>`().');
+    expect([...refs].some((r) => /^scip-dart pub flutter \S+ lib\/src\/widgets\/`binding\.dart`\/runApp\(\)\.$/.test(r)), [...refs].join('\n')).toBe(true);
+    expect([...refs].some((r) => /^scip-dart pub flutter \S+ lib\/src\/material\/`app\.dart`\/MaterialApp#/.test(r))).toBe(true);
+    const lib = readScipIndex(path.join(work, 'index/acme__flutter-widgets/pub__acme_widgets.scip'));
+    const libRefs = new Set(lib.documents.flatMap((d) => d.occurrences.map((o) => o.symbol)));
+    expect([...libRefs].some((r) => /^scip-dart pub flutter \S+ lib\/src\/widgets\/`framework\.dart`\/StatelessWidget#$/.test(r))).toBe(true);
+  });
+});
+
+describe('Flutter package detection', () => {
+  let root: string;
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(path.join(tmpdir(), 'sentei-flutter-detect-')));
+  });
+  afterAll(() => {
+    setFlutterSdkForTests(undefined);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function pkgWith(name: string, pubspecText: string, deps: DiscoveredPackage['deps'] = []): OrgPackage {
+    const repo = repoOf(root, name, pubPackage(name, [`lib/${name}.dart`], deps));
+    mkdirSync(repo.localPath, { recursive: true });
+    writeFileSync(path.join(repo.localPath, 'pubspec.yaml'), pubspecText);
+    return { repo, pkg: repo.packages[0]! };
+  }
+  function input(target: OrgPackage, all: OrgPackage[]): IndexerInput {
+    const byId = new Map(all.map((o) => [o.pkg.packageId, o]));
+    return { repo: target.repo, pkg: target.pkg, lookup: (id) => byId.get(id), orgPackages: all, options: { install: false, maxOldSpaceMb: 0 } };
+  }
+  const head = (name: string) => `name: ${name}\nversion: 1.0.0\npublish_to: none\n`;
+
+  it('environment.flutter, Flutter SDK deps (dev too), sdk: flutter, and org deps that are Flutter packages', () => {
+    const env = pkgWith('env', `${head('env')}environment:\n  sdk: ^3.0.0\n  flutter: ">=3.10.0"\n`);
+    const dev = pkgWith('dev', `${head('dev')}dev_dependencies:\n  flutter_test:\n    sdk: flutter\n`, [
+      { name: 'flutter_test', manager: 'pub', constraint: 'sdk:flutter', resolvedPackageId: null },
+    ]);
+    const sdkOnly = pkgWith('sdkonly', `${head('sdkonly')}dependency_overrides:\n  flutter_gen:\n    sdk: flutter\n`);
+    const pure = pkgWith('pure', `${head('pure')}environment:\n  sdk: ^3.0.0\n# flutter: no\nflutter:\n  assets: []\n`);
+    const viaDep = pkgWith('viadep', `${head('viadep')}dependencies:\n  env: ^1.0.0\n`, [orgDep('env', '^1.0.0')]);
+    const all = [env, dev, sdkOnly, pure, viaDep];
+    expect(flutterReason(input(env, all))).toBe('environment.flutter');
+    expect(flutterReason(input(dev, all))).toBe('depends on flutter_test');
+    expect(flutterReason(input(sdkOnly, all))).toBe('an sdk: flutter dependency');
+    expect(flutterReason(input(pure, all))).toBeUndefined(); // a top-level `flutter:` section alone is not enough
+    expect(flutterReason(input(viaDep, all))).toBe('org dependency env: environment.flutter');
+  });
+
+  it('without `flutter` on PATH a Flutter package is partial with a clear error, and nothing is indexed', async () => {
+    const app = pkgWith('noflutter', `${head('noflutter')}dependencies:\n  flutter:\n    sdk: flutter\n`, [
+      { name: 'flutter', manager: 'pub', constraint: 'sdk:flutter', resolvedPackageId: null },
+    ]);
+    setFlutterSdkForTests({});
+    try {
+      const out = path.join(root, 'out-noflutter');
+      mkdirSync(out);
+      const r = await scipDart.run(input(app, [app]), out);
+      expect(r.status).toBe('partial');
+      expect(r.diagnostics).toEqual([
+        'error: Flutter package (depends on flutter) but `flutter` is not on PATH: not resolved; install the Flutter SDK to index it',
+      ]);
+      expect(existsSync(r.scipFile)).toBe(false);
+      expect(existsSync(r.exportsFile)).toBe(false);
+      expect(existsSync(path.join(app.repo.localPath, '.dart_tool'))).toBe(false); // no pub get ran
+    } finally {
+      setFlutterSdkForTests(undefined);
+    }
   });
 });
 

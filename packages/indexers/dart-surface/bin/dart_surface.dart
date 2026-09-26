@@ -42,10 +42,12 @@ Future<void> main(List<String> argv) async {
     ..addOption('repo-root', mandatory: true, help: 'Repo root (paths in the output are relative to it)')
     ..addOption('package-root', mandatory: true, help: 'Package dir (holds pubspec.yaml)')
     ..addOption('package-id', mandatory: true, help: 'e.g. pub:acme_x')
+    ..addOption('package-name', help: "The package's pub name (default: the last ':' segment of --package-id)")
     ..addMultiOption('entry', help: 'Entry file, repo-relative POSIX (repeatable)')
     ..addOption('org-packages', defaultsTo: '', help: 'Comma-separated pub names of all org packages')
     ..addFlag('pub-get-failed', negatable: false, help: 'pub get failed for this package: own package: URIs that do not resolve are counted, not listed')
     ..addMultiOption('nested', help: 'Dir of a package, or of an ignored manifest, nested inside this one (its files are not ours)')
+    ..addOption('sdk-path', help: "Dart SDK the analyzer resolves dart: libraries from (a Flutter package: the Flutter SDK's bin/cache/dart-sdk)")
     ..addFlag('help', abbr: 'h', negatable: false);
   final ArgResults args;
   try {
@@ -66,6 +68,8 @@ Future<void> main(List<String> argv) async {
     orgPackages: (args['org-packages'] as String).split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toSet(),
     nested: (args['nested'] as List<String>).map((d) => p.normalize(p.absolute(d))).toList(),
     pubGetFailed: args['pub-get-failed'] as bool,
+    sdkPath: args['sdk-path'] as String?,
+    packageNameOverride: args['package-name'] as String?,
   );
   final out = await surface.compute();
   stdout.writeln(const JsonEncoder.withIndent('  ').convert(out));
@@ -108,6 +112,9 @@ class Surface {
   /// `dart pub get` failed for this package (see [unresolvedOwnUris]).
   final bool pubGetFailed;
 
+  /// Dart SDK for the analyzer; null: the SDK running dart-surface.
+  final String? sdkPath;
+
   Surface({
     required this.repoRoot,
     required this.packageRoot,
@@ -116,6 +123,8 @@ class Surface {
     required this.orgPackages,
     required this.nested,
     this.pubGetFailed = false,
+    this.sdkPath,
+    this.packageNameOverride,
   });
 
   final diagnostics = <String>[];
@@ -150,8 +159,12 @@ class Surface {
   ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
   final entrySymbols = <String, Map<String, Object>>{};
 
-  /// The package's pub name (`pub:acme_x` → `acme_x`).
-  String get packageName => packageId.startsWith('pub:') ? packageId.substring(4) : packageId;
+  /// The package's pub name: the last `:` segment of the id (`pub:acme_x`, or
+  /// `pub:<repo>:acme_x` → `acme_x`). `--package-name` overrides it.
+  String get packageName => packageNameOverride ?? packageId.substring(packageId.lastIndexOf(':') + 1);
+
+  /// `--package-name`: the pub name when the id does not end in it.
+  final String? packageNameOverride;
 
   void addEntrySymbol(Element element, String why) {
     final decl = declarationOf(element);
@@ -186,7 +199,7 @@ class Surface {
   }
 
   Future<Map<String, Object>> compute() async {
-    final collection = AnalysisContextCollection(includedPaths: [packageRoot]);
+    final collection = AnalysisContextCollection(includedPaths: [packageRoot], sdkPath: sdkPath);
     context = collection.contextFor(packageRoot);
     final session = context.currentSession;
 

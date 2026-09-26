@@ -1,0 +1,16 @@
+name: acme_flutter_app
+description: "Org-private Flutter app consuming acme_widgets (path dependency)."
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  acme_widgets:
+    path: ../flutter-widgets
+
+flutter:
+  uses-material-design: true

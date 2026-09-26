@@ -1,3 +1,5 @@
+// Modified by sentei (see PATCHES.md); original: Workiva/scip-dart 1.7.0, Apache-2.0.
+
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:path/path.dart' as p;
@@ -40,6 +42,7 @@ Future<Index> indexPackage(
 
   final collection = AnalysisContextCollection(
     includedPaths: [...allPackageRoots, dirPath],
+    sdkPath: Flags.instance.sdkPath,
   );
 
   if (Flags.instance.performance) print('Analyzing Source');

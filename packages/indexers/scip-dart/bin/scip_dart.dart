@@ -45,6 +45,12 @@ Future<void> main(List<String> args) async {
                   'Emit global symbols for private (_name) declarations '
                   'instead of local symbols',
             )
+            ..addOption(
+              'sdk-path',
+              help:
+                  'Dart SDK the analyzer resolves dart: libraries from '
+                  '(default: the SDK running scip-dart)',
+            )
             ..addFlag(
               'version',
               defaultsTo: false,

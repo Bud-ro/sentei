@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.7` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.8` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -13,7 +13,8 @@ checked in so the analyzer version is pinned (docs/DESIGN.md, M3).
 
 Diffs are against the upstream commit, paths relative to this directory.
 Each modified file (`pubspec.yaml`, `bin/scip_dart.dart`, `lib/src/flags.dart`,
-`lib/src/symbol_generator.dart`, `lib/src/scip_visitor.dart`) also starts with a
+`lib/src/symbol_generator.dart`, `lib/src/scip_visitor.dart`,
+`lib/src/indexer.dart`) also starts with a
 one-line "Modified by sentei" notice (Apache-2.0 §4(b)) plus, in the Dart files,
 a blank line after it; the diffs below leave that header out, so their new-side
 line numbers are offset by it.
@@ -24,6 +25,14 @@ scip-dart 1.7.0 requires Dart >= 3.12 but its only SDK-sensitive dependency,
 `analyzer` ^14 (resolves to 14.4.0), needs only 3.11. Relaxing the floor gives
 byte-identical `.scip` output on Dart 3.11.3 (checked on fixtures/org-dart during
 the M3 evaluation). Upstreamable only if Workiva wants the wider range.
+
+Still needed after the dev box moved to Dart 3.13.4: the floor is what users on
+3.11 get. The checked-in `pubspec.lock` (analyzer 14.4.0, `_fe_analyzer_shared`
+108.0.0) resolves unchanged on 3.13.4 (`dart pub get --enforce-lockfile`), 14.4.0
+is still the newest analyzer on pub.dev, and its current language version is
+3.14, so 3.12/3.13 syntax (private named parameters, primary constructors)
+parses. fixtures/org-dart gives byte-identical `.scip` snapshots on 3.11.3 and
+3.13.4.
 
 ```diff
 --- a/pubspec.yaml
@@ -326,6 +335,58 @@ references, dead-code analysis does not.
      // [visitDeclaration] on the [GeneralizingAstVisitor] does not match parameters
      // even though the parameter node extends [Declaration]. This is a workaround
      // to correctly parse all [Declaration] ast nodes.
+```
+
+## 5. `--sdk-path`: the Dart SDK the analyzer uses (`bin/scip_dart.dart`, `lib/src/flags.dart`, `lib/src/indexer.dart`)
+
+A Flutter package resolves `package:flutter` into the Flutter SDK
+(`flutter pub get` writes a package config pointing at
+`<flutterRoot>/packages/flutter` and `bin/cache/pkg/sky_engine`, whose
+`_embedder.yaml` supplies `dart:ui`). The analyzer takes `dart:core` and friends
+from the SDK running scip-dart; when that is not the Flutter SDK's own Dart SDK,
+the framework is analyzed against the wrong core libraries. `--sdk-path` is
+passed to `AnalysisContextCollection(sdkPath:)`; absent, upstream behaviour is
+unchanged. sentei passes `--sdk-path <flutterRoot>/bin/cache/dart-sdk` for
+Flutter packages (a no-op when `dart` on PATH is Flutter's). Upstreamable.
+
+```diff
+--- a/bin/scip_dart.dart
++++ b/bin/scip_dart.dart
+@@ -44,6 +44,12 @@
+                   'instead of local symbols',
+             )
++            ..addOption(
++              'sdk-path',
++              help:
++                  'Dart SDK the analyzer resolves dart: libraries from '
++                  '(default: the SDK running scip-dart)',
++            )
+             ..addFlag(
+               'version',
+--- a/lib/src/flags.dart
++++ b/lib/src/flags.dart
+@@ -12,10 +12,16 @@
+   bool get privateSymbols => _privateSymbols;
+   bool _privateSymbols = false;
+ 
++  /// Dart SDK for the analyzer (`--sdk-path`), e.g. the Flutter SDK's
++  /// `bin/cache/dart-sdk`; null: the SDK running scip-dart.
++  String? get sdkPath => _sdkPath;
++  String? _sdkPath;
++
+   void init(ArgResults results) {
+     _verbose = results['verbose'] as bool? ?? false;
+     _performance = results['performance'] as bool? ?? false;
+     _privateSymbols = results['private-symbols'] as bool? ?? false;
++    _sdkPath = results['sdk-path'] as String?;
+   }
+--- a/lib/src/indexer.dart
++++ b/lib/src/indexer.dart
+@@ -40,6 +40,7 @@
+   final collection = AnalysisContextCollection(
+     includedPaths: [...allPackageRoots, dirPath],
++    sdkPath: Flags.instance.sdkPath,
+   );
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)
