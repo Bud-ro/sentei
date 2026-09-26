@@ -9,12 +9,22 @@
 
   // Expected: alive, no finding (bin/ entry point).
   void main() {
-//     ^^^^ definition scip-dart pub acme_tools . bin/`acme_tools.dart`/main(). enclosing [4:0-8:1]
-    print(shifted(Vec2(1, 2), 1).x);
+//     ^^^^ definition scip-dart pub acme_tools . bin/`acme_tools.dart`/main(). enclosing [4:0-10:1]
+    final a = Vec2(1, 2) & Vec2(3, 4);
+//        ^ definition local 0 enclosing [5:8-5:35]
+//            ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
+//                       ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2Ops#`&`().
+//                         ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
+    print((a % 2)[0]);
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//         ^ reference local 0
+//           ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2Ops#`%`().
+//               ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2Ops#`[]`().
+    print(shifted(a, 1).x);
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/shifted().
-//                ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
-//                               ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                ^ reference local 0
+//                      ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
     print(Engine().run());
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^^^^^^ reference scip-dart pub acme_core . lib/_parts/`engine.dart`/Engine#`<constructor>`().

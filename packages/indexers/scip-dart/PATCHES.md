@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.9` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 8 below, pub workspaces resolved once at the root, and a package with `lib/` code but no `lib/` document fails): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.9` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 9 below, pub workspaces resolved once at the root, and a package with `lib/` code but no `lib/` document fails): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -826,6 +826,122 @@ Upstreamable: a correctness bug for any library with name-based parts.
 +      if (units[file] case final unit?) unit,
 +  ];
 +}
+```
+
+## 9. Operator expressions are references (`lib/src/scip_visitor.dart`)
+
+The visitor emitted references for declarations, identifiers, named types,
+import prefixes and named arguments only. An operator expression names
+nothing: `a + b` calls `+` of `a`'s type (or of an extension on it) without
+an identifier, so no occurrence pointed at the operator and an operator used
+only so looked unused, together with its extension: `sokobros/BlockOperators`
+(`+` used in `turn_manager.dart`) came out private_dead, flame's
+`Vector2Extension` `&`/`%` and `QuaternionExtension` `/` had no reference. Now
+a reference occurrence is emitted at the operator token for the element the
+analyzer resolved: `BinaryExpression` (`a + b`, `a == b`; `a != b` resolves to
+`==`), `PrefixExpression` (`-a` is `unary-`, `~a`, `++a` is `+`),
+`PostfixExpression` (`a++`), compound `AssignmentExpression` (`a += b`), and
+`IndexExpression` at its `[`: `a[i]` reads `[]`, `a[i] = v` writes `[]=`
+(the assignment carries it as its write element; the index expression has
+none then), `a[i] += v` / `a[i]++` both. `!a`, `a!`, `&&`, `||`, `??` and plain
+`=` resolve to no element and emit nothing. Operators declared in `dart:`
+libraries (`int +`, `Object ==`) are skipped: they are never an org package's
+code and are on nearly every line.
+
+Upstreamable (the SDK skip as an option): code navigation wants operator
+references too.
+
+```diff
+--- a/lib/src/scip_visitor.dart
++++ b/lib/src/scip_visitor.dart
+@@ -68,11 +68,87 @@ class ScipVisitor extends GeneralizingAstVisitor {
+       _visitImportPrefixReference(node);
+     } else if (node is NamedArgument) {
+       _visitNamedArgument(node);
++    } else if (node is BinaryExpression) {
++      // `a + b`, `a == b`, `a != b` (resolves to `==`), `a & b`, ...
++      _visitOperator(
++        node,
++        node.element,
++        node.operator.offset,
++        node.operator.length,
++      );
++    } else if (node is PrefixExpression) {
++      // `-a` (`unary-`), `~a`, `++a` (`+`); `!a` has no element.
++      _visitOperator(
++        node,
++        node.element,
++        node.operator.offset,
++        node.operator.length,
++      );
++    } else if (node is PostfixExpression) {
++      // `a++` (`+`); `a!` has no element.
++      _visitOperator(
++        node,
++        node.element,
++        node.operator.offset,
++        node.operator.length,
++      );
++    } else if (node is AssignmentExpression) {
++      // `a += b` (`+`); a plain `=` has no element.
++      _visitOperator(
++        node,
++        node.element,
++        node.operator.offset,
++        node.operator.length,
++      );
++    } else if (node is IndexExpression) {
++      _visitIndexExpression(node);
+     }
+ 
+     super.visitNode(node);
+   }
+ 
++  /// A user-defined operator applied by an expression: a reference at the
++  /// operator token. Nothing names the operator (or its extension), so
++  /// without this `a + b` kept no member of `a`'s type (or extension) alive.
++  /// Operators of `dart:` libraries (`int +`, `Object ==`) are skipped: they
++  /// are never an org package's code and are on nearly every line.
++  void _visitOperator(AstNode node, Element? element, int offset, int length) {
++    if (element == null || element.source == null) return;
++    if (element.library?.isInSdk == true) return;
++    _registerAsReference(element, node, offset: offset, length: length);
++  }
++
++  /// `a[i]` references `[]`; as an assignment target (`a[i] = v`) `[]=`, and
++  /// both when compound (`a[i] += v`, `a[i]++`): the assignment carries them
++  /// as its read and write elements, the index expression has none then.
++  /// The reference is at the `[` token.
++  void _visitIndexExpression(IndexExpression node) {
++    final parent = node.parent;
++    final bracket = node.leftBracket;
++    if (parent is CompoundAssignmentExpression &&
++        _assignmentTarget(parent) == node) {
++      _visitOperator(node, parent.readElement, bracket.offset, bracket.length);
++      if (parent.writeElement != parent.readElement) {
++        _visitOperator(
++          node,
++          parent.writeElement,
++          bracket.offset,
++          bracket.length,
++        );
++      }
++      return;
++    }
++    _visitOperator(node, node.element, bracket.offset, bracket.length);
++  }
++
++  static Expression? _assignmentTarget(CompoundAssignmentExpression e) =>
++      switch (e) {
++        AssignmentExpression a => a.leftHandSide,
++        PrefixExpression p => p.operand,
++        PostfixExpression p => p.operand,
++        _ => null,
++      };
++
+   void _visitDeclaration(Declaration node) {
+     final element = _symbolGenerator.elementFor(node);
+     if (element == null) return;
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)

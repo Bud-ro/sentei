@@ -491,6 +491,21 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
     expect(refs).toContain('scip-dart pub acme_core 1.0.0 lib/_parts/`helper.dart`/_Helper#step().');
   });
 
+  it('operator expressions reference the operator, also of an extension (fork patch 9)', () => {
+    const occ = (pkg: string, file: string) => readScipIndex(path.join(work, 'index/acme__dart-workspace', `pub__${pkg}.scip`))
+      .documents.find((d) => d.relativePath === file)!
+      .occurrences.filter((o) => (o.symbolRoles & 1) === 0)
+      .map((o) => `${o.range[0]}:${o.range[1]} ${o.symbol.split(' ').pop()}`);
+    // `final a = Vec2(1, 2) & Vec2(3, 4);` and `print((a % 2)[0]);` in acme_tools' bin.
+    expect(occ('acme_tools', 'bin/acme_tools.dart')).toEqual(expect.arrayContaining([
+      '5:23 lib/src/`vec.dart`/Vec2Ops#`&`().',
+      '6:11 lib/src/`vec.dart`/Vec2Ops#`%`().',
+      '6:15 lib/src/`vec.dart`/Vec2Ops#`[]`().',
+    ]));
+    // `v + d` inside acme_core: the private extension `_Shift` is used only so.
+    expect(occ('acme_core', 'lib/src/vec.dart')).toContain('30:33 lib/src/`vec.dart`/_Shift#+().');
+  });
+
   it('a package of a workspace run gets the index a run on it alone produces', () => {
     const alone = path.join(tmp, 'acme_core-alone.scip');
     const r = spawnSync('dart', ['run', 'scip_dart', '--private-symbols', '--output', alone, path.join(tmp, WS, 'packages/acme_core')], {
@@ -853,6 +868,62 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(r.status).toBe('partial');
     expect(r.diagnostics.some((d) => d.startsWith("error: missing generated part 'fake.g.dart' at lib/testing/fake.dart:1:6"))).toBe(true);
     expect(readJson<ExportsSidecar>(r.exportsFile).entrySymbols).toEqual([{ name: 'main', file: 'lib/mocks.dart', line: 0, col: 5, kind: 'runtime' }]);
+  }, 300_000);
+
+  it('references user-defined operators at the operator token, index reads and writes too; SDK operators are skipped (fork patch 9)', async () => {
+    write({
+      'ops/pubspec.yaml': pubspec('acme_ops', '1.0.0'),
+      'ops/lib/acme_ops.dart': [
+        'class V {',
+        '  V operator +(V o) => this;',
+        '  V operator -() => this;',
+        '  int operator [](int i) => i;',
+        '  void operator []=(int i, int v) {}',
+        '  @override',
+        '  bool operator ==(Object o) => true;',
+        '}',
+        'void f(V a, V b) {',
+        '  a + b;', // 9
+        '  -a;', // 10
+        '  a[0];', // 11
+        '  a[0] = 1;', // 12
+        '  a[0] += 1;', // 13
+        '  a[0]++;', // 14
+        '  var c = a;',
+        '  c += b;', // 16
+        '  a == b;', // 17
+        '  a != b;', // 18
+        '  1 + 2;', // 19
+        '}',
+        '',
+      ].join('\n'),
+    });
+    const repos = [repoOf(root, 'ops', pubPackage('acme_ops', ['lib/acme_ops.dart']))];
+    repos[0]!.localPath = path.join(root, 'ops');
+    const out = path.join(root, 'out-ops');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor(repos, repos[0]!), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    const refs = readScipIndex(r.scipFile).documents[0]!.occurrences
+      .filter((o) => (o.symbolRoles & 1) === 0 && o.range[0]! >= 9)
+      .map((o) => `${o.range[0]}:${o.range[1]} ${o.symbol.split(' ').pop()!.replace('lib/`acme_ops.dart`/', '')}`)
+      .filter((s) => /V#/.test(s) && !/\(o\)|<constructor>/.test(s));
+    expect(refs.sort()).toEqual([
+      '10:2 V#-().', // unary minus: the definition's symbol too
+      '11:3 V#`[]`().',
+      '12:3 V#`[]=`().',
+      '13:3 V#`[]=`().',
+      '13:3 V#`[]`().',
+      '14:3 V#`[]=`().',
+      '14:3 V#`[]`().',
+      '16:4 V#+().',
+      '17:4 V#`==`().',
+      '18:4 V#`==`().',
+      '9:4 V#+().',
+    ].sort());
+    // `1 + 2` (line 19) and Object.== are SDK operators: no occurrence.
+    const sdk = readScipIndex(r.scipFile).documents[0]!.occurrences.filter((o) => o.range[0] === 19 && o.symbol.includes('dart:core'));
+    expect(sdk).toEqual([]);
   }, 300_000);
 
   it('a package with Dart files under lib/ but no lib/ document in its index fails (never ok)', async () => {

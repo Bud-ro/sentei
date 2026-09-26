@@ -68,10 +68,86 @@ class ScipVisitor extends GeneralizingAstVisitor {
       _visitImportPrefixReference(node);
     } else if (node is NamedArgument) {
       _visitNamedArgument(node);
+    } else if (node is BinaryExpression) {
+      // `a + b`, `a == b`, `a != b` (resolves to `==`), `a & b`, ...
+      _visitOperator(
+        node,
+        node.element,
+        node.operator.offset,
+        node.operator.length,
+      );
+    } else if (node is PrefixExpression) {
+      // `-a` (`unary-`), `~a`, `++a` (`+`); `!a` has no element.
+      _visitOperator(
+        node,
+        node.element,
+        node.operator.offset,
+        node.operator.length,
+      );
+    } else if (node is PostfixExpression) {
+      // `a++` (`+`); `a!` has no element.
+      _visitOperator(
+        node,
+        node.element,
+        node.operator.offset,
+        node.operator.length,
+      );
+    } else if (node is AssignmentExpression) {
+      // `a += b` (`+`); a plain `=` has no element.
+      _visitOperator(
+        node,
+        node.element,
+        node.operator.offset,
+        node.operator.length,
+      );
+    } else if (node is IndexExpression) {
+      _visitIndexExpression(node);
     }
 
     super.visitNode(node);
   }
+
+  /// A user-defined operator applied by an expression: a reference at the
+  /// operator token. Nothing names the operator (or its extension), so
+  /// without this `a + b` kept no member of `a`'s type (or extension) alive.
+  /// Operators of `dart:` libraries (`int +`, `Object ==`) are skipped: they
+  /// are never an org package's code and are on nearly every line.
+  void _visitOperator(AstNode node, Element? element, int offset, int length) {
+    if (element == null || element.source == null) return;
+    if (element.library?.isInSdk == true) return;
+    _registerAsReference(element, node, offset: offset, length: length);
+  }
+
+  /// `a[i]` references `[]`; as an assignment target (`a[i] = v`) `[]=`, and
+  /// both when compound (`a[i] += v`, `a[i]++`): the assignment carries them
+  /// as its read and write elements, the index expression has none then.
+  /// The reference is at the `[` token.
+  void _visitIndexExpression(IndexExpression node) {
+    final parent = node.parent;
+    final bracket = node.leftBracket;
+    if (parent is CompoundAssignmentExpression &&
+        _assignmentTarget(parent) == node) {
+      _visitOperator(node, parent.readElement, bracket.offset, bracket.length);
+      if (parent.writeElement != parent.readElement) {
+        _visitOperator(
+          node,
+          parent.writeElement,
+          bracket.offset,
+          bracket.length,
+        );
+      }
+      return;
+    }
+    _visitOperator(node, node.element, bracket.offset, bracket.length);
+  }
+
+  static Expression? _assignmentTarget(CompoundAssignmentExpression e) =>
+      switch (e) {
+        AssignmentExpression a => a.leftHandSide,
+        PrefixExpression p => p.operand,
+        PostfixExpression p => p.operand,
+        _ => null,
+      };
 
   void _visitDeclaration(Declaration node) {
     final element = _symbolGenerator.elementFor(node);

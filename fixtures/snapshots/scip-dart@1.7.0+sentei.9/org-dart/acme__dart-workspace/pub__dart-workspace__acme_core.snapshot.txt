@@ -47,36 +47,92 @@
   part '_parts/helper.dart';
 
 ## lib/src/vec.dart
-  // Expected: alive, no finding (external refs from acme_tools).
+  // Operators are used without naming anything: `a & b` never names `Vec2Ops`,
 //^ definition scip-dart pub acme_core . lib/src/`vec.dart`/
+  // `v + 1` never names `_Shift`. scip-dart emitted no reference for operator
+  // expressions (fork patch 9), so both looked unused.
+
+  // Expected: alive, no finding (external refs from acme_tools).
   class Vec2 {
-//      ^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2# enclosing [1:0-7:1]
+//      ^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2# enclosing [5:0-11:1]
     // Expected: alive, no finding.
     final int x;
 //        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x. enclosing [3:12-3:13]
+//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x. enclosing [7:12-7:13]
     // Expected: alive, no finding.
     final int y;
 //        ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y. enclosing [5:12-5:13]
+//            ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y. enclosing [9:12-9:13]
     const Vec2(this.x, this.y);
-//        ^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`(). enclosing [6:2-6:29]
+//        ^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`(). enclosing [10:2-10:29]
 //                  ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
 //                          ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
   }
 
+  // Expected: alive, no finding. acme_tools uses its operators only (`&`, `%`, `[]`).
+  extension Vec2Ops on Vec2 {
+//          ^^^^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2Ops# enclosing [14:0-21:1]
+//                     ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+    // Expected: alive, no finding (`a & b` in acme_tools).
+    Vec2 operator &(Vec2 o) => Vec2(x & o.x, y & o.y);
+//  ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+//                ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2Ops#`&`(). enclosing [16:2-16:52]
+//                  ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+//                       ^ definition local 0 enclosing [16:18-16:24]
+//                             ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
+//                                  ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                                      ^ reference local 0
+//                                        ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                                           ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
+//                                               ^ reference local 0
+//                                                 ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
+    // Expected: alive, no finding (`a % 2` in acme_tools).
+    Vec2 operator %(int n) => Vec2(x % n, y % n);
+//  ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+//                ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2Ops#`%`(). enclosing [18:2-18:47]
+//                  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                      ^ definition local 1 enclosing [18:18-18:23]
+//                            ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
+//                                 ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                                     ^ reference local 1
+//                                        ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
+//                                            ^ reference local 1
+    // Expected: alive, no finding (`a[0]` in acme_tools).
+    int operator [](int i) => i == 0 ? x : y;
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//               ^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/Vec2Ops#`[]`(). enclosing [20:2-20:43]
+//                  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                      ^ definition local 2 enclosing [20:18-20:23]
+//                            ^ reference local 2
+//                                     ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                                         ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
+  }
+
+  // Expected: alive, no finding (private, reached from `shifted` through `v + d`).
+  extension _Shift on Vec2 {
+//          ^^^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/_Shift# enclosing [24:0-27:1]
+//                    ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+    // Expected: alive, no finding.
+    Vec2 operator +(int d) => Vec2(x + d, y + d);
+//  ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
+//                ^ definition scip-dart pub acme_core . lib/src/`vec.dart`/_Shift#+(). enclosing [26:2-26:47]
+//                  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                      ^ definition local 3 enclosing [26:18-26:23]
+//                            ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
+//                                 ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
+//                                     ^ reference local 3
+//                                        ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
+//                                            ^ reference local 3
+  }
+
   // Expected: alive, no finding (external ref from acme_tools).
-  Vec2 shifted(Vec2 v, int d) => Vec2(v.x + d, v.y + d);
+  Vec2 shifted(Vec2 v, int d) => v + d;
 //^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
-//     ^^^^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/shifted(). enclosing [10:0-10:54]
+//     ^^^^^^^ definition scip-dart pub acme_core . lib/src/`vec.dart`/shifted(). enclosing [30:0-30:37]
 //             ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#
-//                  ^ definition local 0 enclosing [10:13-10:19]
+//                  ^ definition local 4 enclosing [30:13-30:19]
 //                     ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
-//                         ^ definition local 1 enclosing [10:21-10:26]
-//                               ^^^^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#`<constructor>`().
-//                                    ^ reference local 0
-//                                      ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#x.
-//                                          ^ reference local 1
-//                                             ^ reference local 0
-//                                               ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/Vec2#y.
-//                                                   ^ reference local 1
+//                         ^ definition local 5 enclosing [30:21-30:26]
+//                               ^ reference local 4
+//                                 ^ reference scip-dart pub acme_core . lib/src/`vec.dart`/_Shift#+().
+//                                   ^ reference local 5

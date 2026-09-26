@@ -68,10 +68,12 @@
     print(a == const Vec(1)); // operator ==
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^ reference local 0
+//          ^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#`==`().
 //                   ^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#`<constructor>`().
     print(a[0]); // operator []
 //  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
 //        ^ reference local 0
+//         ^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#`[]`().
     // A closure with a named parameter: local symbols.
     final Mapper id = <T>(T value, {int? times}) => value;
 //        ^^^^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Mapper#
