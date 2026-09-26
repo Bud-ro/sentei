@@ -6,7 +6,7 @@ import { create, toBinary } from '@bufbuild/protobuf';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { analyzeOrg } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { ingestOrg, repoSlug, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
+import { ingestOrg, repoSlug, statusReason, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
 import { IndexSchema, SymbolInformation_Kind } from '../src/scip/scip_pb.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
@@ -1447,5 +1447,28 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(count(db, "SELECT count(*) AS n FROM package_flags WHERE flag = 'unindexed_consumer'")).toBe(1);
     expect(count(db, 'SELECT count(*) AS n FROM keep_rules')).toBe(1);
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  });
+});
+
+describe('statusReason (the opaque_consumer / index_failed reason of a partial / failed index)', () => {
+  it('prefers the last cause line, else the first error, else the first warning, first line only', () => {
+    // supabase iceberg-js: the first warning was a type-error count that does not change status.
+    const iceberg = [
+      'info: ran npm ci',
+      'warn: 1 TypeScript error diagnostic(s) in the package (status unaffected)',
+      'warn: unresolved re-exports: x',
+      'cause: warn: unresolved re-exports: x',
+    ];
+    expect(statusReason(iceberg)).toBe('warn: unresolved re-exports: x');
+    // An install failure made it partial; scip-typescript then failed: the last cause explains `failed`.
+    expect(statusReason([
+      'error: pnpm install failed', 'cause: error: pnpm install failed',
+      'error: scip-typescript exited with code 1: a\nb', 'cause: error: scip-typescript exited with code 1: a\nb',
+    ])).toBe('error: scip-typescript exited with code 1: a');
+    // No cause line (the Dart adapter, older index.json files): the old order.
+    expect(statusReason(['info: x', 'warn: w', 'error: e'])).toBe('error: e');
+    expect(statusReason(['info: x', 'warn: w'])).toBe('warn: w');
+    expect(statusReason(['info: x'])).toBe('info: x');
+    expect(statusReason([])).toBeNull();
   });
 });

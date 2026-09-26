@@ -414,6 +414,29 @@ function rawSymbolPackage(str: string): string | undefined {
 }
 
 /**
+ * The reason a partial / failed index result gives its `opaque_consumer` /
+ * `index_failed` flag, first line only, or null when there are no diagnostics:
+ *   1. the diagnostic the adapter names as the cause of its status: the LAST
+ *      `cause: <diagnostic>` line (the TypeScript adapter adds one each time its
+ *      status got worse, so the last one explains the final status);
+ *   2. else (the Dart adapter, older index.json files) the first `error:` diagnostic
+ *      (diagnostics are prefixed info:/warn:/error:), else the first `warn:`, else the
+ *      first diagnostic. (An `info: install skipped` line is never the reason if
+ *      anything worse was reported.)
+ * Without the cause line, a partial TypeScript package was flagged with whatever
+ * warning came first (supabase: "1 TypeScript error diagnostic(s) (status
+ * unaffected)", a test file's witness-only import).
+ */
+export function statusReason(diagnostics: readonly string[]): string | null {
+  const cause = diagnostics.findLast((d) => d.startsWith('cause: '));
+  const diag = (cause !== undefined ? cause.slice('cause: '.length) : undefined)
+    ?? diagnostics.find((d) => d.startsWith('error:'))
+    ?? diagnostics.find((d) => d.startsWith('warn:'))
+    ?? diagnostics[0];
+  return (diag ?? '').split('\n')[0] || null;
+}
+
+/**
  * Interning key of a version-normalized SCIP symbol (`norm`: version already '.') of
  * org package `packageId`. SCIP names a package only by `<manager> <name>`, and several
  * org packages may share a name (package ids are `<manager>:<repo>:<name>`): then the
@@ -743,14 +766,8 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       for (const ip of idx.packages) {
         const pkg = pkgs.get(ip.packageId);
         if (!pkg || pkg.repo !== r.repo) throw new Error(`sentei: ${indexFile}: unknown package ${ip.packageId} for repo ${r.repo}`);
-        // Reason: the first `error:` diagnostic if any (diagnostics are prefixed
-        // info:/warn:/error:), else the first `warn:`, else the first diagnostic; first
-        // line only. (An `info: install skipped` line is never the reason if anything
-        // worse was reported.)
-        const diag = ip.diagnostics.find((d) => d.startsWith('error:'))
-          ?? ip.diagnostics.find((d) => d.startsWith('warn:'))
-          ?? ip.diagnostics[0];
-        const firstDiag = (diag ?? '').split('\n')[0] || null;
+        // Reason of the opaque_consumer / index_failed flag: statusReason.
+        const firstDiag = statusReason(ip.diagnostics);
         if (ip.status === 'partial') addFlag(pkg.packageId, 'opaque_consumer', firstDiag ?? 'index partial', null);
         if (ip.status === 'failed') {
           addFlag(pkg.packageId, 'index_failed', firstDiag ?? 'index failed', null);
