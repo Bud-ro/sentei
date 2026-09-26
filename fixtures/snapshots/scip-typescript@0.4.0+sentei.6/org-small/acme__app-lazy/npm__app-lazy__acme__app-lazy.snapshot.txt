@@ -1,0 +1,71 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.ts
+  // Entry point of @acme/app-lazy: org packages loaded with dynamic import() and
+//^ definition scip-typescript npm @acme/app-lazy . src/`main.ts`/ enclosing [4:0-31:0]
+  // destructured (supabase pg-delta's `const { analyzeAndSort } = await loadPgTopo()`).
+
+  // `const { a } = await import('<org package>')`.
+  const { lazyDirect } = await import('@acme/lazy');
+//        ^^^^^^^^^^ definition local 1
+//        ^^^^^^^^^^ reference local 4
+//                                    ^^^^^^^^^^^^ reference scip-typescript npm @acme/lazy . src/`index.ts`/
+
+  // Expected: alive, no finding (not exported; called at the top level of the entry file).
+  const load = () => import('@acme/lazy');
+//      ^^^^ definition scip-typescript npm @acme/app-lazy . src/`main.ts`/load. enclosing [7:13-7:39]
+//                          ^^^^^^^^^^^^ reference scip-typescript npm @acme/lazy . src/`index.ts`/
+  // Expected: alive, no finding (not exported; called at the top level of the entry file).
+  async function loadLazy() {
+//               ^^^^^^^^ definition scip-typescript npm @acme/app-lazy . src/`main.ts`/loadLazy(). enclosing [9:0-11:1]
+    return await load();
+//               ^^^^ reference scip-typescript npm @acme/app-lazy . src/`main.ts`/load.
+  }
+  // `const { a } = await loader()`.
+  const { lazyLoaded } = await loadLazy();
+//        ^^^^^^^^^^ definition local 6
+//        ^^^^^^^^^^ reference scip-typescript npm @acme/lazy . src/`index.ts`/lazyLoaded().
+//                             ^^^^^^^^ reference scip-typescript npm @acme/app-lazy . src/`main.ts`/loadLazy().
+
+  // `const m = await import(...); const { a } = m`.
+  const kept = await import('@acme/lazy');
+//      ^^^^ definition scip-typescript npm @acme/app-lazy . src/`main.ts`/kept.
+//                          ^^^^^^^^^^^^ reference scip-typescript npm @acme/lazy . src/`index.ts`/
+  const { lazyKept } = kept;
+//        ^^^^^^^^ definition local 8
+//        ^^^^^^^^ reference scip-typescript npm @acme/lazy . src/`index.ts`/lazyKept().
+//                     ^^^^ reference scip-typescript npm @acme/app-lazy . src/`main.ts`/kept.
+
+  console.log(lazyDirect(), lazyLoaded(), lazyKept());
+//^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//        ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//            ^^^^^^^^^^ reference local 1
+//                          ^^^^^^^^^^ reference local 6
+//                                        ^^^^^^^^ reference local 8
+
+  // A rest element hides which members are read: namespace_dynamic at @acme/lazy-opaque.
+  const { opaqueA, ...others } = await import('@acme/lazy-opaque');
+//        ^^^^^^^ definition local 10
+//        ^^^^^^^ reference scip-typescript npm @acme/lazy-opaque . src/`index.ts`/opaqueA().
+//                    ^^^^^^ definition local 11
+//                                            ^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/lazy-opaque . src/`index.ts`/
+  console.log(opaqueA, others);
+//^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//        ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//            ^^^^^^^ reference local 10
+//                     ^^^^^^ reference local 11
+
+  // Handing the namespace to a function that takes `object` hides them too.
+  // Expected: alive, no finding (not exported; called at the top level of the entry file).
+  function show(o: object): void {
+//         ^^^^ definition scip-typescript npm @acme/app-lazy . src/`main.ts`/show(). enclosing [27:0-29:1]
+//              ^ definition scip-typescript npm @acme/app-lazy . src/`main.ts`/show().(o)
+    console.log(o);
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//              ^ reference scip-typescript npm @acme/app-lazy . src/`main.ts`/show().(o)
+  }
+  show(await import('@acme/lazy-opaque'));
+//^^^^ reference scip-typescript npm @acme/app-lazy . src/`main.ts`/show().
+//                  ^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/lazy-opaque . src/`index.ts`/

@@ -32,6 +32,16 @@
       "targetFile": "src/misc.ts",
       "targetLine": 13,
       "targetPackage": "@acme/widgets"
+    },
+    {
+      "col": 85,
+      "file": "src/main.ts",
+      "line": 13,
+      "member": "lazyWidget",
+      "targetCol": 16,
+      "targetFile": "src/lazy.ts",
+      "targetLine": 3,
+      "targetPackage": "@acme/widgets"
     }
   ],
   "namespaceSpreadRefs": [],

@@ -46,6 +46,9 @@ Findings rows: `package_id` (`<manager>:<repo>:<name>`, e.g.
 | `repo-broken` | `@acme/broken` | private | invalid `tsconfig.json` → index fails |
 | `tool-py` | `@acme/tool-py` | private | consumer of y with a Python file (`scripts/build.py`) → `unindexed_consumer` |
 | `lib-cascade` | `@acme/cascade` | private | no org consumer; exercises the witness → analyze cascade, `exports` conditions, the `imports` map and a Vite `index.html` entry (see below) |
+| `lib-lazy` | `@acme/lazy` | private | lib whose only consumer (`app-lazy`) destructures it from dynamic `import()` namespaces |
+| `lib-lazy-opaque` | `@acme/lazy-opaque` | private | lib whose only consumer takes a rest element of its namespace and passes the namespace to a function |
+| `app-lazy` | `@acme/app-lazy` | private | consumer of lazy + lazy-opaque through `import()` only; flagged `namespace_dynamic` at lazy-opaque |
 | `app-worker` | `@acme/worker` | private | Cloudflare Worker app, no `main`/`exports`: runtime entries by convention (wrangler `main`, Pages `functions/`), a `bin` outside the program, TS namespaces, and a consumer of `@acme/widgets/lazy` naming a widgets candidate (see below) |
 
 Note: `lib-widgets` imports `@acme/y`, so it typechecks only with
@@ -65,6 +68,8 @@ by design with a single TS2305 on `removedFn`. Consumers of `@acme/widgets` need
 | `export { a as b } from '@acme/y'` | `lib-widgets/src/index.ts` (`yThing as widgetY`), used as `widgetY` in `app-consumer` | `@acme/y#yThing` alive |
 | `export default` anonymous → symbol `default` | `lib-widgets/src/anon.ts` (imported), `src/unused-anon.ts` (not) | anon alive; unused-anon `default` deprecation_candidate |
 | `import('@acme/x')` with static string | `app-consumer/src/main.ts` → `@acme/widgets/lazy` | `lazyWidget` alive |
+| Destructuring a dynamic-import namespace (`const { a } = await import('@acme/x')`, through a loader function, through a variable; scip-typescript 0.4.0 links none of them) | `app-lazy/src/main.ts` → `@acme/lazy` | `lazyDirect` (an alias re-export), `lazyLoaded`, `lazyKept` alive; `lazyUnused` deletion_candidate. Other shapes (`typeof import()` parameters, `.then`, `import *` destructuring) are unit tests in `packages/cli/test/namespace-destructuring.test.ts` |
+| Rest element / namespace passed as a value → `namespace_dynamic` | `app-lazy/src/main.ts` → `@acme/lazy-opaque` | `opaqueA` alive (destructured by name), `opaqueB` blocked by `npm:acme/app-lazy:@acme/app-lazy:namespace_dynamic` |
 | `require('@acme/' + name)` → `dynamic_access` | `app-dynamic/src/load.cts` | `@acme/dyn` verdicts blocked |
 | Subpath import against `exports` `*` pattern | `app-consumer/src/main.ts` → `@acme/widgets/deep/thing` (`"./deep/*"`) | `deepThing` alive |
 | `import type` counts as a ref | `app-consumer/src/main.ts` → `WidgetOptions` | alive |

@@ -43,7 +43,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     expect(model.org).toBe('acme');
     expect(model.source).toEqual({ kind: 'local', dir: FIXTURE });
     expect(model.generatedAt).toBe(1_700_000_000);
-    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-skew', 'app-worker', 'lib-cascade', 'lib-core', 'lib-dyn', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'tool-py'];
+    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-lazy', 'app-skew', 'app-worker', 'lib-cascade', 'lib-core', 'lib-dyn', 'lib-lazy', 'lib-lazy-opaque', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'tool-py'];
     expect(model.repos.map((r) => r.repo)).toEqual(REPOS.map((n) => `acme/${n}`));
     expect(model.repos[0]!.localPath).toBe(join(FIXTURE, 'repos', 'app'));
 
@@ -54,6 +54,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     expect(all('SELECT package_id, repo, path, manager, name, version, visibility, is_library, entry_points FROM packages ORDER BY package_id')).toEqual([
       { package_id: 'npm:acme/app-consumer:@acme/consumer', repo: 'acme/app-consumer', path: '.', manager: 'npm', name: '@acme/consumer', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       { package_id: 'npm:acme/app-dynamic:@acme/app-dynamic', repo: 'acme/app-dynamic', path: '.', manager: 'npm', name: '@acme/app-dynamic', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/load.cts","src/main.ts"]' },
+      { package_id: 'npm:acme/app-lazy:@acme/app-lazy', repo: 'acme/app-lazy', path: '.', manager: 'npm', name: '@acme/app-lazy', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       { package_id: 'npm:acme/app-skew:@acme/app-skew', repo: 'acme/app-skew', path: '.', manager: 'npm', name: '@acme/app-skew', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       // wrangler.jsonc `main` + Pages functions/ (by convention); the `bin` is runtime-only, not an entry point
       { package_id: 'npm:acme/app-worker:@acme/worker', repo: 'acme/app-worker', path: '.', manager: 'npm', name: '@acme/worker', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["functions/api/hello.ts","src/worker.ts"]' },
@@ -62,6 +63,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:acme/lib-cascade:@acme/cascade', repo: 'acme/lib-cascade', path: '.', manager: 'npm', name: '@acme/cascade', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/client.ts","src/impl.node.ts","src/impl.ts","src/index.ts"]' },
       { package_id: 'npm:acme/lib-core:@acme/core', repo: 'acme/lib-core', path: '.', manager: 'npm', name: '@acme/core', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       { package_id: 'npm:acme/lib-dyn:@acme/dyn', repo: 'acme/lib-dyn', path: '.', manager: 'npm', name: '@acme/dyn', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
+      { package_id: 'npm:acme/lib-lazy-opaque:@acme/lazy-opaque', repo: 'acme/lib-lazy-opaque', path: '.', manager: 'npm', name: '@acme/lazy-opaque', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
+      { package_id: 'npm:acme/lib-lazy:@acme/lazy', repo: 'acme/lib-lazy', path: '.', manager: 'npm', name: '@acme/lazy', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       { package_id: 'npm:acme/lib-testkit:@acme/testkit', repo: 'acme/lib-testkit', path: '.', manager: 'npm', name: '@acme/testkit', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
       // published-public (no "private"), exports map incl. a "./deep/*" pattern resolved against the filesystem
       { package_id: 'npm:acme/lib-widgets:@acme/widgets', repo: 'acme/lib-widgets', path: '.', manager: 'npm', name: '@acme/widgets', version: '1.0.0', visibility: 'published-public', is_library: 1, entry_points: '["src/anon.ts","src/deep/thing.ts","src/index.ts","src/lazy.ts","src/unused-anon.ts"]' },
@@ -74,6 +77,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       { consumer_package_id: 'npm:acme/app-consumer:@acme/consumer', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-widgets:@acme/widgets', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app-consumer:@acme/consumer', dep_name: '@acme/y', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-y:@acme/y', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app-dynamic:@acme/app-dynamic', dep_name: '@acme/dyn', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-dyn:@acme/dyn', dev: 0, resolution: 'name', ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/app-lazy:@acme/app-lazy', dep_name: '@acme/lazy', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-lazy:@acme/lazy', dev: 0, resolution: 'name', ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/app-lazy:@acme/app-lazy', dep_name: '@acme/lazy-opaque', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-lazy-opaque:@acme/lazy-opaque', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app-skew:@acme/app-skew', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '1.0.0', resolved_package_id: 'npm:acme/lib-widgets:@acme/widgets', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app-worker:@acme/worker', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-widgets:@acme/widgets', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app:@acme/app', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
@@ -103,7 +108,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/gone')").run();
     db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:acme/lib-core:@acme/core', 'src/index.ts', 'x')").run();
     writeDiscoverToDb(db, model);
-    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 13 }]);
+    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 16 }]);
     expect(all("SELECT count(*) AS n FROM repos WHERE repo = 'acme/gone'")).toEqual([{ n: 0 }]);
     expect(all('SELECT count(*) AS n FROM symbols')).toEqual([{ n: 0 }]);
   });
@@ -569,7 +574,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 13 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 16 }]);
   });
 });
 

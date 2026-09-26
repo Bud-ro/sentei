@@ -270,7 +270,11 @@ export const scipTypescript: Indexer = {
   // Not bumped for the toolchain round (package-manager choice and pins,
   // engine-strict flags, ts-option-compat): the sidecar format is unchanged and
   // the packages it rescues were partial/failed, which the cache never reuses.
-  version: '0.4.0+sentei.5',
+  // +sentei.6: namespace values other than `import * as` bindings (dynamic
+  //   import(), `typeof import()` values, destructuring of any namespace):
+  //   destructured / accessed members are `namespaceMemberRefs`; a rest element,
+  //   computed key or widening use is `namespace_dynamic` + a spread ref.
+  version: '0.4.0+sentei.6',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference

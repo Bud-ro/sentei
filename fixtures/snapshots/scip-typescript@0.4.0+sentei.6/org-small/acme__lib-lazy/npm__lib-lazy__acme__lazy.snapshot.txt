@@ -1,0 +1,40 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/direct.ts
+  // Expected: alive, no finding (re-exported by the entry; destructured by @acme/app-lazy).
+//^ definition scip-typescript npm @acme/lazy . src/`direct.ts`/ enclosing [1:0-4:0]
+  export function lazyDirect(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/lazy . src/`direct.ts`/lazyDirect(). enclosing [1:0-3:1]
+    return 'direct';
+  }
+
+## src/index.ts
+  // Package entry point for @acme/lazy. Its only consumer (@acme/app-lazy) loads it with
+//^ definition scip-typescript npm @acme/lazy . src/`index.ts`/ enclosing [6:0-22:0]
+  // dynamic import() and destructures the namespace, which scip-typescript 0.4.0 links
+  // to nothing (the bindings are `local` symbols); the adapter's checker-resolved
+  // namespaceMemberRefs carry the uses.
+
+  // Expected: alive, no finding (an alias re-export: destructured from `await import()`).
+  export { lazyDirect } from './direct';
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/lazy . src/`direct.ts`/lazyDirect().
+//                           ^^^^^^^^^^ reference scip-typescript npm @acme/lazy . src/`direct.ts`/
+
+  // Expected: alive, no finding (destructured from the awaited result of a loader function).
+  export function lazyLoaded(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/lazy . src/`index.ts`/lazyLoaded(). enclosing [9:0-11:1]
+    return 'loaded';
+  }
+
+  // Expected: alive, no finding (destructured from a namespace kept in a variable).
+  export function lazyKept(): string {
+//                ^^^^^^^^ definition scip-typescript npm @acme/lazy . src/`index.ts`/lazyKept(). enclosing [14:0-16:1]
+    return 'kept';
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (never destructured or accessed).
+  export function lazyUnused(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/lazy . src/`index.ts`/lazyUnused(). enclosing [19:0-21:1]
+    return 'unused';
+  }

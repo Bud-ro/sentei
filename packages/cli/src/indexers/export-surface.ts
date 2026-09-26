@@ -236,7 +236,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       if (rootsKnown && !indexedFiles.has(path.resolve(sf.fileName))) continue;
       ambient.push(...collectAmbientDeclarations(sf, toRepoRel));
     }
-    const r = checkConsumerFiles(files, checker, input.orgPackageNames, toRepoRel, input.orgPackageDirs);
+    const r = checkConsumerFiles(files, checker, input.orgPackageNames, toRepoRel, input.orgPackageDirs, input.packageName ?? null);
     consumer.unresolvedOrgModules.push(...r.unresolvedOrgModules);
     consumer.unresolvedImports.push(...r.unresolvedImports);
     consumer.flags.push(...r.flags);

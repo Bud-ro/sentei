@@ -1,0 +1,90 @@
+{
+  "entryPoints": [
+    "src/main.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [
+    {
+      "col": 11,
+      "file": "src/main.ts",
+      "flag": "namespace_dynamic",
+      "line": 30,
+      "reason": "namespace await import('@acme/lazy-opaque') used as a value: show(await import('@acme/lazy-opaque'))",
+      "targetPackage": "@acme/lazy-opaque"
+    },
+    {
+      "col": 17,
+      "file": "src/main.ts",
+      "flag": "namespace_dynamic",
+      "line": 22,
+      "reason": "rest element in a namespace destructuring: { opaqueA, ...others }",
+      "targetPackage": "@acme/lazy-opaque"
+    }
+  ],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [
+    {
+      "col": 8,
+      "file": "src/main.ts",
+      "line": 13,
+      "member": "lazyLoaded",
+      "targetCol": 16,
+      "targetFile": "src/index.ts",
+      "targetLine": 9,
+      "targetPackage": "@acme/lazy"
+    },
+    {
+      "col": 8,
+      "file": "src/main.ts",
+      "line": 17,
+      "member": "lazyKept",
+      "targetCol": 16,
+      "targetFile": "src/index.ts",
+      "targetLine": 14,
+      "targetPackage": "@acme/lazy"
+    },
+    {
+      "col": 8,
+      "file": "src/main.ts",
+      "line": 22,
+      "member": "opaqueA",
+      "targetCol": 16,
+      "targetFile": "src/index.ts",
+      "targetLine": 5,
+      "targetPackage": "@acme/lazy-opaque"
+    },
+    {
+      "col": 8,
+      "file": "src/main.ts",
+      "line": 4,
+      "member": "lazyDirect",
+      "targetCol": 16,
+      "targetFile": "src/direct.ts",
+      "targetLine": 1,
+      "targetPackage": "@acme/lazy"
+    }
+  ],
+  "namespaceSpreadRefs": [
+    {
+      "col": 11,
+      "file": "src/main.ts",
+      "line": 30,
+      "targetFile": "src/index.ts",
+      "targetPackage": "@acme/lazy-opaque"
+    },
+    {
+      "col": 17,
+      "file": "src/main.ts",
+      "line": 22,
+      "targetFile": "src/index.ts",
+      "targetPackage": "@acme/lazy-opaque"
+    }
+  ],
+  "packageId": "npm:acme/app-lazy:@acme/app-lazy",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

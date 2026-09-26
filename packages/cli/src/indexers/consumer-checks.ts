@@ -11,7 +11,10 @@
 //   - a named import the org module does not export: the consumer names a
 //     symbol that no longer exists (version skew) → `unresolvedImports`;
 //   - a namespace import used as a value, or a computed require/import: the
-//     accessed members are not statically known → `flags`.
+//     accessed members are not statically known → `flags`. The same holds for
+//     any namespace value (`await import('x')`, a `typeof import('x')` value)
+//     whose use hides its members (rest element, computed key, widened type);
+//     its destructured / accessed members are `namespaceMemberRefs`.
 // Plus two upstream gaps recorded as checker-resolved references (ingest
 // dedupes them against SCIP occurrences): namespace member accesses
 // (`namespaceMemberRefs`) and shorthand properties (`shorthandRefs`); and
@@ -65,6 +68,7 @@ export function checkConsumerFiles(
   orgPackageNames: ReadonlySet<string>,
   toRepoRel: (abs: string) => string,
   orgPackageDirs: readonly OrgPackageDir[] = [],
+  selfName: string | null = null,
 ): ConsumerCheckResult {
   const result: ConsumerCheckResult = {
     unresolvedOrgModules: [],
@@ -76,7 +80,8 @@ export function checkConsumerFiles(
   };
   // Longest dir first, so a nested package wins over its parent.
   const dirs = [...orgPackageDirs].sort((a, b) => b.dir.length - a.dir.length);
-  for (const sf of files) checkFile(sf, checker, orgPackageNames, toRepoRel, result, dirs);
+  const nsTypes = new NamespaceTypes(checker, dirs, selfName);
+  for (const sf of files) checkFile(sf, checker, orgPackageNames, toRepoRel, result, dirs, nsTypes);
   return result;
 }
 
@@ -87,6 +92,7 @@ function checkFile(
   toRepoRel: (abs: string) => string,
   out: ConsumerCheckResult,
   orgDirs: readonly OrgPackageDir[],
+  nsTypes: NamespaceTypes,
 ): void {
   const pos = (node: ts.Node): SourcePosition => {
     const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
@@ -170,7 +176,218 @@ function checkFile(
     }
   }
 
+  // ---- Namespace values other than `import * as` bindings (see NamespaceTypes) ----
+  // `const { a } = await import('@acme/x')`, `const m = await load(); m.a`,
+  // `function f({ a }: typeof import('@acme/x'))`: scip-typescript 0.4.0 gives the
+  // destructured binding a `local` symbol and records no reference to the member, so
+  // the checker-resolved member is recorded in namespaceMemberRefs. A use that hides
+  // which members are read (a rest element, a computed key, the value handed to a
+  // wider type) is recorded like a value use of a namespace import: a
+  // `namespace_dynamic` flag at another org package, plus a namespace spread ref.
+  const dynSeen = new Set<string>();
+  const dynamicUse = (node: ts.Node, modules: readonly NamespaceModule[], reason: string): void => {
+    const at = pos(node);
+    for (const m of modules) {
+      const key = `${at.line}:${at.col}\0${m.pkg ?? ''}\0${m.file?.targetPackage ?? ''}\0${m.file?.targetFile ?? ''}`;
+      if (dynSeen.has(key)) continue;
+      dynSeen.add(key);
+      if (m.pkg !== undefined) out.flags.push({ flag: 'namespace_dynamic', reason, targetPackage: m.pkg, ...at });
+      if (m.file !== undefined) out.namespaceSpreadRefs.push({ ...at, ...m.file });
+    }
+  };
+  /** Records member `text` of a namespace (position `nameNode`); a missing member of another org package is version skew. */
+  const memberRef = (nameNode: ts.Node, text: string, ns: NsType): void => {
+    const prop = checker.getPropertyOfType(ns.type, text);
+    if (prop === undefined) {
+      if (ns.module.pkg !== undefined) out.unresolvedImports.push({ module: ns.module.pkg, name: text, ...pos(nameNode) });
+      return;
+    }
+    // A nested namespace (`export * as sub`): its own member reads are origins in turn.
+    const resolved = prop.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(prop) : prop;
+    if (resolved.declarations?.some(ts.isSourceFile) === true) return;
+    const ref = declTarget(prop, checker, orgDirs, false);
+    if (ref !== undefined) out.namespaceMemberRefs.push({ ...pos(nameNode), member: text, ...ref });
+  };
+  const nsish = (t: ts.Type | undefined): boolean => t !== undefined && nsTypes.of(t, true).length > 0;
+  /**
+   * Why a use of a namespace-typed expression hides which members are read, or
+   * undefined when it does not (static member reads are recorded here). Pass-through
+   * parents (`await`, parentheses, `as`, `!`, `??`, `||`, conditional arms) are climbed
+   * while their type is still a namespace. `direct` false: the caller records a member
+   * read directly on `e` itself (an `import * as` binding).
+   */
+  const classify = (e: ts.Expression, direct: boolean): string | undefined => {
+    let cur: ts.Expression = e;
+    while (isPassThrough(cur.parent, cur)) {
+      const p = cur.parent as ts.Expression;
+      if (!nsish(checker.getTypeAtLocation(p))) return `namespace value widened: ${truncate(p.getText(sf))}`;
+      cur = p;
+    }
+    const p = cur.parent;
+    if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === cur) {
+      if (!direct && cur === e) return undefined;
+      const plain = nsTypes.of(checker.getTypeAtLocation(cur), false);
+      if (ts.isPropertyAccessExpression(p)) {
+        if (plain.length > 0) {
+          for (const n of plain) memberRef(p.name, p.name.text, n);
+          return undefined;
+        }
+        // A promise of a namespace: `.then(cb)` hands it to cb, whose parameter is an
+        // origin in turn when cb is written inline; `.catch` / `.finally` return the
+        // promise again (a call: an origin).
+        if (p.name.text === 'then' && ts.isCallExpression(p.parent) && p.parent.expression === p) {
+          const cb = p.parent.arguments[0];
+          if (cb !== undefined && !ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb)) {
+            return `namespace promise handed to a callback: ${truncate(p.parent.getText(sf))}`;
+          }
+        }
+        return undefined;
+      }
+      const arg = p.argumentExpression;
+      if (plain.length === 0) return undefined; // an array / tuple element: the access is an origin in turn
+      if (!ts.isStringLiteralLike(arg) && !ts.isNumericLiteral(arg)) {
+        return `namespace ${truncate(cur.getText(sf))} indexed with a computed key: ${truncate(p.getText(sf))}`;
+      }
+      for (const n of plain) memberRef(arg, arg.text, n);
+      return undefined;
+    }
+    return sinkUse(cur);
+  };
+  /** Why handing the namespace value `c` to its parent hides members (undefined: tracked, or harmless). */
+  const sinkUse = (c: ts.Expression): string | undefined => {
+    const p = c.parent;
+    const text = (): string => truncate(p.getText(sf));
+    const valueUse = (): string => `namespace ${truncate(c.getText(sf))} used as a value: ${text()}`;
+    if (
+      (ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p) || ts.isPropertyDeclaration(p)) &&
+      p.initializer === c
+    ) {
+      // Destructured: the pattern walk resolves (or flags) each element; an array
+      // pattern's elements are patterns or variables typed as the namespace in turn.
+      if (ts.isObjectBindingPattern(p.name)) return undefined;
+      if (ts.isArrayBindingPattern(p.name)) return nsish(checker.getTypeAtLocation(p.name)) ? undefined : valueUse();
+      if (ts.isVariableDeclaration(p) && isExportedVariable(p)) return `namespace exported as a value: ${text()}`;
+      // Kept in a location still typed as the namespace: its reads are origins in turn.
+      return nsish(checker.getTypeAtLocation(p.name)) ? undefined : valueUse();
+    }
+    if (ts.isReturnStatement(p) || (ts.isArrowFunction(p) && p.body === c)) {
+      const fn = ts.isArrowFunction(p) ? p : containingFunction(p);
+      const sig = fn !== undefined ? checker.getSignatureFromDeclaration(fn) : undefined;
+      return sig !== undefined && nsish(checker.getReturnTypeOfSignature(sig)) ? undefined : valueUse();
+    }
+    if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      if (p.left === c) return undefined; // assigned to, not read
+      const target = p.left;
+      // `({ a, b: x } = <namespace>)`: a destructuring assignment.
+      if (ts.isObjectLiteralExpression(target)) return destructuringAssignment(target, c);
+      return !ts.isArrayLiteralExpression(target) && nsish(checker.getTypeAtLocation(target)) ? undefined : valueUse();
+    }
+    if ((ts.isCallExpression(p) || ts.isNewExpression(p)) && p.arguments?.includes(c) === true) {
+      return nsish(checker.getContextualType(c)) ? undefined : valueUse();
+    }
+    if ((ts.isPropertyAssignment(p) && p.initializer === c) || (ts.isShorthandPropertyAssignment(p) && p.name === c)) {
+      // An inferred object literal keeps the namespace type on the property (its reads
+      // are origins); a contextually typed one must keep it too.
+      const ctx = checker.getContextualType(p.parent);
+      if (ctx === undefined) return undefined;
+      const name = ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name) || ts.isNumericLiteral(p.name) ? p.name.text : undefined;
+      const prop = name !== undefined ? checker.getPropertyOfType(ctx, name) : undefined;
+      return prop !== undefined && nsish(checker.getTypeOfSymbol(prop)) ? undefined : valueUse();
+    }
+    // Evaluated and discarded, or only tested: no member is read.
+    if (ts.isExpressionStatement(p) || ts.isVoidExpression(p) || ts.isTypeOfExpression(p)) return undefined;
+    if (ts.isPrefixUnaryExpression(p) && p.operator === ts.SyntaxKind.ExclamationToken) return undefined;
+    if ((ts.isIfStatement(p) || ts.isWhileStatement(p) || ts.isDoStatement(p)) && p.expression === c) return undefined;
+    if (ts.isConditionalExpression(p) && p.condition === c) return undefined;
+    if (ts.isBinaryExpression(p)) {
+      const op = p.operatorToken.kind;
+      if (
+        op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+        op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken ||
+        ((op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.CommaToken) && p.left === c) ||
+        (op === ts.SyntaxKind.InKeyword && p.right === c)
+      ) {
+        return undefined;
+      }
+    }
+    return valueUse();
+  };
+  /** `({ a, b: x, ...rest } = <namespace>)`: like a binding pattern. */
+  const destructuringAssignment = (target: ts.ObjectLiteralExpression, value: ts.Expression): string | undefined => {
+    const nss = nsTypes.of(checker.getTypeAtLocation(value), false);
+    if (nss.length === 0) return `namespace destructured by assignment: ${truncate(target.getText(sf))}`;
+    for (const prop of target.properties) {
+      const key = ts.isShorthandPropertyAssignment(prop) || ts.isPropertyAssignment(prop) ? prop.name : undefined;
+      const keyNode = key !== undefined && ts.isComputedPropertyName(key) ? key.expression : key;
+      const literal = keyNode !== undefined && (ts.isStringLiteralLike(keyNode) || ts.isNumericLiteral(keyNode));
+      if (keyNode === undefined || !(literal || (ts.isIdentifier(keyNode) && key === keyNode))) {
+        return `namespace destructured by assignment: ${truncate(target.getText(sf))}`;
+      }
+      for (const n of nss) memberRef(keyNode, (keyNode as ts.Identifier | ts.StringLiteralLike | ts.NumericLiteral).text, n);
+    }
+    return undefined;
+  };
+  /** `const { a, b: c, ...rest } = <namespace>` (any binding position). */
+  const bindingPattern = (pattern: ts.ObjectBindingPattern): void => {
+    const nss = nsTypes.of(checker.getTypeAtLocation(pattern), false);
+    if (nss.length === 0) return;
+    const modules = nss.map((n) => n.module);
+    for (const el of pattern.elements) {
+      if (el.dotDotDotToken !== undefined) {
+        dynamicUse(el, modules, `rest element in a namespace destructuring: ${truncate(pattern.getText(sf))}`);
+        continue;
+      }
+      const key = el.propertyName ?? el.name;
+      const keyNode = ts.isComputedPropertyName(key) ? key.expression : key;
+      const literal = ts.isStringLiteralLike(keyNode) || ts.isNumericLiteral(keyNode);
+      if (!(literal || (ts.isIdentifier(keyNode) && !ts.isComputedPropertyName(key)))) {
+        dynamicUse(el, modules, `computed key in a namespace destructuring: ${truncate(el.getText(sf))}`);
+        continue;
+      }
+      for (const n of nss) memberRef(keyNode, keyNode.text, n);
+    }
+  };
+  /** The type of a potential namespace-valued expression, or undefined when it cannot be one. */
+  const originType = (node: ts.Identifier | ts.PropertyAccessExpression | ts.ElementAccessExpression | ts.CallExpression): ts.Type | undefined => {
+    if (ts.isIdentifier(node)) {
+      const parent = node.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.name === node) return undefined; // the access is the origin
+      if (ts.isBindingElement(parent) && parent.propertyName === node) return undefined;
+      if (ts.isQualifiedName(parent) || inTypePosition(node)) return undefined;
+      const shorthand = ts.isShorthandPropertyAssignment(parent) && parent.name === node;
+      const sym = shorthand ? checker.getShorthandAssignmentValueSymbol(parent) : checker.getSymbolAtLocation(node);
+      if (sym === undefined || (sym.flags & (ts.SymbolFlags.Variable | ts.SymbolFlags.Property)) === 0) return undefined;
+      if (!shorthand && sym.declarations?.some((d) => ts.getNameOfDeclaration(d) === node) === true) return undefined;
+      return checker.getTypeOfSymbol(sym);
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      let sym = checker.getSymbolAtLocation(node.name);
+      if (sym === undefined) return undefined;
+      if (sym.flags & ts.SymbolFlags.Alias) sym = checker.getAliasedSymbol(sym);
+      const kinds = ts.SymbolFlags.Variable | ts.SymbolFlags.Property | ts.SymbolFlags.ValueModule | ts.SymbolFlags.GetAccessor;
+      return sym.flags & kinds ? checker.getTypeOfSymbol(sym) : undefined;
+    }
+    return checker.getTypeAtLocation(node);
+  };
+
   const visit = (node: ts.Node): void => {
+    if (ts.isObjectBindingPattern(node)) {
+      bindingPattern(node);
+    } else if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node) || ts.isCallExpression(node)) {
+      const t = originType(node);
+      const nss = t !== undefined ? nsTypes.of(t, true) : [];
+      if (nss.length > 0) {
+        const why = classify(node, true);
+        if (why !== undefined) dynamicUse(node, nss.map((n) => n.module), why);
+      }
+    } else if (ts.isExportSpecifier(node) && node.parent.parent.moduleSpecifier === undefined && !node.isTypeOnly) {
+      // `export { m }` of a local namespace-typed variable.
+      const local = checker.getExportSpecifierLocalTargetSymbol(node);
+      if (local !== undefined && local.flags & ts.SymbolFlags.Variable) {
+        const nss = nsTypes.of(checker.getTypeOfSymbol(local), true);
+        if (nss.length > 0) dynamicUse(node, nss.map((n) => n.module), `namespace exported as a value: ${truncate(node.getText(sf))}`);
+      }
+    }
     if (ts.isCallExpression(node) && isRequireOrImport(node)) {
       const arg = node.arguments[0];
       if (arg !== undefined && ts.isStringLiteralLike(arg)) {
@@ -199,7 +416,7 @@ function checkFile(
       if (ref !== undefined) out.shorthandRefs.push({ ...pos(node.name), member: node.name.text, ...ref });
     }
     if (ts.isIdentifier(node) && namespaceNames.has(node.text)) {
-      const use = namespaceValueUse(node, checker, namespaceModules, sf);
+      const use = namespaceValueUse(node, checker, namespaceModules, sf, classify);
       if (use !== undefined) {
         // The namespace's module is known, so the flag blocks only that package.
         if (use.module.pkg !== undefined) {
@@ -268,6 +485,7 @@ function namespaceValueUse(
   checker: ts.TypeChecker,
   modules: ReadonlyMap<ts.Symbol, NamespaceModule>,
   sf: ts.SourceFile,
+  classify: (e: ts.Expression, direct: boolean) => string | undefined,
 ): { reason: string; module: NamespaceModule } | undefined {
   const parent = id.parent;
   if (ts.isNamespaceImport(parent)) return undefined; // the declaration
@@ -292,7 +510,117 @@ function namespaceValueUse(
   }
   if (ts.isQualifiedName(parent) && parent.left === id) return undefined; // `X.Type`
   if (inTypePosition(id)) return undefined;
-  return { reason: `namespace ${id.text} used as a value: ${truncate(parent.getText(sf))}`, module };
+  if (ts.isExportSpecifier(parent)) return { reason: `namespace ${id.text} used as a value: ${truncate(parent.getText(sf))}`, module };
+  // Destructured, or kept in a location still typed as the namespace (tracked from there).
+  const reason = classify(id, false);
+  return reason === undefined ? undefined : { reason, module };
+}
+
+/** Parents a namespace value passes through unchanged (when their type is still a namespace). */
+function isPassThrough(p: ts.Node, c: ts.Node): boolean {
+  if (
+    ts.isParenthesizedExpression(p) || ts.isAwaitExpression(p) || ts.isNonNullExpression(p) ||
+    ts.isAsExpression(p) || ts.isSatisfiesExpression(p) || ts.isTypeAssertionExpression(p)
+  ) {
+    return true;
+  }
+  if (ts.isConditionalExpression(p)) return p.condition !== c;
+  if (ts.isArrayLiteralExpression(p)) return true; // an array / tuple of namespaces (`Promise.all([import('x')])`)
+  if (ts.isBinaryExpression(p)) {
+    const op = p.operatorToken.kind;
+    if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) return true;
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.CommaToken) return p.right === c;
+  }
+  return false;
+}
+
+function containingFunction(node: ts.Node): ts.SignatureDeclaration | undefined {
+  for (let n = node.parent; n !== undefined && !ts.isSourceFile(n); n = n.parent) {
+    if (ts.isFunctionLike(n)) return n;
+  }
+  return undefined;
+}
+
+function isExportedVariable(decl: ts.VariableDeclaration): boolean {
+  const stmt = decl.parent.parent;
+  return ts.isVariableStatement(stmt) && (ts.getModifiers(stmt)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false);
+}
+
+/** A module namespace type (`typeof import('x')`) of an org module, as found in some type. */
+interface NsType {
+  module: NamespaceModule;
+  /** The namespace object type (members are the module's exports). */
+  type: ts.Type;
+  /**
+   * Where the namespace sits: `undefined` for the type itself (or a union member);
+   * `promise` for the awaited type of a `Promise` / `PromiseLike` (`import('x')`);
+   * `array` for an element of an array / tuple (`Promise.all([import('x'), ...])`).
+   * Members are read only from a direct one; a container's reads yield it (`await`,
+   * `arr[0]`, a `.then` callback parameter), which is an origin in turn.
+   */
+  container?: 'promise' | 'array';
+}
+
+/**
+ * Finds module namespace types of org modules inside a type: the type itself, each
+ * union member, the awaited type of a Promise and the element types of an array or
+ * tuple (nested up to a small depth). `module.pkg` is the org package
+ * (npm name) holding the module unless it is this package (`selfName`): the flag
+ * target; `module.file` is always set (the spread-ref target). Cached per type.
+ */
+class NamespaceTypes {
+  private readonly byType = new Map<ts.Type, NsType[]>();
+  private readonly byModule = new Map<ts.Symbol, NamespaceModule | null>();
+  private readonly checker: ts.TypeChecker;
+  private readonly orgDirs: readonly OrgPackageDir[];
+  private readonly selfName: string | null;
+  constructor(checker: ts.TypeChecker, orgDirs: readonly OrgPackageDir[], selfName: string | null) {
+    this.checker = checker;
+    this.orgDirs = orgDirs;
+    this.selfName = selfName;
+  }
+
+  /** Namespaces in `type`; with `contained` false, only direct ones (members can be read from those). */
+  of(type: ts.Type, contained: boolean): NsType[] {
+    let found = this.byType.get(type);
+    if (found === undefined) {
+      found = this.compute(type, undefined, 0);
+      this.byType.set(type, found);
+    }
+    return contained ? found : found.filter((n) => n.container === undefined);
+  }
+
+  private compute(type: ts.Type, container: NsType['container'], depth: number): NsType[] {
+    const out: NsType[] = [];
+    for (const t of type.isUnion() ? type.types : [type]) {
+      const direct = this.moduleOf(t);
+      if (direct !== undefined) {
+        out.push({ module: direct, type: t, ...(container !== undefined ? { container } : {}) });
+        continue;
+      }
+      if (depth >= 3) continue;
+      const name = t.getSymbol()?.name;
+      if (name === 'Promise' || name === 'PromiseLike') {
+        const awaited = this.checker.getAwaitedType(t);
+        if (awaited !== undefined && awaited !== t) out.push(...this.compute(awaited, container ?? 'promise', depth + 1));
+      } else if (this.checker.isArrayType(t) || this.checker.isTupleType(t)) {
+        for (const el of this.checker.getTypeArguments(t as ts.TypeReference)) out.push(...this.compute(el, container ?? 'array', depth + 1));
+      }
+    }
+    return out;
+  }
+
+  private moduleOf(t: ts.Type): NamespaceModule | undefined {
+    const sym = t.getSymbol();
+    if (sym === undefined || (sym.flags & ts.SymbolFlags.ValueModule) === 0) return undefined;
+    let m = this.byModule.get(sym);
+    if (m === undefined) {
+      const file = sym.declarations?.some(ts.isSourceFile) === true ? moduleTarget(sym, this.orgDirs) : undefined;
+      m = file === undefined ? null : { ...(file.targetPackage !== this.selfName ? { pkg: file.targetPackage } : {}), file };
+      this.byModule.set(sym, m);
+    }
+    return m ?? undefined;
+  }
 }
 
 /** A namespace import's module, as far as it concerns org code. */

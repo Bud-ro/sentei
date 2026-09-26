@@ -1,0 +1,60 @@
+{
+  "entryPoints": [
+    "src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "lazyDirect",
+      "file": "src/direct.ts",
+      "line": 1,
+      "name": "lazyDirect",
+      "sites": [
+        {
+          "col": 9,
+          "file": "src/index.ts",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "lazyKept",
+      "file": "src/index.ts",
+      "line": 14,
+      "name": "lazyKept",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "lazyLoaded",
+      "file": "src/index.ts",
+      "line": 9,
+      "name": "lazyLoaded",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "src/index.ts",
+      "exportedAs": "lazyUnused",
+      "file": "src/index.ts",
+      "line": 19,
+      "name": "lazyUnused",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-lazy:@acme/lazy",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

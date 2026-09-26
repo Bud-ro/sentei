@@ -1469,3 +1469,64 @@ in them); `inSurfaceDir` is exported from `@sentei/core` for them. Globs are
 matched against repo-relative paths, so a whole npm package under a `tests/`,
 `e2e/` or `tools/` directory is still entirely test/script code; matching
 package-relative paths is a separate change.
+
+### Phase 2 fix round 1: namespace destructuring; conditional imports; headerless codegen
+
+**Namespace values other than `import * as` bindings (adapter `+sentei.6`).**
+supabase pg-delta's `const { analyzeAndSort } = await loadPgTopo()` (with
+`loadPgTopo = () => import('@supabase/pg-topo')`) left pg-topo's
+`analyzeAndSort` with no reference: scip-typescript 0.4.0 defines the
+destructured binding as a `local` and links nothing to the module member; only
+a module-level reference to `@supabase/pg-topo src/index.ts/` remains, which
+ingest drops. Only the text witness kept it out of the deletion list.
+
+The fix is at the sidecar boundary (`consumer-checks.ts`), with the checker:
+- A **namespace type** is a type whose symbol is a source-file module inside
+  an org checkout (`typeof import('x')`), found directly, in a union, as the
+  awaited type of a `Promise`, or as an array / tuple element
+  (`Promise.all([import('a'), import('b')])`).
+- Every **object binding pattern** (variable, parameter, nested, `for…of`,
+  `.then(({ a }) => …)`) whose type is a namespace records each element as a
+  `namespaceMemberRefs` entry (the existing field: position of the property
+  name, checker-resolved declaration; ingest adds the occurrence and edge when
+  SCIP has none there). A destructuring assignment `({ a } = ns)` likewise.
+- **Tracking instead of data flow.** Every identifier, property access,
+  element access and call whose type holds a namespace is an *origin*. Its
+  use is classified by its parent after climbing pass-throughs (`await`,
+  parentheses, `as`, `!`, `??`, `||`, conditional arms, array literals) while
+  the type stays a namespace: a member read (`m.a`, `m['a']`) is recorded; a
+  location still typed as the namespace (a variable, a return with a namespace
+  return type, an argument whose parameter is typed so, an assignment target,
+  an object-literal property) is fine because its own reads are origins in
+  turn; `await x;`, `!x`, `x === y`, `'k' in x`, conditions are harmless.
+  Anything else (a rest element, a computed key, an argument of type
+  `object` / `any` / a type parameter, a spread, `export`, a widening cast, a
+  `.then(fn)` with a non-inline callback) raises **`namespace_dynamic`
+  targeted at the module's package** plus a `namespaceSpreadRefs` entry for
+  the module file (the existing handling: all its declarations stay
+  reachable; cross-package occurrences are withheld because the flag blocks
+  the package). Own-package modules get only the spread ref (a self-targeted
+  flag would make the package opaque). A missing member of another org
+  package is an `unresolvedImports` entry (version skew). Each widening is
+  caught where it happens, so `async function load(): Promise<any> { return
+  import('x') }` flags at the `return`.
+- `import * as ns` keeps its own path (member refs only for bare org
+  specifiers, as before), but its value uses now go through the same
+  classification: `const { a } = ns` and `const m = ns; m.a` are resolved
+  instead of flagged; `f(ns)` with a wider parameter, spreads, `export { ns }`
+  still flag.
+- Known gap (accepted): a namespace stored in an inferred object literal that
+  is later widened as a whole (`const o = { ns }; take(o as unknown)`) is not
+  seen; only the property's own reads are.
+
+Measured on the supabase evidence (76 npm packages, new vs old adapter): no
+flag, spread-ref or unresolved-import difference outside test files; pg-delta
+gains `analyzeAndSort` (sql-order.ts:215) plus 14 own-package refs from
+`await import('../src/…')` in tests and scripts; supabase/storage 462 member
+refs (own modules imported dynamically by vitest mocks) and 15 fewer spread
+refs than before (`const m = ns` is now tracked). Time is within noise (the
+checker has typed these nodes already for the diagnostics pass). Fixture:
+`lib-lazy` / `lib-lazy-opaque` / `app-lazy` in `fixtures/org-small`; the other
+shapes are unit tests in `packages/cli/test/namespace-destructuring.test.ts`.
+Snapshot change on the existing fixture: one new member ref (`app-consumer`'s
+`import('@acme/widgets/lazy').then((m) => m.lazyWidget)`).
