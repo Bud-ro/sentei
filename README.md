@@ -119,8 +119,14 @@ opens pull requests.
   alive although nothing references them: the top-level `main` of every
   library (wherever it is; test files excepted), build.yaml builder factories,
   grinder tasks (`@Task` / `@DefaultTask`, run by reflection from
-  `tool/grind.dart`), dart_dev's `config`, and the Flutter plugin classes a pubspec names
-  (`flutter.plugin.platforms.*.pluginClass` / `dartPluginClass`).
+  `tool/grind.dart`), dart_dev's `config`, the Flutter plugin classes a pubspec names
+  (`flutter.plugin.platforms.*.pluginClass` / `dartPluginClass`), and the
+  `main` / `hybridMain` of a library of the repo that a `package:` string
+  literal names (`spawnHybridUri('package:x/src/server.dart')`,
+  `Isolate.spawnUri(Uri.parse('package:x/worker.dart'), …)`).
+- Dart re-exports of another org package of the same repo (`package:test`'s
+  `export 'package:matcher/expect.dart'`) are exports of the re-exporting entry
+  too; re-exports of packages in other repos are not recorded.
 - Dart conditional imports / exports (`import 'stub.dart' if (dart.library.io)
   'io.dart'`): the index sees only the default; its uses are lent to the
   alternatives' same-named declarations, and for a conditional `export` the
@@ -465,9 +471,14 @@ test-file uses of it count as references even under a regular dependency
 `*_test_utils`, `*_testing`, … (pub `lib/test.dart`, npm `./testing` →
 `src/testing.ts` or `src/testing/index.ts`), symbols under `lib/src/test*/`,
 `lib/src/mocks/`, `lib/testing/`, `src/testing/`, `src/test-utils/`, and every
-symbol of a package named `*testkit`, `*_test`, `*_test_utils`, `*-testing`, … A
-test-support helper used only by its own package's tests is still
-`only_test_refs`.
+symbol of a package named `*testkit`, `*_test`, `*_test_utils`, `*-testing`, …,
+and symbols defined in a pub `lib/` library named that way
+(`lib/src/code_assets/testing.dart`). An entry of another org package of the
+same repo counts too: matcher's `closeTo`, re-exported by `package:test`'s
+`lib/test.dart`, is test-support surface. A test use also counts through a
+dev-only dependency on a package that re-exports the symbol (consumers depend
+on `test`, not on `matcher`). A test-support helper used only by its own
+package's tests is still `only_test_refs`.
 
 **Mixed repos.** A package of the other manager in the same repo is a witness
 consumer: a Dart package that reads a JS bundle built in the same repo through
@@ -483,12 +494,14 @@ Test, docs, generated and script files are recognized by path
 except that nothing under a pub package's `lib/` is ever one of them: every file
 there is importable library code. TypeScript files are also generated when a
 comment in their first 20 lines says so (`@generated`, "do not edit", "do not
-modify by hand", "auto generated", ...), Dart files when their leading comment
-block does (ffigen / jnigen bindings, source_gen output), TypeScript files when
+modify", "auto generated", "generated from … IDL", ...), Dart files when a
+comment before their first directive or declaration does, in any leading
+block and doc comments excepted (ffigen / jnigen bindings, source_gen and
+protoc output, package:web's Web IDL bindings), TypeScript files when
 they sit under a tool-output directory (`.nuxt/`, `.svelte-kit/`, `.prisma/`,
 ...), or when they have the exact shape of `supabase gen types typescript`
 output (which carries no header). Generated globs include ffigen / jnigen style
-`*_generated.dart`. Vendored code, in a `third_party/`, `vendor/` or `vendored/`
+`*_generated.dart` and protoc's `*.pb*.dart` (`*.pbgrpc.dart` included). Vendored code, in a `third_party/`, `vendor/` or `vendored/`
 directory below the package root, is treated like generated code: nothing
 defined there gets a verdict, references from it still count (a package whose
 own root is under such a directory is still org code).

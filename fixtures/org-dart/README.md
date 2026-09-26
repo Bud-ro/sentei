@@ -14,6 +14,7 @@ over them).
 | `dart-app` | `acme_app` | private (`publish_to: none`) | consumer (`bin/main.dart`, `bin/shapes.dart`): `path:` dep on `acme_x`, hosted `^1.0.0` dep on `acme_pub`; `test/kit_test.dart` uses `acme_kit` (regular `path:` dep) |
 | `dart-js` | `acme_js_app` (root) + npm `acme-js-src` (`js_src/`) | private | mixed repo: Dart `bin/main.dart` reads the JS bundle built from `js_src/` through `@JS('acmeBridge.start')`; no dependency either way |
 | `dart-testkit` | `acme_kit` | private (`publish_to: none`) | test-support library: `lib/testing.dart` entry, `lib/src/test_utils/` |
+| `dart-testkit` (`match/`) | `acme_match` | private (`publish_to: none`) | nested matcher library that `acme_kit` re-exports (package:matcher / package:test); `acme_pub` dev-depends on `acme_kit` |
 | `flutter-widgets` | `acme_widgets` | private (`publish_to: none`) | Flutter lib (`environment.flutter`, `flutter: {sdk: flutter}`): `AcmeButton` (used), `AcmeBanner` (unused) |
 | `flutter-app` | `acme_flutter_app` | private (`publish_to: none`) | Flutter app: `lib/main.dart` `main` calls `runApp` with an `AcmeButton`; `path:` dep on `acme_widgets` |
 | `flutter-plugin` | `acme_plugin` | private (`publish_to: none`) | Flutter plugin implementation (like flame-engine's gamepads_web): pubspec `flutter.plugin.platforms` names `AcmePluginWeb` (web `pluginClass`, `fileName: acme_plugin.dart`), `AcmePluginLinux` (`dartPluginClass`) and a native Android `pluginClass`; no org package depends on it |
@@ -178,3 +179,19 @@ from there (Workiva over_react_test: all 13 parts, none next to its source).
 | --- | --- | --- |
 | A part that exists only under `.dart_tool/build/generated/` references an otherwise-unused declaration | `dart-gen/lib/acme_gen.dart` `part 'acme_gen.g.dart';`, committed as `dart-gen/.dart_tool/build/generated/acme_gen/lib/acme_gen.g.dart`, whose `_$parseSettings` calls `splitSettingPairs` (`lib/src/settings_support.dart`, not exported) | `splitSettingPairs` alive (fork patch 13 indexes the part as a generated document at its real path; without it, private_dead `already_unreachable`); status `ok`, no build_runner run, no missing part |
 | A generated file named like hand-written code (dart-lang ffigen / jnigen bindings: 292 PRIV-DEAD, 21 REVIEW, 1 DELETE rows) | `dart-gen/lib/bindings.dart`, header `// GENERATED CODE - DO NOT MODIFY BY HAND`: exported unused `nativeVersion`, private `_versionFromHeader`, unreachable `_unusedBinding` | no finding: the adapter lists it in the sidecar's `generatedFiles` (the TypeScript header sniff over the index's documents); without, `nativeVersion` deletion_candidate and both privates private_dead |
+
+### Re-exported test APIs; URI-spawned libraries (Phase 2 fix round 7)
+
+`acme_kit` plays `package:test` and `acme_match` (nested in the same repo) plays
+`package:matcher`: dart-surface records `acme_kit`'s re-exports of `acme_match` as
+exports of acme_kit's entries, and analyze counts a test use through a dev-only
+dependency on the re-exporter.
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| Re-exported through a dev dependency's main library | `acme_match` `closeish` (`match/lib/src/close.dart`), re-exported by `lib/acme_kit.dart`; used only by `dart-lib-pub/test/pub_test.dart` (acme_pub dev-depends on acme_kit) | alive |
+| Re-exported through a test-support entry, regular dependency | `supportMatcher`, re-exported by `lib/testing.dart`; used by `dart-app/test/kit_test.dart` | alive |
+| Re-exported through a regular dependency's main library (negative) | `regularOnlyMatcher`, used by `dart-app/test/kit_test.dart` | deletion_candidate `["only_test_refs"]` |
+| Not re-exported (negative) | `hiddenMatcher` (`match/lib/acme_match.dart`), used by acme_pub's test | deletion_candidate `["only_test_refs"]` |
+| `hybridMain` of a library a `package:` string literal names (`spawnHybridUri`) | `dart-testkit/test/hybrid_test.dart` names `package:acme_kit/src/hybrid/echo_server.dart` and `package:acme_match/src/remote_server.dart` (a sibling package) | both `hybridMain` alive (sidecar `entrySymbols`), `_echo` alive; a literal naming a missing file adds nothing |
+| A `hybridMain` nothing names (negative) | `lib/src/hybrid/orphan_server.dart` | private_dead `["already_unreachable"]` |

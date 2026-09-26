@@ -3346,3 +3346,166 @@ version note lives there). Not re-run on flamedeck.
 - esbuild / tsup / electron-builder entry conventions (optional F(b)) not added.
 - G misses Dart parameter types and multi-line signatures; a signature range in
   the sidecar (dart-surface / export-surface) would make it exact.
+
+### Phase 2 fix round 7: re-exported test APIs; protoc and IDL headers; URI entries
+
+From the dart-lang final rerun (`$TMPDIR/dog-dartlang3`: report.md §4–§6,
+`work/sentei.db`, the clones). **Measured** on copies (`$TMPDIR/r7/m-base`,
+`$TMPDIR/r7/m-new`: the run's DB, discover.json, index files and blame cache
+copied, the clones linked read only): ingest → blame → analyze → witness → report
+once with the base commit (`0df33f1`, round 6 included) and once with this
+branch. The branch's adapter output was simulated on the copied index, not
+re-indexed: the new header sniff's extra `generatedFiles` were added to the
+sidecars, and the new dart-surface was re-run (same arguments / batch specs as
+the run's logs) for the 10 repos with same-repo org re-exports or the
+spawn_hybrid package (test, build, pub-dev, labs, dart-pad, flute, http,
+native, leak_tracker, core), replacing those sidecars' `exports` and
+`entrySymbols`. Scripts: `$TMPDIR/r7/` (`patch_new.ts`, `pipe.sh`, `vdiff.ts`).
+
+Report TOTAL, base → branch (evidence run, tool 95892d5, in brackets where it
+differs; its UNEXPORT predates round 6):
+
+| view | base | branch |
+| --- | --- | --- |
+| DELETE | 775 | **773** (spawn_hybrid, other_package `hybridMain`) |
+| DEPRECATE | 1147 | **338** (web 757, matcher 45, test_api 6, code_assets 1) |
+| ORG-DEAD | 1319 | **510** |
+| UNEXPORT (incl. published) | 2000 [4618] | **1803** (web's internal-only rows, now generated) |
+| PRIV-DEAD | 1263 | **1184** (appengine 76, test_core 3) |
+| REVIEW | 101 | **102** (+ code_assets `testCodeBuildHook`) |
+| BLOCKED | 209 [279] | 209 |
+
+No row was gained in DELETE, DEPRECATE, UNEXPORT view or PRIV-DEAD; analyze
+127 s → 126 s; witness checked 3588 → 2778 symbols; ingest `generatedDocuments`
+977 → 1205, `exportAliases` 13824 → 14501, `unmatchedExports` 0.
+
+**A. Re-exported test APIs.** Consumers use matcher's `closeTo` through their
+dev dependency on `package:test`, whose `lib/test.dart` re-exports matcher (and
+test_core, test_api). Two gaps: dart-surface dropped every declaration of
+another package from an entry's export namespace (the TypeScript side notes the
+same: "re-exports into another org package not recorded"), and the dev rule of
+`external_ref_occurrences` looked only at a dependency on the symbol's own
+package. **Smallest change chosen:** dart-surface now records, as ordinary
+`exports` of the re-exporting entry, the declarations of *another org package
+checked out in the same repo* (`package:` URI of an `--org-packages` name, file
+under the repo root, outside `.dart_tool` / `build` / dot dirs). Ingest needed
+no change: it matches sidecar exports by repo-relative position in the
+sidecar's repo, so the symbol gets a `symbol_exports` row whose `entry_file` is
+`pkgs/test/lib/test.dart` (and `is_exported = 1`, which it already had when its
+own package exports it). Re-exports of a package in **another repo** are not
+recorded: the sidecar position cannot name another repo without an ingest
+change (not in this unit's files). The `show` names of such re-exports stay
+references from the re-exporting package (not export sites), as before: flute
+`show VertexMode` keeps engine's `VertexMode` exported (a first attempt marked
+them sites and made `VertexMode` an unexport and two deprecated matcher
+re-exports witness-mismatch reviews).
+In analyze.sql:
+- `reexporting_packages (symbol_id, exporter_package_id)`: a `symbol_exports`
+  row whose entry file is a document of a different package of the symbol's
+  repo (the repo pins the exporter: `entry_file` is repo-relative);
+- `external_ref_occurrences.dev_dep` is also true when the consumer's dev-only
+  dependency is such an exporter. **Deviation:** a *regular* dependency on the
+  exporter counts only through `test_support_symbols` (an exporting entry named
+  like `test.dart`, which that view already reads from every `symbol_exports`
+  row, re-exports included): the existing rule does not count a test use
+  through a regular dependency on the symbol's own package either, and a
+  re-exporter should not be stronger evidence than the owner. `package:test`
+  itself is covered both ways (its entry stem is `test`). The key of the `IN`
+  is a concatenated string: a row-value `IN` made analyze 127 s → 353 s.
+- `test_support_symbols` also takes symbols defined in a pub `lib/` library
+  whose file stem matches `test_support_names` (native's
+  `lib/src/code_assets/testing.dart` `testCodeBuildHook`, exported through the
+  main library `lib/code_assets.dart`, which is why no existing rule applied).
+  npm module files stay excluded (round 1's negative test
+  `src/other/testing.ts`): in Dart each lib/ file is an importable library,
+  in npm a module is not an entry unless exported.
+`matcher`-style name patterns were **not** added (`*matcher*` would mark any
+matcher library test-support; the re-export rule covers the case).
+dart-lang: matcher DEPRECATE 77 → **32** (`closeTo`, `completion`,
+`containsPair` and 42 more have no row; 136 matcher symbols are re-exported by
+test and so test-support). The 32 left are used only by matcher's own tests or
+nowhere (`isSorted`, `pairwiseCompare`, `expectAsyncUntil1..6`, …: policy).
+test_api's `spawnHybridCode`, `markTestSkipped`, `OnPlatform`, `Retry`, `Tags`,
+`TestOn` lost their DEPRECATE rows (used through test); test_core's
+`internalBootstrapVmTest` / `internalBootstrapNativeTest` (re-exported by
+test's `lib/bootstrap/vm.dart`, called by generated bootstrap code) and
+`serializeSuite` lost false PRIV-DEAD rows (they are now exported; the two are
+undated by blame, the shallow clones needing github.com, so no verdict).
+`testCodeBuildHook` became REVIEW: its only users are the hooks examples'
+tests (ignored manifests), which the witness now scans because the symbol is
+test-support. **Not changed, by policy:** bazel_worker `TestStdinSync`, exported
+by the test-support entry `lib/testing.dart` but used only by bazel_worker's own
+tests (round 1: own-package test uses never count). Not done: the witness's
+consumer set is still the symbol's package's dependents, not the re-exporter's
+(witness.ts is outside this unit); the test uses above are indexed, so it was
+not needed here.
+Fixture: org-dart `dart-testkit/match` (`acme_match`, re-exported by
+`acme_kit`): `closeish` (dev dependency via re-export) and `supportMatcher`
+(test-support entry) alive; `regularOnlyMatcher` (regular dependency) and
+`hiddenMatcher` (not re-exported) stay `only_test_refs`. Unit tests
+(analyze.test.ts): dev vs regular, test-support entry, a same-path entry in
+another repo is no exporter, the lib/ file-stem rule and its npm negative.
+
+**B. protoc gRPC output.** `**/*.pbgrpc.dart` joins GENERATED_GLOBS and the
+`generated_files` view (`.pb`, `.pbenum`, `.pbjson`, `.pbserver` were there).
+The shared header patterns match "do not modify" (was "do not modify by hand"):
+protoc-gen-dart writes `//  Generated code. Do not modify.`; build_version's
+`version.dart` writes `// Generated code. Do not modify.` (pana, markdown,
+webdev, dwds). appengine PRIV-DEAD 76 → **0**.
+
+**C. package:web IDL bindings.** Round 5's Dart sniff already read past the
+license block (blank lines did not end it); what failed was the pattern. Now:
+"generated from … IDL" is a header pattern, and `dartFileHeader` reads every
+leading `//` line and `/* */` block before the first directive / annotation /
+declaration, with doc comments (`///`, `/** */`) **skipped rather than ending the
+header**, and the Dart sniff reads the whole header, not 20 lines
+(`isGeneratedDartFile`; a long license no longer hides the line). A block
+comment no longer ends the header (round 5's unit test said it did; changed).
+Over every Dart document of the dart-lang DB: 228 more generated (web 182 of
+its `lib/src/dom/*.dart` and helpers, appengine 25, js_interop_gen's
+`test/integration/idl/*_expected.dart` 15, 4 `version.dart`, dwds'
+`injected_client_js.dart`, a jaspr `main.client.options.dart`), **none**
+unmarked; `samples/command_line/lib/src/options.dart` and swiftgen's
+`config.dart` stay code. web DEPRECATE 758 → **1** (`KeyLocation` in the
+hand-written `lib/src/helpers/enums.dart`). Negative tests: a `///` or `/** */`
+doc on the first declaration saying "Generated code. Do not modify." stays
+code; a header line after the first code token does not count.
+
+**D. Runtime-by-URI entries.** dart-surface collects the `package:<org
+package>/….dart` string literals in the code of every own file (tests
+included; directive URIs excluded), resolves each through the package config
+to a Dart library under the repo root, and records that library's top-level
+`main` and `hybridMain` as runtime entry symbols, in a sibling package too
+(ingest matches entry symbols by repo position). Only those two names:
+generators hold many such literals (`'package:built_value/built_value.dart'`
+in built_value_generator, mockito, checks_codegen: about 35 packages in dart-lang),
+and nothing else in such a library is invoked by name. `main` was already an
+entry for every library, so the new effect is `hybridMain`: spawn_hybrid's
+and other_package's `emits_numbers.dart` DELETE rows are gone. Not handled:
+URIs built at run time (`Uri(path: …)`), relative paths, `Process.run('dart',
+['x.dart'])` (bin/ and tool/ mains are entries anyway). Fixture: acme_kit's
+`test/hybrid_test.dart` names `lib/src/hybrid/echo_server.dart` and the
+sibling `acme_match`'s `remote_server.dart` (both alive); `orphan_server.dart`
+stays private_dead.
+
+**E. Dart `cause:` lines.** scip-dart.ts now tracks the diagnostic that made
+the status worse (`worsen`, as the TypeScript adapter does) for every event:
+unresolved org modules, unresolved files, parts outside the package,
+unresolvable own URIs, missing generated parts, unresolved export directives,
+missing entry points, scip-dart / dart-surface / tool failures, and a status
+inherited from prepare (its first error, e.g. the pub get failure; also the
+Flutter-without-`flutter` case, whose diagnostics now end with a `cause:` copy
+of its error). Written for partial and failed results. The dart-lang progress
+line `current_results: partial — warn: test not source-linked…` now leads with
+the unresolved `.pb.dart` import (checked by the fixture's `dart-bad` test, not
+re-run on dart-lang).
+
+Adapter **`1.7.0+sentei.14`** (dart-surface output changed, and the index cache
+is keyed by adapter version, so a rerun must re-index): Dart snapshots moved to
+the new directory. Existing fixture packages produce byte-identical output;
+only the packages whose sources this round edited changed (acme_kit, acme_app,
+acme_pub, new acme_match).
+
+**Not verified:** a real re-index of dart-lang (the adapter's output was
+simulated as described above; the dart-surface re-runs used the clones' existing
+`.dart_tool` package configs); the cross-repo re-export case (not recorded).
