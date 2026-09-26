@@ -2034,3 +2034,74 @@ only_test_refs > only_docs_refs > no_refs). Fixture: org-dart `acme_pub`
 (136 of them next to `only_test_refs`), `no_refs` 572 → 561, `only_test_refs`
 888 → 888; getTeam is `["only_docs_refs", "witness_pending"]`. supabase: 2,
 flame: 5.
+
+### Phase 2 fix round 2: report views and rerun cost
+
+From the dart-lang run (31 repos, 264 packages; index 66 min, blame 1280 s).
+
+**`report --view` no longer overwrites the default outputs.** `report --view
+org_dead` replaced `work/sarif/` with the 166 org-dead results: a quick look at
+one view destroyed the logs meant for upload. Now `report.json` is always the
+full report (every view; its content does not depend on `--view`, only
+`generatedAt` changes), the stdout summary is filtered by `--view`, and the
+SARIF of a `--view` run goes to a sibling directory `work/sarif-<view>[,<view>]/`
+(views in REPORT_VIEWS order, as parseViews returns them; stages/report.ts
+`sarifDirFor`). Chosen over `work/sarif/<view>/` because a recursive upload of
+`work/sarif/` (upload-sarif takes a directory) would pick up the view's logs as
+well. `work/sarif/` is written only by a run without `--view` (also `run
+--view`), and the report prints both locations.
+
+**Summary table width.** `BLOCKED BY` listed every blocker id: lines up to 2517
+characters. `formatTable` now cuts any cell at 80 characters with `…`
+(`capCell`), and the `BLOCKED BY` / `BLOCKS PACKAGES` cells name at most three
+ids, as many as fit in the 80 (blocker ids run ~45 characters, so usually one),
+then `… +N more (report.json)` (`capList`). report.json is unchanged. The
+summary is no longer pure ASCII (the ellipsis); the test now allows exactly that
+character.
+
+**Failure cache.** The index cache reused only `ok` results, so each rerun
+repeated the 75 failing `pub get`s (dart-lang/build's
+`dart_flutter_team_lints` override conflict and others), minutes each, on every
+rerun (how much of the 66 min they were was not measured). A partial/failed entry now
+records `inputHash` (cache.ts `failureInputHash`: sha256 over the package id,
+path, manager, its repo's head sha, indexer@version, install mode, toolchain
+version, consumer policy, and `<id>@<head sha>` of every org package it resolves
+through, transitively, including ambiguous candidates) and `indexedAt`. A rerun
+reuses the failure when the hash matches and skips its `prepare` (the install
+that failed): the log replays the status line with its first error and
+`cached failure from <time>; rerun with --retry-failed to retry (log: …)`; the
+summary still counts it as failed (`--strict` still exits 2). `--retry-failed`
+(index/run) retries them; `--force` re-indexes everything. Older entries have no
+hash and are retried once. A `failed` entry is reused without its `.scip` file
+(ingest flags it either way); a `partial` one still needs its files.
+Toolchain version: `node <process.version>` for npm (pnpm/yarn versions come
+from lockfiles and packageManager pins, covered by the head sha), `dart
+--version` plus the Flutter SDK's version file (`bin/cache/flutter.version.json`
+or `version`, never running `flutter`, which is slow) for pub. **Deviation:**
+ok results stay keyed by head sha and indexer version only (no toolchain), as
+before; adding the toolchain there would invalidate every existing cache and was
+not asked for. The inputs of a failure include the org dependency head shas
+because failures usually come from the environment (a sibling's pubspec, the
+SDK), which the ok key never needed.
+
+**Blame in parallel.** Blame unshallowed and blamed the 31 repos one at a time
+(1280 s). Repos now run `--clone-concurrency` at a time (default 8; the org
+sentei.json `repos.cloneConcurrency` is not read by blame, only by discover),
+and the `git blame` processes of all repos share one pool of 8, so parallel
+repos do not multiply the processes. Per-repo results are order-independent
+(each repo has its own cache file and symbols; tests compare repoConcurrency 1
+and 8 on a fake runner and 1 and 3 on real shallow clones). Fetches from an
+https origin (the unshallow and a partial clone's promisor blob fetches during
+`git blame`) carry the clone token as `ensureClone` does (git.ts `authEnv`,
+exported; GIT_CONFIG_* env, never argv or logs); the token is looked up at most
+once and only when some repo needs a fetch. Before this a private repo could not
+be unshallowed at all. Log lines of different repos may now interleave.
+
+**Index progress.** Installs ran before any status line, so the index log was
+silent for ~10 minutes. Every prepare step prints `pub get <id>` (`--offline`
+without installs), `installing <id> (<pm>)` (the manager of the nearest
+lockfile up to the repo root; the adapter makes the real choice) or `linking
+<id> (--no-install)` as it starts; with more than 20 packages, `N/M packages
+prepared` and `N/M packages done` lines about every tenth (at least every 10
+packages). Not verified on a full dart-lang rerun: the new timings (blame with 8
+repos at once, index with cached failures) are not measured.

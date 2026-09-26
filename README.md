@@ -73,9 +73,9 @@ opens pull requests.
 npm ci
 S="node packages/cli/src/main.ts"
 $S discover --org unjs --lockfile fixtures/orgs/unjs.lock.json   # list (lockfile written on first run, read after), shallow-clone
-$S index      # SCIP indexes per package (cached by head sha; --force, --no-install)
+$S index      # SCIP indexes per package (cached by head sha; --force, --retry-failed, --no-install)
 $S ingest     # load .scip files into work/sentei.db
-$S blame      # first-seen dates for exported symbols (unshallows clones)
+$S blame      # first-seen dates for exported symbols (unshallows clones, --clone-concurrency at a time)
 $S analyze    # reachability + verdicts
 $S witness    # text-search check: witnessed candidates become deletion/deprecation candidates
 $S report     # report.json, SARIF, summary on stdout (--view org_dead,... to pick views)
@@ -86,7 +86,8 @@ $S run --org unjs --lockfile fixtures/orgs/unjs.lock.json
 `--org-dir <dir>` replaces `--org` for a local org directory (`org.json` +
 `repos/<name>/`, see `fixtures/org-small`). Useful options: `--work <dir>`
 (default `./work`), `--db <file>` (default `<work>/sentei.db`), `--include/--exclude <glob>`,
-`--include-forks`, `--include-archived`, `--clone-concurrency <n>`,
+`--include-forks`, `--include-archived`, `--clone-concurrency <n>` (parallel clones,
+and repos unshallowed and blamed at once by `blame`),
 `--allow-clone-failures` (see [Choosing repos](#choosing-repos)),
 `--update-lockfile`, `--config-dir <dir>` (where the org `sentei.json` lives;
 default the cwd if it has one), `--max-old-space-mb <n>`, `--quiet`, `--verbose`.
@@ -432,6 +433,19 @@ cached per package by head sha and indexer version. Changing the policy
 `trustPrivateRegistry`, `keep`) needs `discover` (it records the policy in the DB)
 and then `analyze`, `witness` and `report`, never `index`; choosing views needs
 only `report`.
+
+Partial and failed results are cached too, keyed by everything they depend on:
+the package's head sha, indexer version, install mode (`--no-install`), toolchain
+(`node` version for npm; `dart --version` and the Flutter SDK for pub), policy,
+and the head shas of every org package it resolves through. While those are
+unchanged a rerun reuses the failure without re-running its install and replays
+it (`cached failure from <time>; rerun with --retry-failed to retry`, with the
+log path). `--retry-failed` (index/run) retries them after you fixed the
+environment; `--force` re-indexes everything.
+
+While it runs, `index` prints each install as it starts (`pub get <package>`,
+`installing <package> (pnpm)`, `linking <package> (--no-install)`) and, with more
+than 20 packages, `N/M packages prepared` / `N/M packages done` lines.
 
 ## Reading the summary
 
