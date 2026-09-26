@@ -16,6 +16,7 @@ import {
   defaultOrgConfig, packageIdOf, packageRefMatches, parseKeepEntry, readOrgConfig, readRepoConfig, type Policy, type RepoConfig,
 } from './config.ts';
 import { matchGlob } from './glob.ts';
+import { npmSatisfies, pubSatisfies } from './semver.ts';
 import {
   DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readRepoManifestsWithIgnored,
   type IgnoredManifest, type Manager, type ManifestPackage, type Visibility,
@@ -50,9 +51,32 @@ export interface DiscoverDep {
  * can belong to several org packages). `name`: the only org package of that name;
  * `same-repo`: several, the consumer's own repo has one; `published`: several, exactly
  * one of them is not private (npm `private: true` / pub `publish_to: none` packages
- * cannot be installed from a registry, so a consumer elsewhere cannot mean them).
+ * cannot be installed from a registry, so a consumer elsewhere cannot mean them);
+ * `constraint`: several, and the manifest version of exactly one of them satisfies the
+ * consumer's version constraint (constraintPick). Never "the highest version".
  */
-export type DepResolution = 'name' | 'same-repo' | 'published';
+export type DepResolution = 'name' | 'same-repo' | 'published' | 'constraint';
+
+/**
+ * The one candidate whose manifest version satisfies `constraint` (npmSatisfies /
+ * pubSatisfies), or undefined: when zero or several satisfy, when the constraint is not
+ * a version range (`workspace:`, `file:`, a pub `path:` / `git:` dep, a dist-tag), or
+ * when any candidate's version is missing or unparseable (it might satisfy too: fail
+ * closed).
+ */
+export function constraintPick<T extends { version: string | null }>(
+  manager: Manager, constraint: string | null, cands: readonly T[],
+): T | undefined {
+  if (constraint === null) return undefined;
+  const sat = manager === 'npm' ? npmSatisfies : pubSatisfies;
+  const matching: T[] = [];
+  for (const c of cands) {
+    const ok = c.version === null ? null : sat(c.version, constraint);
+    if (ok === null) return undefined;
+    if (ok) matching.push(c);
+  }
+  return matching.length === 1 ? matching[0] : undefined;
+}
 
 export interface DiscoverPackage {
   packageId: string;
@@ -457,7 +481,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   if (dups.length > 0) throw new Error(duplicateNamesMessage(dups));
 
   // Every org package by (manager, name): usually one, several when repos share a name.
-  type Candidate = { id: string; repo: string; isPrivate: boolean; ignoreEntry: string };
+  type Candidate = { id: string; repo: string; isPrivate: boolean; ignoreEntry: string; version: string | null };
   const byName = new Map<string, Candidate[]>();
   for (const r of repos) {
     const repoName = r.repo.slice(opts.org.length + 1);
@@ -465,6 +489,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       const key = `${m.manager}:${m.name}`;
       byName.set(key, [...(byName.get(key) ?? []), {
         id: packageIdOf(m.manager, r.repo, m.name), repo: r.repo, isPrivate: m.visibility === 'private', ignoreEntry: `${repoName}/${m.manifest}`,
+        version: m.version,
       }]);
     }
   }
@@ -495,6 +520,8 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       } else if (published.length === 1) {
         pick = published[0]!;
         out.resolution = 'published';
+      } else if ((pick = constraintPick(d.manager, d.constraint, cands)) !== undefined) {
+        out.resolution = 'constraint';
       } else {
         out.ambiguous = true;
       }
@@ -512,7 +539,9 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
         + 'unresolved, their verdicts are blocked (ambiguous_dep). Keep the one it means and exclude the others in the org '
         + `sentei.json, e.g. "ignoreManifests": [${cands.map((c) => JSON.stringify(c.ignoreEntry)).join(', ')}] minus the real one`);
     } else if (d.candidates !== undefined) {
-      log(`${repo}: ${who} dep ${d.name} matches ${cands.length} org packages; resolved to ${d.resolvedPackageId} (${d.resolution})`);
+      const why = d.resolution === 'constraint'
+        ? `: the only version satisfying ${d.constraint} of ${cands.map((c) => `${c.version ?? '?'} (${c.id})`).join(', ')}` : '';
+      log(`${repo}: ${who} dep ${d.name} matches ${cands.length} org packages; resolved to ${d.resolvedPackageId} (${d.resolution})${why}`);
     }
   };
   // Pub package id -> the first of its lib/ Dart files that exports Dart to JS, or null

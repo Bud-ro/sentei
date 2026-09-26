@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '../src/db.ts';
-import { discoverLocal, discoverRepos, writeDiscoverToDb } from '../src/discover.ts';
+import { constraintPick, discoverLocal, discoverRepos, writeDiscoverToDb } from '../src/discover.ts';
 
 const FIXTURE = fileURLToPath(new URL('../../../fixtures/org-small', import.meta.url));
 
@@ -219,6 +219,58 @@ describe('discoverLocal on a synthetic org', () => {
       { package_id: 'npm:acme/three:@acme/both', blocker_package_id: 'npm:acme/mono:mono-app', flag: 'ambiguous_dep' },
     ]);
     expect(all('SELECT package_id FROM opaque_packages')).toEqual([]);
+  });
+
+  it('resolves a shared name by the version constraint when exactly one candidate satisfies it (fix round 4)', () => {
+    // supabase: @supabase/ssr is 0.3.0 in auth-helpers (stale copy) and 0.12.7 in the ssr repo;
+    // evals' `^0.12.5` matches only 0.12.7.
+    org(['helpers', 'ssr', 'evals', 'olddep', 'wide', 'ws', 'dartold', 'dartnew', 'flutterapp']);
+    write('org/repos/helpers/package.json', { name: '@acme/ssr', version: '0.3.0' });
+    write('org/repos/ssr/package.json', { name: '@acme/ssr', version: '0.12.7' });
+    write('org/repos/evals/package.json', { name: 'evals', private: true, dependencies: { '@acme/ssr': '^0.12.5' } });
+    write('org/repos/olddep/package.json', { name: 'olddep', private: true, dependencies: { '@acme/ssr': '~0.3.0' } });
+    // Both satisfy, none does, not a range: stay ambiguous (never "the highest version").
+    write('org/repos/wide/package.json', { name: 'wide', private: true, dependencies: { '@acme/ssr': '>=0.1.0 <1', a: 'npm:@acme/ssr@^2' } });
+    write('org/repos/ws/package.json', { name: 'ws', private: true, dependencies: { '@acme/ssr': 'workspace:^0.12.0' } });
+    // pub: `^0.1.0` allows <0.2.0 in pub (so only 0.1.4 of 0.1.4 / 0.2.0 / 1.0.0); a path dep is not a range.
+    write('org/repos/dartold/pubspec.yaml', 'name: acme_kit\nversion: 0.1.4\n');
+    write('org/repos/dartnew/pubspec.yaml', 'name: acme_kit\nversion: 0.2.0\n');
+    write('org/repos/dartnew/pkgs/other/pubspec.yaml', 'name: other_kit\nversion: 1.0.0\n');
+    write('org/repos/flutterapp/pubspec.yaml', 'name: flutterapp\npublish_to: none\ndependencies:\n  acme_kit: ^0.1.0\n');
+    write('org/repos/flutterapp/tool/pubspec.yaml', 'name: fa_tool\npublish_to: none\ndependencies:\n  acme_kit:\n    path: ../../dartnew\n');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    const deps = (id: string) => m.repos.flatMap((r) => r.packages).find((p) => p.packageId === id)!.deps
+      .map((d) => [d.name, d.resolvedPackageId, d.resolution ?? null, d.ambiguous ?? false]);
+    expect(deps('npm:acme/evals:evals')).toEqual([['@acme/ssr', 'npm:acme/ssr:@acme/ssr', 'constraint', false]]);
+    expect(deps('npm:acme/olddep:olddep')).toEqual([['@acme/ssr', 'npm:acme/helpers:@acme/ssr', 'constraint', false]]);
+    expect(deps('npm:acme/wide:wide')).toEqual([['@acme/ssr', null, null, true], ['a', null, null, true]]);
+    expect(deps('npm:acme/ws:ws')).toEqual([['@acme/ssr', null, null, true]]);
+    expect(deps('pub:acme/flutterapp:flutterapp')).toEqual([['acme_kit', 'pub:acme/dartold:acme_kit', 'constraint', false]]);
+    expect(deps('pub:acme/flutterapp:fa_tool')).toEqual([['acme_kit', null, null, true]]);
+    expect(logs).toContain('acme/evals: npm:acme/evals:evals dep @acme/ssr matches 2 org packages; resolved to npm:acme/ssr:@acme/ssr '
+      + '(constraint): the only version satisfying ^0.12.5 of 0.3.0 (npm:acme/helpers:@acme/ssr), 0.12.7 (npm:acme/ssr:@acme/ssr)');
+    expect(m.repos.find((r) => r.repo === 'acme/evals')!.packages[0]!.flags).toEqual([]);
+    writeDiscoverToDb(db, m);
+    expect(all(`SELECT consumer_package_id, resolved_package_id, resolution, ambiguous FROM package_deps
+      WHERE resolution = 'constraint' ORDER BY consumer_package_id`)).toEqual([
+      { consumer_package_id: 'npm:acme/evals:evals', resolved_package_id: 'npm:acme/ssr:@acme/ssr', resolution: 'constraint', ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/olddep:olddep', resolved_package_id: 'npm:acme/helpers:@acme/ssr', resolution: 'constraint', ambiguous: 0 },
+      { consumer_package_id: 'pub:acme/flutterapp:flutterapp', resolved_package_id: 'pub:acme/dartold:acme_kit', resolution: 'constraint', ambiguous: 0 },
+    ]);
+  });
+
+  it('constraintPick: exactly one satisfying candidate, never with an unknown version', () => {
+    const c = (version: string | null) => ({ version });
+    expect(constraintPick('npm', '^0.12.5', [c('0.3.0'), c('0.12.7')])).toEqual(c('0.12.7'));
+    expect(constraintPick('npm', '^0.12.5', [c(null), c('0.12.7')])).toBeUndefined();
+    expect(constraintPick('npm', '^0.12.5', [c('garbage'), c('0.12.7')])).toBeUndefined();
+    expect(constraintPick('npm', null, [c('0.3.0'), c('0.12.7')])).toBeUndefined();
+    expect(constraintPick('npm', 'latest', [c('0.3.0'), c('0.12.7')])).toBeUndefined();
+    expect(constraintPick('npm', 'file:../ssr', [c('0.3.0'), c('0.12.7')])).toBeUndefined();
+    expect(constraintPick('pub', 'path:../x', [c('0.1.0'), c('0.2.0')])).toBeUndefined();
+    expect(constraintPick('pub', 'any', [c('0.1.0'), c('0.2.0')])).toBeUndefined();
+    expect(constraintPick('pub', '>=0.2.0 <0.3.0', [c('0.1.0'), c('0.2.0')])).toEqual(c('0.2.0'));
   });
 
   it('private duplicates within one repo are auto-ignored (kept as ignored manifests); across repos they are packages', () => {

@@ -545,7 +545,7 @@ export function buildReport(opts: BuildReportOptions): Report {
                 AND substr(f.reason, 1, length(d.dep_name) + 13) = 'dep ' || d.dep_name || ' matches '
               ORDER BY f.target_package_id)) AS candidates
     FROM package_deps d
-    WHERE d.ambiguous = 1 OR d.resolution IN ('same-repo', 'published')
+    WHERE d.ambiguous = 1 OR d.resolution IN ('same-repo', 'published', 'constraint')
     ORDER BY d.consumer_package_id, d.dep_name`).all() as Array<{
     consumer: string; dep_name: string; resolved: string | null; resolution: string | null; candidates: string | null;
   }>;

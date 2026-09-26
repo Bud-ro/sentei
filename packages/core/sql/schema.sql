@@ -70,7 +70,8 @@ CREATE INDEX IF NOT EXISTS packages_name ON packages (manager, name);
 -- Manifest-declared dependencies (not code references); resolved to org packages by
 -- name when possible (discover.ts resolveDep): one org package of that name -> it
 -- (resolution 'name'); several -> the one in the consumer's repo ('same-repo'), else
--- the only non-private one ('published'); otherwise ambiguous = 1, resolved_package_id
+-- the only non-private one ('published'), else the only one whose manifest version
+-- satisfies the dep's constraint ('constraint'); otherwise ambiguous = 1, resolved_package_id
 -- NULL, and the consumer gets an `ambiguous_dep` flag targeted at every candidate.
 CREATE TABLE IF NOT EXISTS package_deps (
   consumer_package_id TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
@@ -81,7 +82,7 @@ CREATE TABLE IF NOT EXISTS package_deps (
   -- 1 = declared ONLY as a dev dependency (npm devDependencies / pub dev_dependencies):
   -- the consumer's test files are then real consumers of the target (analyze.sql).
   dev                 INTEGER NOT NULL DEFAULT 0 CHECK (dev IN (0, 1)),
-  resolution          TEXT CHECK (resolution IN ('name', 'same-repo', 'published')),
+  resolution          TEXT CHECK (resolution IN ('name', 'same-repo', 'published', 'constraint')),
   ambiguous           INTEGER NOT NULL DEFAULT 0 CHECK (ambiguous IN (0, 1)),
   CHECK (ambiguous = 0 OR resolved_package_id IS NULL),
   PRIMARY KEY (consumer_package_id, dep_manager, dep_name)
