@@ -21,6 +21,7 @@ import {
   parseOverrideConflicts,
   parseYamlBlock,
   pubGet,
+  pubspecDependencyOverrides,
   pubspecWorkspaceKeys,
   pubWorkspaceOf,
   SCIP_DART_DIR,
@@ -933,6 +934,69 @@ describe('pubspec_overrides.yaml writer', () => {
     expect(d).toEqual([]);
   });
 
+  it("carries pubspec.yaml's own dependency_overrides into the file (pub reads only one of the two); our link wins for the org package", () => {
+    // dart-lang/native: the root pubspec overrides `ffigen: {path: pkgs/ffigen}`;
+    // a pubspec_overrides.yaml without it made version solving fail for 14 packages.
+    const inp = input();
+    const dir = inp.repo.localPath;
+    const file = path.join(dir, 'pubspec_overrides.yaml');
+    rmSync(file, { force: true });
+    rmSync(path.join(dir, '.sentei-backup'), { recursive: true, force: true });
+    const pubspecText = [
+      'name: acme_app',
+      'dependencies:',
+      '  http: ^1.0.0',
+      'dependency_overrides: # local forks',
+      '  ffigen:',
+      '    path: pkgs/ffigen',
+      '',
+      '  acme_lib: 1.2.3 # ours wins',
+      'flutter:',
+      '  uses-material-design: true',
+      '',
+    ].join('\n');
+    writeFileSync(path.join(dir, 'pubspec.yaml'), pubspecText);
+    try {
+      const d: string[] = [];
+      writeOverrides(inp, dir, d);
+      expect(readFileSync(file, 'utf8')).toBe(`${OVERRIDES_HEADER}\ndependency_overrides:\n  ffigen:\n    path: pkgs/ffigen\n  acme_lib:\n    path: ../lib\n`);
+      expect(d).toContain("info: carried pubspec.yaml dependency_overrides into pubspec_overrides.yaml (pub reads only one of the two): ffigen, acme_lib");
+      expect(d).toContain('info: replaced existing dependency_overrides entry for acme_lib');
+      expect(existsSync(path.join(dir, '.sentei-backup'))).toBe(false);
+      expect(readFileSync(path.join(dir, 'pubspec.yaml'), 'utf8')).toBe(pubspecText); // never touched
+      // Idempotent; dropping the link removes our file, so the pubspec's overrides apply again.
+      writeOverrides(inp, dir, []);
+      expect(readFileSync(file, 'utf8')).toContain('ffigen:\n    path: pkgs/ffigen');
+      writeOverrides(inp, dir, [], new Set(['acme_lib']));
+      expect(existsSync(file)).toBe(false);
+
+      // A user file WITH the key: pub already ignored the pubspec's overrides, so do we.
+      writeFileSync(file, 'dependency_overrides:\n  http:\n    path: ../http\n');
+      writeOverrides(inp, dir, []);
+      expect(readFileSync(file, 'utf8')).toBe(`${OVERRIDES_HEADER}\ndependency_overrides:\n  http:\n    path: ../http\n  acme_lib:\n    path: ../lib\n`);
+      // A user file WITHOUT the key: the pubspec's overrides still applied, so they join.
+      rmSync(file);
+      rmSync(path.join(dir, '.sentei-backup'), { recursive: true, force: true });
+      writeFileSync(file, '# nothing here yet\n');
+      writeOverrides(inp, dir, []);
+      expect(readFileSync(file, 'utf8')).toBe(`${OVERRIDES_HEADER}\ndependency_overrides:\n  ffigen:\n    path: pkgs/ffigen\n  acme_lib:\n    path: ../lib\n`);
+    } finally {
+      rmSync(path.join(dir, 'pubspec.yaml'), { force: true });
+      rmSync(file, { force: true });
+      rmSync(path.join(dir, '.sentei-backup'), { recursive: true, force: true });
+    }
+  });
+
+  it("reads pubspec.yaml's dependency_overrides block, and says when it cannot", () => {
+    expect(pubspecDependencyOverrides('name: x\n')).toEqual({});
+    expect(pubspecDependencyOverrides('name: x\ndependency_overrides:\n  a:\n    git:\n      url: https://e.com/a.git\n  b: ^1.0.0\nenvironment:\n  sdk: ^3.0.0\n')).toEqual({
+      overrides: { a: { git: { url: 'https://e.com/a.git' } }, b: '^1.0.0' },
+    });
+    expect(pubspecDependencyOverrides('dependency_overrides: {}\n')).toEqual({ overrides: {} });
+    expect(pubspecDependencyOverrides('dependency_overrides: {a: {path: ../a}}\n').error).toMatch(/^not a block map/);
+    expect(pubspecDependencyOverrides('dependency_overrides:\n  a:\n    - x\n').error).toBe('YAML sentei cannot round-trip');
+  });
+
   it('refuses YAML it cannot round-trip', () => {
     expect(parseYamlBlock('dependency_overrides:\n  - x\n')).toBeUndefined();
     expect(parseYamlBlock('a: |\n  text\n')).toBeUndefined();
@@ -1459,6 +1523,69 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(m.status).toBe('partial');
     expect(m.diagnostics.some((d) => d.startsWith('error: package unresolvable'))).toBe(false);
     expect(readJson<ExportsSidecar>(m.exportsFile).unresolved).toEqual(["lib/acme_selfmiss.dart: export 'package:acme_selfmiss/src/missing.dart'"]);
+  }, 300_000);
+
+  it("keeps pubspec.yaml's own dependency_overrides when it source-links an org dep: pub get resolves", async () => {
+    // Without them the offline pub get fails: `helper ^2.0.0` exists only as the path override.
+    write({
+      'ovr/helper/pubspec.yaml': pubspec('helper', '2.0.0'),
+      'ovr/helper/lib/helper.dart': 'int h() => 1;\n',
+      'ovr/lib/pubspec.yaml': pubspec('acme_olib', '2.0.0'),
+      'ovr/lib/lib/acme_olib.dart': 'int libFn() => 2;\n',
+      'ovr/app/pubspec.yaml': `${pubspec('acme_oapp', '1.0.0', '  acme_olib: ^2.0.0\n  helper: ^2.0.0\n')}dependency_overrides:\n  helper:\n    path: ../helper\n`,
+      'ovr/app/bin/main.dart': "import 'package:acme_olib/acme_olib.dart';\nimport 'package:helper/helper.dart';\n\nvoid main() => print(libFn() + h());\n",
+    });
+    const lib = repoOf(root, 'olib', pubPackage('acme_olib', ['lib/acme_olib.dart']));
+    const app = repoOf(root, 'oapp', pubPackage('acme_oapp', ['bin/main.dart'], [orgDep('acme_olib', '^2.0.0')]));
+    lib.localPath = path.join(root, 'ovr/lib');
+    app.localPath = path.join(root, 'ovr/app');
+    const prep = await scipDart.prepare!(inputFor([lib, app], app));
+    expect(prep.status, prep.diagnostics.join('\n')).toBe('ok');
+    expect(readFileSync(path.join(app.localPath, 'pubspec_overrides.yaml'), 'utf8')).toBe(
+      `${OVERRIDES_HEADER}\ndependency_overrides:\n  helper:\n    path: ../helper\n  acme_olib:\n    path: ../lib\n`,
+    );
+    const config = readFileSync(path.join(app.localPath, '.dart_tool/package_config.json'), 'utf8');
+    expect(config).toMatch(/"rootUri": "\.\.\/\.\.\/helper\/?"/);
+    expect(config).toMatch(/"rootUri": "\.\.\/\.\.\/lib\/?"/);
+  }, 300_000);
+
+  it('a pub workspace: the root keeps its own overrides, and a dep a member overrides itself is not linked (pub refuses both)', async () => {
+    write({
+      'ovw/helper/pubspec.yaml': pubspec('helper', '2.0.0'),
+      'ovw/helper/lib/helper.dart': 'int h() => 1;\n',
+      'ovw/lib/pubspec.yaml': pubspec('acme_wlib', '2.0.0'),
+      'ovw/lib/lib/acme_wlib.dart': 'int libFn() => 2;\n',
+      'ovw/lib_old/pubspec.yaml': pubspec('acme_wlib', '2.0.0'),
+      'ovw/lib_old/lib/acme_wlib.dart': 'int libFn() => 1;\n',
+      'ovw/lib2/pubspec.yaml': pubspec('acme_wlib2', '2.0.0'),
+      'ovw/lib2/lib/acme_wlib2.dart': 'int two() => 2;\n',
+      'ovw/ws/pubspec.yaml': 'name: acme_wsroot\npublish_to: none\nenvironment:\n  sdk: ^3.6.0\nworkspace:\n  - pkgs/m\ndependency_overrides:\n  helper:\n    path: ../helper\n',
+      'ovw/ws/pkgs/m/pubspec.yaml':
+        'name: acme_wm\npublish_to: none\nresolution: workspace\nenvironment:\n  sdk: ^3.6.0\ndependencies:\n  acme_wlib: ^2.0.0\n  acme_wlib2: ^2.0.0\n  helper: ^2.0.0\n' +
+        'dependency_overrides:\n  acme_wlib:\n    path: ../../../lib_old\n',
+      'ovw/ws/pkgs/m/lib/acme_wm.dart': "import 'package:acme_wlib/acme_wlib.dart';\nimport 'package:helper/helper.dart';\n\nint m() => libFn() + h();\n",
+    });
+    const lib = repoOf(root, 'wlib', pubPackage('acme_wlib', ['lib/acme_wlib.dart']));
+    lib.localPath = path.join(root, 'ovw/lib');
+    const lib2 = repoOf(root, 'wlib2', pubPackage('acme_wlib2', ['lib/acme_wlib2.dart']));
+    lib2.localPath = path.join(root, 'ovw/lib2');
+    const ws: DiscoveredRepo = {
+      repo: 'acme/ovw', localPath: path.join(root, 'ovw/ws'), defaultBranch: 'main', headSha: null,
+      packages: [
+        { packageId: 'pub:acme_wsroot', path: '.', manager: 'pub', name: 'acme_wsroot', entryPoints: [], deps: [] },
+        { packageId: 'pub:acme_wm', path: 'pkgs/m', manager: 'pub', name: 'acme_wm', entryPoints: ['pkgs/m/lib/acme_wm.dart'], deps: [orgDep('acme_wlib', '^2.0.0'), orgDep('acme_wlib2', '^2.0.0')] },
+      ],
+    };
+    const inp = { ...inputFor([lib, lib2, ws], ws), pkg: ws.packages[1]! };
+    const prep = await scipDart.prepare!(inp);
+    expect(prep.status, prep.diagnostics.join('\n')).toBe('ok');
+    expect(prep.diagnostics).toContain('warn: acme_wlib is overridden by workspace member pkgs/m (pub refuses an override in both it and the root); not linked');
+    // The root file: its pubspec's own override (helper, the native/ffigen case) plus the link.
+    expect(readFileSync(path.join(ws.localPath, 'pubspec_overrides.yaml'), 'utf8')).toBe(
+      `${OVERRIDES_HEADER}\ndependency_overrides:\n  helper:\n    path: ../helper\n  acme_wlib2:\n    path: ../lib2\n`,
+    );
+    const config = readFileSync(path.join(ws.localPath, '.dart_tool/package_config.json'), 'utf8');
+    expect(config).toMatch(/"rootUri": "\.\.\/\.\.\/lib_old\/?"/);
   }, 300_000);
 
   it('retries pub get without a source link whose HEAD conflicts with the consumer, restoring the user override', async () => {

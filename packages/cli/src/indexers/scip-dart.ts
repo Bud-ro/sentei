@@ -553,8 +553,18 @@ async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<
   const ids = new Set(ws.packages.map((p) => p.packageId));
   const names = new Set(ws.packages.flatMap((p) => (p.name !== null && p.name !== undefined ? [p.name] : [])));
   const deps = ws.packages.flatMap((p) => p.deps);
+  // Pub combines the overrides of every workspace package and refuses a name
+  // overridden in two of them: a member's own override keeps its dep unlinked.
+  const memberOverrides = new Map<string, string>();
+  for (const p of ws.packages) {
+    const d = realpathSync(packageDir(repo, p));
+    if (d === ws.root) continue;
+    const own = effectiveOverrideNames(d);
+    if (own === undefined) diagnostics.push(`warn: workspace member ${p.path}: dependency_overrides unreadable; a source link of the same name may make pub refuse the workspace`);
+    for (const n of own ?? []) if (!memberOverrides.has(n)) memberOverrides.set(n, p.path);
+  }
   const write = (excluded: ReadonlySet<string>): Map<string, string> =>
-    writeOverridesFor(deps, ids, names, input.lookup, ws.root, diagnostics, excluded);
+    writeOverridesFor(deps, ids, names, input.lookup, ws.root, diagnostics, excluded, memberOverrides);
   const links = write(new Set());
   const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
   const flutter = workspaceFlutterReason(input, ws);
@@ -1054,7 +1064,13 @@ export async function buildRunner(
  * copied to `.sentei-backup/pubspec_overrides.yaml` first (once, never
  * overwritten); when the file is already ours, the merge base is that backup
  * (or nothing), so a link dropped with `exclude` gets the user's original
- * entry (if any) back. `pubspec.yaml` is never touched. Returns the links
+ * entry (if any) back. Pub reads `dependency_overrides` from ONE place: the
+ * overrides file when it has the key, else `pubspec.yaml`. So when the user's
+ * file has no such key (or there is none), the pubspec's own
+ * `dependency_overrides` are carried into the merge base: without them
+ * dart-lang/native lost its `ffigen: {path: pkgs/ffigen}` and version solving
+ * failed for all 14 workspace packages. Our links win only for the org
+ * packages we link. `pubspec.yaml` is never touched. Returns the links
  * written (pub name -> relative path).
  */
 export function writeOverrides(
@@ -1069,9 +1085,11 @@ export function writeOverrides(
 /**
  * [writeOverrides] for any dependency list: links every dep resolved to an org
  * package outside `selfIds`, except pub names in `skipNames` (a pub workspace's
- * own members: pub refuses to override them) and in `exclude`.
+ * own members: pub refuses to override them), in `exclude`, and in
+ * `memberOverrides` (name -> the workspace member whose own overrides name it:
+ * pub refuses a package "overridden in both" the root and a member).
  */
-function writeOverridesFor(
+export function writeOverridesFor(
   deps: readonly DiscoveredDep[],
   selfIds: ReadonlySet<string>,
   skipNames: ReadonlySet<string>,
@@ -1079,6 +1097,7 @@ function writeOverridesFor(
   pkgDir: string,
   diagnostics: string[],
   exclude: ReadonlySet<string> = new Set(),
+  memberOverrides: ReadonlyMap<string, string> = new Map(),
 ): Map<string, string> {
   const links = new Map<string, string>();
   for (const dep of deps) {
@@ -1099,6 +1118,11 @@ function writeOverridesFor(
     if (exclude.has(name) || links.has(name)) continue;
     if (skipNames.has(name)) {
       diagnostics.push(`warn: ${dep.name} resolves to ${dep.resolvedPackageId}, but the pub workspace has a member of that name; not linked`);
+      continue;
+    }
+    const member = memberOverrides.get(name);
+    if (member !== undefined) {
+      diagnostics.push(`warn: ${name} is overridden by workspace member ${member} (pub refuses an override in both it and the root); not linked`);
       continue;
     }
     links.set(name, path.relative(pkgDir, realpathSync(targetDir)).split(path.sep).join('/') || '.');
@@ -1138,6 +1162,20 @@ function writeOverridesFor(
       doc = parsed;
     }
   }
+  // Pub takes dependency_overrides from the overrides file when it has the
+  // key, else from pubspec.yaml; ours always has it, so without a user key the
+  // pubspec's entries join the base (with a user key, pub already ignored them).
+  let fromPubspec: ReadonlySet<string> = new Set();
+  if (!Object.hasOwn(doc, 'dependency_overrides')) {
+    const own = pubspecOverridesIn(pkgDir);
+    if (own.error !== undefined) {
+      diagnostics.push(`warn: pubspec.yaml dependency_overrides not carried into ${OVERRIDES} (${own.error}); pub no longer applies them`);
+    } else if (own.overrides !== undefined && Object.keys(own.overrides).length > 0) {
+      doc['dependency_overrides'] = { ...own.overrides };
+      fromPubspec = new Set(Object.keys(own.overrides));
+      diagnostics.push(`info: carried pubspec.yaml dependency_overrides into ${OVERRIDES} (pub reads only one of the two): ${Object.keys(own.overrides).join(', ')}`);
+    }
+  }
   let overrides = doc['dependency_overrides'];
   if (typeof overrides !== 'object') {
     overrides = {};
@@ -1146,7 +1184,7 @@ function writeOverridesFor(
   for (const [name, rel] of links) {
     const prev = overrides[name];
     const next: YamlMap = { path: yamlScalar(rel) };
-    if (!ours && prev !== undefined && !(typeof prev === 'object' && prev['path'] === next['path'])) {
+    if ((!ours || fromPubspec.has(name)) && prev !== undefined && !(typeof prev === 'object' && prev['path'] === next['path'])) {
       diagnostics.push(`info: replaced existing dependency_overrides entry for ${name}`);
     }
     overrides[name] = next;
@@ -1155,6 +1193,58 @@ function writeOverridesFor(
   if (text !== existingText) writeFileSync(file, text);
   diagnostics.push(`info: ${OVERRIDES}: ${[...links].map(([n, r]) => `${n} -> ${r}`).join(', ')}`);
   return links;
+}
+
+/**
+ * The `dependency_overrides` of `<dir>/pubspec.yaml` (a top-level block map;
+ * `{}` / `null` read as none), or why they cannot be read (flow style, YAML
+ * [parseYamlBlock] does not round-trip). No file or no key: neither.
+ */
+export function pubspecOverridesIn(dir: string): { overrides?: YamlMap; error?: string } {
+  let text: string;
+  try {
+    text = readFileSync(path.join(dir, 'pubspec.yaml'), 'utf8');
+  } catch {
+    return {};
+  }
+  return pubspecDependencyOverrides(text);
+}
+
+/** [pubspecOverridesIn] on the text of a pubspec.yaml. */
+export function pubspecDependencyOverrides(text: string): { overrides?: YamlMap; error?: string } {
+  const lines = text.split(/\r?\n/);
+  const key = /^["']?dependency_overrides["']?[ \t]*:/;
+  const at = lines.findIndex((l) => key.test(l));
+  if (at < 0) return {};
+  const rest = stripComment(lines[at]!).replace(key, '').trim();
+  if (rest === '{}' || rest === 'null' || rest === '~') return { overrides: {} };
+  if (rest !== '') return { error: `not a block map: ${rest.slice(0, 40)}` };
+  const block = ['dependency_overrides:'];
+  for (let i = at + 1; i < lines.length && (lines[i]!.trim() === '' || /^[ \t#]/.test(lines[i]!)); i++) block.push(lines[i]!);
+  const parsed = parseYamlBlock(block.join('\n'));
+  const overrides = parsed?.['dependency_overrides'];
+  if (parsed === undefined || typeof overrides !== 'object') return { error: 'YAML sentei cannot round-trip' };
+  return { overrides };
+}
+
+/**
+ * The names a pub package overrides itself: its own pubspec_overrides.yaml's
+ * `dependency_overrides` when that file (not one we wrote) has the key, else its
+ * pubspec.yaml's. Undefined when they cannot be read.
+ */
+export function effectiveOverrideNames(dir: string): string[] | undefined {
+  const file = path.join(dir, OVERRIDES);
+  if (existsSync(file)) {
+    const text = readFileSync(file, 'utf8');
+    if (!text.startsWith(OVERRIDES_HEADER)) {
+      const parsed = parseYamlBlock(text);
+      if (parsed === undefined) return undefined;
+      const o = parsed['dependency_overrides'];
+      if (o !== undefined) return typeof o === 'object' ? Object.keys(o) : [];
+    }
+  }
+  const own = pubspecOverridesIn(dir);
+  return own.error !== undefined ? undefined : Object.keys(own.overrides ?? {});
 }
 
 // ---- Flutter ---------------------------------------------------------------
