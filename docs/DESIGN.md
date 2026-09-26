@@ -2765,3 +2765,127 @@ today's behaviour. Fixture ready, not asserted:
 `fixtures/org-dart/pending/conditional-export/` (outside `org.json`; its
 README lists today's three wrong rows, `platformName` ×2 and `_ioDetail`, and
 how to enable it).
+
+
+### Phase 2 fix round 4: nameless symbol collisions; conditional exports; URL entries; constraint resolution
+
+From the supabase round-3 rerun (`dog-supabase3`: REPORT.md, `work/sentei.db`,
+`work/report.json`). **Measured** by rerunning discover → ingest → analyze →
+witness → report twice on the same inputs, once with the base commit (`409d7b9`)
+and once with this branch: discover over the round-3 clones (read only), the
+round-3 `.scip` / sidecar files (copied), minAgeDays 0 and no blame (every symbol
+old enough, so private_dead and blocked rows are comparable; deletion counts are
+not the round-3 ones). The Dart sidecars predate `directive`, so the copies of the
+supabase-flutter sidecars got it from the directive's source text (4 of 11
+entries are `export`). Scripts and outputs: `$TMPDIR/r4/`.
+
+**Nameless packages collided (ingest `anonymousSymbolKey`).** scip-typescript
+names every package.json without `"name"` `npm . .`, and `symbols.symbol_str` is
+unique, so round 3's `_unnamed/<dir>` consumers shared every same-path symbol
+(`lib/\`utils.ts\`/cn().`): the first one ingested owned it, the others' references
+resolved into it (REPORT: 150 multiplayer.dev references into hack-the-base
+`dec-24`), and their own definitions were never interned. No finding came out
+wrong (nameless packages have none), but reach edges were cut and cross-package
+edges invented. A symbol whose SCIP package name is the `.` placeholder is now the
+document's own package's: its interning key gets that package's name and id in the
+name / version slots (`scip-typescript npm _unnamed/. npm:supabase/multiplayer.dev:_unnamed/. lib/…`),
+the way shared names already get the id in the version slot (`symbolKey`, which now
+escapes spaces in the id). A nameless package cannot be imported by name, so an
+anonymous symbol is only ever its own; a reference from one nameless package to
+another's file by relative path is dropped (same-package target, no unresolved
+row). A named package's own files never carry `npm . .`; files under a nameless
+marker inside it (`{"type": "module"}` in a subdir) are attributed to the owning
+package, where they belong. **Assertion:** pass 1 counts every definition not
+interned because another package already has the key (`sharedDefinitions`) and
+warns when the definer claims the symbol as its own (its own name, or the rewritten
+anonymous one), which after this fix can only be a bug; third-party symbols two
+packages both declare (module augmentation, `declare global`) and round 1's
+augmentation of another org package's symbol are only logged. Measured:
+cross-package occurrences between unnamed packages 264 → 0, edges 93 → 0, symbols of
+the 9 unnamed packages 651 → 736 (their own definitions, now interned), no
+`claimed` warning, no finding changes. Fixture: `lib-dual/unnamed-demo-2` (same
+`src/main.ts` `localHelper()` as `unnamed-demo`); pipeline test asserts each keeps
+its own symbol and no edge crosses them; `ingest.test.ts` has the hand-made case
+(fails without the fix, checked).
+
+**Conditional exports (ingest; the round-3 open item).** Implemented as DESIGN
+round 3 described it: in the conditionalImports pass, for an entry with
+`directive: 'export'`, each twin X' (same matching as the mirroring) gets X's
+`symbol_exports` rows (`INSERT OR IGNORE … SELECT X', entry_file, exported_as`)
+and `is_exported = 1` when a row was added, so it is a seed with X's verdict logic
+(its external references are X's, mirrored). When the default is not an indexed
+document, B's public (non-`_`) top-level symbols become runtime `entry_symbols`.
+Counted as `conditionalExportSymbols` (`exported N` in the ingest line).
+Measured: supabase_common's 6 `*_io.dart` private_dead rows (`createDefaultHttpClient`,
+`createDefaultIoHttpClient`, `<get>conditionalPlatform`, `…PlatformVersion`,
+`…RuntimeVersion`, `isRunningInFlutterTest`) and the `_platformNames` row they
+unlocked are gone; `defaultHttpIdleTimeout` and `normalizePlatformName` stay
+deprecation candidates but lose `dead_island` (the io twin now uses them). The
+pending fixture is enabled (`fixtures/org-dart` acme_core `lib/platform.dart`,
+used by acme_tools); expected findings unchanged, the pipeline test asserts no
+`platformName` / `_ioDetail` row; Dart snapshots regenerated (acme_core gains the
+four files and the `export` entry, acme_tools' `cli.dart` one import), index-dart
+line numbers of `cli.dart` shifted by one.
+
+**Bundler / worker entries named by URL (manifests `urlReferencedFiles`).**
+supabase's CLI bundles `apps/cli/src/shared/functions/serve.main.ts` with esbuild
+from `fileURLToPath(new URL("./serve.main.ts", import.meta.url))`, and Deno runs it
+verbatim; nothing imports it. `conventionEntryPoints` now text-scans the package's
+own code files (not tests, not nested packages; a quick `import.meta` /
+`__dirname` filter first) for `new URL('<relative code file>', import.meta.url)`
+and `join|resolve(__dirname | import.meta.dirname, '<seg>', …)` with only string
+literal segments, resolves the path against the referencing file like a declared
+entry (extension probing, build output to source) and adds it as a runtime entry
+point if it exists. Entries only add reachability. Measured: all 52 cli rows gone
+(45 `serve.main.ts`, 7 `serve-main-deps.ts`), nothing else changed. Fixture:
+`dual-server/src/bundled-worker.ts` (`handleJob` is private_dead without the rule,
+checked). The discover log line still lists the older conventions by name.
+
+**`ambiguous_dep` by version constraint (discover `constraintPick`, new
+`semver.ts`).** After same-repo and published, a shared name resolves to the one
+candidate whose manifest version satisfies the dependency's constraint
+(`resolution 'constraint'`, logged with every candidate's version). Zero or several
+matches, a constraint that is not a range (`workspace:`, `file:`, `link:`, a git or
+path dep, a dist-tag such as `latest`) or any candidate without a parseable version
+stay ambiguous: never "the highest version". The matcher (no dependency): npm
+`^ ~ = < <= > >=`, x-ranges, hyphen ranges, `||`, `*`, `npm:` aliases; pub `^` with
+pub's 0.x rule (`^0.0.3` allows `<0.1.0`), comparators, exact, `any`. It is lenient
+only where that makes more versions match (prerelease precedence without npm's
+same-tuple exclusion), which can only leave a name ambiguous. Schema: the
+`package_deps.resolution` CHECK gains `'constraint'`, **SCHEMA_VERSION 12** (old
+work DBs are rebuilt); the report's shared-name note lists it. Measured on
+`@supabase/ssr` (auth-helpers 0.3.0, ssr 0.12.7): evals' `^0.12.5` resolves to the
+ssr repo; the other three consumers stay ambiguous, correctly under this rule:
+multiplayer.dev pins `0.10.2` and smart-office-dashboard `^0.7.0` (no org copy has
+those versions at HEAD), dec-24 says `latest`. So the 42 ssr `blocked` rows (32 in
+ssr, 10 in auth-helpers' copy) keep 3 of their 4 blockers. Lifting them needs
+either a rule for "matches no org version" (the ssr repo published 0.7 and 0.10
+once, but HEAD cannot prove it) or `ignoreManifests` for auth-helpers' stale copy;
+neither was done.
+
+**Minor.**
+- Index progress line (`stages/index.ts`): shows the last `cause:` diagnostic
+  when there is one, as `statusReason` does (test: the `surface` package's line
+  names `lib/extra.mjs`, not the type-error warning).
+- `blockerHint`: a targeted `opaque_consumer` (the TS adapter's deep dist import
+  with no source) is its own hint, `deep import <specifier> has no source (from
+  <consumer>, <file>)`, not "index partial" (auth-helpers-nextjs on supabase, whose
+  index is ok).
+- Witness: the `(used by ignored manifest <manifest>)` note is now on the
+  deletion / deprecation path's ignored-manifest hits too (a "checkout missing"
+  hit included). Measured: the 12 auth-helpers / middleware-openfeature /
+  supabase_flutter needs_review rows change only by the note. org-dart's
+  `AcmeLoader` reason gains it.
+- `export-surface.ts` checks `ts.version` before using the compiler API
+  (`computeExportSurface`, `filesOutsidePrograms`): any major but 5 throws
+  `the export surface needs TypeScript 5 …, but "typescript" resolved to <path>
+  (version <v>); run npm ci …` instead of the round-3 crash.
+
+**Open (for routing).**
+- `indexers/types.ts` (not this unit's): `DiscoveredPackage` deps' `resolution`
+  union lacks `'constraint'` (read from discover.json with a cast; nothing in the
+  CLI switches on it).
+- The remaining ssr ambiguity (above).
+- Not verified end to end: a real re-index of supabase-flutter with the current
+  Dart adapter (the measurement patched `directive` into copied sidecars), and a
+  run with blame (deletion counts).

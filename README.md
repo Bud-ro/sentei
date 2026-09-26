@@ -84,7 +84,10 @@ opens pull requests.
   include them, they are indexed through a temporary
   `tsconfig.sentei-runtime.json` next to it (it `extends` the package tsconfig and
   is removed after the run); they never make the package opaque. A `main` /
-  `exports` / `types` entry outside the tsconfig still does.
+  `exports` / `types` entry outside the tsconfig still does. A code file the
+  package's own source names relative to itself, `new URL('./worker.ts',
+  import.meta.url)` or `path.join(__dirname, 'x.js')` (a bundler, worker or
+  subprocess input), is such an entry too.
 
   of them is `failed`, never `ok`. Every `.dart` file of the package's `lib/`,
   `bin/`, `test/`, `example/`, `tool/`, `benchmark/`, `web/`,
@@ -97,6 +100,10 @@ opens pull requests.
   library (wherever it is; test files excepted), build.yaml builder factories,
   dart_dev's `config`, and the Flutter plugin classes a pubspec names
   (`flutter.plugin.platforms.*.pluginClass` / `dartPluginClass`).
+- Dart conditional imports / exports (`import 'stub.dart' if (dart.library.io)
+  'io.dart'`): the index sees only the default; its uses are lent to the
+  alternatives' same-named declarations, and for a conditional `export` the
+  alternatives also take the default's export surface.
 - tsconfig `lib`/`target`/`module` values newer than the bundled TypeScript
   5.9 (`ES2025`) are read as its newest (`esnext`, `nodenext`), with an
   `info:` line in the package's index log.
@@ -335,7 +342,9 @@ A `package.json` without `"name"` that declares dependencies (a demo app, a Phoe
 `assets/` bundle) is still indexed, as a consumer: its name is `_unnamed/<dir>`
 (`_unnamed/.` at the repo root), it is private, has no export surface and gets no
 findings of its own, but its uses of org packages count. One without dependencies
-(a bare `{"private": true}` marker) is skipped with a warning.
+(a bare `{"private": true}` marker) is skipped with a warning. scip-typescript names
+the symbols of every nameless package `npm . .`; ingest gives each such package's
+own symbols its own name and id, so two nameless apps never share a symbol.
 
 Manifests and SCIP symbols name dependencies by name only, so a dependency on a
 name several org packages share is resolved per consumer:
@@ -344,7 +353,12 @@ name several org packages share is resolved per consumer:
 2. otherwise the one in the consumer's own repo (`same-repo`);
 3. otherwise the only one that is not private (`published`: a private package
    cannot be installed from a registry);
-4. otherwise it is **ambiguous**: no package is picked, the consumer gets an
+4. otherwise the only one whose manifest `version` satisfies the dependency's
+   version constraint (`constraint`: npm ranges `^` `~` `>=`/`<` `||` `*`, pub
+   `^` / ranges / `any`); a `workspace:` / `file:` / path / git dependency, a
+   dist-tag, or a candidate without a version never decides, and zero or several
+   matches do not either (never "the highest version");
+5. otherwise it is **ambiguous**: no package is picked, the consumer gets an
    `ambiguous_dep` flag at every candidate, and all of them are `blocked` (fail
    closed). Discover logs a warning with `ignoreManifests` entries to disambiguate;
    the report lists each such dependency in its warnings.
