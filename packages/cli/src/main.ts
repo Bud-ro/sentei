@@ -10,7 +10,7 @@ import type { GithubDiscoverOptions, Stage, StageContext } from './context.ts';
 import { analyze } from './stages/analyze.ts';
 import { blame } from './stages/blame.ts';
 import { discover } from './stages/discover.ts';
-import { index } from './stages/index.ts';
+import { index, type IndexSummary } from './stages/index.ts';
 import { ingest } from './stages/ingest.ts';
 import { report } from './stages/report.ts';
 import { repos } from './stages/repos.ts';
@@ -19,7 +19,7 @@ import { witness } from './stages/witness.ts';
 /** Pipeline order; `run` executes these in sequence. */
 const STAGES: ReadonlyArray<readonly [string, Stage]> = [
   ['discover', discover],
-  ['index', index],
+  ['index', async (ctx) => void (await index(ctx))],
   ['ingest', ingest],
   ['blame', blame],
   ['analyze', analyze],
@@ -69,9 +69,12 @@ Options:
   --clones-dir <dir>    discover --org: where clones live (default: <work>/repos)
   --config-dir <dir>    discover/repos --org: dir with the org sentei.json
                         (default: cwd if it has one, else defaults)
-  --json         repos: print JSON instead of a table
+  --json         repos: print JSON instead of a table; index: print the
+                 end-of-run summary as JSON ({"summary": …}; progress on stderr)
   --force        index: re-index repos even when cached for the same headSha
   --no-install   index: do not run npm ci / pnpm / yarn install
+  --strict       index/run: exit 2 when any package failed to index (its
+                 consumers' findings are blocked; run still writes the report)
   --max-old-space-mb <n>  index: heap limit in MB of each indexer and export-surface
                           child process, doubled once on heap exhaustion (default: 8192)
   --policy <key>=<json>   discover/run: override one org sentei.json policy key
@@ -85,7 +88,8 @@ Options:
   -v, --verbose  On error, print the full stack trace
   -h, --help     Show this help
 
-Exit codes: 0 success, 1 a stage failed, 2 usage error.
+Exit codes: 0 success, 1 a stage failed, 2 usage error or (--strict) a package
+failed to index.
 `;
 
 /** Where main() writes; injectable for tests. */
@@ -186,6 +190,7 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
         'config-dir': { type: 'string' },
         force: { type: 'boolean', default: false },
         install: { type: 'boolean', default: true },
+        strict: { type: 'boolean', default: false },
         'max-old-space-mb': { type: 'string', default: '8192' },
         policy: { type: 'string', multiple: true, default: [] },
         view: { type: 'string', multiple: true, default: [] },
@@ -226,7 +231,8 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
       return usageError('--clone-concurrency must be an integer from 1 to 32');
     }
   }
-  if (values.json && command !== 'repos') return usageError('--json only applies to repos');
+  if (values.json && command !== 'repos' && command !== 'index') return usageError('--json only applies to repos and index');
+  if (values.strict && command !== 'index' && command !== 'run') return usageError('--strict only applies to index (and run)');
   const github: GithubDiscoverOptions = {
     updateLockfile: values['update-lockfile'],
     include: values.include,
@@ -290,6 +296,8 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
   }
 
   const { quiet, verbose } = values;
+  // index --json: stdout carries only the JSON summary; progress goes to stderr.
+  const json = values.json && command === 'index';
   let current = command;
   const fail = (err: unknown): number => {
     io.stderr(formatError(current, err, verbose));
@@ -308,7 +316,7 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
   }
   try {
     const log = (line: string): void => {
-      if (!quiet || keepWhenQuiet(current, line)) io.stdout(`${line}\n`);
+      if (!quiet || keepWhenQuiet(current, line)) (json ? io.stderr : io.stdout)(`${line}\n`);
     };
     const ctx: StageContext = { work, dbPath, db, log };
     if (values['org-dir'] !== undefined) ctx.orgDir = values['org-dir'];
@@ -317,18 +325,24 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
     ctx.github = github;
     const t0 = performance.now();
     const took: string[] = [];
+    let indexSummary: IndexSummary | undefined;
     for (const [name, stage] of selected) {
       current = name;
       const start = performance.now();
-      await (name === 'index' ? index(ctx, indexOptions)
-        : name === 'report' ? report(ctx, views !== undefined ? { views } : {})
-        : stage(ctx));
+      if (name === 'index') indexSummary = await index(ctx, indexOptions);
+      else await (name === 'report' ? report(ctx, views !== undefined ? { views } : {}) : stage(ctx));
       const ms = performance.now() - start;
       took.push(`${name} ${seconds(ms)}`);
-      if (!quiet) io.stdout(`[${name}] done in ${seconds(ms)}\n`);
+      if (!quiet) (json ? io.stderr : io.stdout)(`[${name}] done in ${seconds(ms)}\n`);
     }
     if (command === 'run' && !quiet) {
       io.stdout(`[run] done in ${seconds(performance.now() - t0)} (${took.join(', ')})\n`);
+    }
+    if (json && indexSummary !== undefined) io.stdout(`${JSON.stringify({ summary: indexSummary }, null, 2)}\n`);
+    if (values.strict && indexSummary !== undefined && indexSummary.failed > 0) {
+      io.stderr(`sentei ${command}: --strict: ${indexSummary.failed} package(s) failed to index: ${
+        indexSummary.failures.map((f) => f.packageId).join(', ')}\n`);
+      return 2;
     }
   } catch (err) {
     return fail(err);

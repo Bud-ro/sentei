@@ -87,12 +87,15 @@ default the cwd if it has one), `--max-old-space-mb <n>`, `--quiet`, `--verbose`
 `--policy key=value` (repeatable, JSON values) overrides one org policy key for
 `discover`/`run`, e.g. `--policy countTestsAsConsumers=true --policy minAgeDays=0`.
 `--view <name>[,<name>]` (report/run) limits the summary and SARIF to those
-[views](#views).
+[views](#views). `--strict` (index/run) exits 2 when any package failed to index
+(see [Reading the summary](#reading-the-summary)); `run --strict` still runs every
+stage and writes the report first. `index --json` prints the end-of-run summary as
+JSON (`{"summary": {...}}`) on stdout and the progress lines on stderr.
 Run with `--help` for the full list.
 
 Each stage prints `[stage] done in 1.2s`; `run` ends with a total. Exit codes: 0
 success, 1 a stage failed (`sentei <stage>: <message>` on stderr; `--verbose` adds
-the stack), 2 usage error.
+the stack), 2 usage error, or with `--strict` a package that failed to index.
 
 ## Choosing repos
 
@@ -387,6 +390,25 @@ and then `analyze`, `witness` and `report`, never `index`; choosing views needs
 only `report`.
 
 ## Reading the summary
+
+`index` ends with its own summary: packages indexed, reused from the cache and
+failed (plus partial), per indexer, then one line per failed package with the
+first line of its diagnostics that names a cause (a `TS1012`, an `Error:`, heap
+exhaustion, ...) and the path of its log (`work/index/<owner>__<repo>/<pkg>.log`,
+the full indexer and install output):
+
+```
+[index] summary: 15 indexed, 0 cached, 1 failed
+  INDEXER          INDEXED  CACHED  FAILED  PARTIAL
+  scip-typescript       15       0       1        0
+[index] 1 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):
+  npm:acme/repo-broken:@acme/broken: tsconfig.json(11,2): error TS1012: Unexpected token. (log: work/index/acme__repo-broken/npm__repo-broken__acme__broken.log)
+```
+
+A failed package is not fatal: sentei fails closed, so every symbol it might
+consume is `blocked` with `<package id>:index_failed` rather than reported dead,
+and the run exits 0. Fix those first (they cost verdicts, see top blockers
+below), or pass `--strict` in CI to make them exit 2.
 
 The report stage prints: the policy line (and the selected views with
 `--view`); a `!!` warning banner (`minAgeDays` 0, repos whose index was partial

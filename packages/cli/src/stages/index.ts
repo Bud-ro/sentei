@@ -52,8 +52,12 @@ export function repoSlug(repo: string): string {
   return repo.replace(/\//g, '__');
 }
 
-/** `index` stage (PLAN.md §6.2): run the pinned SCIP indexers per package. */
-export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {}): Promise<void> {
+/**
+ * `index` stage (PLAN.md §6.2): run the pinned SCIP indexers per package. Ends with a
+ * summary (indexed / cached / failed per indexer, one line per failed package), which
+ * it also returns (`--strict` exits 2 when `failed > 0`).
+ */
+export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {}): Promise<IndexSummary> {
   const options: IndexOptions = { ...DEFAULT_INDEX_OPTIONS, workDir: path.resolve(ctx.work), ...opts };
   const discoverPath = path.join(ctx.work, 'discover.json');
   if (!existsSync(discoverPath)) throw new Error(`[index] ${discoverPath} not found; run \`sentei discover\` first`);
@@ -70,6 +74,7 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
   // Phase 1: make every org package resolvable (install + source links) before
   // indexing any, since a consumer resolves an org dep's own org imports through
   // that dep's node_modules. Cached repos are prepared too (others resolve through them).
+  const summary = emptySummary();
   const prepared = new Map<string, PrepareResult>();
   for (const repo of discovered.repos) {
     for (const pkg of repo.packages) {
@@ -88,6 +93,11 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
     const owners = repo.packages.map((pkg) => [pkg, INDEXERS.find((ix) => ix.detect({ repo, pkg }))] as const);
     const decisions = options.force ? undefined : isCached(indexJson, repo, owners, { install: options.install });
     mkdirSync(outDir, { recursive: true });
+    const logOf = (entry: PackageIndex): string | null => {
+      if (entry.scip === null) return null;
+      const log = path.join(ctx.work, 'index', repoSlug(repo.repo), entry.scip.replace(/\.scip$/, '.log'));
+      return existsSync(log) ? log : null;
+    };
 
     const result: RepoIndex = { repo: repo.repo, headSha: repo.headSha, status: 'ok', install: true, packages: [] };
     for (const [pkg, indexer] of owners) {
@@ -97,6 +107,7 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
         result.packages.push(entry);
         result.status = worstStatus(result.status, entry.status);
         if (entry.indexer !== null && entry.install !== true) result.install = false;
+        countPackage(summary, repo.repo, entry, true, logOf(entry));
         ctx.log(`[index] ${repo.repo} ${pkg.packageId}: cached (${entry.status} at ${repo.headSha}; use --force to re-index)`);
         continue;
       }
@@ -131,6 +142,7 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
       result.packages.push(entry);
       result.status = worstStatus(result.status, entry.status);
       if (entry.indexer !== null && !entry.install) result.install = false;
+      countPackage(summary, repo.repo, entry, false, logOf(entry));
       const firstProblem = entry.diagnostics.find((d) => d.startsWith('error:') || d.startsWith('warn:'));
       ctx.log(
         `[index] ${repo.repo} ${pkg.packageId}: ${why !== undefined ? `re-indexed (${why}): ` : ''}${entry.status}` +
@@ -140,4 +152,107 @@ export async function index(ctx: StageContext, opts: Partial<IndexOptions> = {})
     }
     writeFileSync(indexJson, `${JSON.stringify(result, null, 2)}\n`);
   }
+  for (const line of formatIndexSummary(summary)) ctx.log(line);
+  return summary;
+}
+
+/** Per-indexer package counts of one `index` run (`(none)`: no indexer owns the package). */
+export interface IndexCounts {
+  /** Indexed in this run (any status). */
+  indexed: number;
+  /** Reused from a previous run (status ok by construction). */
+  cached: number;
+  /** Status `failed` (fresh or reused), included in indexed / cached. */
+  failed: number;
+  /** Status `partial` (fresh or reused), included in indexed / cached. */
+  partial: number;
+}
+
+export interface IndexFailure {
+  repo: string;
+  packageId: string;
+  indexer: string | null;
+  /** The first meaningful error line of the package's diagnostics (see firstMeaningfulError). */
+  error: string;
+  /** The package's log file (under <work>/index/<repo slug>/), null when none was written. */
+  log: string | null;
+}
+
+/** What `index` returns and prints last (`sentei index --json` prints it as `{ "summary": … }`). */
+export interface IndexSummary extends IndexCounts {
+  byIndexer: Record<string, IndexCounts>;
+  failures: IndexFailure[];
+}
+
+const NO_INDEXER = '(none)';
+
+function emptyCounts(): IndexCounts {
+  return { indexed: 0, cached: 0, failed: 0, partial: 0 };
+}
+
+/** Add one package result to the summary. */
+export function countPackage(
+  summary: IndexSummary, repo: string, entry: PackageIndex, cached: boolean, logFile: string | null,
+): void {
+  const key = entry.indexer ?? NO_INDEXER;
+  const per = (summary.byIndexer[key] ??= emptyCounts());
+  for (const c of [summary, per]) {
+    if (cached) c.cached++;
+    else c.indexed++;
+    if (entry.status === 'failed') c.failed++;
+    if (entry.status === 'partial') c.partial++;
+  }
+  if (entry.status === 'failed') {
+    summary.failures.push({ repo, packageId: entry.packageId, indexer: entry.indexer, error: firstMeaningfulError(entry.diagnostics), log: logFile });
+  }
+}
+
+export function emptySummary(): IndexSummary {
+  return { ...emptyCounts(), byIndexer: {}, failures: [] };
+}
+
+/** A diagnostic that names the cause: a TS diagnostic code, an `XxxError:`, an errno, heap exhaustion, a timeout. */
+const MEANINGFUL = /\bTS\d{3,5}\b|\b[A-Z]\w*Error:|\bE[A-Z]{3,}\b|out of memory|timed out|not found|no indexer|cannot|could not|failed to/i;
+
+/**
+ * The line of a failed package's diagnostics most likely to say why: among the
+ * `error:` lines (else `warn:`, else all), skipping echoed source (`throw …`), stack
+ * frames (`at …`) and the pipe-joined stderr tails of "exited with code" lines, the
+ * first that looks like a cause (MEANINGFUL), else the first remaining one, else the
+ * first line cut at its stderr tail. The `error:` prefix and a leading `Error: ` are
+ * dropped; at most 200 characters.
+ */
+export function firstMeaningfulError(diagnostics: readonly string[]): string {
+  const strip = (d: string): string => d.replace(/^(?:error|warn|info):\s*/, '').replace(/^Error:\s*/, '').trim();
+  const pool = [/^error:/, /^warn:/, /./].map((re) => diagnostics.filter((d) => re.test(d))).find((xs) => xs.length > 0) ?? [];
+  const lines = pool.map(strip);
+  const clean = lines.filter((l) => l !== '' && !/^(?:throw\b|at\s|\^)/.test(l) && !l.includes(' | '));
+  const pick = clean.find((l) => MEANINGFUL.test(l)) ?? clean[0] ?? (lines[0] ?? 'failed (no diagnostics)').split(' | ')[0]!.replace(/:\s*$/, '');
+  return pick.length > 200 ? `${pick.slice(0, 199)}…` : pick;
+}
+
+/**
+ * The end-of-run table: one line per indexer (indexed / cached / failed, partial when
+ * any), a total when there are several, then one line per failed package: package id,
+ * its first meaningful error, its log file.
+ */
+export function formatIndexSummary(summary: IndexSummary): string[] {
+  const row = (name: string, c: IndexCounts): string[] => [
+    name, String(c.indexed), String(c.cached), String(c.failed), String(c.partial),
+  ];
+  const rows = [['INDEXER', 'INDEXED', 'CACHED', 'FAILED', 'PARTIAL']];
+  const names = Object.keys(summary.byIndexer).sort();
+  for (const n of names) rows.push(row(n, summary.byIndexer[n]!));
+  if (names.length !== 1) rows.push(row('total', summary));
+  const widths = rows[0]!.map((_, i) => Math.max(...rows.map((r) => r[i]!.length)));
+  const out = [
+    `[index] summary: ${summary.indexed} indexed, ${summary.cached} cached, ${summary.failed} failed` +
+      (summary.partial > 0 ? `, ${summary.partial} partial` : ''),
+    ...rows.map((r) => `  ${r.map((c, i) => (i === 0 ? c.padEnd(widths[i]!) : c.padStart(widths[i]!))).join('  ')}`.trimEnd()),
+  ];
+  if (summary.failures.length > 0) {
+    out.push(`[index] ${summary.failures.length} package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):`);
+    for (const f of summary.failures) out.push(`  ${f.packageId}: ${f.error}${f.log !== null ? ` (log: ${f.log})` : ''}`);
+  }
+  return out;
 }

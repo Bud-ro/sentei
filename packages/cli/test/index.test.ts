@@ -10,7 +10,7 @@ import { isCached } from '../src/indexers/cache.ts';
 import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
 import { choosePackageManager, hermeticEnv, install, installArgs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
-import { index, type RepoIndex } from '../src/stages/index.ts';
+import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
 
 const FIXTURE = path.resolve(import.meta.dirname, '../../../fixtures/org-small');
 /** Copy options that never carry a node_modules left in the fixture by a manual run. */
@@ -165,6 +165,14 @@ describe('index stage on fixtures/org-small', () => {
       '[index] acme/lib-core npm:acme/lib-core:@acme/core: cached (ok at sha-lib; use --force to re-index)',
       '[index] acme/app npm:acme/app:@acme/app: cached (ok at sha-app; use --force to re-index)',
       '[index] acme/app pub:acme/app:app_tool: cached (failed at sha-app; use --force to re-index)',
+      // The end-of-run summary: a cached failure is still a failure (--strict exits 2 on it).
+      '[index] summary: 0 indexed, 3 cached, 1 failed',
+      '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
+      '  (none)                 0       1       1        0',
+      '  scip-typescript        0       2       0        0',
+      '  total                  0       3       1        0',
+      "[index] 1 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):",
+      '  pub:acme/app:app_tool: no indexer',
     ]);
     expect(readFileSync(path.join(work, 'index/acme__app/index.json'), 'utf8')).toBe(before);
   });
@@ -1076,13 +1084,14 @@ describe('per-package index cache (stage)', () => {
     const second = await run();
     expect(log[0]).toBe('[index] acme/mono npm:@acme/a: cached (ok at sha1; use --force to re-index)');
     expect(log[1]).toMatch(/^\[index\] acme\/mono npm:@acme\/b: re-indexed \(previous status partial; partial\/failed results are always retried\): partial/);
-    expect(log).toHaveLength(2);
+    expect(log[2]).toBe('[index] summary: 1 indexed, 1 cached, 0 failed, 1 partial');
+    expect(log).toHaveLength(5); // two packages, the summary line and its two-row table
     expect(second.packages[0]).toEqual(first.packages[0]);
     expect(second.status).toBe('partial');
     expect(statSync(aLog).mtimeMs).toBe(aLogMtime); // a was not re-run
 
     await run({ force: true });
-    expect(log.map((l) => l.replace(/: re-indexed \(--force\): .*/, ''))).toEqual([
+    expect(log.filter((l) => l.startsWith('[index] acme/')).map((l) => l.replace(/: re-indexed \(--force\): .*/, ''))).toEqual([
       '[index] acme/mono npm:@acme/a',
       '[index] acme/mono npm:@acme/b',
     ]);
@@ -1801,5 +1810,56 @@ describe('packageSlug', () => {
     expect(packageSlug(pkg('npm:acme/x:x', 'npm', null, 'tools/gen'))).toBe('npm__x__tools__gen');
     // An old-format id (no repo) keeps the old slug.
     expect(packageSlug(pkg('npm:@acme/core', 'npm', '@acme/core'))).toBe('npm__acme__core');
+  });
+});
+
+describe('index summary formatting', () => {
+  it('firstMeaningfulError skips stderr tails, echoed source and stack frames', () => {
+    expect(firstMeaningfulError([
+      'info: install skipped (--no-install)',
+      'error: scip-typescript exited with code 1: /x/main.js:166 | throw new Error(x); | ^ | at y',
+      'error: throw new Error(ts.formatDiagnostics([readResult.error]));',
+      'error: Error: tsconfig.json(11,2): error TS1012: Unexpected token.',
+      'error: x.scip missing or empty',
+    ])).toBe('tsconfig.json(11,2): error TS1012: Unexpected token.');
+    // No line looks like a cause: the first clean error line.
+    expect(firstMeaningfulError(['warn: w', 'error: x.scip missing or empty', 'error: other'])).toBe('x.scip missing or empty');
+    // Only a pipe-joined line: its head (up to the first stderr tail separator).
+    expect(firstMeaningfulError(['error: scip-dart exited with code 255: a | b'])).toBe('scip-dart exited with code 255: a');
+    expect(firstMeaningfulError(['error: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory']))
+      .toBe('FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory');
+    expect(firstMeaningfulError([])).toBe('failed (no diagnostics)');
+    expect(firstMeaningfulError([`error: ${'x'.repeat(300)}`])).toHaveLength(200);
+  });
+
+  it('counts per indexer (cached and fresh), totals several indexers, lists each failure with its log', () => {
+    const s = emptySummary();
+    const entry = (packageId: string, indexer: string | null, status: 'ok' | 'partial' | 'failed', diagnostics: string[] = []): PackageIndex => ({
+      packageId, indexer, indexerVersion: indexer === null ? null : '1', status, scip: null, exports: null, diagnostics, install: true,
+    });
+    countPackage(s, 'acme/a', entry('npm:acme/a:a', 'scip-typescript', 'ok'), true, null);
+    countPackage(s, 'acme/a', entry('npm:acme/a:b', 'scip-typescript', 'partial'), false, null);
+    countPackage(s, 'acme/d', entry('pub:acme/d:d', 'scip-dart', 'failed', ['error: pub get failed to resolve']), false, 'work/index/acme__d/pub__d__d.log');
+    countPackage(s, 'acme/p', entry('pub:acme/p:p', null, 'failed', ['error: no indexer']), false, null);
+    expect(s).toMatchObject({ indexed: 3, cached: 1, failed: 2, partial: 1 });
+    expect(formatIndexSummary(s)).toEqual([
+      '[index] summary: 3 indexed, 1 cached, 2 failed, 1 partial',
+      '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
+      '  (none)                 1       0       1        0',
+      '  scip-dart              1       0       1        0',
+      '  scip-typescript        1       1       0        1',
+      '  total                  3       1       2        1',
+      "[index] 2 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):",
+      '  pub:acme/d:d: pub get failed to resolve (log: work/index/acme__d/pub__d__d.log)',
+      '  pub:acme/p:p: no indexer',
+    ]);
+    // Nothing failed: the table only.
+    const ok = emptySummary();
+    countPackage(ok, 'acme/a', entry('npm:acme/a:a', 'scip-typescript', 'ok'), false, null);
+    expect(formatIndexSummary(ok)).toEqual([
+      '[index] summary: 1 indexed, 0 cached, 0 failed',
+      '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
+      '  scip-typescript        1       0       0        0',
+    ]);
   });
 });

@@ -330,3 +330,79 @@ describe('repos and GitHub discover (fake API)', () => {
     expect(listed.out).toMatch(/^gone .* language TypeScript; last clone failed: git clone/m);
   });
 });
+
+describe('index summary, --strict and --json', () => {
+  /** org-small cut down to repo-broken (index fails on purpose) and lib-y (indexes fine). */
+  function brokenOrg(): string {
+    const orgDir = path.join(tmpRoot, `org-broken-${n++}`);
+    for (const r of ['repo-broken', 'lib-y']) {
+      cpSync(path.join(FIXTURES, 'org-small', 'repos', r), path.join(orgDir, 'repos', r), {
+        recursive: true,
+        filter: (src) => !src.split(path.sep).includes('node_modules'),
+      });
+    }
+    writeFileSync(path.join(orgDir, 'org.json'), JSON.stringify({
+      org: 'acme', repos: [{ name: 'lib-y', default_branch: 'main' }, { name: 'repo-broken', default_branch: 'main' }],
+    }));
+    return orgDir;
+  }
+
+  it('--strict applies to index and run only; --json to repos and index only', async () => {
+    const strict = await run('analyze', '--strict', '--work', freshWork());
+    expect(strict.code).toBe(2);
+    expect(strict.err).toMatch(/^--strict only applies to index \(and run\)/);
+    const json = await run('run', '--json', '--work', freshWork());
+    expect(json.code).toBe(2);
+    expect(json.err).toMatch(/^--json only applies to repos and index/);
+  });
+
+  it('prints the summary with the failed package, its error and its log; exits 0, or 2 with --strict', async () => {
+    const orgDir = brokenOrg();
+    const work = freshWork();
+    expect((await run('discover', '--org-dir', orgDir, '--work', work, '-q')).code).toBe(0);
+    const broken = 'npm:acme/repo-broken:@acme/broken';
+    const log = path.join(work, 'index', 'acme__repo-broken', 'npm__repo-broken__acme__broken.log');
+
+    const lenient = await run('index', '--work', work, '--no-install', '--force');
+    expect(lenient.code).toBe(0);
+    expect(lenient.err).toBe('');
+    const lines = lenient.out.split('\n');
+    const at = lines.indexOf('[index] summary: 2 indexed, 0 cached, 1 failed');
+    expect(at).toBeGreaterThan(-1);
+    expect(lines.slice(at + 1, at + 5)).toEqual([
+      '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
+      '  scip-typescript        2       0       1        0',
+      "[index] 1 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):",
+      `  ${broken}: tsconfig.json(11,2): error TS1012: Unexpected token. (log: ${log})`,
+    ]);
+    expect(readFileSync(log, 'utf8')).toContain('TS1012');
+
+    const strict = await run('index', '--work', work, '--no-install', '--force', '--strict');
+    expect(strict.code).toBe(2);
+    expect(strict.out).toContain('[index] summary: 2 indexed, 0 cached, 1 failed');
+    expect(strict.err).toBe(`sentei index: --strict: 1 package(s) failed to index: ${broken}\n`);
+
+    // --json: stdout is only the summary; progress (and the table) on stderr.
+    const json = await run('index', '--work', work, '--no-install', '--force', '--json', '--strict');
+    expect(json.code).toBe(2);
+    expect(json.err).toContain('[index] summary: 2 indexed');
+    const { summary } = JSON.parse(json.out) as { summary: Record<string, unknown> };
+    expect(summary).toEqual({
+      indexed: 2, cached: 0, failed: 1, partial: 0,
+      byIndexer: { 'scip-typescript': { indexed: 2, cached: 0, failed: 1, partial: 0 } },
+      failures: [{
+        repo: 'acme/repo-broken', packageId: broken, indexer: 'scip-typescript',
+        error: 'tsconfig.json(11,2): error TS1012: Unexpected token.', log,
+      }],
+    });
+  }, 180_000);
+
+  it('run --strict still writes the report, then exits 2', async () => {
+    const orgDir = brokenOrg();
+    const work = freshWork();
+    const r = await run('run', '--org-dir', orgDir, '--work', work, '--no-install', '--strict', '-q');
+    expect(r.code).toBe(2);
+    expect(readFileSync(path.join(work, 'report.json'), 'utf8')).toContain('index_failed');
+    expect(r.err).toBe('sentei run: --strict: 1 package(s) failed to index: npm:acme/repo-broken:@acme/broken\n');
+  }, 180_000);
+});
