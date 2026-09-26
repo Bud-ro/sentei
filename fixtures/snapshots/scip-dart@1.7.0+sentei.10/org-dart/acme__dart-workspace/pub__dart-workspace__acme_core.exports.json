@@ -12,6 +12,8 @@
     }
   ],
   "entryPoints": [
+    "packages/acme_core/lib/_parts/engine.dart",
+    "packages/acme_core/lib/_parts/helper.dart",
     "packages/acme_core/lib/acme_core.dart"
   ],
   "entrySymbols": [],

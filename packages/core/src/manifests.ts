@@ -33,7 +33,8 @@ export interface ManifestPackage {
   visibility: Visibility;
   /**
    * Manifest shape of a library (imported by other code) rather than an app (run by a
-   * runtime): npm `exports`/`types`/`typings`/`module`; pub any `lib/*.dart`.
+   * runtime): npm `exports`/`types`/`typings`/`module`; pub any public library
+   * (a `.dart` file under `lib/` outside `lib/src/`, see pubPublicLibraries).
    */
   isLibrary: boolean;
   /** Package dir relative to the repo root, POSIX; '.' for the root. */
@@ -1461,18 +1462,18 @@ export function readPubPackage(
   const version = typeof doc['version'] === 'string' ? doc['version'] : null;
 
   const files = packageFiles(dir, repoFiles ?? listFiles(repoRoot));
-  const entryPoints = files
-    .filter((f) => f.endsWith('.dart') && ((f.startsWith('lib/') && !f.slice(4).includes('/')) || f.startsWith('bin/')))
+  const publicLibs = pubPublicLibraries(files);
+  const entryPoints = [...publicLibs, ...files.filter((f) => f.startsWith('bin/') && f.endsWith('.dart'))]
     .map((f) => joinRel(dir, f))
     .sort(cmp);
-  if (entryPoints.length === 0) warn(`${manifest}: no entry points (no lib/*.dart or bin/**/*.dart)`);
+  if (entryPoints.length === 0) warn(`${manifest}: no entry points (no lib/**/*.dart outside lib/src/, no bin/**/*.dart)`);
 
   return {
     manager: 'pub',
     name,
     version,
     visibility: pubVisibility(doc['publish_to']),
-    isLibrary: files.some((f) => f.startsWith('lib/') && f.endsWith('.dart') && !f.slice(4).includes('/')),
+    isLibrary: publicLibs.length > 0,
     path: dir,
     manifest,
     entryPoints,
@@ -1480,6 +1481,28 @@ export function readPubPackage(
     runtimeEntryPoints: [],
     deps: pubDeps(doc, manifest, warn),
   };
+}
+
+/**
+ * The public libraries of a pub package (package-relative paths): every `.dart` file
+ * under `lib/` except those under `lib/src/`. Each is importable as `package:<name>/<path>` (Dart
+ * package layout convention), so `lib/client/client.dart` is as much API as
+ * `lib/foo.dart` (dart-lang/sse has nothing else). Left out: dot dirs, and the files of
+ * a package nested under `lib/` (its own pubspec.yaml). A `part of` file stays in the
+ * list; dart-surface reports it as "not a library" and exports nothing from it.
+ */
+export function pubPublicLibraries(files: readonly string[]): string[] {
+  const nested = files
+    .filter((f) => f.startsWith('lib/') && f.endsWith('/pubspec.yaml'))
+    .map((f) => f.slice(0, -'pubspec.yaml'.length));
+  return files.filter(
+    (f) =>
+      f.startsWith('lib/') &&
+      f.endsWith('.dart') &&
+      !f.startsWith('lib/src/') &&
+      !f.split('/').some((seg) => seg.startsWith('.')) &&
+      !nested.some((d) => f.startsWith(d)),
+  );
 }
 
 /** pub deps (dependencies, then dev_dependencies for names not already seen, with `dev: true`). Sorted by name. */

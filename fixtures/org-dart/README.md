@@ -151,3 +151,9 @@ docs / example files: a use there makes them needs_review with a note.
 | Extension whose only member is shorter than 3 characters (negative) | `AcmeTiny` (`sq`; `demo.dart` has a local `sq`) | deletion_candidate `["no_refs"]`: short names and Object members are not searched |
 | Unexport named by the ignored example | `acme_x.dart` `inExample` (used inside acme_x by `_privateFn`; `inExample()` in `demo.dart`) | needs_review `["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest example/pubspec.yaml)"]`, not unexport_candidate |
 | Unexport nothing outside the index names (negative) | `lib/src/wire_test.dart` `wireTick` | unexport_candidate `["internal_refs_only"]` (unchanged) |
+
+### Public libraries, `main` anywhere, analyzer excludes (Phase 2 fix round 3)
+
+| Case | Where | Expected |
+| --- | --- | --- |
+| Public library in a subdirectory of `lib/` (dart-lang/sse, timezone `lib/data/`) | `dart-lib-x/lib/extras/extras.dart`: discover entry point (every `lib/**/*.dart` outside `lib/src/`) | `extrasUsed` (used by `dart-app/bin/clock.dart`) alive; `extrasUnused` deletion_candidate `["no_refs"]` (was private_dead `already_unreachable`: not exported) |

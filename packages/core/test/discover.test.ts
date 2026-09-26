@@ -295,10 +295,35 @@ describe('discoverLocal on a synthetic org', () => {
     ]);
     expect(logs).toContain('acme/flame: pubspec.yaml: no lib/ directory, treated as private (not importable)');
     expect(logs).toContain('acme/tools: pubspec.yaml: no lib/ directory, treated as private (not importable)');
-    expect(logs.filter((l) => l.includes('no entry points'))).toEqual(['warning: acme/tools: srconly/pubspec.yaml: no entry points (no lib/*.dart or bin/**/*.dart)']);
+    expect(logs.filter((l) => l.includes('no entry points'))).toEqual(['warning: acme/tools: srconly/pubspec.yaml: no entry points (no lib/**/*.dart outside lib/src/, no bin/**/*.dart)']);
     writeDiscoverToDb(db, m);
     expect(all("SELECT package_id, visibility, is_library FROM packages WHERE package_id = 'pub:acme/flame:_'"))
       .toEqual([{ package_id: 'pub:acme/flame:_', visibility: 'private', is_library: 0 }]);
+  });
+
+  it('pub: every lib/**/*.dart outside lib/src/ is a public library (entry point), parts included; lib/src, dot dirs and nested packages are not', () => {
+    org(['sse']);
+    // dart-lang/sse: only lib/client/ and lib/server/ (was "no entry points").
+    write('org/repos/sse/pubspec.yaml', 'name: sse\n');
+    write('org/repos/sse/lib/client/sse_client.dart', '');
+    write('org/repos/sse/lib/server/sse_handler.dart', '');
+    write('org/repos/sse/lib/server/handler_part.dart', "part of 'sse_handler.dart';\n");
+    write('org/repos/sse/lib/src/util.dart', '');
+    write('org/repos/sse/lib/.hidden/x.dart', '');
+    write('org/repos/sse/lib/templates/app/pubspec.yaml', 'name: app\n');
+    write('org/repos/sse/lib/templates/app/main.dart', '');
+    write('org/repos/sse/bin/tool.dart', '');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    const sse = m.repos[0]!.packages.find((p) => p.name === 'sse')!;
+    expect(sse.isLibrary).toBe(true);
+    expect(sse.entryPoints).toEqual([
+      'bin/tool.dart',
+      'lib/client/sse_client.dart',
+      'lib/server/handler_part.dart',
+      'lib/server/sse_handler.dart',
+    ]);
+    expect(logs.filter((l) => l.includes('no entry points'))).toEqual([]);
   });
 
   it('the same-repo clash message lists every location and copy-pasteable ignoreManifests suggestions', () => {

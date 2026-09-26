@@ -119,7 +119,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.9',
+        indexerVersion: '1.7.0+sentei.10',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -190,7 +190,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(s.unresolvedImports).toEqual([]);
     // `void main() {` on line 10: the runtime calls it, nothing references it.
     expect(s.entrySymbols).toEqual([
-      { name: 'main', file: 'bin/clock.dart', line: 4, col: 5, kind: 'runtime' },
+      { name: 'main', file: 'bin/clock.dart', line: 6, col: 5, kind: 'runtime' },
       { name: 'main', file: 'bin/main.dart', line: 9, col: 5, kind: 'runtime' },
       { name: 'main', file: 'bin/shapes.dart', line: 4, col: 5, kind: 'runtime' },
     ]);

@@ -87,7 +87,9 @@ export const scipDart: Indexer = {
   // dart-surface: a `main` re-exported by a script is an entry symbol, and
   // `conditionalImports`; build_runner for missing generated parts;
   // dart-surface once per pub workspace (`--batch`).
-  version: '1.7.0+sentei.9',
+  // sentei.10: every public library (lib/**, not lib/src/) is a discover entry
+  // point, so dart-surface computes its export surface.
+  version: '1.7.0+sentei.10',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));
