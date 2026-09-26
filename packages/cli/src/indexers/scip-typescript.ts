@@ -56,16 +56,95 @@ export function packageDir(repo: DiscoveredRepo, pkg: DiscoveredPackage): string
   return path.resolve(repo.localPath, ...pkg.path.split('/'));
 }
 
-type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
+export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
-/** Lockfile → package manager and its install arguments (first match wins, per directory). */
-const LOCKFILES: ReadonlyArray<readonly [string, PackageManager, string[]]> = [
-  ['package-lock.json', 'npm', ['ci', '--ignore-scripts']],
-  ['pnpm-lock.yaml', 'pnpm', ['install', '--frozen-lockfile', '--ignore-scripts']],
-  ['yarn.lock', 'yarn', ['install', '--frozen-lockfile', '--ignore-scripts']],
-  ['bun.lock', 'bun', ['install', '--frozen-lockfile', '--ignore-scripts']],
-  ['bun.lockb', 'bun', ['install', '--frozen-lockfile', '--ignore-scripts']],
+/**
+ * Lockfile → package manager, in the order that breaks ties when a directory
+ * holds several lockfiles and its package.json does not say which manager it
+ * uses (see `choosePackageManager`).
+ */
+const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
+  ['package-lock.json', 'npm'],
+  ['pnpm-lock.yaml', 'pnpm'],
+  ['yarn.lock', 'yarn'],
+  ['bun.lock', 'bun'],
+  ['bun.lockb', 'bun'],
 ];
+
+/** The package-manager names a package.json declares: `packageManager` first, then `devEngines.packageManager`. */
+function declaredManagers(pkgJson: unknown): Array<{ pm: PackageManager; field: string; version?: string }> {
+  if (typeof pkgJson !== 'object' || pkgJson === null) return [];
+  const json = pkgJson as { packageManager?: unknown; devEngines?: { packageManager?: unknown } };
+  const out: Array<{ pm: PackageManager; field: string; version?: string }> = [];
+  if (typeof json.packageManager === 'string') {
+    const m = /^(npm|pnpm|yarn|bun)@([^+\s]+)/.exec(json.packageManager.trim()) ?? /^(npm|pnpm|yarn|bun)$/.exec(json.packageManager.trim());
+    if (m !== null) out.push({ pm: m[1] as PackageManager, field: 'packageManager', ...(m[2] !== undefined ? { version: m[2] } : {}) });
+  }
+  const dev = json.devEngines?.packageManager;
+  for (const e of Array.isArray(dev) ? dev : dev !== undefined ? [dev] : []) {
+    if (typeof e !== 'object' || e === null) continue;
+    const { name, version } = e as { name?: unknown; version?: unknown };
+    if (name !== 'npm' && name !== 'pnpm' && name !== 'yarn' && name !== 'bun') continue;
+    const ok = typeof version === 'string' && /^[\w.^~<>=|*\s-]+$/.test(version.trim());
+    out.push({ pm: name, field: 'devEngines.packageManager', ...(ok ? { version: (version as string).trim() } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Which package manager installs a directory holding `lockfiles` (file names),
+ * given the nearest package.json that declares a manager (`pkgJson`, or
+ * undefined). Order:
+ *   1. `packageManager` (`pnpm@9.12.0`, `yarn@4.5.0`, `npm@10`), when that
+ *      manager's lockfile is present;
+ *   2. `devEngines.packageManager` (object or array form), likewise;
+ *   3. the first present lockfile in LOCKFILES order (npm, pnpm, yarn, bun).
+ * A declared manager without its lockfile here cannot run a frozen install, so
+ * it falls through to 3 (the `reason` says so). Undefined without lockfiles.
+ */
+export function choosePackageManager(
+  pkgJson: unknown,
+  lockfiles: readonly string[],
+): { pm: PackageManager; lockfile: string; reason: string } | undefined {
+  const present = LOCKFILES.filter(([f]) => lockfiles.includes(f));
+  if (present.length === 0) return undefined;
+  const declared = declaredManagers(pkgJson);
+  for (const d of declared) {
+    const hit = present.find(([, pm]) => pm === d.pm);
+    if (hit !== undefined) return { pm: d.pm, lockfile: hit[0], reason: `${d.field} names ${d.pm}` };
+  }
+  const [lockfile, pm] = present[0]!;
+  const unmet = declared.length > 0 ? `; ${declared[0]!.field} names ${declared[0]!.pm}, which has no lockfile here` : '';
+  return { pm, lockfile, reason: `lockfile order${unmet}` };
+}
+
+/**
+ * The nearest package.json from `dir` up to `repoRoot` that declares a package
+ * manager (`packageManager` or `devEngines.packageManager`), parsed, with its
+ * repo-relative POSIX path; undefined when none does.
+ */
+function nearestManagerManifest(repoRoot: string, dir: string): { json: unknown; rel: string } | undefined {
+  for (let d = dir; ; d = path.dirname(d)) {
+    let json: unknown;
+    try {
+      json = JSON.parse(readFileSync(path.join(d, 'package.json'), 'utf8'));
+    } catch {
+      json = undefined;
+    }
+    if (declaredManagers(json).length > 0) {
+      return { json, rel: path.relative(repoRoot, path.join(d, 'package.json')).split(path.sep).join('/') };
+    }
+    if (d === repoRoot || path.dirname(d) === d) return undefined;
+  }
+}
+
+/** Install arguments per manager. */
+const LEGACY_ARGS: Record<PackageManager, string[]> = {
+  npm: ['ci', '--ignore-scripts'],
+  pnpm: ['install', '--frozen-lockfile', '--ignore-scripts'],
+  yarn: ['install', '--frozen-lockfile', '--ignore-scripts'],
+  bun: ['install', '--frozen-lockfile', '--ignore-scripts'],
+};
 
 /** Directories never searched for sources (tsconfig inference, the no-code check). */
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'coverage']);
@@ -566,9 +645,15 @@ export async function install(
   workDir: string = path.join(tmpdir(), 'sentei-pm'),
 ): Promise<boolean> {
   for (let d = pkgDir; ; d = path.dirname(d)) {
-    for (const [lockfile, pm, baseArgs] of LOCKFILES) {
-      if (!existsSync(path.join(d, lockfile))) continue;
+    const lockfiles = LOCKFILES.map(([f]) => f).filter((f) => existsSync(path.join(d, f)));
+    const choice = choosePackageManager(nearestManagerManifest(repoRoot, d)?.json, lockfiles);
+    if (choice !== undefined) {
+      const { pm, lockfile } = choice;
+      const baseArgs = LEGACY_ARGS[pm];
       const rel = path.relative(repoRoot, d) || '.';
+      if (lockfiles.length > 1) {
+        diagnostics.push(`info: ${lockfiles.join(', ')} in ${rel}; installing with ${pm} (${lockfile}: ${choice.reason})`);
+      }
       if (isInstalled(path.join(d, 'node_modules'))) {
         diagnostics.push(`info: ${rel}/node_modules exists; install skipped`);
         return true;
@@ -690,26 +775,15 @@ function packageManagerVersion(
   pm: PackageManager,
 ): { version: string; source: string } {
   for (let d = lockDir; ; d = path.dirname(d)) {
-    let json: { packageManager?: unknown; devEngines?: { packageManager?: unknown } } | undefined;
+    let json: unknown;
     try {
-      json = JSON.parse(readFileSync(path.join(d, 'package.json'), 'utf8')) as typeof json;
+      json = JSON.parse(readFileSync(path.join(d, 'package.json'), 'utf8'));
     } catch {
       json = undefined;
     }
     const rel = path.relative(repoRoot, path.join(d, 'package.json')).split(path.sep).join('/');
-    const field = json?.packageManager;
-    if (typeof field === 'string') {
-      const m = /^(npm|pnpm|yarn|bun)@([^+\s]+)/.exec(field);
-      if (m !== null && m[1] === pm) return { version: m[2]!, source: `from packageManager in ${rel}` };
-    }
-    const dev = json?.devEngines?.packageManager;
-    for (const e of Array.isArray(dev) ? dev : dev !== undefined ? [dev] : []) {
-      if (typeof e !== 'object' || e === null) continue;
-      const { name, version } = e as { name?: unknown; version?: unknown };
-      if (name === pm && typeof version === 'string' && /^[\w.^~<>=|*\s-]+$/.test(version.trim())) {
-        return { version: version.trim(), source: `from devEngines.packageManager in ${rel}` };
-      }
-    }
+    const hit = declaredManagers(json).find((e) => e.pm === pm && e.version !== undefined);
+    if (hit !== undefined) return { version: hit.version!, source: `from ${hit.field} in ${rel}` };
     if (d === repoRoot || path.dirname(d) === d) break;
   }
   return { version: 'latest', source: '(no matching packageManager or devEngines.packageManager field)' };

@@ -7,7 +7,7 @@ import type { StageContext } from '../src/context.ts';
 import { readScipIndex } from '@sentei/core/scip';
 import { isCached } from '../src/indexers/cache.ts';
 import { isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, runNode, runSurfaceWorker, scipTypescript, stderrTail, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, runNode, runSurfaceWorker, scipTypescript, stderrTail, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { index, type RepoIndex } from '../src/stages/index.ts';
 
@@ -788,6 +788,49 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     expect(envLine).toContain('YARN_HTTPS_PROXY');
     expect(envLine).not.toContain('proxy.test');
     expect(log.filter((l) => l.startsWith('# install env'))).toHaveLength(1);
+  });
+
+  it('(toolchain 1) packageManager picks among several lockfiles; then devEngines; then lockfile order', () => {
+    const both = ['package-lock.json', 'pnpm-lock.yaml'];
+    expect(choosePackageManager({ packageManager: 'pnpm@7.1.7' }, both)).toEqual({ pm: 'pnpm', lockfile: 'pnpm-lock.yaml', reason: 'packageManager names pnpm' });
+    expect(choosePackageManager({ packageManager: 'yarn@4.5.0+sha512.x' }, ['package-lock.json', 'yarn.lock'])!.pm).toBe('yarn');
+    expect(choosePackageManager({ packageManager: 'npm@10' }, both)!.pm).toBe('npm');
+    expect(choosePackageManager({ packageManager: 'bun@1.2.0' }, ['yarn.lock', 'bun.lockb'])).toMatchObject({ pm: 'bun', lockfile: 'bun.lockb' });
+    expect(choosePackageManager({ devEngines: { packageManager: [{ name: 'pnpm', version: '^9' }] } }, both)!.pm).toBe('pnpm');
+    // packageManager beats devEngines.
+    expect(choosePackageManager({ packageManager: 'npm@10.0.0', devEngines: { packageManager: { name: 'pnpm' } } }, both)!.pm).toBe('npm');
+    // Nothing declared: lockfile order (npm, pnpm, yarn, bun).
+    expect(choosePackageManager({}, ['yarn.lock', 'pnpm-lock.yaml', 'package-lock.json'])).toEqual({ pm: 'npm', lockfile: 'package-lock.json', reason: 'lockfile order' });
+    expect(choosePackageManager(undefined, ['bun.lock', 'yarn.lock'])!.pm).toBe('yarn');
+    // A declared manager without its lockfile cannot install frozen: lockfile order, and the reason says so.
+    expect(choosePackageManager({ packageManager: 'pnpm@9.0.0' }, ['package-lock.json'])).toEqual({
+      pm: 'npm',
+      lockfile: 'package-lock.json',
+      reason: 'lockfile order; packageManager names pnpm, which has no lockfile here',
+    });
+    expect(choosePackageManager({ packageManager: 'pnpm@9.0.0' }, [])).toBeUndefined();
+    expect(choosePackageManager({ packageManager: 'not a pm' }, ['yarn.lock'])!.pm).toBe('yarn');
+  });
+
+  it('(toolchain 1) installs a dir with package-lock.json and pnpm-lock.yaml with the packageManager (supabase/auth-helpers)', async () => {
+    const dir = repo('two-locks', {
+      'package.json': JSON.stringify({ packageManager: 'pnpm@7.1.7' }),
+      'package-lock.json': '{}',
+      'pnpm-lock.yaml': "lockfileVersion: '6.0'\n",
+    });
+    const calls: Array<[string, string[]]> = [];
+    const diagnostics: string[] = [];
+    expect(await install(dir, dir, diagnostics, [], fakeRunner([], calls), root)).toBe(true);
+    expect(calls.map(([cmd]) => cmd)).toEqual(['pnpm']);
+    expect(diagnostics[0]).toBe('info: package-lock.json, pnpm-lock.yaml in .; installing with pnpm (pnpm-lock.yaml: packageManager names pnpm)');
+
+    // Without a packageManager field npm still wins (lockfile order), and says why.
+    const plain = repo('two-locks-plain', { 'package.json': '{}', 'package-lock.json': '{}', 'pnpm-lock.yaml': '' });
+    const calls2: Array<[string, string[]]> = [];
+    const d2: string[] = [];
+    await install(plain, plain, d2, [], fakeRunner([], calls2), root);
+    expect(calls2.map(([cmd]) => cmd)).toEqual(['npm']);
+    expect(d2[0]).toContain('installing with npm (package-lock.json: lockfile order)');
   });
 
   it('(hermetic) passes HTTP_PROXY to yarn only when set, and never overrides YARN_* proxies', () => {
