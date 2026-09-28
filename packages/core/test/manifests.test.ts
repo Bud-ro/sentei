@@ -554,6 +554,32 @@ describe('npm manifests', () => {
     expect(sourceForBuildOutput(root, 'pkgs/sb', '../escape')).toBeNull();
   });
 
+  it('a build dir named for one target: dist-electron/ → src/electron/, then electron/, then src/ (marlo)', () => {
+    pkgJson('desktop/package.json', { name: '@workspace/desktop', private: true, main: 'dist-electron/main.js' });
+    write('desktop/src/electron/main.ts');
+    write('desktop/src/electron/preload.ts');
+    write('desktop/src/pages/index.astro');
+    write('desktop/renderer/app.js');
+    write('desktop/src/worker.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+    expect(p!.entryPoints).toContain('desktop/src/electron/main.ts');
+    expect(sourceForBuildOutput(root, 'desktop', 'dist-electron/preload.js')).toBe('src/electron/preload.ts');
+    expect(sourceForBuildOutput(root, 'desktop', 'build-renderer/app.js')).toBe('renderer/app.js');
+    expect(sourceForBuildOutput(root, 'desktop', 'renderer-dist/app.js')).toBe('renderer/app.js');
+    expect(sourceForBuildOutput(root, 'desktop', 'out-worker/worker.js')).toBe('src/worker.ts');
+    // Existence-checked: a leaf with no source anywhere stays unresolved; a dir that only
+    // looks like one (`distribution/`, `dist-/`) is not a named build dir.
+    expect(sourceForBuildOutput(root, 'desktop', 'dist-electron/gone.js')).toBeNull();
+    expect(sourceForBuildOutput(root, 'desktop', 'distribution/main.js')).toBeNull();
+    expect(sourceForBuildOutput(root, 'desktop', 'dist-/main.js')).toBeNull();
+    pkgJson('other/package.json', { name: 'other', main: 'dist-electron/main.js' });
+    write('other/src/main.js');
+    const q = readRepoManifests(root, warn).find((x) => x.name === 'other');
+    // `src/main.js` is JavaScript: another target's code, not the electron build's source.
+    expect(q!.unresolvedEntryPoints).toEqual(['dist-electron/main.js']);
+  });
+
   it('a tsconfig rootDir other than src, allowJs sources, and .mjs → .mts', () => {
     pkgJson('package.json', { name: 'x', main: 'out/cjs/main.js', exports: { './m': './out/esm/m.mjs', './j': './out/esm/j.js' } });
     write('tsconfig.json', '{ "compilerOptions": { "outDir": "out/cjs", "rootDir": "lib", "allowJs": true } }');

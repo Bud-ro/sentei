@@ -1992,7 +1992,9 @@ const ROOTDIR_SOURCE_EXT = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs'
  *    dropped wherever they sit, then a–d on the result (`lib/typescript/commonjs/index.d.ts`
  *    → `lib/index.d.ts` → `src/index.ts`);
  * f. a bundler named input whose name is the path's stem or its last segments
- *    (SourceLayout.namedInputs: `dist/node/internal.js` → `src/node/internalIndex.ts`).
+ *    (SourceLayout.namedInputs: `dist/node/internal.js` → `src/node/internalIndex.ts`);
+ * g. a build dir named for one target (`dist-electron/main.js` → `src/electron/main.ts`,
+ *    then `electron/main.*`, then `src/main.ts`; namedBuildDirGroups).
  * Every rule is guarded by existence (resolveEntry keeps the first candidate that is a
  * package file); a later rule only matters when the earlier ones name nothing.
  * [] if the path is not build-output-shaped.
@@ -2006,6 +2008,7 @@ function distToSrcGroups(p: string, layout: SourceLayout, nested = false): strin
     const stem = joinRel(rootDir === '' ? '.' : rootDir, p.slice(outDir.length + 1)).replace(BUILT_EXT, '');
     out.push(...stemGroups(stem, rootDir, decl, ROOTDIR_SOURCE_EXT));
   }
+  if (!nested) out.push(...namedBuildDirGroups(p, decl));
   if (!BUILD_DIR.test(p)) return out;
   out.push(...stemGroups(p.replace(BUILD_DIR, 'src/').replace(BUILT_EXT, ''), 'src', decl, ['.ts', '.tsx']));
   const segs = p.split('/');
@@ -2055,6 +2058,33 @@ function distToSrcGroups(p: string, layout: SourceLayout, nested = false): strin
     }
   }
   return out;
+}
+
+/**
+ * A build dir named for one target (`dist-electron/`, `build-main/`, `out-preload/`,
+ * `electron-dist/`): its first segment's `<name>`, else null.
+ */
+const NAMED_BUILD_DIR = /^(?:(?:dist|build|out)-([\w.]+(?:-[\w.]+)*)|([\w.]+(?:-[\w.]+)*)-dist)$/;
+
+/**
+ * g. A leaf under a build dir named for one target (NAMED_BUILD_DIR: marlo's
+ * `main: dist-electron/main.js`, built by astro-electron from `src/electron/main.ts`)
+ * maps to the same path under `src/<name>/`, then `<name>/` (TypeScript or JavaScript
+ * sources), then `src/` (TypeScript only: a JS file there is the other target's code).
+ * Existence is the caller's check, as for every rule.
+ */
+function namedBuildDirGroups(p: string, decl: boolean): string[][] {
+  const slash = p.indexOf('/');
+  if (slash < 0 || p.includes('*')) return [];
+  const m = NAMED_BUILD_DIR.exec(p.slice(0, slash));
+  if (m === null) return [];
+  const name = m[1] ?? m[2]!;
+  const rest = p.slice(slash + 1).replace(BUILT_EXT, '');
+  return [
+    ...stemGroups(`src/${name}/${rest}`, `src/${name}`, decl, DIST_LAYOUT_EXT),
+    ...stemGroups(`${name}/${rest}`, name, decl, DIST_LAYOUT_EXT),
+    ...stemGroups(`src/${rest}`, 'src', decl, ['.ts', '.tsx', '.mts', '.cts']),
+  ];
 }
 
 /**
