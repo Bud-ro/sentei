@@ -207,7 +207,10 @@ export interface ExportsSidecar {
    * subjects). Recorded whether or not SCIP linked it; ingest dedupes.
    * Also carries references to CommonJS require bindings (`const x =
    * require('m')`; scip-typescript resolves their uses through the alias to
-   * the module, leaving the binding without references). Always `[]` for Dart.
+   * the module, leaving the binding without references), and references for
+   * loads of this package's own modules (a load of an own file that SCIP links
+   * to no declaration: the reference goes to the loaded module's declarations).
+   * Always `[]` for Dart.
    */
   shorthandRefs: ShorthandRef[];
   /**
@@ -237,9 +240,10 @@ export interface ExportsSidecar {
    *    or from an indexed file where that self import does not resolve (so
    *    SCIP links nothing; never an unresolved org module, never partial).
    *    Core's self-witness covers the file (it imports P by name);
-   *  - SFC files only, `relative: true`: a relative import of one of this
+   *  - `relative: true`: a relative (or aliased) import of one of this
    *    package's own code files (`module` = that file, repo-relative POSIX;
-   *    `targetPackage` = this package), whose declarations it uses.
+   *    `targetPackage` = this package), whose declarations it uses: from SFC
+   *    files and from the other unindexed code files alike.
    * Test/docs/script files are recorded with their `scope` whatever the
    * consumer policy says (core routes scoped entries to the witness).
    * Always `[]` for Dart.
@@ -277,9 +281,14 @@ export interface ExportsSidecar {
    * any nesting (`declare namespace WebAssembly { class CompileError }`).
    * Members of ordinary (non-ambient) namespaces are not included.
    *
-   * `kind`: `runtime` for declarations the runtime or a tool invokes (Dart;
-   * dart-surface emits no kind and the adapter sets `runtime`); `ambient` for
-   * TypeScript ambient contributions (everything export-surface records).
+   * TypeScript also has `runtime` entries: declarations of own modules the
+   * package loads at runtime (own-module loads) and declarations named by a
+   * string entry (a runtime entry symbol given by name, not by reference).
+   *
+   * `kind`: `runtime` for declarations the runtime or a tool invokes (Dart:
+   * dart-surface emits no kind and the adapter sets `runtime`; TypeScript: the
+   * own-module loads and string entries above); `ambient` for TypeScript
+   * ambient contributions (everything export-surface records as ambient).
    * Core counts only `runtime` ones as package seeds: an ambient declaration
    * (711 in one Wrangler `worker-configuration.d.ts`) keeps itself alive but
    * says nothing about whether the package is used.
@@ -364,8 +373,9 @@ export interface UnindexedImport {
    */
   scope?: 'script' | 'docs' | 'test';
   /**
-   * An own file of this package loaded by an unindexed file (an SFC's relative or
-   * aliased import, a `<script src>`) or by an `import.meta.glob` pattern (see `module`).
+   * An own file of this package loaded by an unindexed file (an SFC's or another
+   * unindexed code file's relative or aliased import, a `<script src>`) or by an
+   * `import.meta.glob` pattern (see `module`).
    */
   relative?: true;
   /**
