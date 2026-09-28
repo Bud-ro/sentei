@@ -12,6 +12,7 @@ import {
   barePackageName,
   checkConsumerFiles,
   collectRequireAliasRefs,
+  importedNames,
   isExcludedConsumerFile,
   isGeneratedFile,
   scanOwnModuleLoads,
@@ -335,6 +336,16 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       consumer.shorthandRefs.push(...collectRequireAliasRefs(indexed, checker, input.pkgDir, input.packageName, toRepoRel));
     }
     collectDeepImportExports(files, checker, input.orgPackageDirs, input.packageName ?? null, deepImportExports);
+    // Dynamic imports of own modules TypeScript resolves (round 9b): SCIP links the module,
+    // not the names the import's result is used by (`dynamic(() => import('./dialog'))`
+    // renders its default export).
+    if (input.packageName !== undefined && input.packageName !== null) {
+      const indexed = rootsKnown ? files.filter((sf) => indexedFiles.has(path.resolve(sf.fileName))) : files;
+      collectDynamicImportRefs(indexed, checker, {
+        isOwnFile, toRepoRel, pkgDir: input.pkgDir, selfName: input.packageName, diagnostics,
+        refsFrom: () => true, isEntryLoad: () => false, entrySymbols: loadEntrySymbols, refs: loadRefs,
+      });
+    }
     for (const [target, loads] of pendingLoads) {
       const sf = program.getSourceFile(target);
       if (sf === undefined) continue;
@@ -1169,6 +1180,54 @@ function resolveOwnLoads(sf: ts.SourceFile, loads: readonly OwnModuleLoad[], che
       ctx.diagnostics.push(`warn: ${load.file}:${load.line + 1}:${load.col + 1} loads ${load.names.map((n) => n.name).join(', ')} from ${ctx.toRepoRel(path.resolve(sf.fileName))} ('${load.spec}'), which does not export them`);
     }
   }
+}
+
+/**
+ * References for the names a dynamic `import('./x')` of an own module takes (consumer-checks
+ * importedNames: destructured or accessed names, `default` for a lazy component loader
+ * such as `next/dynamic` or `React.lazy`), from each of `files` (indexed documents) to
+ * the module's declarations, as `shorthandRefs` through resolveOwnLoads. SCIP links such
+ * an import to the module only, which keeps the module's top-level code reachable but
+ * not the export the loader renders (docs.page's `export default function SearchDialog`).
+ * A result used as a whole (unknown names) adds nothing: the module-level reference
+ * stays the only one, as before.
+ */
+function collectDynamicImportRefs(files: readonly ts.SourceFile[], checker: ts.TypeChecker, ctx: OwnLoadContext): void {
+  const byTarget = new Map<ts.SourceFile, OwnModuleLoad[]>();
+  for (const sf of files) {
+    const file = ctx.toRepoRel(path.resolve(sf.fileName));
+    const pos = (node: ts.Node): SourcePosition => {
+      const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      return { file, line, col: character };
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const lit = node.arguments[0];
+        if (lit !== undefined && ts.isStringLiteralLike(lit)) {
+          const names = importedNames(lit, pos);
+          const target = names !== undefined && names !== null && names.length > 0 ? moduleSourceFile(checker, lit) : undefined;
+          if (target !== undefined && ctx.isOwnFile(target.fileName) && !target.isDeclarationFile) {
+            const abs = path.resolve(target.fileName);
+            byTarget.set(target, [...(byTarget.get(target) ?? []), { ...pos(lit), spec: lit.text, targets: [abs], names: names!, kind: 'import' }]);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  for (const [target, loads] of byTarget) resolveOwnLoads(target, loads, checker, ctx);
+}
+
+/** The source file a module specifier resolves to, or undefined. */
+function moduleSourceFile(checker: ts.TypeChecker, lit: ts.StringLiteralLike): ts.SourceFile | undefined {
+  let mod: ts.Symbol | undefined;
+  try {
+    mod = checker.getSymbolAtLocation(lit);
+  } catch {
+    return undefined;
+  }
+  return mod?.declarations?.find(ts.isSourceFile);
 }
 
 /** Named top-level declarations of a file (functions, classes, variables, types, enums, namespaces). */

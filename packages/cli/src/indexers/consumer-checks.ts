@@ -1618,8 +1618,18 @@ export function scanOwnModuleLoads(input: OwnLoadScanInput): { loads: OwnModuleL
  * name in the loading file), undefined for every export (a namespace import, a bare
  * `import()` / `require()` whose result is used as a whole, `export *`), [] for a
  * side-effect import. null when the literal is not a module specifier.
+ *
+ * A dynamic `import()` / `require()` takes (round 8d, 9b):
+ *  - the destructured names: `const { a } = await import(…)`, `.then(({ a }) => …)`;
+ *  - the accessed names: `import(…).a`, `(await import(…)).a`, `.then((m) => m.a)`, and
+ *    `const m = await import(…)` when every use of `m` in its scope is `m.<name>`;
+ *  - `default` when a lazy component loader gets it: `dynamic(() => import(…))`
+ *    (next/dynamic), `lazy(…)` / `React.lazy(…)`, `defineAsyncComponent(…)` (also its
+ *    `{ loader }` option), `loadable(…)`: the loader resolves to the module and the
+ *    wrapper renders its default export;
+ *  - otherwise every export (the result is used as a whole: unknown).
  */
-function importedNames(lit: ts.StringLiteralLike, pos: (n: ts.Node) => SourcePosition): Array<SourcePosition & { name: string }> | undefined | null {
+export function importedNames(lit: ts.StringLiteralLike, pos: (n: ts.Node) => SourcePosition): Array<SourcePosition & { name: string }> | undefined | null {
   const p = lit.parent;
   const named = (name: string, node: ts.Node): SourcePosition & { name: string } => ({ ...pos(node), name });
   if (ts.isImportDeclaration(p) && p.moduleSpecifier === lit) {
@@ -1651,18 +1661,94 @@ function importedNames(lit: ts.StringLiteralLike, pos: (n: ts.Node) => SourcePos
     if (ts.isVariableDeclaration(e.parent) && e.parent.initializer === e && ts.isObjectBindingPattern(e.parent.name)) {
       return bindingNames(e.parent.name, named);
     }
-    // `import(…).then(({ a }) => …)`
+    // `const m = await import(…)`, every use `m.<name>`
+    if (ts.isVariableDeclaration(e.parent) && e.parent.initializer === e && ts.isIdentifier(e.parent.name)) {
+      return memberUses(e.parent.name, scopeOf(e.parent), named);
+    }
+    // `(await import(…)).a`
+    let q: ts.Node = e;
+    while (ts.isParenthesizedExpression(q.parent)) q = q.parent;
+    if (q !== p && ts.isPropertyAccessExpression(q.parent) && q.parent.expression === q) return [named(q.parent.name.text, q.parent.name)];
+    // `import(…).then(({ a }) => …)` / `.then((m) => m.a)`
     const then = p.parent;
     if (ts.isPropertyAccessExpression(then) && then.name.text === 'then' && ts.isCallExpression(then.parent)) {
-      const cb = then.parent.arguments[0];
-      const param = cb !== undefined && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) ? cb.parameters[0] : undefined;
+      const arg = then.parent.arguments[0];
+      const cb = arg !== undefined && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) ? arg : undefined;
+      const param = cb?.parameters[0];
       if (param !== undefined && ts.isObjectBindingPattern(param.name)) return bindingNames(param.name, named);
+      if (cb !== undefined && param !== undefined && ts.isIdentifier(param.name)) return memberUses(param.name, cb.body, named);
     }
     // `import(…).a` / `require(…).a`
     if (ts.isPropertyAccessExpression(p.parent) && p.parent.expression === p && p.parent.name.text !== 'then') return [named(p.parent.name.text, p.parent.name)];
+    // A lazy component loader: `dynamic(() => import(…))`, `React.lazy(() => import(…))`.
+    if (isImport && lazyLoaderArgument(p)) return [named('default', lit)];
     return undefined;
   }
   return null;
+}
+
+/** Callees that take a component loader and render its module's default export. */
+const LAZY_LOADERS = new Set(['dynamic', 'lazy', 'defineAsyncComponent', 'loadable', 'lazyWithPreload']);
+
+/**
+ * Whether the `import()` call `call` is what a lazy component loader resolves: the call
+ * itself, or the value an arrow / function returns (expression body or a `return`), is an
+ * argument of `dynamic(…)` / `lazy(…)` / `React.lazy(…)` / `defineAsyncComponent(…)` /
+ * `loadable(…)`, or the `loader` of `defineAsyncComponent({ loader })`.
+ */
+function lazyLoaderArgument(call: ts.CallExpression): boolean {
+  let n: ts.Node = call;
+  while (ts.isParenthesizedExpression(n.parent) || ts.isAwaitExpression(n.parent)) n = n.parent;
+  if (ts.isReturnStatement(n.parent)) {
+    let b: ts.Node = n.parent;
+    while (!ts.isFunctionLike(b) && b.parent !== undefined && !ts.isSourceFile(b)) b = b.parent;
+    n = b;
+  } else if (ts.isArrowFunction(n.parent) && n.parent.body === n) {
+    n = n.parent;
+  }
+  while (ts.isParenthesizedExpression(n.parent)) n = n.parent;
+  let host: ts.Node = n.parent;
+  if (ts.isPropertyAssignment(host) && ts.isIdentifier(host.name) && host.name.text === 'loader' && ts.isObjectLiteralExpression(host.parent)) {
+    host = host.parent.parent;
+  }
+  if (!ts.isCallExpression(host) || host.expression === n) return false;
+  const callee = host.expression;
+  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+  return name !== undefined && LAZY_LOADERS.has(name);
+}
+
+/** The scope a variable declaration's uses are searched in: its enclosing block, function body or file. */
+function scopeOf(decl: ts.VariableDeclaration): ts.Node {
+  let n: ts.Node = decl;
+  while (n.parent !== undefined && !ts.isBlock(n.parent) && !ts.isSourceFile(n.parent) && !ts.isModuleBlock(n.parent)) n = n.parent;
+  return n.parent ?? n;
+}
+
+/**
+ * The names `id` (a module namespace held by a variable or parameter) is accessed by in
+ * `scope`: every use must be `id.<name>` (never assigned, passed, spread or indexed),
+ * else undefined (every export). Shadowing is not tracked: a same-named variable's uses
+ * only add names (fail closed) or make the result undefined.
+ */
+function memberUses(
+  id: ts.Identifier, scope: ts.Node, named: (name: string, node: ts.Node) => SourcePosition & { name: string },
+): Array<SourcePosition & { name: string }> | undefined {
+  const out: Array<SourcePosition & { name: string }> = [];
+  let whole = false;
+  const visit = (n: ts.Node): void => {
+    if (whole) return;
+    if (ts.isIdentifier(n) && n !== id && n.text === id.text) {
+      const parent = n.parent;
+      // A property name (`x.m`, `{ m: 1 }`) is not a use of the variable.
+      if ((ts.isPropertyAccessExpression(parent) && parent.name === n) || (ts.isPropertyAssignment(parent) && parent.name === n)) return;
+      if (ts.isPropertyAccessExpression(parent) && parent.expression === n) out.push(named(parent.name.text, parent.name));
+      else whole = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  return whole || out.length === 0 ? undefined : out;
 }
 
 /** Property names of an object binding pattern; undefined (every export) for a rest element or a computed key. */

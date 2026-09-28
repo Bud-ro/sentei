@@ -20,12 +20,45 @@
 
 ## src/app/page.tsx
   // A Next.js app-router page under src/app (a runtime entry by the existing router convention).
-//^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/ enclosing [3:0-6:0]
+//^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/ enclosing [1:0-11:0]
+  import dynamic from 'next/dynamic';
+//       ^^^^^^^ reference local 0
+
+  // A lazily loaded component (docs.page's search dialog): SCIP links only the module;
+  // next/dynamic renders its default export.
+  const Dialog = dynamic(() => import('../components/dialog'));
+//      ^^^^^^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/Dialog.
+//               ^^^^^^^ reference local 0
+//                                    ^^^^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-web . src/components/`dialog.tsx`/
 
   // Expected: alive, no finding (the page component, loaded by Next).
-  export default function Page(): null {
-//                        ^^^^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/Page(). enclosing [3:0-5:1]
-    return null;
+  export default function Page(): unknown {
+//                        ^^^^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/Page(). enclosing [8:0-10:1]
+    return Dialog;
+//         ^^^^^^ reference scip-typescript npm @acme/dual-web . src/app/`page.tsx`/Dialog.
+  }
+
+## src/components/dialog.tsx
+  // Loaded by the page through `dynamic(() => import('../components/dialog'))` only.
+//^ definition scip-typescript npm @acme/dual-web . src/components/`dialog.tsx`/ enclosing [3:0-16:0]
+
+  // Expected: alive, no finding (next/dynamic renders the default export).
+  export default function Dialog(): string {
+//                        ^^^^^^ definition scip-typescript npm @acme/dual-web . src/components/`dialog.tsx`/Dialog(). enclosing [3:0-5:1]
+    return dialogTitle();
+//         ^^^^^^^^^^^ reference scip-typescript npm @acme/dual-web . src/components/`dialog.tsx`/dialogTitle().
+  }
+
+  // Expected: alive, no finding (the dialog calls it).
+  function dialogTitle(): string {
+//         ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-web . src/components/`dialog.tsx`/dialogTitle(). enclosing [8:0-10:1]
+    return 'dialog';
+  }
+
+  // Expected: private_dead (a lazy loader takes the default export only).
+  export function dialogDead(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual-web . src/components/`dialog.tsx`/dialogDead(). enclosing [13:0-15:1]
+    return 'dead';
   }
 
 ## src/instrumentation.ts

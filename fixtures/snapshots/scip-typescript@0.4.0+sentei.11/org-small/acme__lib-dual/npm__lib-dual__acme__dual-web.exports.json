@@ -40,7 +40,7 @@
       "entry": "packages/dual-web/src/app/page.tsx",
       "exportedAs": "default",
       "file": "packages/dual-web/src/app/page.tsx",
-      "line": 3,
+      "line": 8,
       "name": "Page",
       "sites": []
     },
@@ -61,7 +61,18 @@
   "namespaceMemberRefs": [],
   "namespaceSpreadRefs": [],
   "packageId": "npm:acme/lib-dual:@acme/dual-web",
-  "shorthandRefs": [],
+  "shorthandRefs": [
+    {
+      "col": 36,
+      "file": "packages/dual-web/src/app/page.tsx",
+      "line": 5,
+      "member": "default",
+      "targetCol": 24,
+      "targetFile": "src/components/dialog.tsx",
+      "targetLine": 3,
+      "targetPackage": "@acme/dual-web"
+    }
+  ],
   "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []
