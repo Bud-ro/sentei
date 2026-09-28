@@ -205,7 +205,10 @@ export interface DiscoverIgnoredManifest {
    * dir, a VS Code extension or a private duplicate did (those are routine, not
    * reported). Written to the DB table ignored_manifests for the report's warning.
    * Also set for a consumer-dir manifest (IgnoredManifest.consumerDir) that the glob
-   * kept from being promoted to a consumer package.
+   * kept from being promoted to a consumer package, and, in place of a glob, to the
+   * reason for a manifest that is no package on its own account: `cannot parse: …`,
+   * `template name …` (IgnoredManifest.reason), `same-repo duplicate name <id>` (two
+   * or more non-private manifests of one name in one repo).
    */
   ignoredBy?: string;
   /**
@@ -357,7 +360,7 @@ function npmTargetName(name: string, constraint: string | null): string {
   return at > 0 ? spec.slice(0, at) : spec;
 }
 
-/** Build the org model from a local org directory. Throws on duplicate (manager, name) within one repo. */
+/** Build the org model from a local org directory. */
 export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
   const orgDir = resolve(opts.orgDir);
   const listing = readOrgListing(orgDir);
@@ -379,8 +382,9 @@ export function discoverLocal(opts: DiscoverLocalOptions): DiscoverModel {
 /**
  * Build the org model from checked-out repos (any source). Walks manifests,
  * applies sentei.json overlays, resolves deps by (manager, name) (DepResolution).
- * Throws on a missing checkout or two non-private manifests of one (manager, name)
- * in the same repo (their package ids would collide).
+ * Throws on a missing checkout. Same-name manifests in one repo (their package ids
+ * would collide) are ignored manifests, with a warning when more than one is not
+ * private.
  */
 export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   const log = opts.log ?? (() => {});
@@ -430,6 +434,9 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       },
       log: (m) => log(`${repo}: ${m}`),
     });
+    // An unparseable or template manifest (IgnoredManifest.reason) is recorded like an
+    // ignoreManifests exclusion, so the report's ignored-manifest warning names it.
+    for (const m of ignored) if (m.reason !== undefined && !ignoredBy.has(m.manifest)) ignoredBy.set(m.manifest, m.reason);
     // No lib/ at all: nothing another package can import (package: URIs resolve under
     // lib/), so it is no library and nobody outside can depend on its code, whatever
     // publish_to says (pub workspace roots named `_` or `*_workspace`, bin-only tools).
@@ -472,12 +479,18 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
   }
 
   // Package identity is (repo, manager, name): the same name in two repos is two
-  // packages (resolveDep below picks one per consumer, or flags the ambiguity). Within
-  // ONE repo the ids would collide, so there the old rule stays: private duplicates
-  // (npm `private: true`, pub `publish_to: none`: docs sites, playgrounds, app shells
-  // that reuse the name) are auto-ignored when at most one manifest of the name is not
-  // private; they become ignored manifests (not org packages, still witness-scanned).
-  // Two non-private manifests of one name in one repo are a hard error.
+  // packages (resolveDep below picks one per consumer, or flags the ambiguity:
+  // ambiguous_dep, never an error). Within ONE repo the ids would collide, so there
+  // duplicates become ignored manifests (not org packages, still witness-scanned):
+  // - private duplicates (npm `private: true`, pub `publish_to: none` or an
+  //   application: docs sites, playgrounds, app shells that reuse the name) are
+  //   auto-ignored when at most one manifest of the name is not private, which stays;
+  // - when two or more are not private (workshop copies, `projects/*` examples of one
+  //   name), none can be told apart as the real package: all of the name are ignored
+  //   as copies, with one warning listing them and the `ignoreManifests` entries that
+  //   keep the real one. This used to be a hard error that stopped discover for the
+  //   whole org (Baseflow's two `bloc_counter` workshop copies, drizzle-team's four
+  //   `planetscale-mysql2` examples); ignoring fails closed (no verdict on any copy).
   type Owner = { r: (typeof repos)[number]; m: ManifestPackage; loc: string; ignoreEntry: string };
   const byRepoName = new Map<string, Owner[]>();
   for (const r of repos) {
@@ -487,24 +500,27 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       byRepoName.set(id, [...(byRepoName.get(id) ?? []), { r, m, loc: `${r.repo}:${m.manifest}`, ignoreEntry: `${repoName}/${m.manifest}` }]);
     }
   }
-  const dups: Array<[string, Owner[]]> = [];
+  const dropDuplicate = (o: Owner, why?: string): void => {
+    o.r.manifests = o.r.manifests.filter((x) => x !== o.m);
+    o.r.ignored.push({ path: o.m.path, manifest: o.m.manifest, manager: o.m.manager, name: o.m.name, deps: o.m.deps, depsUnknown: false });
+    o.r.ignored.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
+    if (why !== undefined) o.r.ignoredBy.set(o.m.manifest, why);
+  };
   for (const [id, group] of byRepoName) {
     if (group.length < 2) continue;
     const open = group.filter((o) => o.m.visibility !== 'private');
     if (open.length > 1) {
-      dups.push([id, open]); // the private ones would be ignored anyway
+      log(`warning: ${duplicateNamesMessage(id, group)}`);
+      for (const o of group) dropDuplicate(o, `same-repo duplicate name ${id}`);
       continue;
     }
     for (const o of group) {
       if (o.m.visibility !== 'private') continue;
       const other = open[0] ?? group.find((x) => x !== o)!;
       log(`${o.r.repo}: ignored private duplicate manifest ${o.r.repo}/${o.m.manifest} (same name as ${other.r.repo}/${other.m.manifest})`);
-      o.r.manifests = o.r.manifests.filter((x) => x !== o.m);
-      o.r.ignored.push({ path: o.m.path, manifest: o.m.manifest, manager: o.m.manager, name: o.m.name, deps: o.m.deps, depsUnknown: false });
-      o.r.ignored.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
+      dropDuplicate(o);
     }
   }
-  if (dups.length > 0) throw new Error(duplicateNamesMessage(dups));
 
   // Every org package by (manager, name): usually one, several when repos share a name.
   type Candidate = { id: string; repo: string; isPrivate: boolean; ignoreEntry: string; version: string | null };
@@ -789,18 +805,15 @@ function consumerKind(manifest: string): string {
   return 'consumer';
 }
 
-/** The same-repo duplicate-name error: every location, plus copy-pasteable `ignoreManifests` entries. */
-function duplicateNamesMessage(dups: Array<[string, Array<{ loc: string; ignoreEntry: string }>]>): string {
-  const lines = ['sentei: duplicate package names within one repo (package ids are <manager>:<repo>:<name>; private duplicates are ignored automatically, these are not private):'];
-  for (const [id, locs] of dups) lines.push(`  ${id}: ${locs.map((l) => l.loc).join(', ')}`);
-  const entries = dups.flatMap(([, locs]) => locs.map((l) => l.ignoreEntry));
-  lines.push(
-    'Exactly one manifest per name may remain in a repo. If the others are templates, fixtures or examples',
-    '(not real org packages), exclude them in the org sentei.json. Candidates (keep the real',
-    "package's entry OUT of the list):",
-    `  "ignoreManifests": [${entries.map((e) => JSON.stringify(e)).join(', ')}]`,
-  );
-  return lines.join('\n');
+/**
+ * The same-repo duplicate-name warning (one line): every manifest of the name, and the
+ * copy-pasteable `ignoreManifests` entries that leave the real package in place.
+ */
+function duplicateNamesMessage(id: string, locs: ReadonlyArray<{ loc: string; ignoreEntry: string }>): string {
+  return `${locs.length} manifests in one repo share the package id ${id} (ids are <manager>:<repo>:<name>) and more than one is not private: `
+    + `${locs.map((l) => l.loc).join(', ')}; none is an org package (ignored as copies, witness-scanned, no verdicts). `
+    + 'If one of them is the real package, exclude the others in the org sentei.json (keep the real one\'s entry OUT of the list): '
+    + `"ignoreManifests": [${locs.map((l) => JSON.stringify(l.ignoreEntry)).join(', ')}]`;
 }
 
 /**

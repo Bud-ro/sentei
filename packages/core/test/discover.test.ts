@@ -314,20 +314,111 @@ describe('discoverLocal on a synthetic org', () => {
     ]);
   });
 
-  it('pub: publish_to: none duplicates are private too; two non-private ones in one repo still clash', () => {
+  it('pub: publish_to: none duplicates are private too; two non-private ones in one repo are ignored copies, not an error', () => {
     org(['a', 'b', 'c']);
     write('org/repos/a/pubspec.yaml', 'name: shared\n');
     write('org/repos/b/pubspec.yaml', 'name: shared\npublish_to: none\n');
     write('org/repos/c/package.json', { name: 'x' });
     write('org/repos/c/sub/package.json', { name: 'x', private: true });
     write('org/repos/c/other/package.json', { name: 'x' });
-    expect(() => discoverLocal({ orgDir: join(tmp, 'org') })).toThrow(
-      /npm:acme\/c:x: acme\/c:package\.json, acme\/c:other\/package\.json\n/);
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos.flatMap((r) => r.packages.map((p) => p.packageId))).toEqual(['pub:acme/a:shared', 'pub:acme/b:shared']);
+    expect(m.repos[2]!.ignoredManifests.map((i) => [i.manifest, i.ignoredBy])).toEqual([
+      ['package.json', 'same-repo duplicate name npm:acme/c:x'],
+      ['other/package.json', 'same-repo duplicate name npm:acme/c:x'],
+      ['sub/package.json', 'same-repo duplicate name npm:acme/c:x'],
+    ]);
+    expect(logs.filter((l) => l.includes('share the package id'))).toHaveLength(1);
     write('org/repos/c/other/package.json', { name: 'y' });
-    const m = discoverLocal({ orgDir: join(tmp, 'org') });
-    expect(m.repos.flatMap((r) => r.packages.map((p) => p.packageId))).toEqual([
+    const m2 = discoverLocal({ orgDir: join(tmp, 'org') });
+    expect(m2.repos.flatMap((r) => r.packages.map((p) => p.packageId))).toEqual([
       'pub:acme/a:shared', 'pub:acme/b:shared', 'npm:acme/c:x', 'npm:acme/c:y',
     ]);
+  });
+
+  it('npm: four non-private same-name examples in one repo (drizzle-team projects/*) never abort discover', () => {
+    org(['mono', 'user']);
+    write('org/repos/mono/package.json', { name: 'mono-root', private: true });
+    for (const p of ['a', 'b', 'c', 'd']) {
+      write(`org/repos/mono/projects/${p}/package.json`, { name: 'planetscale-mysql2', dependencies: { 'drizzle-kit': '^1' } });
+      write(`org/repos/mono/projects/${p}/src/index.ts`, 'export const x = 1;\n');
+    }
+    // Another repo depending on the name: no org package of that name is left to resolve.
+    write('org/repos/user/package.json', { name: 'user', private: true, dependencies: { 'planetscale-mysql2': '^1' } });
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos.map((r) => r.packages.map((p) => p.packageId))).toEqual([['npm:acme/mono:mono-root'], ['npm:acme/user:user']]);
+    expect(m.repos[0]!.ignoredManifests.map((i) => [i.manifest, i.name, i.ignoredBy])).toEqual(['a', 'b', 'c', 'd'].map((p) => [
+      `projects/${p}/package.json`, 'planetscale-mysql2', 'same-repo duplicate name npm:acme/mono:planetscale-mysql2',
+    ]));
+    expect(m.repos[1]!.packages[0]!.deps).toEqual([{ name: 'planetscale-mysql2', manager: 'npm', constraint: '^1', resolvedPackageId: null }]);
+    const warning = logs.find((l) => l.includes('share the package id'))!;
+    expect(warning).toBe('warning: 4 manifests in one repo share the package id npm:acme/mono:planetscale-mysql2 (ids are <manager>:<repo>:<name>) '
+      + 'and more than one is not private: acme/mono:projects/a/package.json, acme/mono:projects/b/package.json, acme/mono:projects/c/package.json, '
+      + 'acme/mono:projects/d/package.json; none is an org package (ignored as copies, witness-scanned, no verdicts). If one of them is the real '
+      + "package, exclude the others in the org sentei.json (keep the real one's entry OUT of the list): "
+      + '"ignoreManifests": ["mono/projects/a/package.json", "mono/projects/b/package.json", "mono/projects/c/package.json", "mono/projects/d/package.json"]');
+    // The report names them (ignored_manifests).
+    writeDiscoverToDb(db, m);
+    expect(all("SELECT manifest, glob FROM ignored_manifests WHERE repo = 'acme/mono' ORDER BY manifest")).toEqual(['a', 'b', 'c', 'd'].map((p) => ({
+      manifest: `projects/${p}/package.json`, glob: 'same-repo duplicate name npm:acme/mono:planetscale-mysql2',
+    })));
+  });
+
+  it('pub apps without publish_to are private, so same-name workshop copies in one repo are auto-ignored', () => {
+    // Baseflow flutter-meetup: two `bloc_counter` copies (start/ and finish/) made discover stop.
+    org(['meetup']);
+    for (const d of ['start', 'finish']) {
+      write(`org/repos/meetup/bloc_counter/${d}/pubspec.yaml`, 'name: bloc_counter\nenvironment:\n  sdk: ^3.0.0\n');
+      write(`org/repos/meetup/bloc_counter/${d}/lib/main.dart`, 'void main() {}\n');
+    }
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos[0]!.packages).toEqual([]);
+    expect(m.repos[0]!.ignoredManifests.map((i) => [i.manifest, i.ignoredBy])).toEqual([
+      ['bloc_counter/finish/pubspec.yaml', undefined], ['bloc_counter/start/pubspec.yaml', undefined],
+    ]);
+    expect(logs).toContain('acme/meetup: bloc_counter/start/pubspec.yaml: an application (lib/main.dart declares main) without publish_to: treated as private');
+    expect(logs.some((l) => l.includes('share the package id'))).toBe(false);
+  });
+
+  it('an unparseable manifest (a mason template with {{…}} tags) is skipped with a warning and recorded, never an abort', () => {
+    org(['tpl']);
+    write('org/repos/tpl/package.json', { name: '@acme/tpl' });
+    write('org/repos/tpl/docs_site/package.json', '{\n  "name": "{{project_name}}",\n  {{^publishable}}"private": true,{{/publishable}}\n  "version": "0.0.0"\n}\n');
+    write('org/repos/tpl/app/pubspec.yaml', 'name: {{project_name.snakeCase()}}_android\n');
+    write('org/repos/tpl/app/lib/app.dart', '');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos[0]!.packages.map((p) => p.packageId)).toEqual(['npm:acme/tpl:@acme/tpl']);
+    expect(m.repos[0]!.ignoredManifests.map((i) => [i.manifest, i.depsUnknown, i.ignoredBy])).toEqual([
+      ['app/pubspec.yaml', false, 'template name {{project_name.snakeCase()}}_android'],
+      ['docs_site/package.json', true, expect.stringMatching(/^cannot parse: /)],
+    ]);
+    expect(logs.some((l) => l.startsWith('warning: acme/tpl: docs_site/package.json: cannot parse ('))).toBe(true);
+    expect(logs).toContain('warning: acme/tpl: app/pubspec.yaml: package name "{{project_name.snakeCase()}}_android" is a template ({{…}}); not an org package');
+    writeDiscoverToDb(db, m);
+    expect(all('SELECT manifest FROM ignored_manifests ORDER BY manifest')).toEqual([{ manifest: 'app/pubspec.yaml' }, { manifest: 'docs_site/package.json' }]);
+  });
+
+  it('mason brick templates (__brick__/) and .mason/ are ignored dirs; a brick hooks/ package is kept', () => {
+    org(['bricks']);
+    write('org/repos/bricks/very_good_core/__brick__/{{project_name.snakeCase()}}/pubspec.yaml', 'name: {{project_name.snakeCase()}}\n');
+    write('org/repos/bricks/very_good_core/__brick__/package.json', '{{#docs}}{"name": "x"}{{/docs}}');
+    write('org/repos/bricks/.mason/bricks/b/pubspec.yaml', 'name: cached_brick\n');
+    write('org/repos/bricks/very_good_core/hooks/pubspec.yaml', 'name: very_good_core_hooks\ndependencies:\n  mason: ^0.1.0\n');
+    write('org/repos/bricks/very_good_core/hooks/pre_gen.dart', 'void run(Object context) {}\n');
+    write('org/repos/bricks/very_good_core/hooks/lib/src/vars.dart', 'const x = 1;\n');
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    expect(m.repos[0]!.packages.map((p) => [p.packageId, p.visibility])).toEqual([['pub:acme/bricks:very_good_core_hooks', 'private']]);
+    expect(m.repos[0]!.ignoredManifests.map((i) => [i.manifest, i.byDir])).toEqual([
+      ['.mason/bricks/b/pubspec.yaml', true],
+      ['very_good_core/__brick__/package.json', true],
+      ['very_good_core/__brick__/{{project_name.snakeCase()}}/pubspec.yaml', true],
+    ]);
+    expect(logs).toContain('acme/bricks: very_good_core/hooks/pubspec.yaml: an application (mason hooks: pre_gen.dart / post_gen.dart) without publish_to: treated as private');
   });
 
   it('flags a package whose code-looking entry point resolves to nothing opaque_consumer; ingest keeps the flag', () => {
@@ -400,7 +491,7 @@ describe('discoverLocal on a synthetic org', () => {
     expect(logs.filter((l) => l.includes('no entry points'))).toEqual([]);
   });
 
-  it('the same-repo clash message lists every location and copy-pasteable ignoreManifests suggestions', () => {
+  it('the same-repo duplicate warning lists every location and copy-pasteable ignoreManifests suggestions', () => {
     org(['hono', 'starter', 'vscode']);
     write('org/repos/hono/package.json', { name: 'hono' });
     write('org/repos/starter/package.json', { name: 'basic' });
@@ -408,19 +499,17 @@ describe('discoverLocal on a synthetic org', () => {
     write('org/repos/starter/apps/node/package.json', { name: 'hono' });
     write('org/repos/starter/basic/package.json', { name: 'basic' });
     write('org/repos/vscode/package.json', { name: 'hono' }); // another repo: no clash
-    let msg = '';
-    try {
-      discoverLocal({ orgDir: join(tmp, 'org') });
-    } catch (err) {
-      msg = (err as Error).message;
-    }
-    expect(msg).toContain('  npm:acme/starter:basic: acme/starter:package.json, acme/starter:basic/package.json\n');
-    expect(msg).toContain('  npm:acme/starter:hono: acme/starter:apps/node/package.json, acme/starter:apps/vercel/package.json\n');
-    expect(msg).not.toContain('vscode');
-    const suggestion = /^ {2}("ignoreManifests": \[.*\])$/m.exec(msg)?.[1];
-    expect(JSON.parse(`{${suggestion}}`)).toEqual({
-      ignoreManifests: ['starter/package.json', 'starter/basic/package.json', 'starter/apps/node/package.json', 'starter/apps/vercel/package.json'],
-    });
+    const logs: string[] = [];
+    const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+    const warnings = logs.filter((l) => l.includes('share the package id'));
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain('share the package id npm:acme/starter:basic ');
+    expect(warnings[0]).toContain('acme/starter:package.json, acme/starter:basic/package.json;');
+    expect(warnings[1]).toContain('acme/starter:apps/node/package.json, acme/starter:apps/vercel/package.json;');
+    expect(logs.join('\n')).not.toContain('acme/vscode:package.json');
+    const suggestion = /("ignoreManifests": \[.*\])$/.exec(warnings[1]!)?.[1];
+    expect(JSON.parse(`{${suggestion}}`)).toEqual({ ignoreManifests: ['starter/apps/node/package.json', 'starter/apps/vercel/package.json'] });
+    expect(m.repos.map((r) => r.packages.map((p) => p.packageId))).toEqual([['npm:acme/hono:hono'], [], ['npm:acme/vscode:hono']]);
   });
 
   it('ignoreManifests globs (org sentei.json) remove manifests; unused globs warn', () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_IGNORE_MANIFEST_DIRS, electronHtmlRefs, inlineScriptRefs, webpackEntries, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
+  DEFAULT_IGNORE_MANIFEST_DIRS, electronHtmlRefs, pubApplicationReason, readNpmPackage, inlineScriptRefs, webpackEntries, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
   dockerfileTargets, runnerTargets, sourceForBuildOutput, stripJsonc, tsconfigOutDirs, urlReferencedFiles,
 } from '../src/manifests.ts';
 
@@ -127,7 +127,7 @@ describe('ignored manifest dirs', () => {
     expect(pkgs.map((p) => p.name)).toEqual(['real', 'testing']);
     expect(logs).toEqual([
       `skipped ${DEFAULT_IGNORE_MANIFEST_DIRS.length + 1} manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): `
-        + 'pkgs/__fixtures__/x/package.json, pkgs/__mocks__/x/package.json, pkgs/__tests__/x/package.json, ...',
+        + 'pkgs/.mason/x/package.json, pkgs/__brick__/x/package.json, pkgs/__fixtures__/x/package.json, ...',
     ]);
     expect(warnings).toEqual([]);
     const files = listFiles(root);
@@ -1026,9 +1026,30 @@ describe('npm manifests', () => {
     expect(readRepoManifests(root, warn).map((p) => p.name)).toEqual(['test_cases']);
   });
 
-  it('a malformed package.json is an error (fail closed)', () => {
+  it('a malformed package.json is skipped with a warning and kept as an ignored manifest with unknown deps (fail closed, never an abort)', () => {
     write('package.json', '{ nope');
-    expect(() => readRepoManifests(root, warn)).toThrow(/cannot parse package\.json/);
+    pkgJson('pkg/package.json', { name: 'ok' });
+    write('pkg/index.ts');
+    const r = readRepoManifestsWithIgnored(root, warn);
+    expect(r.packages.map((p) => p.name)).toEqual(['ok']);
+    expect(r.ignored).toEqual([{
+      path: '.', manifest: 'package.json', manager: 'npm', name: null, deps: [], depsUnknown: true, reason: expect.stringMatching(/^cannot parse: /),
+    }]);
+    expect(warnings).toEqual([expect.stringMatching(/^package\.json: cannot parse \(.*\); not an org package: its deps are unknown/)]);
+    // readNpmPackage alone still throws (the promotion pass catches it).
+    expect(() => readNpmPackage(root, '.', null)).toThrow(/cannot parse package\.json/);
+  });
+
+  it('a mason template manifest ({{…}} name) is no package, and names with {{ are never accepted', () => {
+    pkgJson('tpl/package.json', { name: '{{project_name.paramCase()}}', dependencies: { '@acme/x': '^1' } });
+    write('app/pubspec.yaml', 'name: {{project_name.snakeCase()}}_android\n');
+    write('app/lib/a.dart');
+    const r = readRepoManifestsWithIgnored(root, warn);
+    expect(r.packages).toEqual([]);
+    expect(r.ignored.map((m) => [m.manifest, m.name, m.deps.map((d) => d.name), m.reason])).toEqual([
+      ['app/pubspec.yaml', '{{project_name.snakeCase()}}_android', [], 'template name {{project_name.snakeCase()}}_android'],
+      ['tpl/package.json', '{{project_name.paramCase()}}', ['@acme/x'], 'template name {{project_name.paramCase()}}'],
+    ]);
   });
 });
 
@@ -1101,6 +1122,39 @@ flutter:
   it('YAML subset: sequences at key indent, block scalars, CRLF', () => {
     const doc = parsePubspecYaml('name: x\r\nplatforms:\r\n- linux\r\n- web\r\nnotes: |\r\n  a: b\r\ndependencies:\r\n  y: 1.0.0\r\n');
     expect(doc).toEqual({ name: 'x', platforms: null, notes: null, dependencies: { y: '1.0.0' } });
+  });
+
+  it('an application without publish_to is private: lib/main.dart with main, a Flutter app section, mason hooks', () => {
+    const read = (files: Record<string, string>) => (rel: string): string | null => files[rel] ?? null;
+    const doc = (y: string) => parsePubspecYaml(y);
+    expect(pubApplicationReason(doc('name: a\n'), ['lib/main.dart'], read({ 'lib/main.dart': 'void main() => runApp(const App());\n' })))
+      .toBe('lib/main.dart declares main');
+    expect(pubApplicationReason(doc('name: a\n'), ['lib/main.dart'], read({ 'lib/main.dart': 'Future<void> main() async {}\n' })))
+      .toBe('lib/main.dart declares main');
+    // An analyzer plugin's lib/main.dart declares `plugin`, not main: a library.
+    expect(pubApplicationReason(doc('name: a\n'), ['lib/main.dart'], read({ 'lib/main.dart': 'final plugin = P();\nvoid mainly() {}\n' }))).toBeNull();
+    expect(pubApplicationReason(doc('name: a\nflutter:\n  uses-material-design: true\n'), ['lib/main.dart'], read({})))
+      .toBe('flutter: uses-material-design and no library besides lib/main.dart');
+    expect(pubApplicationReason(doc('name: a\nflutter:\n  assets:\n    - images/\n'), ['lib/src/app.dart'], read({})))
+      .toBe('flutter: assets and no library besides lib/main.dart');
+    // A Flutter package with public libraries and assets is a library.
+    expect(pubApplicationReason(doc('name: a\nflutter:\n  assets:\n    - images/\n'), ['lib/a.dart'], read({}))).toBeNull();
+    expect(pubApplicationReason(doc('name: h\ndependencies:\n  mason: ^0.1.0\n'), ['pre_gen.dart'], read({})))
+      .toBe('mason hooks: pre_gen.dart / post_gen.dart');
+    expect(pubApplicationReason(doc('name: h\n'), ['pre_gen.dart'], read({}))).toBeNull();
+
+    write('app/pubspec.yaml', 'name: app\n');
+    write('app/lib/main.dart', 'void main() {}\n');
+    write('app/lib/src/x.dart');
+    write('pubapp/pubspec.yaml', 'name: pubapp\npublish_to: https://pub.acme.dev\n'); // explicit publish_to wins
+    write('pubapp/lib/main.dart', 'void main() {}\n');
+    write('lib1/pubspec.yaml', 'name: lib1\n');
+    write('lib1/lib/lib1.dart');
+    const logs: string[] = [];
+    expect(readRepoManifests(root, warn, listFiles(root), { log: (l) => logs.push(l) }).map((p) => [p.name, p.visibility])).toEqual([
+      ['app', 'private'], ['lib1', 'published-public'], ['pubapp', 'published-private'],
+    ]);
+    expect(logs).toEqual(['app/pubspec.yaml: an application (lib/main.dart declares main) without publish_to: treated as private']);
   });
 
   it('skips a pubspec without a name, with a warning', () => {

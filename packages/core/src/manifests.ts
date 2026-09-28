@@ -81,7 +81,9 @@ export type Warn = (message: string) => void;
  * Directory names never descended into, at any depth, in a git checkout or not:
  * installed dependencies and VCS / tool metadata.
  */
-export const ALWAYS_SKIP_DIRS: ReadonlySet<string> = new Set(['node_modules', '.git', '.dart_tool']);
+export const ALWAYS_SKIP_DIRS: ReadonlySet<string> = new Set([
+  'node_modules', '.git', '.dart_tool',
+]);
 
 /**
  * Directory names also skipped when the repo is NOT a git checkout (fixtures, plain
@@ -104,6 +106,10 @@ export const DEFAULT_IGNORE_MANIFEST_DIRS: readonly string[] = Object.freeze([
   'testing', 'test_packages',
   // Rust crates' `crates/*/test_cases/*/package.json` fixtures (supabase/edge-runtime).
   'test_cases',
+  // mason brick templates (`bricks/<b>/__brick__/`, a `{{project_name}}` package inside)
+  // and mason's project dir: templates with mustache tags, never real packages. A
+  // brick's `hooks/` package (run by mason) sits beside `__brick__/` and is kept.
+  '__brick__', '.mason',
 ]);
 
 /**
@@ -365,6 +371,13 @@ export interface IgnoredManifest {
    */
   byDir?: true;
   /**
+   * Present when the manifest is no org package for a reason of its own, not a dir
+   * rule or glob: it does not parse (`cannot parse: …`, e.g. a mason template's
+   * `package.json` with `{{…}}` tags), or its name is a template (`{{…}}`). discover
+   * records it like an `ignoreManifests` exclusion (ignoredBy) so the report names it.
+   */
+  reason?: string;
+  /**
    * Present (true) with byDir when its ignored dirs are all consumer dirs
    * (isConsumerManifestPath: example, benchmark, sample, demo, playground…): discover
    * indexes it as a consumer package when it depends on another repo's org package.
@@ -427,9 +440,28 @@ export function readRepoManifestsWithIgnored(
       ignored.push(readIgnoredManifest(repoRoot, dir, 'npm', warn));
       continue;
     }
-    const pkg = base === 'package.json'
-      ? readNpmPackage(repoRoot, dir, files, warn, opts.log)
-      : readPubPackage(repoRoot, dir, files, warn);
+    // An unparseable manifest (a template with `{{…}}` tags, a merge conflict) is no
+    // org package: skipped with a warning and kept as an ignored manifest with unknown
+    // deps (the witness scans it for every package, fail closed), never an abort of the
+    // whole discover. A template name (`{{project_name.snakeCase()}}_android`) is the
+    // same: a mason / cookiecutter template that parsed, not a package.
+    const manager: Manager = base === 'package.json' ? 'npm' : 'pub';
+    let pkg: ManifestPackage | null;
+    try {
+      pkg = manager === 'npm'
+        ? readNpmPackage(repoRoot, dir, files, warn, opts.log)
+        : readPubPackage(repoRoot, dir, files, warn, opts.log);
+    } catch (err) {
+      if (!(err instanceof ManifestParseError)) throw err;
+      warn(`${file}: cannot parse (${err.detail}); not an org package: its deps are unknown, the text witness scans it as a consumer of every package`);
+      ignored.push({ path: dir, manifest: file, manager, name: null, deps: [], depsUnknown: true, reason: `cannot parse: ${err.detail}` });
+      continue;
+    }
+    if (pkg && isTemplateName(pkg.name)) {
+      warn(`${file}: package name ${JSON.stringify(pkg.name)} is a template ({{…}}); not an org package`);
+      ignored.push({ path: dir, manifest: file, manager, name: pkg.name, deps: pkg.deps, depsUnknown: false, reason: `template name ${pkg.name}` });
+      continue;
+    }
     if (pkg) pkgs.push(pkg);
   }
   if (skipped.length > 0) {
@@ -461,6 +493,23 @@ function isVscodeExtension(repoRoot: string, manifest: string): boolean {
   if (!isObject(json)) return false;
   const engines = json['engines'];
   return isObject(engines) && engines['vscode'] !== undefined;
+}
+
+/** A manifest that is no valid JSON / pubspec YAML (readNpmPackage, readPubPackage). */
+export class ManifestParseError extends Error {
+  readonly manifest: string;
+  readonly detail: string;
+  constructor(manifest: string, detail: string) {
+    super(`sentei: cannot parse ${manifest}: ${detail}`);
+    this.name = 'ManifestParseError';
+    this.manifest = manifest;
+    this.detail = detail;
+  }
+}
+
+/** A package name that is a template placeholder (mason / mustache `{{name}}`), never a real package. */
+export function isTemplateName(name: string): boolean {
+  return name.includes('{{');
 }
 
 /** Parse an ignored manifest for its name and deps only; parse errors are warnings. */
@@ -502,10 +551,11 @@ export function readNpmPackage(
   try {
     json = JSON.parse(readFileSync(join(repoRoot, manifest), 'utf8'));
   } catch (err) {
-    // Fail closed: silently dropping a manifest could hide a consumer.
-    throw new Error(`sentei: cannot parse ${manifest}: ${(err as Error).message}`);
+    // Fail closed: silently dropping a manifest could hide a consumer. The caller keeps
+    // it as an ignored manifest with unknown deps (readRepoManifestsWithIgnored).
+    throw new ManifestParseError(manifest, (err as Error).message.split('\n')[0]!);
   }
-  if (!isObject(json)) throw new Error(`sentei: ${manifest} is not a JSON object`);
+  if (!isObject(json)) throw new ManifestParseError(manifest, 'not a JSON object');
   const declaredName = json['name'];
   if (typeof declaredName !== 'string' || declaredName === '') {
     // No name: nothing can import it, but it may still USE org packages (an app, a
@@ -1672,14 +1722,14 @@ function exportPatternRegExp(p: string): RegExp {
 
 /** Parse one pubspec.yaml. `dir` is the package dir relative to the repo root. */
 export function readPubPackage(
-  repoRoot: string, dir: string, repoFiles: readonly string[] | null, warn: Warn = () => {},
+  repoRoot: string, dir: string, repoFiles: readonly string[] | null, warn: Warn = () => {}, log: Warn = () => {},
 ): ManifestPackage | null {
   const manifest = joinRel(dir, 'pubspec.yaml');
   let doc: YamlMap;
   try {
     doc = parsePubspecYaml(readFileSync(join(repoRoot, manifest), 'utf8'));
   } catch (err) {
-    throw new Error(`sentei: cannot parse ${manifest}: ${(err as Error).message}`);
+    throw new ManifestParseError(manifest, (err as Error).message.split('\n')[0]!);
   }
   const name = doc['name'];
   if (typeof name !== 'string' || name === '') {
@@ -1695,11 +1745,21 @@ export function readPubPackage(
     .sort(cmp);
   if (entryPoints.length === 0) warn(`${manifest}: no entry points (no lib/**/*.dart outside lib/src/, no bin/**/*.dart)`);
 
+  // An application is run, never depended on: private whatever pub.dev would allow
+  // (a Flutter app or a workshop copy without `publish_to: none`). An explicit
+  // publish_to is a declaration and wins.
+  let visibility = pubVisibility(doc['publish_to']);
+  const app = doc['publish_to'] === undefined ? pubApplicationReason(doc, files, (f) => readText(repoRoot, joinRel(dir, f))) : null;
+  if (app !== null) {
+    visibility = 'private';
+    log(`${manifest}: an application (${app}) without publish_to: treated as private`);
+  }
+
   return {
     manager: 'pub',
     name,
     version,
-    visibility: pubVisibility(doc['publish_to']),
+    visibility,
     isLibrary: publicLibs.length > 0,
     path: dir,
     manifest,
@@ -1708,6 +1768,44 @@ export function readPubPackage(
     runtimeEntryPoints: [],
     deps: pubDeps(doc, manifest, warn),
   };
+}
+
+/** A file's text, or null when it cannot be read. */
+function readText(repoRoot: string, rel: string): string | null {
+  try {
+    return readFileSync(join(repoRoot, rel), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** A top-level `main` function declaration (`void main(...)`, `Future<void> main() async`, `main() =>`). */
+const DART_TOP_LEVEL_MAIN = /^(?:(?:void|dynamic|int|Future(?:Or)?(?:<[^>\n]*>)?)\s+)?main\s*\(/m;
+
+/**
+ * Why the pub package whose pubspec is `doc` (package-relative `files`) is an
+ * application rather than a library, or null:
+ *   - `lib/main.dart` declares a top-level `main` (a Flutter or Dart app; an
+ *     analyzer plugin's `lib/main.dart` declares `plugin`, not `main`);
+ *   - a `flutter:` section with `assets` or `uses-material-design` and no public
+ *     library besides `lib/main.dart`;
+ *   - mason hooks: `pre_gen.dart` / `post_gen.dart` at the package root and a `mason`
+ *     dependency (mason runs them from the brick; nobody depends on the package).
+ */
+export function pubApplicationReason(doc: YamlMap, files: readonly string[], read: (rel: string) => string | null): string | null {
+  if (files.includes('lib/main.dart')) {
+    const text = read('lib/main.dart');
+    if (text !== null && DART_TOP_LEVEL_MAIN.test(text)) return 'lib/main.dart declares main';
+  }
+  const flutter = doc['flutter'];
+  if (flutter !== null && typeof flutter === 'object' && ('assets' in flutter || 'uses-material-design' in flutter)) {
+    const libs = pubPublicLibraries(files).filter((f) => f !== 'lib/main.dart');
+    if (libs.length === 0) return `flutter: ${'uses-material-design' in flutter ? 'uses-material-design' : 'assets'} and no library besides lib/main.dart`;
+  }
+  const deps = doc['dependencies'];
+  const hasMason = deps !== null && typeof deps === 'object' && 'mason' in deps;
+  if (hasMason && (files.includes('pre_gen.dart') || files.includes('post_gen.dart'))) return 'mason hooks: pre_gen.dart / post_gen.dart';
+  return null;
 }
 
 /**
