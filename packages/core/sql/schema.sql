@@ -226,14 +226,17 @@ CREATE INDEX IF NOT EXISTS package_flags_package ON package_flags (package_id);
 CREATE TABLE IF NOT EXISTS policy (
   key   TEXT PRIMARY KEY CHECK (key IN (
           'minAgeDays', 'trustPrivateRegistry',
-          'countTestsAsConsumers', 'countDocsAsConsumers')),
+          'countTestsAsConsumers', 'countDocsAsConsumers', 'closedOrg')),
   value TEXT NOT NULL CHECK (json_valid(value))
 ) STRICT;
 
 -- Removed policy keys are dropped on insert rather than rejected, so a sentei.json (or
 -- a Policy object) that still carries one does not abort discover. `assumeClosedWorld`
--- (removed in Phase 2): the verdicts no longer depend on it; the report's `org_dead`
--- view states the assertion it used to make silently.
+-- (removed in Phase 2): it re-derived every verdict under a silent closed-world
+-- assumption. Its successor `closedOrg` (Phase 3) is a different key with the same
+-- effect on published packages, stated in the report; the removed key is never read
+-- as it (a stale row is dropped and closedOrg keeps its default, false: fail closed;
+-- config.ts rejects the old key in sentei.json and points at closedOrg).
 CREATE TRIGGER IF NOT EXISTS policy_drop_removed_keys
 BEFORE INSERT ON policy
 WHEN NEW.key IN ('assumeClosedWorld')
@@ -246,7 +249,8 @@ INSERT OR IGNORE INTO policy (key, value) VALUES
   ('minAgeDays', '180'),
   ('trustPrivateRegistry', 'true'),
   ('countTestsAsConsumers', 'false'),
-  ('countDocsAsConsumers', 'false');
+  ('countDocsAsConsumers', 'false'),
+  ('closedOrg', 'false');
 
 -- `keep` list entries ("<package_id>#<symbol name>"); symbol_name '*' keeps every symbol.
 -- A name-only sentei.json entry ("npm:<name>#sym") is expanded at discover to one row
@@ -294,17 +298,23 @@ CREATE TABLE IF NOT EXISTS findings (
 -- Policy views (rules that read a config value)
 -- ---------------------------------------------------------------------------
 
--- Private packages: nobody outside the org can depend on them, so the org's code is
--- their whole consumer set. `private`, or `published-private` with trustPrivateRegistry
--- (an org-internal registry). Every other package is "published": external consumers
--- may exist, so its unused exports are deprecation_candidate, not deletion_candidate.
--- A missing / false policy key means "no".
+-- Private packages: nobody outside the org depends on them, so the org's code is their
+-- whole consumer set and an unused export is a deletion (not a deprecation) candidate.
+-- `private`; `published-private` with trustPrivateRegistry (an org-internal registry);
+-- or any package when the org asserts policy closedOrg ("nothing outside the org
+-- depends on our published packages"; sentei cannot check it, the report states it).
+-- Every other package is "published": external consumers may exist, so its unused
+-- exports are deprecation_candidate. A missing / false policy key means "no".
+-- The analysis, the witness and the findings triggers all read this one view, so
+-- closedOrg changes verdicts the way trustPrivateRegistry does: at analyze / witness
+-- over the same index (no re-index).
 CREATE VIEW IF NOT EXISTS private_packages (package_id) AS
 SELECT p.package_id
 FROM packages p
 WHERE p.visibility = 'private'
    OR (p.visibility = 'published-private'
-       AND coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'trustPrivateRegistry'), 0) = 1);
+       AND coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'trustPrivateRegistry'), 0) = 1)
+   OR coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'closedOrg'), 0) = 1;
 
 -- Packages we cannot see into: any untargeted package_flags row. A targeted flag is
 -- about the consumer's use of one other package, not about the consumer's own code.
@@ -408,7 +418,7 @@ END;
 -- The "would-be deletion" verdicts: deletion_candidate (private package) and a
 -- deprecation_candidate that is not an internal-only export (reasons no_refs /
 -- only_test_refs / only_docs_refs, or dead_island: published package, the same
--- evidence as a deletion; the report's org_dead view reads these as deletions). A
+-- evidence as a deletion; with closedOrg they are deletion_candidate instead). A
 -- deprecation_candidate with reason internal_refs_only and no dead_island is the
 -- published form of an unexport (it may also carry only_test_refs / only_docs_refs).
 -- only_test_refs / only_docs_refs: the only uses are in test / docs files the policy
@@ -426,8 +436,9 @@ BEGIN
   SELECT RAISE(ABORT, 'sentei: deletion/deprecation candidate blocked by opaque consumer');
 END;
 
--- §5.1: deletion/unexport verdicts only for private packages (nobody outside the org
--- can depend on them).
+-- §5.1: deletion/unexport verdicts only for private packages (view private_packages:
+-- nobody outside the org can depend on them). A published package qualifies only
+-- through policy closedOrg: a deletion in a published package requires closedOrg.
 CREATE TRIGGER IF NOT EXISTS findings_requires_private_package
 BEFORE INSERT ON findings
 WHEN NEW.verdict IN ('deletion_candidate', 'unexport_candidate')
@@ -435,10 +446,10 @@ WHEN NEW.verdict IN ('deletion_candidate', 'unexport_candidate')
                  JOIN private_packages c ON c.package_id = s.package_id
                  WHERE s.symbol_id = NEW.symbol_id)
 BEGIN
-  SELECT RAISE(ABORT, 'sentei: deletion/unexport candidate requires a private package');
+  SELECT RAISE(ABORT, 'sentei: deletion/unexport candidate requires a private package (or policy closedOrg)');
 END;
 
--- ... and deprecation verdicts only for published ones.
+-- ... and deprecation verdicts only for published ones (so never under closedOrg).
 CREATE TRIGGER IF NOT EXISTS findings_deprecation_requires_published_package
 BEFORE INSERT ON findings
 WHEN NEW.verdict = 'deprecation_candidate'

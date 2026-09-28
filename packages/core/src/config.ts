@@ -11,6 +11,12 @@ export interface Policy {
   trustPrivateRegistry: boolean;
   countTestsAsConsumers: boolean;
   countDocsAsConsumers: boolean;
+  /**
+   * The org asserts that nothing outside it depends on its published packages, so
+   * their unused exports are deletion candidates (as in private packages) instead of
+   * deprecation candidates. sentei cannot check this; the report states it. Default false.
+   */
+  closedOrg: boolean;
 }
 
 /** PLAN §6.5 defaults; identical to the seeds in schema.sql. */
@@ -19,6 +25,7 @@ export const DEFAULT_POLICY: Readonly<Policy> = Object.freeze({
   trustPrivateRegistry: true,
   countTestsAsConsumers: false,
   countDocsAsConsumers: false,
+  closedOrg: false,
 });
 
 export interface OrgConfig {
@@ -216,6 +223,7 @@ export function readOrgConfig(orgDir: string): OrgConfig {
       case 'trustPrivateRegistry':
       case 'countTestsAsConsumers':
       case 'countDocsAsConsumers':
+      case 'closedOrg':
         setPolicyValue(policy, key, value, file);
         break;
       case 'keep':
@@ -241,9 +249,9 @@ export function readOrgConfig(orgDir: string): OrgConfig {
         cfg.repos = readRepoSelectConfig(file, value);
         break;
       case 'assumeClosedWorld':
-        throw new Error(`sentei: ${file}: "assumeClosedWorld" was removed: verdicts no longer depend on it; `
-          + 'published packages get deprecation_candidate, and `sentei report --view org_dead` lists them as deletions '
-          + 'under the stated assertion that the org is their only consumer');
+        throw new Error(`sentei: ${file}: "assumeClosedWorld" was removed: published packages get deprecation_candidate; `
+          + 'set "closedOrg": true to assert that nothing outside the org depends on them (their unused exports are '
+          + 'then deletion candidates; no re-index needed)');
       default:
         throw new Error(`sentei: ${file}: unknown key "${key}"`);
     }

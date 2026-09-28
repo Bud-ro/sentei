@@ -1,13 +1,14 @@
 // M1 acceptance test (PLAN.md §10): the whole pipeline on a temp copy of
 // fixtures/org-small must reproduce expected-findings.json EXACTLY. The expected file
-// holds the base verdicts; the report views (delete / deprecate / org_dead / …) are
-// filters over them, checked here on the same run (no second analysis).
+// holds the base verdicts; the report views (delete / deprecate / legacy org_dead / …)
+// are filters over them, checked here on the same run (no second analysis). Policy
+// closedOrg is checked on the same index too (discover again, no re-index).
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openDb } from '@sentei/core/db';
-import { ORG_DEAD_ASSERTION, type Report, type SarifLog } from '@sentei/core';
+import { CLOSED_ORG_ASSERTION, ORG_DEAD_ASSERTION, type Report, type SarifLog } from '@sentei/core';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { StageContext } from '../src/context.ts';
 import { analyze } from '../src/stages/analyze.ts';
@@ -187,9 +188,12 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(names(r.views.unexport.rows)).toContain('npm:acme/lib-core:@acme/core#internalOnlyFn');
     expect(r.packages.find((p) => p.package_id === widgets)).toMatchObject({ private: false, counts: { delete: 0, deprecate: 4 } });
 
-    // Default stdout: every view, ORG-DEAD once with its footnote.
-    expect(lines.some((l) => /^ {2}ORG-DEAD +4\*/.test(l))).toBe(true);
-    expect(lines).toContain(`* ORG-DEAD lists the DEPRECATE rows as deletions, asserting: ${ORG_DEAD_ASSERTION}`);
+    // Default stdout: every view but the legacy org_dead (no column, line or footnote).
+    expect(lines.some((l) => /^ {2}DEPRECATE +4\b/.test(l))).toBe(true);
+    expect(lines.some((l) => l.includes('ORG-DEAD'))).toBe(false);
+    expect(lines.some((l) => l.includes(ORG_DEAD_ASSERTION))).toBe(false);
+    expect(lines).toContain('policy: minAgeDays=0 trustPrivateRegistry=true countTestsAsConsumers=false countDocsAsConsumers=false closedOrg=false');
+    expect(r.assertions).toEqual([]);
 
     // M5: one SARIF log per repo, schema-valid; default views: all but org_dead.
     for (const { repo } of r.repos) {
@@ -236,7 +240,54 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(filtered.some((l) => /^ {2}ORG-DEAD/.test(l))).toBe(true);
     expect(filtered.some((l) => /^ {2}(DELETE|DEPRECATE|UNEXPORT)\b/.test(l))).toBe(false);
     expect(filtered.some((l) => l.startsWith('Top blockers') || l.startsWith('Version skew'))).toBe(false);
-  }, 180_000);
+
+    // Policy closedOrg on the same index: discover (with --policy closedOrg=true), index
+    // (all cached: no re-index), ingest, analyze, witness, report. The published
+    // package's would-be deletions become deletion_candidate (through the witness), its
+    // unexport a plain unexport, the helper they unlock private_dead; nothing else moves.
+    const closed = await withCtx(org, async (ctx, out) => {
+      ctx.policyOverrides = { closedOrg: true };
+      await discover(ctx);
+      await index(ctx, { install: false });
+      await ingest(ctx);
+      await analyze(ctx);
+      await witness(ctx);
+      await report(ctx);
+      return { out, r: JSON.parse(readFileSync(path.join(ctx.work, 'report.json'), 'utf8')) as Report };
+    });
+    // (The fixture repos are not checkouts, so the index cache cannot apply here and index
+    // runs again; that closedOrg never invalidates a cached index is index.test.ts's
+    // failureInputHash test.)
+    expect(closed.r.policy.closedOrg).toBe(true);
+    expect(closed.r.assertions).toEqual([{ policy: 'closedOrg', text: CLOSED_ORG_ASSERTION }]);
+    const published = new Set(r.packages.filter((p) => !p.private).map((p) => p.package_id));
+    const flipped = r.findings.map((f) => ({
+      ...f,
+      verdict: f.verdict === 'deprecation_candidate' && published.has(f.package_id)
+        ? (f.reasons.includes('internal_refs_only') && !f.reasons.includes('dead_island') ? 'unexport_candidate' : 'deletion_candidate')
+        : f.verdict,
+    }));
+    expect(closed.r.findings).toEqual(flipped);
+    expect(closed.r.views.deprecate.rows).toEqual([]);
+    expect(closed.r.views.org_dead.rows).toEqual([]);
+    expect(closed.r.views.org_dead.private_dead).toEqual([]);
+    expect(closed.r.views.delete.assertion).toBe(CLOSED_ORG_ASSERTION);
+    expect(names(closed.r.views.delete.rows)).toEqual(expect.arrayContaining([
+      `${widgets}#default`, `${widgets}#internalUnused`, `${widgets}#namespaceUnused`, `${widgets}#testOnlyFn`,
+    ]));
+    expect(names(closed.r.views.private_dead.rows)).toContain(`${widgets}#unusedHelper`);
+    expect(closed.r.packages.find((p) => p.package_id === widgets))
+      .toMatchObject({ private: true, private_by_assertion: true, counts: { delete: 4, deprecate: 0 } });
+    expect(closed.out).toContain('policy: minAgeDays=0 trustPrivateRegistry=true countTestsAsConsumers=false countDocsAsConsumers=false '
+      + `closedOrg=true (asserted: ${CLOSED_ORG_ASSERTION})`);
+    const closedSarif = allSarifResults(work);
+    expect(closedSarif.some((x) => x.ruleId === 'sentei/deprecate' || x.ruleId === 'sentei/org-dead')).toBe(false);
+    const widgetsDeletes = closedSarif.filter((x) => x.ruleId === 'sentei/delete' && ['default', 'internalUnused', 'namespaceUnused', 'testOnlyFn'].includes(String(x.symbol)));
+    expect(widgetsDeletes).toHaveLength(4);
+    expect(widgetsDeletes.every((x) => x.message.endsWith(`assertion (policy closedOrg): ${CLOSED_ORG_ASSERTION}.`))).toBe(true);
+    expect(sarifSchemaErrors(widgetsDeletes[0]!.log)).toEqual([]);
+    expect(widgetsDeletes[0]!.log.runs[0]!.properties.assertions).toEqual([{ view: 'delete', text: CLOSED_ORG_ASSERTION }]);
+  }, 300_000);
 });
 
 // Package identity is <manager>:<repo>:<name>: repos `one` and `two` both have

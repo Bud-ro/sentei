@@ -87,7 +87,7 @@ describe('openDb', () => {
   });
 
   it('stamps SCHEMA_VERSION and refuses a DB stamped with another version', () => {
-    expect(SCHEMA_VERSION).toBe(12);
+    expect(SCHEMA_VERSION).toBe(13);
     const v = db.prepare('PRAGMA user_version').get() as { user_version: number };
     expect(v.user_version).toBe(SCHEMA_VERSION);
     db.close();
@@ -97,7 +97,7 @@ describe('openDb', () => {
     db = openDb(path);
     db.exec('PRAGMA user_version = 1');
     db.close();
-    expect(() => openDb(path)).toThrow(/schema version 1, expected 12/);
+    expect(() => openDb(path)).toThrow(/schema version 1, expected 13/);
     for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
     db = openDb(':memory:');
   });
@@ -574,7 +574,16 @@ describe('policy invariants', () => {
     setPolicy('assumeClosedWorld', true);
     run("INSERT INTO policy (key, value) VALUES ('assumeClosedWorld', 'false')");
     expect(count("SELECT count(*) AS n FROM policy WHERE key = 'assumeClosedWorld'")).toBe(0);
-    expect(count('SELECT count(*) AS n FROM policy')).toBe(4);
+    expect(count('SELECT count(*) AS n FROM policy')).toBe(5);
+    // ... and it is not read as its successor closedOrg, which keeps its default.
+    expect(db.prepare("SELECT value FROM policy WHERE key = 'closedOrg'").get()).toEqual({ value: 'false' });
+  });
+
+  it('seeds closedOrg = false and accepts only JSON values for it', () => {
+    expect(db.prepare("SELECT value FROM policy WHERE key = 'closedOrg'").get()).toEqual({ value: 'false' });
+    setPolicy('closedOrg', true);
+    expect(db.prepare("SELECT value FROM policy WHERE key = 'closedOrg'").get()).toEqual({ value: 'true' });
+    expect(() => run("UPDATE policy SET value = 'yes' WHERE key = 'closedOrg'")).toThrow(REJECTED);
   });
 });
 
@@ -643,6 +652,42 @@ describe('findings invariants', () => {
     expect(() => addFinding(a, 'deprecation_candidate')).toThrow(/sentei: deprecation_candidate requires a published package/);
     expect(db.prepare('SELECT package_id FROM private_packages ORDER BY package_id').all())
       .toEqual([{ package_id: app }, { package_id: lib }]);
+  });
+
+  it('allows deletion/unexport in a published package only under closedOrg, and then no deprecation', () => {
+    const pub = addPackage('@acme/pub', { visibility: 'published-public' });
+    const s = addSymbol(pub, 's');
+    const t = addSymbol(pub, 't');
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s, 1);
+    const closedOrgErr = /sentei: deletion\/unexport candidate requires a private package \(or policy closedOrg\)/;
+    // Default (closedOrg false), and an explicit false: delete in a published package is rejected.
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(closedOrgErr);
+    setPolicy('closedOrg', false);
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(closedOrgErr);
+    expect(() => addFinding(t, 'unexport_candidate')).toThrow(closedOrgErr);
+    // A missing key reads as false (fail closed).
+    run("DELETE FROM policy WHERE key = 'closedOrg'");
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(closedOrgErr);
+    setPolicy('closedOrg', true);
+    expect(db.prepare('SELECT package_id FROM private_packages ORDER BY package_id').all())
+      .toEqual([{ package_id: app }, { package_id: lib }, { package_id: pub }]);
+    addFinding(s, 'deletion_candidate');
+    addFinding(t, 'unexport_candidate');
+    expect(() => addFinding(s, 'deprecation_candidate')).toThrow(/sentei: deprecation_candidate requires a published package/);
+  });
+
+  it('closedOrg does not lift the witness, keep or opaque-consumer guards', () => {
+    setPolicy('closedOrg', true);
+    const pub = addPackage('@acme/pub', { visibility: 'published-public' });
+    run("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, '@acme/pub', 'npm', ?)", app, pub);
+    const s = addSymbol(pub, 's');
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate requires witness_ok/);
+    run('INSERT INTO witness_ok (symbol_id, checked_at) VALUES (?, ?)', s, 1);
+    run("INSERT INTO keep_rules (package_id, symbol_name) VALUES (?, 's')", pub);
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate matches keep rule/);
+    run('DELETE FROM keep_rules');
+    run("INSERT INTO package_flags (package_id, flag, reason) VALUES (?, 'index_failed', 'tsc crashed')", app);
+    expect(() => addFinding(s, 'deletion_candidate')).toThrow(/sentei: deletion\/deprecation candidate blocked by opaque consumer/);
   });
 
   it('treats published-private as private only when trustPrivateRegistry is true', () => {

@@ -5,7 +5,11 @@ import { analyzeSql } from '../src/analyze.ts';
 import { defaultOrgConfig } from '../src/config.ts';
 import { openDb } from '../src/db.ts';
 import { writeDiscoverToDb } from '../src/discover.ts';
-import { blockerHint, buildReport, capCell, capList, formatSummary, formatTable, MAX_CELL, ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS } from '../src/report.ts';
+import {
+  blockerHint, buildReport, capCell, capList, CLOSED_ORG_ASSERTION, CLOSED_ORG_DELETE_DESCRIPTION, formatSummary, formatTable, MAX_CELL,
+  ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS,
+} from '../src/report.ts';
+import { buildSarif } from '../src/sarif.ts';
 
 const NOW = 1_700_000_000;
 const VERSION = (JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
@@ -85,9 +89,16 @@ function markAnalyzed(d: DatabaseSync): void {
   d.prepare("INSERT OR REPLACE INTO run_params (key, value) VALUES ('analyzed_at', '0')").run();
 }
 
-function seed(): void {
+/**
+ * closedOrg: the org asserts that nothing outside it depends on its published packages,
+ * so @acme/open's would-be deletions are deletion_candidate (not deprecation_candidate)
+ * and its internal-only export unexport_candidate, as the witness / analyze write them
+ * under that policy (schema view private_packages holds every package).
+ */
+function seed(closedOrg = false): void {
   markAnalyzed(db);
   setPolicy('minAgeDays', 0);
+  if (closedOrg) setPolicy('closedOrg', true);
   addRepo('acme/lib-core', 'sha-core', 'ok');
   addRepo('acme/lib-pub', 'sha-pub', 'ok');
   addRepo('acme/app', 'sha-app', 'ok');
@@ -118,10 +129,11 @@ function seed(): void {
   addFinding(addSymbol(pub, 'pubB'), BLOCKED, ['no_refs'], [`${dyn}:dynamic_access`, `${dyn}:namespace_dynamic`]);
   addFinding(addSymbol(pub, 'pubA'), BLOCKED, ['only_test_refs'], [`${dyn}:dynamic_access`, `${dyn}:namespace_dynamic`]);
 
-  addFinding(addSymbol(open, 'openDead', { line: 4, col: 16 }), 'deprecation_candidate', ['no_refs']);
-  addFinding(addSymbol(open, 'openTested', { line: 5, col: 16 }), 'deprecation_candidate', ['only_test_refs']);
-  addFinding(addSymbol(open, 'openIsland', { line: 6, col: 16 }), 'deprecation_candidate', ['internal_refs_only', 'dead_island']);
-  addFinding(addSymbol(open, 'openInternal', { line: 7, col: 16 }), 'deprecation_candidate', ['internal_refs_only']);
+  const pubDelete = closedOrg ? 'deletion_candidate' : 'deprecation_candidate';
+  addFinding(addSymbol(open, 'openDead', { line: 4, col: 16 }), pubDelete, ['no_refs']);
+  addFinding(addSymbol(open, 'openTested', { line: 5, col: 16 }), pubDelete, ['only_test_refs']);
+  addFinding(addSymbol(open, 'openIsland', { line: 6, col: 16 }), pubDelete, ['internal_refs_only', 'dead_island']);
+  addFinding(addSymbol(open, 'openInternal', { line: 7, col: 16 }), closedOrg ? 'unexport_candidate' : 'deprecation_candidate', ['internal_refs_only']);
   addFinding(addSymbol(open, 'openHelper', { line: 8, col: 9, exported: false }), 'private_dead', ['unlocked_by:openDead']);
   addFinding(addSymbol(open, 'openOld', { line: 9, col: 9, exported: false }), 'private_dead', ['already_unreachable']);
 
@@ -203,7 +215,8 @@ describe('buildReport', () => {
       tool: { name: 'sentei', version: VERSION },
       generatedAt: NOW,
       generatedAtIso: new Date(NOW * 1000).toISOString(),
-      policy: { minAgeDays: 0, trustPrivateRegistry: true, countTestsAsConsumers: false, countDocsAsConsumers: false },
+      policy: { minAgeDays: 0, trustPrivateRegistry: true, countTestsAsConsumers: false, countDocsAsConsumers: false, closedOrg: false },
+      assertions: [],
       warnings: [
         'minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates',
         'repo acme/app-dyn: index partial; its packages are opaque and block verdicts for every org package they depend on',
@@ -226,26 +239,26 @@ describe('buildReport', () => {
         version_skew: { description: VIEW_DESCRIPTIONS.version_skew, rows: versionSkew },
       },
       packages: [
-        { package_id: 'npm:acme/app-dyn:@acme/dyn', name: '@acme/dyn', repo: 'acme/app-dyn', visibility: 'private', private: true, opaque: true,
+        { package_id: 'npm:acme/app-dyn:@acme/dyn', name: '@acme/dyn', repo: 'acme/app-dyn', visibility: 'private', private: true, private_by_assertion: false, opaque: true,
           flags: [
             { flag: 'dynamic_access', reason: "require('@acme/' + name)", file: 'src/load.cts' },
             { flag: 'namespace_dynamic', reason: 'P[key]', file: 'src/main.ts' },
           ],
           consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
-        { package_id: 'npm:acme/app:@acme/app', name: '@acme/app', repo: 'acme/app', visibility: 'private', private: true, opaque: false, flags: [],
+        { package_id: 'npm:acme/app:@acme/app', name: '@acme/app', repo: 'acme/app', visibility: 'private', private: true, private_by_assertion: false, opaque: false, flags: [],
           consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
-        { ...core, visibility: 'private', private: true, opaque: false, flags: [],
+        { ...core, visibility: 'private', private: true, private_by_assertion: false, opaque: false, flags: [],
           consumers: ['npm:acme/app:@acme/app', 'npm:acme/repo-broken:@acme/broken'], blocked_by: ['npm:acme/repo-broken:@acme/broken:index_failed'],
           counts: blockedCounts(1, 1), exported: 2, symbols: 2 },
-        { ...util, visibility: 'private', private: true, opaque: false, flags: [],
+        { ...util, visibility: 'private', private: true, private_by_assertion: false, opaque: false, flags: [],
           consumers: ['npm:acme/app:@acme/app'], blocked_by: [],
           counts: counts({ delete: 2, unexport: 1, private_dead: 2 }), exported: 4, symbols: 6 },
-        { ...open, visibility: 'published-public', private: false, opaque: false, flags: [], consumers: [], blocked_by: [],
+        { ...open, visibility: 'published-public', private: false, private_by_assertion: false, opaque: false, flags: [], consumers: [], blocked_by: [],
           counts: counts({ deprecate: 3, org_dead: 4, unexport: 1, private_dead: 1 }), exported: 4, symbols: 6 },
-        { ...pub, visibility: 'published-public', private: false, opaque: false, flags: [],
+        { ...pub, visibility: 'published-public', private: false, private_by_assertion: false, opaque: false, flags: [],
           consumers: ['npm:acme/app-dyn:@acme/dyn'], blocked_by: dynBlockers,
           counts: blockedCounts(2), exported: 2, symbols: 2 },
-        { package_id: 'npm:acme/repo-broken:@acme/broken', name: '@acme/broken', repo: 'acme/repo-broken', visibility: 'private', private: true, opaque: true,
+        { package_id: 'npm:acme/repo-broken:@acme/broken', name: '@acme/broken', repo: 'acme/repo-broken', visibility: 'private', private: true, private_by_assertion: false, opaque: true,
           flags: [{ flag: 'index_failed', reason: 'tsconfig.json: invalid JSON', file: null }],
           consumers: [], blocked_by: [], counts: counts({}), exported: 0, symbols: 0 },
       ],
@@ -334,7 +347,7 @@ describe('formatSummary', () => {
     const text = formatSummary(buildReport({ db, now: NOW }));
     const lines = text.split('\n');
     expect(lines[0]).toBe(`sentei ${VERSION} report, generated 2023-11-14T22:13:20Z`);
-    expect(lines[1]).toBe('policy: minAgeDays=0 trustPrivateRegistry=true countTestsAsConsumers=false countDocsAsConsumers=false');
+    expect(lines[1]).toBe('policy: minAgeDays=0 trustPrivateRegistry=true countTestsAsConsumers=false countDocsAsConsumers=false closedOrg=false');
     expect(lines[3]).toMatch(/^!{78}$/);
     expect(lines[4]).toMatch(/^!! WARNING: minAgeDays is 0/);
     expect(lines[7]).toMatch(/^!{78}$/);
@@ -344,35 +357,37 @@ describe('formatSummary', () => {
 
     const header = lines.indexOf('Packages (7), 15 finding(s)');
     expect(header).toBeGreaterThan(7);
-    expect(lines[header + 1]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +DEPRECATE +ORG-DEAD +UNEXPORT +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
+    // No ORG-DEAD column by default (legacy view: explicit --view org_dead only).
+    expect(lines[header + 1]).toMatch(/^PACKAGE +REPO +VISIBILITY +PRIVATE +OPAQUE +DELETE +DEPRECATE +UNEXPORT +PRIV-DEAD +REVIEW +BLOCKED +BLOCKED BY$/);
     // PACKAGE is the name, REPO the repo: together the package id, readable.
     const util = lines.find((l) => l.startsWith('@acme/util '));
-    expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +yes +2 +0 +0 +1 +2 +0 +0$/);
-    expect(lines.find((l) => l.startsWith('@acme/open '))).toMatch(/^@acme\/open +acme\/lib-pub +published-public +0 +3 +4 +1 +1 +0 +0$/);
+    expect(util).toMatch(/^@acme\/util +acme\/lib-core +private +yes +2 +0 +1 +2 +0 +0$/);
+    expect(lines.find((l) => l.startsWith('@acme/open '))).toMatch(/^@acme\/open +acme\/lib-pub +published-public +0 +3 +1 +1 +0 +0$/);
     const pub = lines.find((l) => l.startsWith('@acme/pub '));
     // Two blocker ids do not fit in one cell (MAX_CELL): the first, then a count.
     expect(pub).toMatch(/^@acme\/pub +acme\/lib-pub +published-public +0 .*npm:acme\/app-dyn:@acme\/dyn:dynamic_access … \+1 more \(report\.json\)$/);
     expect(lines.find((l) => l.startsWith('@acme/broken '))).toMatch(/acme\/repo-broken +private +yes +yes +0/);
-    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(/^TOTAL +2 +3 +4 +2 +3 +1 +3$/);
+    expect(lines.find((l) => l.startsWith('TOTAL '))).toMatch(/^TOTAL +2 +3 +2 +3 +1 +3$/);
     // Every row of the package table has its BLOCKED BY column at the same offset.
     const col = lines[header + 1]!.indexOf('BLOCKED BY');
     expect(pub!.indexOf('npm:acme/app-dyn:@acme/dyn:')).toBe(col);
 
-    // View totals: ORG-DEAD once, as the DEPRECATE count with a footnote; islands are a reason.
+    // View totals: no ORG-DEAD line or footnote by default; islands are a reason.
     const views = lines.indexOf('Views');
     expect(views).toBeGreaterThan(header);
-    expect(lines.slice(views + 1, views + 9)).toEqual([
+    expect(lines.slice(views + 1, views + 8)).toEqual([
       '  DELETE            2  (no_refs 1, dead_island 1)',
       '  DEPRECATE         3  (no_refs 1, only_test_refs 1, dead_island 1)',
-      '  ORG-DEAD          3*  (= DEPRECATE, + 1 private helper(s) they unlock)',
       '  UNEXPORT          2  (1 in published packages: deprecate the export first)',
       '  PRIV-DEAD         3',
       '  REVIEW            1',
       '  BLOCKED           3',
       '  VERSION-SKEW      3',
     ]);
-    expect(lines[views + 9]).toBe('dead_island: exports used only by other candidates (delete / deprecate them together).');
-    expect(lines[views + 10]).toBe(`* ORG-DEAD lists the DEPRECATE rows as deletions, asserting: ${ORG_DEAD_ASSERTION}`);
+    expect(lines[views + 8]).toBe('dead_island: exports used only by other candidates (delete / deprecate them together).');
+    expect(lines[views + 9]).toBe('');
+    expect(text).not.toContain('ORG-DEAD');
+    expect(text).not.toContain(ORG_DEAD_ASSERTION);
 
     const top = lines.indexOf('Top blockers (opaque consumers preventing verdicts; fix these first)');
     expect(top).toBeGreaterThan(views);
@@ -400,7 +415,7 @@ describe('formatSummary', () => {
     const views = lines.indexOf('Views');
     expect(lines.slice(views + 1, views + 3).map((l) => l.trim().split(/ +/)[0])).toEqual(['DELETE', 'ORG-DEAD']);
     expect(lines[views + 3]).toMatch(/^dead_island:/);
-    expect(lines[views + 4]).toMatch(/^\* ORG-DEAD lists the DEPRECATE rows as deletions/);
+    expect(lines[views + 4]).toBe(`* ORG-DEAD (legacy; prefer policy closedOrg) lists the DEPRECATE rows as deletions, asserting: ${ORG_DEAD_ASSERTION}`);
     expect(lines.some((l) => l.startsWith('Top blockers') || l.startsWith('Version skew'))).toBe(false);
     // Without org_dead, no footnote.
     const plain = formatSummary(buildReport({ db, now: NOW }), { views: ['deprecate'] });
@@ -420,6 +435,97 @@ describe('formatSummary', () => {
     } finally {
       empty.close();
     }
+  });
+});
+
+describe('policy closedOrg (the org asserts nothing outside it depends on its published packages)', () => {
+  /** A fresh DB seeded under closedOrg (the verdicts differ, so the default seed cannot be reused). */
+  function closedOrgDb(): void {
+    db.close();
+    db = openDb(':memory:');
+    seed(true);
+  }
+
+  it('flips the published would-be deletions into delete, states the assertion, and empties deprecate / org_dead', () => {
+    closedOrgDb();
+    const r = buildReport({ db, now: NOW });
+    const ids = (rows: Array<{ name: string; symbol: string }>): string[] => rows.map((f) => `${f.name}#${f.symbol}`);
+    expect(r.policy.closedOrg).toBe(true);
+    expect(r.assertions).toEqual([{ policy: 'closedOrg', text: CLOSED_ORG_ASSERTION }]);
+    expect(r.views.delete.assertion).toBe(CLOSED_ORG_ASSERTION);
+    expect(r.views.delete.description).toBe(CLOSED_ORG_DELETE_DESCRIPTION);
+    expect(r.views.delete.description).toContain(CLOSED_ORG_ASSERTION);
+    expect(ids(r.views.delete.rows)).toEqual([
+      '@acme/util#islandFn', '@acme/util#unusedFn', '@acme/open#openDead', '@acme/open#openIsland', '@acme/open#openTested',
+    ]);
+    expect(r.views.delete.rows.every((f) => f.verdict === 'deletion_candidate')).toBe(true);
+    // Empty by construction: every published would-be deletion is already in delete.
+    expect(r.views.deprecate.rows).toEqual([]);
+    expect(r.views.org_dead.rows).toEqual([]);
+    expect(r.views.org_dead.private_dead).toEqual([]);
+    // The unexport is a plain one, and the helper openDead unlocks is private_dead.
+    expect(ids(r.views.unexport.rows)).toEqual(['@acme/util#internalOnly', '@acme/open#openInternal']);
+    expect(r.views.unexport.published).toEqual([]);
+    expect(ids(r.views.private_dead.rows)).toEqual(['@acme/util#_island', '@acme/util#helper', '@acme/open#openHelper', '@acme/open#openOld']);
+    const pkg = (id: string): (typeof r.packages)[number] => r.packages.find((p) => p.package_id === id)!;
+    expect(pkg('npm:acme/lib-pub:@acme/open')).toMatchObject({
+      visibility: 'published-public', private: true, private_by_assertion: true,
+      counts: { delete: 3, deprecate: 0, org_dead: 0, unexport: 1, private_dead: 2 },
+    });
+    expect(pkg('npm:acme/lib-core:@acme/util')).toMatchObject({ private: true, private_by_assertion: false });
+  });
+
+  it('states the assertion on the summary policy line and marks the asserted packages', () => {
+    closedOrgDb();
+    const text = formatSummary(buildReport({ db, now: NOW }));
+    const lines = text.split('\n');
+    expect(lines[1]).toBe('policy: minAgeDays=0 trustPrivateRegistry=true countTestsAsConsumers=false countDocsAsConsumers=false '
+      + `closedOrg=true (asserted: ${CLOSED_ORG_ASSERTION})`);
+    expect(lines.find((l) => l.startsWith('@acme/open '))).toMatch(/^@acme\/open +acme\/lib-pub +published-public +closedOrg +3 +0 +1 +2 +0 +0$/);
+    expect(lines.find((l) => l.startsWith('@acme/util '))).toMatch(/^@acme\/util +acme\/lib-core +private +yes +2 /);
+    expect(lines).toContain('  DELETE            5  (no_refs 2, only_test_refs 1, dead_island 2)');
+    expect(lines).toContain('  DEPRECATE         0');
+    expect(text).not.toContain('ORG-DEAD');
+    // --view org_dead still works: empty under closedOrg.
+    const legacy = formatSummary(buildReport({ db, now: NOW }), { views: ['org_dead'] }).split('\n');
+    expect(legacy).toContain('  ORG-DEAD          0*  (= DEPRECATE)');
+  });
+
+  it('SARIF: delete results of published packages repeat the assertion; the default rule selection is unchanged', () => {
+    closedOrgDb();
+    const r = buildReport({ db, now: NOW });
+    const run = buildSarif(r).get('acme/lib-pub')!.runs[0]!;
+    expect(run.properties.policy.closedOrg).toBe(true);
+    expect(run.properties.views).toEqual(['delete', 'deprecate', 'unexport', 'private_dead', 'needs_review', 'blocked', 'version_skew']);
+    expect(run.properties.assertions).toEqual([{ view: 'delete', text: CLOSED_ORG_ASSERTION }]);
+    const del = run.results.filter((x) => x.ruleId === 'sentei/delete');
+    expect(del.map((x) => x.properties['symbol'])).toEqual(['openDead', 'openTested', 'openIsland']);
+    for (const x of del) expect(x.message.text).toContain(`assertion (policy closedOrg): ${CLOSED_ORG_ASSERTION}.`);
+    expect(run.results.some((x) => x.ruleId === 'sentei/deprecate' || x.ruleId === 'sentei/org-dead')).toBe(false);
+    // A private package's deletions rest on no assertion.
+    const core = buildSarif(r).get('acme/lib-core')!.runs[0]!;
+    const privDel = core.results.filter((x) => x.ruleId === 'sentei/delete');
+    expect(privDel).toHaveLength(2);
+    for (const x of privDel) expect(x.message.text).not.toContain('closedOrg');
+  });
+
+  it('default policy: no assertion anywhere, and the published rows stay deprecations', () => {
+    const r = buildReport({ db, now: NOW });
+    expect(r.policy.closedOrg).toBe(false);
+    expect(r.assertions).toEqual([]);
+    expect(r.views.delete.assertion).toBeUndefined();
+    expect(r.views.deprecate.rows.every((f) => f.verdict === 'deprecation_candidate')).toBe(true);
+    const run = buildSarif(r).get('acme/lib-pub')!.runs[0]!;
+    expect(run.properties.assertions).toEqual([]);
+    expect(run.results.filter((x) => x.ruleId === 'sentei/deprecate')).toHaveLength(3);
+  });
+
+  it('the witness gate still applies to a published deletion under closedOrg', () => {
+    closedOrgDb();
+    const open = 'npm:acme/lib-pub:@acme/open';
+    const s = addSymbol(open, 'unwitnessed', { line: 20, col: 16 });
+    expect(() => run("INSERT INTO findings (symbol_id, verdict, reasons) VALUES (?, 'deletion_candidate', '[\"no_refs\"]')", s))
+      .toThrow(/sentei: deletion\/deprecation candidate requires witness_ok/);
   });
 });
 

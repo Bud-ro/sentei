@@ -641,8 +641,10 @@ WHERE x.exported_as = 'default'
 --                                      for a private P, deprecation_candidate for a
 --                                      published one, or leaves needs_review on a hit)
 -- "Private" is the schema view private_packages (nobody outside the org can depend on
--- P); the verdict depends on nothing else about the world, so every report view
--- (delete / deprecate / org_dead / unexport) is a filter over the same findings.
+-- P: private, published-private with trustPrivateRegistry, or any package under the
+-- policy assertion closedOrg); the verdict depends on nothing else about the world, so
+-- every report view (delete / deprecate / unexport / legacy org_dead) is a filter over
+-- the same findings, and closedOrg changes verdicts without a re-index.
 -- no_refs becomes only_test_refs when the only uses (same-package or cross-package) are
 -- in excluded test files, only_docs_refs when they are in excluded docs files, both (in
 -- that order) when there are both; the same reasons are appended after
@@ -710,9 +712,10 @@ LEFT JOIN blockers b ON b.package_id = c.package_id;
 -- Exports that the findings propose to delete, unexport or deprecate: they stop being
 -- seeds. A deprecation is a deletion (or an unexport) of a published symbol deferred to
 -- a major version, so it is a candidate too: the private helpers it unlocks are
--- private_dead with unlocked_by:<it> (the report shows those, in a published package,
--- only in the org_dead view). Package-local: reach_edges never cross packages, so a
--- published package's candidates never unlock a private package's code.
+-- private_dead with unlocked_by:<it> (the report shows those, in a published package
+-- without closedOrg, only in the legacy org_dead view). Package-local: reach_edges
+-- never cross packages, so a published package's candidates never unlock a private
+-- package's code.
 -- Read from `findings` (not from base_verdicts) so that the witness stage's outcome
 -- propagates: a candidate the witness downgrades to needs_review (witness_mismatch, no
 -- witness_pending) is no longer a candidate, stays a seed, and so no longer unlocks

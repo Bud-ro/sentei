@@ -5,7 +5,10 @@ export { discoverLocal, writeDiscoverToDb } from './discover.ts';
 export type { DiscoverModel } from './discover.ts';
 export { runWitness } from './witness.ts';
 export type { WitnessDiscoverInput } from './witness.ts';
-export { blockerHint, buildReport, defaultSarifViews, formatSummary, ignoreManifestEntry, indexLogPath, ORG_DEAD_ASSERTION, parseViews, REPORT_VIEWS } from './report.ts';
+export {
+  blockerHint, buildReport, CLOSED_ORG_ASSERTION, defaultSarifViews, defaultViews, formatSummary, ignoreManifestEntry, indexLogPath,
+  ORG_DEAD_ASSERTION, parseViews, REPORT_VIEWS,
+} from './report.ts';
 export type { Report, ReportViewName, ReportViews } from './report.ts';
 export * from './sarif.ts';
 export { analyzeOrg } from './analyze.ts';

@@ -83,11 +83,15 @@ Options:
                           child process, doubled once on heap exhaustion (default: 8192)
   --policy <key>=<json>   discover/run: override one org sentei.json policy key
                           (repeatable), e.g. --policy countTestsAsConsumers=true
-                          --policy minAgeDays=0
+                          --policy minAgeDays=0. --policy closedOrg=true asserts
+                          that nothing outside the org depends on its published
+                          packages: their unused exports become delete, not
+                          deprecate (no re-index; the report states it)
   --view <name>[,name]    report/run: views printed and emitted in SARIF (repeatable):
-                          delete, deprecate, org_dead, unexport, private_dead,
-                          needs_review, blocked, version_skew (default: all on
-                          stdout, all but org_dead in <work>/sarif/). With --view,
+                          delete, deprecate, unexport, private_dead, needs_review,
+                          blocked, version_skew, and org_dead (legacy: prefer
+                          policy closedOrg; empty when it is on). Default: all
+                          but org_dead, on stdout and in <work>/sarif/. With --view,
                           SARIF goes to <work>/sarif-<view>[,<view>]/ and the
                           default <work>/sarif/ is left alone; report.json always
                           has every view

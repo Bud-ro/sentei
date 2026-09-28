@@ -6,9 +6,10 @@ import type { StageContext } from '../context.ts';
 export interface ReportStageOptions {
   /**
    * `--view <name>[,name]` (core parseViews): the views printed on stdout and emitted
-   * in SARIF. Default: every view on stdout, every view but org_dead in SARIF (it
-   * asserts that the org is the only consumer of its packages). report.json always
-   * carries every view.
+   * in SARIF. Default (core defaultViews): every view but the legacy org_dead, on
+   * stdout and in SARIF (it asserts that the org is the only consumer of its packages;
+   * policy closedOrg is the supported way to say that). report.json always carries
+   * every view.
    */
   views?: readonly ReportViewName[];
 }

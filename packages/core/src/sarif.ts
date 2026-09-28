@@ -17,12 +17,15 @@
 //   * Results are sorted by ruleId, uri, line, symbol: byte-stable output.
 //   * One rule per report view (REPORT_VIEWS); a run carries the results of the
 //     selected views only (BuildSarifOptions.views, default defaultSarifViews(): every
-//     view except org_dead, which asserts something about the world the index cannot
-//     see). Every run declares every rule, so ruleIndex is stable across selections.
-//     The assertions of the selected views are in run.properties.assertions, and each
-//     org-dead result message repeats it.
+//     view except the legacy org_dead, which asserts something about the world the
+//     index cannot see). Every run declares every rule, so ruleIndex is stable across
+//     selections. The assertions of the selected views are in run.properties.assertions
+//     (org_dead's; delete's when policy closedOrg is on), and each result that rests on
+//     one repeats it: every org-dead result, and a delete result of a package that is
+//     private only by the closedOrg assertion.
 import { createHash } from 'node:crypto';
 import {
+  CLOSED_ORG_ASSERTION,
   defaultSarifViews,
   ORG_DEAD_ASSERTION,
   REPORT_VERDICTS,
@@ -92,7 +95,7 @@ export interface SarifRun {
     warnings: string[];
     /** The report views this run carries results for. */
     views: ReportViewName[];
-    /** What the selected views assume beyond the index (empty unless org_dead is selected). */
+    /** What the selected views assume beyond the index (empty unless org_dead is selected or closedOrg is on). */
     assertions: Array<{ view: ReportViewName; text: string }>;
   };
 }
@@ -106,7 +109,7 @@ export interface SarifLog {
 export interface BuildSarifOptions {
   /** tool.driver.informationUri; omitted when unset (sentei has no canonical URL yet). */
   informationUri?: string;
-  /** Views to emit results for (default defaultSarifViews(): all but org_dead). */
+  /** Views to emit results for (default defaultSarifViews(): all but the legacy org_dead). */
   views?: readonly ReportViewName[];
 }
 
@@ -138,8 +141,8 @@ const RULE_SPECS: readonly RuleSpec[] = [
     phrase: 'a deletion candidate',
     rule: rule('sentei/delete', 'Delete', 'warning',
       'Exported symbol of a private package is unused across the whole org',
-      'No precise-indexer reference to this exported symbol exists anywhere in the org (or only test references, per policy), the package is private (nobody outside the org can depend on it), no consumer is opaque, and a text witness search found no mention. It can be deleted.',
-      'Delete the symbol (reason dead_island: together with the other candidates that use it). sentei only emits this when every consumer of the package was indexed cleanly and the package is private.',
+      'No precise-indexer reference to this exported symbol exists anywhere in the org (or only test references, per policy), the package is private (nobody outside the org can depend on it; with policy closedOrg the org asserts this for its published packages too, see run.properties.assertions), no consumer is opaque, and a text witness search found no mention. It can be deleted.',
+      'Delete the symbol (reason dead_island: together with the other candidates that use it). sentei only emits this when every consumer of the package was indexed cleanly and the package is private (or published under the closedOrg assertion, stated in the result message).',
       ['maintainability']),
   },
   {
@@ -148,7 +151,7 @@ const RULE_SPECS: readonly RuleSpec[] = [
     rule: rule('sentei/deprecate', 'Deprecate', 'note',
       'Exported symbol of a published package has no org consumers',
       'No org package references this exported symbol (or only tests, per policy), no consumer is opaque, and a text witness search found no mention, but the package is published, so consumers outside the org may exist. Deprecate before deleting.',
-      'Mark the symbol deprecated and remove it in a later major version. If the org is the only consumer of the package, see the org-dead rule (report --view org_dead).',
+      'Mark the symbol deprecated and remove it in a later major version. If nothing outside the org depends on the org\'s published packages, set policy closedOrg: such symbols are then delete results.',
       ['maintainability', 'api-surface']),
   },
   {
@@ -156,7 +159,7 @@ const RULE_SPECS: readonly RuleSpec[] = [
     phrase: 'dead code as far as the org can see',
     rule: rule('sentei/org-dead', 'OrgDead', 'warning',
       'Exported symbol of a published package is unused by the org, which is asserted to be its only consumer',
-      `The same evidence as a deprecation candidate (no org reference, witness passed), reported as a deletion under an assertion sentei cannot check: ${ORG_DEAD_ASSERTION} Also private helpers that only such symbols keep alive. Emitted only when the org_dead view is selected.`,
+      `Legacy (prefer policy closedOrg). The same evidence as a deprecation candidate (no org reference, witness passed), reported as a deletion under an assertion sentei cannot check: ${ORG_DEAD_ASSERTION} Also private helpers that only such symbols keep alive. Emitted only when the org_dead view is selected; empty under closedOrg.`,
       'Delete the symbol if the assertion holds (see run.properties.assertions); otherwise treat it as a deprecation candidate.',
       ['maintainability', 'assertion']),
   },
@@ -256,13 +259,14 @@ function list(xs: string[]): string {
   return xs.join(', ');
 }
 
-function findingMessage(f: ReportFinding, spec: RuleSpec): string {
+function findingMessage(f: ReportFinding, spec: RuleSpec, asserted: ReadonlySet<string>): string {
   let s = `\`${f.symbol}\` in ${f.package_id} is ${spec.phrase}`;
   if (spec.view === 'unexport' && f.verdict === 'deprecation_candidate') s += ' (published package: deprecate the export first)';
   s += f.reasons.length > 0 ? ` (reasons: ${list(f.reasons)})` : '';
   s += f.blocked_by.length > 0 ? `; blocked by ${list(f.blocked_by)}` : '';
   s += '.';
   if (spec.view === 'org_dead') s += ` Assertion: ${ORG_DEAD_ASSERTION}`;
+  if (spec.view === 'delete' && asserted.has(f.package_id)) s += ` Published package; assertion (policy closedOrg): ${CLOSED_ORG_ASSERTION}.`;
   return s;
 }
 
@@ -277,7 +281,7 @@ interface Pending {
   fingerprintKey: string;
 }
 
-function findingResult(f: ReportFinding, view: ReportViewName): Pending {
+function findingResult(f: ReportFinding, view: ReportViewName, asserted: ReadonlySet<string>): Pending {
   const spec = SPEC_BY_VIEW.get(view)!;
   return {
     symbol: f.symbol,
@@ -287,7 +291,7 @@ function findingResult(f: ReportFinding, view: ReportViewName): Pending {
       ruleId: spec.rule.id,
       ruleIndex: RULE_INDEX.get(spec.rule.id)!,
       level: spec.rule.defaultConfiguration.level,
-      message: { text: findingMessage(f, spec) },
+      message: { text: findingMessage(f, spec, asserted) },
       locations: [location(f.file, f.line, f.col)],
       partialFingerprints: {},
       properties: {
@@ -377,6 +381,8 @@ export function buildSarif(report: Report, opts: BuildSarifOptions = {}): Map<st
     const a = v === 'version_skew' ? undefined : report.views[v].assertion;
     return a === undefined ? [] : [{ view: v, text: a }];
   });
+  // Packages private only by the closedOrg assertion (report.json from before it: none).
+  const asserted = new Set(report.packages.filter((p) => p.private_by_assertion === true).map((p) => p.package_id));
   const repoInfo = new Map(report.repos.map((r) => [r.repo, r]));
   const byRepo = new Map<string, Pending[]>();
   const add = (repo: string, p: Pending): void => {
@@ -396,7 +402,7 @@ export function buildSarif(report: Report, opts: BuildSarifOptions = {}): Map<st
   };
   for (const v of views) {
     if (v === 'version_skew') for (const x of rv.version_skew.rows) add(x.repo, skewResult(x));
-    else for (const f of findingsOf[v]) add(f.repo, findingResult(f, v));
+    else for (const f of findingsOf[v]) add(f.repo, findingResult(f, v, asserted));
   }
 
   const repos = [...new Set([...repoInfo.keys(), ...byRepo.keys()])].sort(cmp);

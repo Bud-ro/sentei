@@ -175,6 +175,21 @@ describe('runWitness', () => {
     }
   });
 
+  it('closedOrg: a published P passes as deletion_candidate, and a hit still downgrades it (the witness gate stays)', () => {
+    for (const [closedOrg, verdict] of [[true, 'deletion_candidate'], [false, 'deprecation_candidate']] as const) {
+      const org = buildOrg({
+        visibility: 'published-public',
+        policy: { closedOrg },
+        symbols: [{ name: 'deadFn' }, { name: 'namedFn' }],
+        files: { 'src/main.ts': "import { liveFn } from '@acme/lib';\nliveFn(namedFn);\n" },
+      });
+      expect(witness(org)).toEqual({ checked: 2, passed: 1, mismatched: 1 });
+      expect(findings(org, org.ids['deadFn']!)).toEqual([{ verdict, reasons: ['no_refs'] }]);
+      expect(witnessOk(org, org.ids['deadFn']!)).toBe(true);
+      expectMismatch(org, org.ids['namedFn']!, ['witness_mismatch:npm:acme/app:@acme/app:pkg/src/main.ts:2']);
+    }
+  });
+
   it('keeps blocked_by and the base reasons, dropping witness_pending', () => {
     const org = buildOrg({ symbols: [{ name: 'deadFn' }] });
     const id = org.ids['deadFn']!;

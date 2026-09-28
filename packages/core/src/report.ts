@@ -18,11 +18,15 @@ import { parseDescriptors, parseScipSymbol } from './scip/read.ts';
 /**
  * The report views, in summary / SARIF order. Every one is a filter over `findings`
  * (version_skew over `versionSkew`); see buildViews for the exact rules.
- *   delete        deletion_candidate: private package, no counted refs, witness passed
+ *   delete        deletion_candidate: private package (schema view private_packages,
+ *                 which holds every package under policy closedOrg), no counted refs,
+ *                 witness passed
  *   deprecate     deprecation_candidate that is not internal-only: published package,
- *                 the same evidence as a deletion (witness passed)
- *   org_dead      the deprecate rows read as deletions under ORG_DEAD_ASSERTION, plus
- *                 the private helpers only they unlock (sub-key private_dead)
+ *                 the same evidence as a deletion (witness passed); empty under closedOrg
+ *   org_dead      legacy (explicit `--view org_dead` only; prefer policy closedOrg):
+ *                 the deprecate rows read as deletions under ORG_DEAD_ASSERTION, plus
+ *                 the private helpers only they unlock (sub-key private_dead); empty
+ *                 under closedOrg, whose deletions are already in delete
  *   unexport      unexport_candidate (private), plus deprecation_candidate
  *                 [internal_refs_only] of published packages (sub-key published)
  *   private_dead  private_dead, minus helpers of a published package that only
@@ -42,8 +46,19 @@ export const REPORT_VIEWS = [
 
 export type ReportViewName = (typeof REPORT_VIEWS)[number];
 
-/** Views that assert something about the world beyond the index: never selected by default in SARIF. */
+/**
+ * Views that assert something about the world beyond the index on their own: never
+ * selected by default (stdout summary or SARIF), only by an explicit `--view`. org_dead
+ * is legacy since Phase 3: the assertion is now the org's own, policy closedOrg, which
+ * moves those rows into delete (DESIGN.md "Phase 3: closedOrg replaces org_dead").
+ */
 export const ASSERTING_VIEWS: readonly ReportViewName[] = ['org_dead'];
+
+/**
+ * Policy closedOrg's assertion, stated in the summary's policy line, report.json
+ * `assertions`, the delete view and SARIF when it is on.
+ */
+export const CLOSED_ORG_ASSERTION = 'nothing outside the org depends on published packages';
 
 /** The org_dead view's assertion, stated in report.json, the summary and SARIF. */
 export const ORG_DEAD_ASSERTION =
@@ -82,13 +97,18 @@ export function parseViews(specs: readonly string[]): ReportViewName[] {
   return REPORT_VIEWS.filter((v) => want.has(v));
 }
 
-/** Default SARIF selection: every view except the asserting ones (org_dead). */
-export function defaultSarifViews(): ReportViewName[] {
+/** Default view selection (stdout summary and SARIF): every view except the asserting ones (legacy org_dead). */
+export function defaultViews(): ReportViewName[] {
   return REPORT_VIEWS.filter((v) => !ASSERTING_VIEWS.includes(v));
 }
 
+/** Default SARIF selection: defaultViews(). */
+export function defaultSarifViews(): ReportViewName[] {
+  return defaultViews();
+}
+
 /** Policy keys, in report order. */
-const POLICY_KEYS = ['minAgeDays', 'trustPrivateRegistry', 'countTestsAsConsumers', 'countDocsAsConsumers'] as const;
+const POLICY_KEYS = ['minAgeDays', 'trustPrivateRegistry', 'countTestsAsConsumers', 'countDocsAsConsumers', 'closedOrg'] as const;
 
 export type ReportPolicy = Record<(typeof POLICY_KEYS)[number], unknown>;
 
@@ -153,9 +173,12 @@ export interface ReportPackage {
   visibility: string;
   /**
    * Nobody outside the org can depend on it (schema view private_packages: `private`,
-   * or `published-private` with trustPrivateRegistry). Decides deletion vs deprecation.
+   * `published-private` with trustPrivateRegistry, or any package under policy
+   * closedOrg). Decides deletion vs deprecation.
    */
   private: boolean;
+  /** `private` only because of the closedOrg assertion (the package itself is published). */
+  private_by_assertion: boolean;
   opaque: boolean;
   flags: Array<{ flag: string; reason: string | null; file: string | null }>;
   consumers: string[];
@@ -193,7 +216,11 @@ export interface ReportView<T = ReportFinding> {
 export interface ReportViews {
   delete: ReportView;
   deprecate: ReportView;
-  /** rows: the deprecate rows. private_dead: private helpers of those packages that only they unlock. */
+  /**
+   * Legacy (prefer policy closedOrg; kept in report.json for compatibility). rows: the
+   * deprecate rows. private_dead: private helpers of those packages that only they
+   * unlock. Empty under closedOrg (those rows are deletion candidates, in delete).
+   */
   org_dead: ReportView & { private_dead: ReportFinding[] };
   /** rows: private packages (unexport_candidate). published: deprecation_candidate [internal_refs_only]. */
   unexport: ReportView & { published: ReportFinding[] };
@@ -210,6 +237,12 @@ export interface Report {
   /** generatedAt as an ISO 8601 UTC string, for humans (`2026-09-24T10:00:00.000Z`). */
   generatedAtIso: string;
   policy: ReportPolicy;
+  /**
+   * What the policy asserts beyond the index (empty by default): with closedOrg,
+   * `{ policy: 'closedOrg', text: CLOSED_ORG_ASSERTION }`. The delete rows of
+   * published packages (packages[].private_by_assertion) are right only if it holds.
+   */
+  assertions: Array<{ policy: string; text: string }>;
   warnings: string[];
   /** Base verdicts, one per symbol (and verdict), independent of any view. */
   findings: ReportFinding[];
@@ -306,8 +339,9 @@ export const VIEW_DESCRIPTIONS: Readonly<Record<ReportViewName, string>> = Objec
     + 'Reason dead_island: used only by other candidates; delete them together.',
   deprecate: 'Exports of published packages with the same evidence as a deletion (no counted reference in the org, '
     + 'witness passed). External consumers may exist: deprecate, and remove in a later major version.',
-  org_dead: 'The deprecate rows read as deletions, plus the private helpers only they unlock (private_dead). '
-    + 'Valid only under the assertion.',
+  org_dead: 'Legacy (prefer policy closedOrg): the deprecate rows read as deletions, plus the private helpers only '
+    + 'they unlock (private_dead). Valid only under the assertion. Empty with closedOrg, which lists those rows '
+    + 'in delete.',
   unexport: 'Exports used only inside their own package: remove the export, keep the declaration. '
     + 'rows: private packages; published: published packages, where removing an export is a breaking change '
     + '(deprecate the export first). Never proposed for a private app nothing in the org depends on (its exports '
@@ -323,14 +357,32 @@ export const VIEW_DESCRIPTIONS: Readonly<Record<ReportViewName, string>> = Objec
     + 'Never keeps anything alive.',
 });
 
+/** The delete view's description with closedOrg on: the view also holds published packages, under the assertion. */
+export const CLOSED_ORG_DELETE_DESCRIPTION = `${VIEW_DESCRIPTIONS.delete} With policy closedOrg the org asserts that `
+  + `${CLOSED_ORG_ASSERTION}, so exports of published packages with the same evidence are listed here too `
+  + '(packages[].private_by_assertion); they are right only if the assertion holds.';
+
+export interface BuildViewsOptions {
+  /** Policy closedOrg is on: the delete view states its assertion. */
+  closedOrg?: boolean;
+}
+
 /**
  * The views over the base findings (REPORT_VIEWS). `privateIds`: packages in the schema
- * view private_packages. Throws on a verdict no view places (a new verdict must get a
- * view, not vanish from the report).
+ * view private_packages (every package under closedOrg, so its deletions and unlocked
+ * helpers land in delete / private_dead and deprecate / org_dead are empty). Throws on
+ * a verdict no view places (a new verdict must get a view, not vanish from the report).
  */
-export function buildViews(findings: ReportFinding[], versionSkew: ReportVersionSkew[], privateIds: ReadonlySet<string>): ReportViews {
+export function buildViews(
+  findings: ReportFinding[],
+  versionSkew: ReportVersionSkew[],
+  privateIds: ReadonlySet<string>,
+  opts: BuildViewsOptions = {},
+): ReportViews {
   const v: ReportViews = {
-    delete: { description: VIEW_DESCRIPTIONS.delete, rows: [] },
+    delete: opts.closedOrg === true
+      ? { description: CLOSED_ORG_DELETE_DESCRIPTION, assertion: CLOSED_ORG_ASSERTION, rows: [] }
+      : { description: VIEW_DESCRIPTIONS.delete, rows: [] },
     deprecate: { description: VIEW_DESCRIPTIONS.deprecate, rows: [] },
     org_dead: { description: VIEW_DESCRIPTIONS.org_dead, assertion: ORG_DEAD_ASSERTION, rows: [], private_dead: [] },
     unexport: { description: VIEW_DESCRIPTIONS.unexport, rows: [], published: [] },
@@ -675,7 +727,11 @@ export function buildReport(opts: BuildReportOptions): Report {
   const repoOf = new Map(pkgRows.map((p) => [p.package_id, p.repo]));
   const pkgOf = new Map(pkgRows.map((p) => [p.package_id, p]));
   const privateIds = new Set(pkgRows.filter((p) => p.private === 1).map((p) => p.package_id));
-  const views = buildViews(findings, versionSkew, privateIds);
+  const closedOrg = policy.closedOrg === true;
+  const views = buildViews(findings, versionSkew, privateIds, { closedOrg });
+  // Private without closedOrg (private_packages minus its closedOrg clause)?
+  const privateByVisibility = (p: { visibility: string }): boolean =>
+    p.visibility === 'private' || (p.visibility === 'published-private' && policy.trustPrivateRegistry === true);
   const packages: ReportPackage[] = pkgRows
     .map((p) => {
       const mine = findings.filter((f) => f.package_id === p.package_id);
@@ -692,6 +748,7 @@ export function buildReport(opts: BuildReportOptions): Report {
         repo: p.repo,
         visibility: p.visibility,
         private: p.private === 1,
+        private_by_assertion: p.private === 1 && !privateByVisibility(p),
         opaque: p.opaque === 1,
         flags: flagRows
           .filter((f) => f.package_id === p.package_id)
@@ -743,6 +800,7 @@ export function buildReport(opts: BuildReportOptions): Report {
     generatedAt: now,
     generatedAtIso: new Date(now * 1000).toISOString(),
     policy,
+    assertions: closedOrg ? [{ policy: 'closedOrg', text: CLOSED_ORG_ASSERTION }] : [],
     warnings,
     findings,
     versionSkew,
@@ -820,7 +878,7 @@ const TOP_BLOCKERS = 10;
 const TOP_GAP_TARGETS = 5;
 
 export interface FormatSummaryOptions {
-  /** Views to print (default: every view). report.json always has them all. */
+  /** Views to print (default: defaultViews(), every view but the legacy org_dead). report.json always has them all. */
   views?: readonly ReportViewName[];
 }
 
@@ -843,16 +901,18 @@ function reasonBreakdown(rows: ReportFinding[]): string {
 }
 
 /**
- * The stdout summary (PLAN.md §6.7): warnings, per-package counts of the selected
- * views, the view totals with a reason breakdown (dead islands are a reason, not a
- * column), the org_dead assertion as a footnote, top blockers, version skew.
+ * The stdout summary (PLAN.md §6.7): the policy (with the closedOrg assertion when it is
+ * on), warnings, per-package counts of the selected views, the view totals with a
+ * reason breakdown (dead islands are a reason, not a column), the legacy org_dead
+ * assertion as a footnote when that view is selected, top blockers, version skew.
  */
 export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): string {
-  const selected = new Set<ReportViewName>(opts.views ?? REPORT_VIEWS);
+  const selected = new Set<ReportViewName>(opts.views ?? defaultViews());
   const out: string[] = [];
   const when = new Date(report.generatedAt * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
   out.push(`sentei ${report.tool.version} report, generated ${when}`);
-  out.push(`policy: ${POLICY_KEYS.map((k) => `${k}=${JSON.stringify(report.policy[k])}`).join(' ')}`);
+  const asserted = report.policy.closedOrg === true ? ` (asserted: ${CLOSED_ORG_ASSERTION})` : '';
+  out.push(`policy: ${POLICY_KEYS.map((k) => `${k}=${JSON.stringify(report.policy[k])}`).join(' ')}${asserted}`);
   if (opts.views !== undefined) out.push(`views: ${REPORT_VIEWS.filter((v) => selected.has(v)).join(', ')}`);
 
   if (report.warnings.length > 0) {
@@ -871,7 +931,7 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
       p.name,
       p.repo,
       p.visibility,
-      p.private ? 'yes' : '',
+      p.private_by_assertion ? 'closedOrg' : p.private ? 'yes' : '',
       p.opaque ? 'yes' : '',
       ...cols.map((v) => String(p.counts[v] ?? 0)),
       capList(p.blocked_by),
@@ -885,7 +945,8 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
     ['l', 'l', 'l', 'l', 'l', ...cols.map((): Align => 'r'), 'l'],
   ));
   out.push('PRIVATE: nobody outside the org can depend on the package (private, or published-private with '
-    + 'trustPrivateRegistry): unused exports are DELETE there, DEPRECATE elsewhere.');
+    + 'trustPrivateRegistry; "closedOrg": published, private by the policy assertion): unused exports are DELETE '
+    + 'there, DEPRECATE elsewhere.');
 
   // View totals, with the reason breakdown of the candidate views.
   const v = report.views;
@@ -911,7 +972,7 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
       out.push('dead_island: exports used only by other candidates (delete / deprecate them together).');
     }
     if (selected.has('org_dead')) {
-      out.push(`* ORG-DEAD lists the DEPRECATE rows as deletions, asserting: ${ORG_DEAD_ASSERTION}`);
+      out.push(`* ORG-DEAD (legacy; prefer policy closedOrg) lists the DEPRECATE rows as deletions, asserting: ${ORG_DEAD_ASSERTION}`);
     }
   }
 

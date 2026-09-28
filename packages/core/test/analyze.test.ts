@@ -671,7 +671,7 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([]);
   });
 
-  it('gives published packages the same evidence as private ones, as deprecations; no closed-world knob exists', () => {
+  it('gives published packages the same evidence as private ones, as deprecations; closedOrg makes them private', () => {
     const pub = pkg('@acme/pub', 'published-public');
     dep(app, pub);
     doc(pub, 'src/index.ts', true);
@@ -689,7 +689,7 @@ describe('analyzeOrg on hand-built rows', () => {
     // No refs: witness_pending like a private deletion (the witness makes it a
     // deprecation_candidate). Internal-only: the published form of an unexport. The age
     // rule gates every verdict (pubYoung: no row), and a deprecation is a candidate, so
-    // the helper only it uses is private_dead (the report shows it under org_dead).
+    // the helper only it uses is private_dead (the report shows it under the legacy org_dead).
     const published = [
       f('pubHelper', 'private_dead', ['unlocked_by:pubUnused']),
       f('pubInternal', 'deprecation_candidate', ['internal_refs_only']),
@@ -699,6 +699,20 @@ describe('analyzeOrg on hand-built rows', () => {
 
     // The removed key is dropped on insert and changes nothing.
     setPolicy('assumeClosedWorld', true);
+    analyze();
+    expect(findings()).toEqual(published);
+
+    // closedOrg (the org asserts nothing outside it depends on its published packages):
+    // the same index, re-analyzed, gives the private verdicts; the would-be deletion still
+    // waits for the witness. Off again, the published verdicts come back.
+    setPolicy('closedOrg', true);
+    analyze();
+    expect(findings()).toEqual([
+      f('pubHelper', 'private_dead', ['unlocked_by:pubUnused']),
+      f('pubInternal', 'unexport_candidate', ['internal_refs_only']),
+      f('pubUnused', 'needs_review', DELETE),
+    ]);
+    setPolicy('closedOrg', false);
     analyze();
     expect(findings()).toEqual(published);
 

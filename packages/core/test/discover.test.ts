@@ -118,6 +118,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     ]);
     // assumeClosedWorld is removed (DESIGN Phase 2 decision 3): the schema drops the row.
     expect(all('SELECT key, value FROM policy ORDER BY key')).toEqual([
+      { key: 'closedOrg', value: 'false' },
       { key: 'countDocsAsConsumers', value: 'false' },
       { key: 'countTestsAsConsumers', value: 'false' },
       { key: 'minAgeDays', value: '0' },
@@ -665,7 +666,7 @@ describe('discoverLocal on a synthetic org', () => {
 
     const logs: string[] = [];
     const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
-    expect(m.policy).toEqual({ minAgeDays: 180, trustPrivateRegistry: true, countTestsAsConsumers: false, countDocsAsConsumers: false });
+    expect(m.policy).toEqual({ minAgeDays: 180, trustPrivateRegistry: true, countTestsAsConsumers: false, countDocsAsConsumers: false, closedOrg: false });
     expect(m.repos.map((r) => r.repo)).toEqual(['acme/dart', 'acme/mono']);
     const [dart, mono] = m.repos;
     expect(dart!.packages.map((p) => [p.packageId, p.path, p.visibility, p.isLibrary, p.entryPoints])).toEqual([
@@ -781,8 +782,37 @@ describe('setPolicyValue / isPolicyKey (shared by org sentei.json and --policy)'
     expect(() => setPolicyValue(p, 'minAgeDays', 1.5, 'where')).toThrow('sentei: where: "minAgeDays" must be a non-negative integer');
     expect(() => setPolicyValue(p, 'countTestsAsConsumers', 'true', 'where')).toThrow('"countTestsAsConsumers" must be a boolean');
     expect(isPolicyKey('trustPrivateRegistry')).toBe(true);
+    expect(isPolicyKey('closedOrg')).toBe(true);
+    setPolicyValue(p, 'closedOrg', true, 'x');
+    expect(p.closedOrg).toBe(true);
+    expect(() => setPolicyValue(p, 'closedOrg', 'yes', 'where')).toThrow('sentei: where: "closedOrg" must be a boolean');
+    expect(DEFAULT_POLICY.closedOrg).toBe(false);
+    expect(isPolicyKey('assumeClosedWorld')).toBe(false);
     expect(isPolicyKey('keep')).toBe(false);
     expect(isPolicyKey('toString')).toBe(false);
+  });
+});
+
+describe('org sentei.json policy.closedOrg (config.ts)', () => {
+  it('reads closedOrg (default false), rejects a non-boolean, and points the removed assumeClosedWorld at it', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { readOrgConfig } = await import('../src/config.ts');
+    const dir = mkdtempSync(join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-closedorg-'));
+    try {
+      const write = (json: unknown): void => writeFileSync(join(dir, 'sentei.json'), JSON.stringify(json));
+      write({ minAgeDays: 0 });
+      expect(readOrgConfig(dir).policy.closedOrg).toBe(false);
+      write({ closedOrg: true });
+      expect(readOrgConfig(dir).policy).toMatchObject({ closedOrg: true, trustPrivateRegistry: true, minAgeDays: 180 });
+      write({ closedOrg: 'true' });
+      expect(() => readOrgConfig(dir)).toThrow(/"closedOrg" must be a boolean/);
+      write({ assumeClosedWorld: true });
+      expect(() => readOrgConfig(dir)).toThrow(/"assumeClosedWorld" was removed: .*set "closedOrg": true/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

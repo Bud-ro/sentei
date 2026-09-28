@@ -99,6 +99,8 @@ describe('--policy', () => {
     expect(parsePolicyOverrides(['countTestsAsConsumers=false', 'minAgeDays=0', 'minAgeDays=30']))
       .toEqual({ countTestsAsConsumers: false, minAgeDays: 30 });
     expect(parsePolicyOverrides([])).toEqual({});
+    expect(parsePolicyOverrides(['closedOrg=true'])).toEqual({ closedOrg: true });
+    expect(() => parsePolicyOverrides(['closedOrg=1'])).toThrow(/"closedOrg" must be a boolean/);
   });
 
   it('discover applies overrides on top of the org sentei.json', async () => {
@@ -108,16 +110,17 @@ describe('--policy', () => {
     writeFileSync(path.join(orgDir, 'sentei.json'), JSON.stringify({ countTestsAsConsumers: true, minAgeDays: 90 }));
     writeFileSync(path.join(orgDir, 'repos', 'lib', 'package.json'), JSON.stringify({ name: '@acme/lib', version: '1.0.0' }));
     const work = freshWork();
-    const r = await run('discover', '--org-dir', orgDir, '--work', work, '--policy', 'minAgeDays=0');
+    const r = await run('discover', '--org-dir', orgDir, '--work', work, '--policy', 'minAgeDays=0', '--policy', 'closedOrg=true');
     expect(r.err).toBe('');
     expect(r.code).toBe(0);
     expect(r.out).toContain('[discover] policy override minAgeDays=0 (was 90)');
+    expect(r.out).toContain('[discover] policy override closedOrg=true (was false)');
     const model = JSON.parse(readFileSync(path.join(work, 'discover.json'), 'utf8'));
-    expect(model.policy).toMatchObject({ countTestsAsConsumers: true, minAgeDays: 0 });
+    expect(model.policy).toMatchObject({ countTestsAsConsumers: true, minAgeDays: 0, closedOrg: true });
     const db = openDb(path.join(work, 'sentei.db'));
     try {
-      const rows = db.prepare("SELECT key, value FROM policy WHERE key IN ('countTestsAsConsumers', 'minAgeDays') ORDER BY key").all();
-      expect(rows).toEqual([{ key: 'countTestsAsConsumers', value: 'true' }, { key: 'minAgeDays', value: '0' }]);
+      const rows = db.prepare("SELECT key, value FROM policy WHERE key IN ('closedOrg', 'countTestsAsConsumers', 'minAgeDays') ORDER BY key").all();
+      expect(rows).toEqual([{ key: 'closedOrg', value: 'true' }, { key: 'countTestsAsConsumers', value: 'true' }, { key: 'minAgeDays', value: '0' }]);
     } finally {
       db.close();
     }
