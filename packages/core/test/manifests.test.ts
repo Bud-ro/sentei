@@ -717,6 +717,40 @@ describe('npm manifests', () => {
     expect(p!.runtimeEntryPoints).toEqual(['src/index.ts']);
   });
 
+  it('sourceForBuildOutput: tsdown / tsup / rolldown entries and a build-script mv rename (@flue/cli)', () => {
+    // @flue/cli: `tsdown && mv dist/flue.mjs dist/flue.js`, bin imports ../dist/flue.js.
+    pkgJson('cli/package.json', { name: '@x/cli', bin: { x: 'bin/x.mjs' }, scripts: { build: 'tsdown && mv dist/flue.mjs dist/flue.js' } });
+    write('cli/tsdown.config.ts', "export default defineConfig({ entry: { flue: 'src/main.ts', 'run-bootstrap': 'src/lib/run-bootstrap.ts' }, format: ['esm'] })");
+    for (const f of ['bin/x.mjs', 'src/main.ts', 'src/lib/run-bootstrap.ts']) write(`cli/${f}`);
+    // A rename to another name; a string entry (named by its stem).
+    pkgJson('ren/package.json', { name: 'ren', scripts: { build: 'tsup && mv -f ./dist/index.cjs ./dist/cli.cjs; echo done' } });
+    write('ren/tsup.config.ts', "export default { entry: 'src/index.ts', format: ['cjs'] }");
+    write('ren/src/index.ts');
+    // An array entry (rolldown).
+    pkgJson('arr/package.json', { name: 'arr' });
+    write('arr/rolldown.config.mjs', "export default { input: ['src/entries/a.ts', 'src/entries/b.ts'] }");
+    for (const f of ['src/entries/a.ts', 'src/entries/b.ts']) write(`arr/${f}`);
+    expect(sourceForBuildOutput(root, 'cli', 'dist/flue.js')).toBe('src/main.ts');
+    expect(sourceForBuildOutput(root, 'cli', 'dist/flue.mjs')).toBe('src/main.ts');
+    expect(sourceForBuildOutput(root, 'cli', 'dist/run-bootstrap.mjs')).toBe('src/lib/run-bootstrap.ts');
+    expect(sourceForBuildOutput(root, 'cli', 'dist/gone.mjs')).toBeNull();
+    expect(sourceForBuildOutput(root, 'ren', 'dist/cli.cjs')).toBe('src/index.ts');
+    expect(sourceForBuildOutput(root, 'ren', 'dist/cli')).toBe('src/index.ts');
+    expect(sourceForBuildOutput(root, 'ren', 'dist/index.cjs')).toBe('src/index.ts');
+    expect(sourceForBuildOutput(root, 'ren', 'dist/other.cjs')).toBeNull();
+    expect(sourceForBuildOutput(root, 'arr', 'dist/a.mjs')).toBe('src/entries/a.ts');
+    expect(sourceForBuildOutput(root, 'arr', 'dist/b.cjs')).toBe('src/entries/b.ts');
+  });
+
+  it('a build-script mv only renames outputs of a named input, within one dir', () => {
+    pkgJson('package.json', { name: 'x', exports: { './a': './dist/renamed.js', './b': './dist/sub/moved.js' }, scripts: { build: 'tsdown && mv dist/unknown.mjs dist/renamed.js && mv dist/main.mjs dist/sub/moved.js' } });
+    write('tsdown.config.ts', "export default { entry: { main: 'src/entry.ts' } }");
+    write('src/entry.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual([]);
+    expect(p!.unresolvedEntryPoints).toEqual(['./dist/renamed.js', './dist/sub/moved.js']);
+  });
+
   it('the segment strip needs the source to exist and never maps to the src dir itself', () => {
     pkgJson('package.json', { name: 'x', main: 'dist/cjs/gone.js', types: 'dist/cjs.d.ts' });
     write('src/other.ts');

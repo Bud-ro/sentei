@@ -1840,7 +1840,9 @@ function sourceLayout(repoRoot: string, dir: string, pkgFiles: readonly string[]
  * resolve(dirname, 'src/node/cli.ts') }` → `cli`), a string or array value naming each
  * literal by its file stem (rollup's `[name]` of an unnamed input). Only literals that are
  * package files are kept (`./` stripped). The output name → source pairs map a declared
- * `dist/…/<name>.js` that no other rule resolves (distToSrcGroups f).
+ * `dist/…/<name>.js` (`.mjs`, `.cjs`) that no other rule resolves (distToSrcGroups f). A
+ * package.json script `mv <dir>/<name>.<ext> <dir>/<other>.<ext>` (tsdown's
+ * `dist/index.mjs` renamed `dist/cli.js`) adds `<other>` for the same source.
  */
 export function bundlerNamedInputs(repoRoot: string, dir: string, pkgFiles: readonly string[]): Array<[string, string]> {
   const files = new Set(pkgFiles);
@@ -1859,6 +1861,42 @@ export function bundlerNamedInputs(repoRoot: string, dir: string, pkgFiles: read
         const named = name ?? posix.basename(n).replace(/\.[^.]+$/, '');
         if (!out.some(([a, b]) => a === named && b === n)) out.push([named, n]);
       }
+    }
+  }
+  // A build script that renames an output (`tsdown && mv dist/flue.mjs dist/flue.js`,
+  // `mv dist/index.mjs dist/cli.js`): the new name stands for the same source.
+  if (out.length > 0) {
+    for (const [from, to] of buildScriptRenames(repoRoot, dir)) {
+      const fromName = posix.basename(from).replace(BUILT_EXT, '');
+      const toName = posix.basename(to).replace(BUILT_EXT, '');
+      if (posix.dirname(from) !== posix.dirname(to) || fromName === toName) continue;
+      for (const [name, source] of [...out]) {
+        if (name === fromName && !out.some(([a, b]) => a === toName && b === source)) out.push([toName, source]);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `mv <from> <to>` pairs of the package.json scripts of the package at `dir` (both
+ * package-relative build-output files, `./` stripped; flags skipped); [] when unreadable.
+ */
+function buildScriptRenames(repoRoot: string, dir: string): Array<[string, string]> {
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(join(repoRoot, joinRel(dir, 'package.json')), 'utf8'));
+  } catch {
+    return [];
+  }
+  if (!isObject(json) || !isObject(json['scripts'])) return [];
+  const out: Array<[string, string]> = [];
+  for (const script of Object.values(json['scripts'])) {
+    if (typeof script !== 'string') continue;
+    for (const m of script.matchAll(/(?:^|[;&|]\s*)mv\s+(?:-\w+\s+)*([^\s;&|]+)\s+([^\s;&|]+)/g)) {
+      const from = normalizeRel(m[1]!.replace(/^['"]|['"]$/g, ''));
+      const to = normalizeRel(m[2]!.replace(/^['"]|['"]$/g, ''));
+      if (from !== null && to !== null && BUILT_EXT.test(from) && BUILT_EXT.test(to)) out.push([from, to]);
     }
   }
   return out;
