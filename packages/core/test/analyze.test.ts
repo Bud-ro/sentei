@@ -867,6 +867,61 @@ describe('analyzeOrg on hand-built rows', () => {
     ]);
   });
 
+  it('runs the top-level code of a module one of whose declarations is reachable (3310snake api/instance.ts)', () => {
+    // src/api.ts is no entry and no module imports it by specifier here; `instance` is
+    // used by an alive export. Its top-level code (`axios.create({ paramsSerializer:
+    // serialize })`, `instance.interceptors.response.use(onOk, onError)`) is attributed
+    // to the module symbol.
+    const user = aliveExport('user');
+    const api = doc(lib, 'src/api.ts');
+    const instance = sym(lib, 'src/api.ts', 'instance');
+    use(user, instance, 'src/fns.ts');
+    const serialize = sym(lib, 'src/api.ts', 'serialize');
+    const onOk = sym(lib, 'src/api.ts', 'onOk');
+    const onError = sym(lib, 'src/api.ts', 'onError');
+    const refresh = sym(lib, 'src/fns.ts', 'refresh');
+    use(api, instance, 'src/api.ts');
+    use(api, serialize, 'src/api.ts');
+    use(api, onOk, 'src/api.ts');
+    use(api, onError, 'src/api.ts');
+    use(onError, refresh, 'src/api.ts');
+    sym(lib, 'src/api.ts', 'stray'); // declared, used by nothing: still dead
+    analyze();
+    expect(findings()).toEqual([f('stray', 'private_dead', ['already_unreachable'])]);
+    const reach = db.prepare('SELECT is_entry_reachable AS r FROM symbols WHERE symbol_id = ?');
+    expect(reach.get(api)).toEqual({ r: 1 });
+  });
+
+  it('never runs the top-level code of a module nothing reachable defines or imports', () => {
+    aliveExport('used');
+    const orphan = doc(lib, 'src/orphan.ts');
+    const orphanFn = sym(lib, 'src/orphan.ts', 'orphanFn');
+    const helper = sym(lib, 'src/fns.ts', 'orphanHelper');
+    use(orphan, helper, 'src/orphan.ts');
+    use(orphan, orphanFn, 'src/orphan.ts');
+    analyze();
+    expect(findings()).toEqual([
+      f('orphanFn', 'private_dead', ['already_unreachable']),
+      f('orphanHelper', 'private_dead', ['already_unreachable']),
+    ]);
+    const reach = db.prepare('SELECT is_entry_reachable AS r FROM symbols WHERE symbol_id = ?');
+    expect(reach.get(orphan)).toEqual({ r: 0 });
+  });
+
+  it('a module whose only reachable declaration is a candidate: its top-level uses are unlocked by it', () => {
+    aliveExport('used');
+    const mod = doc(lib, 'src/side.ts');
+    const unused = sym(lib, 'src/side.ts', 'sideUnused', { exported: true });
+    const helper = sym(lib, 'src/side.ts', 'sideHelper');
+    use(mod, helper, 'src/side.ts');
+    analyze();
+    expect(findings()).toEqual([
+      f('sideHelper', 'private_dead', ['unlocked_by:sideUnused']),
+      f('sideUnused', 'needs_review', DELETE),
+    ]);
+    void unused;
+  });
+
   it('reports a private circular island as already_unreachable', () => {
     aliveExport('used');
     const a = sym(lib, 'src/fns.ts', 'islandA');

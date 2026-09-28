@@ -580,16 +580,31 @@ WHERE k.symbol_name = '*' OR k.symbol_name = s.name;
 -- mat_reachable_after (top of file) by analyze.ts; every view below reads the tables.
 -- ---------------------------------------------------------------------------
 
--- Intra-package graph: same-package edges, owner -> nested declaration, and nested
--- declaration -> owner. The last one: using a member requires its owner (`new X()`
--- names only X#<constructor>()., `o.label` only the property), so a reachable member
--- makes its owner reachable, and with it every sibling member (fail closed).
+-- Intra-package graph: same-package edges, owner -> nested declaration, nested
+-- declaration -> owner, and declaration -> its document's module symbol. The third:
+-- using a member requires its owner (`new X()` names only X#<constructor>()., `o.label`
+-- only the property), so a reachable member makes its owner reachable, and with it every
+-- sibling member (fail closed). The fourth: a declaration can only be used once its
+-- module has been loaded, and loading a module runs its top-level code (`const instance
+-- = axios.create({ paramsSerializer: serializeParams })`, `instance.interceptors
+-- .response.use(onOk, onError)`), whose references ingest attributes to the module
+-- symbol (no declaration encloses them). Without it such code ran only for entry
+-- documents, and a non-entry module's top-level uses were private_dead (drizzle-team
+-- 3310snake: 8 rows). An import of the module already reaches the module symbol (the
+-- specifier references it from the importer), so a module that nothing reachable
+-- defines or imports stays unreachable. The module symbol does not reach the module's
+-- declarations (only what its top-level code references), so this adds no edge back.
 CREATE VIEW reach_edges (from_symbol_id, to_symbol_id) AS
 SELECT from_symbol_id, to_symbol_id FROM edges WHERE from_package_id = to_package_id
 UNION
 SELECT owner_id, symbol_id FROM symbol_owners
 UNION
-SELECT symbol_id, owner_id FROM symbol_owners;
+SELECT symbol_id, owner_id FROM symbol_owners
+UNION
+SELECT s.symbol_id, d.module_symbol_id
+FROM symbols s
+JOIN documents d ON d.package_id = s.package_id AND d.file = s.file
+WHERE d.module_symbol_id IS NOT NULL AND s.symbol_id <> d.module_symbol_id;
 
 -- Exported symbols + runtime-invoked entry symbols + the file pseudo-symbols of entry
 -- documents and of script documents (script_files: run directly, so entry points too)
