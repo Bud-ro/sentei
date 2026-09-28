@@ -1,0 +1,38 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [],
+  "entrySymbols": [
+    {
+      "col": 8,
+      "file": "backend/routes/_middleware.dart",
+      "kind": "runtime",
+      "line": 3,
+      "name": "middleware"
+    },
+    {
+      "col": 9,
+      "file": "backend/routes/api/items.dart",
+      "kind": "runtime",
+      "line": 3,
+      "name": "onRequest"
+    },
+    {
+      "col": 9,
+      "file": "backend/routes/index.dart",
+      "kind": "runtime",
+      "line": 5,
+      "name": "onRequest"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-frameworks:acme_backend",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

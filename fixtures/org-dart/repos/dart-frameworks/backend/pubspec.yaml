@@ -1,0 +1,11 @@
+name: acme_backend
+description: "A dart_frog server (routes/ files are loaded by the framework)."
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  dart_frog:
+    path: ../../../stubs/dart_frog

@@ -1654,6 +1654,45 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     ]);
   }, 300_000);
 
+  it('framework entry conventions: dart_frog entrypoint and nested middleware, hooks/ under a package, an unresolved pigeon input, analyzer_plugin', async () => {
+    write({
+      'fw/frog/pubspec.yaml': pubspec('acme_frog', '1.0.0', '  dart_frog:\n    path: ../dart_frog\n'),
+      'fw/dart_frog/pubspec.yaml': pubspec('dart_frog', '1.0.0'),
+      'fw/dart_frog/lib/dart_frog.dart': 'typedef Handler = Object Function(Object);\n',
+      'fw/frog/main.dart': 'Future<void> init(Object ip, int port) async {}\n\nFuture<Object> run(Object handler, Object ip, int port) async => handler;\n\nvoid notAnEntry() {}\n',
+      'fw/frog/routes/admin/_middleware.dart': "import 'package:dart_frog/dart_frog.dart';\n\nHandler middleware(Handler handler) => handler;\n",
+      'fw/frog/routes/admin/[id].dart': 'Object onRequest(Object context, String id) => id;\n\nObject other() => 1;\n',
+      // mason hooks/ inside a package (no pubspec of their own), and a pigeon input whose
+      // pigeon import does not resolve (not fetched): detected by the URI text.
+      'fw/frog/hooks/post_gen.dart': 'void run(Object context) {}\n',
+      'fw/frog/pigeons/api.dart': "import 'package:pigeon/pigeon.dart';\n\nclass Msg {\n  String? text;\n}\n\nenum Kind { a, b }\n\nconst version = 2;\n",
+      'fw/frog/lib/acme_frog.dart': 'int frog() => 1;\n',
+      // analyzer_plugin (the older plugin API) also names lib/main.dart's `plugin`.
+      'fw/lint/pubspec.yaml': pubspec('acme_lint', '1.0.0', '  analyzer_plugin:\n    path: ../analyzer_plugin\n'),
+      'fw/analyzer_plugin/pubspec.yaml': pubspec('analyzer_plugin', '0.13.0'),
+      'fw/analyzer_plugin/lib/plugin.dart': 'class P {}\n',
+      'fw/lint/lib/main.dart': "import 'package:analyzer_plugin/plugin.dart';\n\nP get plugin => P();\n",
+      // Without the dependency, lib/main.dart's `plugin` is no entry.
+      'fw/noplug/pubspec.yaml': pubspec('acme_noplug', '1.0.0'),
+      'fw/noplug/lib/main.dart': 'final plugin = Object();\n',
+    });
+    const names = async (dir: string, name: string, entries: string[]): Promise<string[]> => {
+      const repo = repoOf(root, dir, pubPackage(name, entries));
+      repo.localPath = path.join(root, 'fw', dir);
+      const out = path.join(root, `out-fw-${dir}`);
+      mkdirSync(out);
+      const r = await scipDart.run(inputFor([repo], repo), out);
+      expect(r.status === 'ok' || r.status === 'partial', r.diagnostics.join('\n')).toBe(true);
+      return readJson<ExportsSidecar>(r.exportsFile).entrySymbols.map((e) => `${e.file}:${e.name}`);
+    };
+    expect(await names('frog', 'acme_frog', ['lib/acme_frog.dart'])).toEqual([
+      'hooks/post_gen.dart:run', 'main.dart:init', 'main.dart:run', 'pigeons/api.dart:Msg', 'pigeons/api.dart:Kind', 'pigeons/api.dart:version',
+      'routes/admin/[id].dart:onRequest', 'routes/admin/_middleware.dart:middleware',
+    ]);
+    expect(await names('lint', 'acme_lint', ['lib/main.dart'])).toEqual(['lib/main.dart:plugin']);
+    expect(await names('noplug', 'acme_noplug', ['lib/main.dart'])).toEqual([]);
+  }, 300_000);
+
   it('an npm package or ignored npm manifest nested in a pub package does not hide its Dart files', async () => {
     // dart-lang/web js_interop_gen: an npm package (package.json) in lib/src/ made
     // dart-surface skip all of lib/src/, so lib/src/dart_main.dart's `main` (compiled

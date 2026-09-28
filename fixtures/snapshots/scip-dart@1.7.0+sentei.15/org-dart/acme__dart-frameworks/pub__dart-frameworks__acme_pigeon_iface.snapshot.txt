@@ -1,0 +1,37 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/acme_pigeon_iface.dart
+  // Expected: deletion_candidate, reasons ["no_refs"] (an ordinary export nobody uses).
+//^ definition scip-dart pub acme_pigeon_iface . lib/`acme_pigeon_iface.dart`/
+  const pigeonApiVersion = 1;
+//      ^^^^^^^^^^^^^^^^ definition scip-dart pub acme_pigeon_iface . lib/`acme_pigeon_iface.dart`/pigeonApiVersion. enclosing [1:0-1:26]
+
+## pigeons/messages.dart
+  import 'package:pigeon/pigeon.dart';
+//^ definition scip-dart pub acme_pigeon_iface . pigeons/`messages.dart`/
+
+  // A pigeon input: the code generator reads it, nothing imports it
+  // (fluttercommunity workmanager: 19 PRIV-DEAD rows, Baseflow geocoding_android).
+  // Expected: no finding for any declaration of this file.
+  @ConfigurePigeon(PigeonOptions(dartOut: 'lib/src/messages.g.dart'))
+// ^^^^^^^^^^^^^^^ reference scip-dart pub pigeon . lib/`pigeon.dart`/ConfigurePigeon#
+//                 ^^^^^^^^^^^^^ reference scip-dart pub pigeon . lib/`pigeon.dart`/PigeonOptions#`<constructor>`().
+//                               ^^^^^^^ reference scip-dart pub pigeon . lib/`pigeon.dart`/PigeonOptions#`<constructor>`().(dartOut)
+  class GreetRequest {
+//      ^^^^^^^^^^^^ definition scip-dart pub acme_pigeon_iface . pigeons/`messages.dart`/GreetRequest# enclosing [5:0-8:1]
+    String? name;
+//  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//          ^^^^ definition scip-dart pub acme_pigeon_iface . pigeons/`messages.dart`/GreetRequest#name. enclosing [7:2-7:14]
+  }
+
+  @HostApi()
+// ^^^^^^^ reference scip-dart pub pigeon . lib/`pigeon.dart`/HostApi#
+  abstract class GreeterHostApi {
+//               ^^^^^^^^^^^^^^ definition scip-dart pub acme_pigeon_iface . pigeons/`messages.dart`/GreeterHostApi# enclosing [10:0-13:1]
+    String greet(GreetRequest request);
+//  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//         ^^^^^ definition scip-dart pub acme_pigeon_iface . pigeons/`messages.dart`/GreeterHostApi#greet(). enclosing [12:2-12:37]
+//               ^^^^^^^^^^^^ reference scip-dart pub acme_pigeon_iface . pigeons/`messages.dart`/GreetRequest#
+//                            ^^^^^^^ definition local 0 enclosing [12:15-12:35]
+  }

@@ -1,0 +1,6 @@
+name: acme_cli_app
+description: "An application without publish_to: private (lib/main.dart declares main)."
+version: 0.1.0
+
+environment:
+  sdk: ^3.0.0

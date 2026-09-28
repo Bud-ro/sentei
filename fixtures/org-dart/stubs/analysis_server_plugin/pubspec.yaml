@@ -1,0 +1,4 @@
+name: analysis_server_plugin
+version: 0.3.0
+environment:
+  sdk: ^3.0.0

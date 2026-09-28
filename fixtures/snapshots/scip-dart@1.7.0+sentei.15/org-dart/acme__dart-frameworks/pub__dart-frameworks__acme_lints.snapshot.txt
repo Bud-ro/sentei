@@ -1,0 +1,27 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/main.dart
+  import 'src/plugin.dart';
+//^ definition scip-dart pub acme_lints . lib/`main.dart`/
+
+  // Expected: no finding. The analysis server loads the top-level `plugin` of
+  // lib/main.dart (Baseflow a11y_linter: a false DEPRECATE row).
+  final plugin = AcmePlugin();
+//      ^^^^^^ definition scip-dart pub acme_lints . lib/`main.dart`/plugin. enclosing [4:0-4:27]
+//               ^^^^^^^^^^ reference scip-dart pub acme_lints . lib/src/`plugin.dart`/AcmePlugin#`<constructor>`().
+
+## lib/src/plugin.dart
+  import 'package:analysis_server_plugin/plugin.dart';
+//^ definition scip-dart pub acme_lints . lib/src/`plugin.dart`/
+
+  // Expected: alive, no finding (reached from `plugin`).
+  class AcmePlugin extends Plugin {
+//      ^^^^^^^^^^ definition scip-dart pub acme_lints . lib/src/`plugin.dart`/AcmePlugin# enclosing [3:0-6:1]
+//                         ^^^^^^ reference scip-dart pub analysis_server_plugin . lib/`plugin.dart`/Plugin#
+    @override
+//   ^^^^^^^^ reference scip-dart pub dart:core . dart:core/`annotations.dart`/override.
+    String get name => 'acme';
+//  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//             ^^^^ definition scip-dart pub acme_lints . lib/src/`plugin.dart`/AcmePlugin#`<get>name`. enclosing [4:2-5:28]
+  }

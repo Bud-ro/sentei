@@ -1,0 +1,3 @@
+name: {{name.snakeCase()}}
+description: A mason template (ignored dir __brick__/).
+version: 0.1.0

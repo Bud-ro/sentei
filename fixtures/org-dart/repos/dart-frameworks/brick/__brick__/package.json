@@ -1,0 +1,5 @@
+{
+  "name": "{{name.paramCase()}}",
+  {{^publishable}}"private": true,{{/publishable}}
+  "version": "0.1.0"
+}

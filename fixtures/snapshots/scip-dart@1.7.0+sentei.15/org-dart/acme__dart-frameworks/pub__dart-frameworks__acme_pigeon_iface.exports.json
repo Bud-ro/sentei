@@ -1,0 +1,43 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [
+    "pigeon_iface/lib/acme_pigeon_iface.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 15,
+      "file": "pigeon_iface/pigeons/messages.dart",
+      "kind": "runtime",
+      "line": 11,
+      "name": "GreeterHostApi"
+    },
+    {
+      "col": 6,
+      "file": "pigeon_iface/pigeons/messages.dart",
+      "kind": "runtime",
+      "line": 6,
+      "name": "GreetRequest"
+    }
+  ],
+  "exports": [
+    {
+      "col": 6,
+      "entry": "pigeon_iface/lib/acme_pigeon_iface.dart",
+      "exportedAs": "pigeonApiVersion",
+      "file": "pigeon_iface/lib/acme_pigeon_iface.dart",
+      "line": 1,
+      "name": "pigeonApiVersion",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-frameworks:acme_pigeon_iface",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

@@ -1,0 +1,52 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/src/vars.dart
+  // Expected: alive, no finding (used by pre_gen.dart's `run`).
+//^ definition scip-dart pub acme_brick_hooks . lib/src/`vars.dart`/
+  Map<String, dynamic> projectVars(String name) => {'project': name};
+//^^^ reference scip-dart pub dart:core . dart:core/`map.dart`/Map#
+//    ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                     ^^^^^^^^^^^ definition scip-dart pub acme_brick_hooks . lib/src/`vars.dart`/projectVars(). enclosing [1:0-1:67]
+//                                 ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                                        ^^^^ definition local 0 enclosing [1:33-1:44]
+//                                                             ^^^^ reference local 0
+
+  // Expected: private_dead, reasons ["already_unreachable"] (the hooks' own dead code
+  // still gets a verdict).
+  String staleVar() => 'stale';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^ definition scip-dart pub acme_brick_hooks . lib/src/`vars.dart`/staleVar(). enclosing [5:0-5:29]
+
+## post_gen.dart
+  import 'package:mason/mason.dart';
+//^ definition scip-dart pub acme_brick_hooks . `post_gen.dart`/
+
+  // Expected: no finding (mason hook entry).
+  void run(HookContext context) {}
+//     ^^^ definition scip-dart pub acme_brick_hooks . `post_gen.dart`/run(). enclosing [3:0-3:32]
+//         ^^^^^^^^^^^ reference scip-dart pub mason . lib/`mason.dart`/HookContext#
+//                     ^^^^^^^ definition local 0 enclosing [3:9-3:28]
+
+## pre_gen.dart
+  import 'package:mason/mason.dart';
+//^ definition scip-dart pub acme_brick_hooks . `pre_gen.dart`/
+
+  import 'lib/src/vars.dart';
+
+  // Expected: no finding. mason runs `run(HookContext)` of hooks/pre_gen.dart by
+  // convention (VeryGoodOpenSource: 7 false DELETE rows in very_good_cli's hooks).
+  Future<void> run(HookContext context) async {
+//^^^^^^ reference scip-dart pub dart:async . dart:async/`future.dart`/Future#
+//             ^^^ definition scip-dart pub acme_brick_hooks . `pre_gen.dart`/run(). enclosing [6:0-8:1]
+//                 ^^^^^^^^^^^ reference scip-dart pub mason . lib/`mason.dart`/HookContext#
+//                             ^^^^^^^ definition local 0 enclosing [6:17-6:36]
+    context.vars.addAll(projectVars(context.vars['name'] as String));
+//  ^^^^^^^ reference local 0
+//          ^^^^ reference scip-dart pub mason . lib/`mason.dart`/HookContext#`<get>vars`.
+//               ^^^^^^ reference scip-dart pub dart:core . dart:core/`map.dart`/Map#addAll().
+//                      ^^^^^^^^^^^ reference scip-dart pub acme_brick_hooks . lib/src/`vars.dart`/projectVars().
+//                                  ^^^^^^^ reference local 0
+//                                          ^^^^ reference scip-dart pub mason . lib/`mason.dart`/HookContext#`<get>vars`.
+//                                                          ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+  }

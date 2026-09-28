@@ -1,0 +1,36 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [
+    "lints/lib/main.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 6,
+      "file": "lints/lib/main.dart",
+      "kind": "runtime",
+      "line": 4,
+      "name": "plugin"
+    }
+  ],
+  "exports": [
+    {
+      "col": 6,
+      "entry": "lints/lib/main.dart",
+      "exportedAs": "plugin",
+      "file": "lints/lib/main.dart",
+      "line": 4,
+      "name": "plugin",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-frameworks:acme_lints",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

@@ -1,0 +1,10 @@
+name: acme_brick_hooks
+description: "mason hooks of a brick (no publish_to: an application, so private)."
+version: 0.1.0
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  mason:
+    path: ../../../../stubs/mason

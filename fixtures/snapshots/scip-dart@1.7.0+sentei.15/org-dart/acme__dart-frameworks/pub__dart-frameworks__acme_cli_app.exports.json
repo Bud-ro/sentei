@@ -1,0 +1,45 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [
+    "cli_app/lib/main.dart"
+  ],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "cli_app/lib/main.dart",
+      "kind": "runtime",
+      "line": 1,
+      "name": "main"
+    }
+  ],
+  "exports": [
+    {
+      "col": 5,
+      "entry": "cli_app/lib/main.dart",
+      "exportedAs": "main",
+      "file": "cli_app/lib/main.dart",
+      "line": 1,
+      "name": "main",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "cli_app/lib/main.dart",
+      "exportedAs": "unusedInApp",
+      "file": "cli_app/lib/main.dart",
+      "line": 5,
+      "name": "unusedInApp",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-frameworks:acme_cli_app",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

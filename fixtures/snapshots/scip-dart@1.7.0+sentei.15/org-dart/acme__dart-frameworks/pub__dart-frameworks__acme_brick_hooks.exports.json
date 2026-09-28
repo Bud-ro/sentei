@@ -1,0 +1,31 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [],
+  "entrySymbols": [
+    {
+      "col": 13,
+      "file": "brick/hooks/pre_gen.dart",
+      "kind": "runtime",
+      "line": 6,
+      "name": "run"
+    },
+    {
+      "col": 5,
+      "file": "brick/hooks/post_gen.dart",
+      "kind": "runtime",
+      "line": 3,
+      "name": "run"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-frameworks:acme_brick_hooks",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

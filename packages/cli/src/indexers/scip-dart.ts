@@ -130,7 +130,10 @@ export const scipDart: Indexer = {
   // sentei.15: fork patch 15 (unnamed extensions get a synthetic name, so
   // their members are global symbols; local functions are always local; an
   // unnamed primary constructor is defined at its `(`); pub get runs with
-  // `--no-example`, and a failed pub get stays the recorded cause.
+  // `--no-example`, and a failed pub get stays the recorded cause;
+  // dart-surface: framework entry conventions (mason hooks' `run`, dart_frog
+  // routes' `onRequest` / `middleware` and entrypoint `init` / `run`, pigeon
+  // inputs' declarations, an analyzer plugin's `plugin`).
   version: '1.7.0+sentei.15',
 
   detect({ repo, pkg }) {

@@ -1,0 +1,15 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/main.dart
+  // Expected: no finding (main).
+//^ definition scip-dart pub acme_cli_app . lib/`main.dart`/
+  void main() => print('acme');
+//     ^^^^ definition scip-dart pub acme_cli_app . lib/`main.dart`/main(). enclosing [1:0-1:29]
+//               ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+
+  // Expected: deletion_candidate, reasons ["no_refs"]: the app is private, so an
+  // unused export is a deletion, not a deprecation.
+  String unusedInApp() => 'unused';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^^^^ definition scip-dart pub acme_cli_app . lib/`main.dart`/unusedInApp(). enclosing [5:0-5:33]

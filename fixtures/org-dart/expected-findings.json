@@ -1,4 +1,8 @@
 [
+  {"package_id": "pub:acme/dart-frameworks:acme_backend", "symbol": "unusedRouteHelper", "file": "backend/routes/index.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "pub:acme/dart-frameworks:acme_brick_hooks", "symbol": "staleVar", "file": "brick/hooks/lib/src/vars.dart", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "pub:acme/dart-frameworks:acme_cli_app", "symbol": "unusedInApp", "file": "cli_app/lib/main.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
+  {"package_id": "pub:acme/dart-frameworks:acme_pigeon_iface", "symbol": "pigeonApiVersion", "file": "pigeon_iface/lib/acme_pigeon_iface.dart", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "npm:acme/dart-js:acme-js-src", "symbol": "acmeLegacyStart", "file": "js_src/src/index.ts", "verdict": "needs_review", "reasons": ["no_refs", "witness_mismatch:pub:acme/dart-js:acme_js_app:bin/main.dart:13", "witness_mismatch:pub:acme/dart-js:acme_js_app:bin/main.dart:18"]},
   {"package_id": "npm:acme/dart-js:acme-js-src", "symbol": "jsOnlyUnused", "file": "js_src/src/index.ts", "verdict": "deletion_candidate", "reasons": ["no_refs"]},
   {"package_id": "pub:acme/dart-lib-pub:acme_pub", "symbol": "pubExampleOnly", "file": "lib/acme_pub.dart", "verdict": "deprecation_candidate", "reasons": ["only_docs_refs"]},

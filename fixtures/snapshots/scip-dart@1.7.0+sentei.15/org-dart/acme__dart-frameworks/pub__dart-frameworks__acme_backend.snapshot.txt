@@ -1,0 +1,55 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## lib/src/greeting.dart
+  // Expected: alive, no finding (used by routes/index.dart's onRequest).
+//^ definition scip-dart pub acme_backend . lib/src/`greeting.dart`/
+  String greeting() => 'hello';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^ definition scip-dart pub acme_backend . lib/src/`greeting.dart`/greeting(). enclosing [1:0-1:29]
+
+## routes/_middleware.dart
+  import 'package:dart_frog/dart_frog.dart';
+//^ definition scip-dart pub acme_backend . routes/`_middleware.dart`/
+
+  // Expected: no finding. dart_frog applies `middleware` of routes/**/_middleware.dart.
+  Handler middleware(Handler handler) => handler;
+//^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Handler#
+//        ^^^^^^^^^^ definition scip-dart pub acme_backend . routes/`_middleware.dart`/middleware(). enclosing [3:0-3:47]
+//                   ^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Handler#
+//                           ^^^^^^^ definition local 0 enclosing [3:19-3:34]
+//                                       ^^^^^^^ reference local 0
+
+## routes/api/items.dart
+  import 'package:dart_frog/dart_frog.dart';
+//^ definition scip-dart pub acme_backend . routes/api/`items.dart`/
+
+  // Expected: no finding (a nested route).
+  Response onRequest(RequestContext context) => Response(body: '[]');
+//^^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Response#
+//         ^^^^^^^^^ definition scip-dart pub acme_backend . routes/api/`items.dart`/onRequest(). enclosing [3:0-3:67]
+//                   ^^^^^^^^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/RequestContext#
+//                                  ^^^^^^^ definition local 0 enclosing [3:19-3:41]
+//                                              ^^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Response#`<constructor>`().
+//                                                       ^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Response#`<constructor>`().(body)
+
+## routes/index.dart
+  import 'package:acme_backend/src/greeting.dart';
+//^ definition scip-dart pub acme_backend . routes/`index.dart`/
+  import 'package:dart_frog/dart_frog.dart';
+
+  // Expected: no finding. dart_frog calls `onRequest` of every routes/ file
+  // (VeryGoodOpenSource flutter_and_friends backend: PRIV-DEAD).
+  Response onRequest(RequestContext context) => Response(body: greeting());
+//^^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Response#
+//         ^^^^^^^^^ definition scip-dart pub acme_backend . routes/`index.dart`/onRequest(). enclosing [5:0-5:73]
+//                   ^^^^^^^^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/RequestContext#
+//                                  ^^^^^^^ definition local 0 enclosing [5:19-5:41]
+//                                              ^^^^^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Response#`<constructor>`().
+//                                                       ^^^^ reference scip-dart pub dart_frog . lib/`dart_frog.dart`/Response#`<constructor>`().(body)
+//                                                             ^^^^^^^^ reference scip-dart pub acme_backend . lib/src/`greeting.dart`/greeting().
+
+  // Expected: private_dead, reasons ["already_unreachable"].
+  String unusedRouteHelper() => 'unused';
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^^^^^^^^^^ definition scip-dart pub acme_backend . routes/`index.dart`/unusedRouteHelper(). enclosing [8:0-8:39]

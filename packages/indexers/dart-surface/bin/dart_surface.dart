@@ -226,7 +226,11 @@ class Surface {
   ///   - grinder tasks (see [_addGrinderTasks]);
   ///   - `main` / `hybridMain` of a library named by a `package:` string
   ///     literal in code (see [_uriEntries]);
-  ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`.
+  ///   - dart_dev's `tool/dart_dev/config.dart` top-level `config`;
+  ///   - framework conventions: mason hooks' `run`, dart_frog routes'
+  ///     `onRequest` / `middleware`, an analyzer plugin's `plugin` (see
+  ///     [_addFrameworkEntries]), every top-level declaration of a pigeon
+  ///     input (see [_addPigeonInputs]).
   final entrySymbols = <String, Map<String, Object>>{};
 
   /// The package's pub name: the last `:` segment of the id (`pub:acme_x`, or
@@ -526,7 +530,9 @@ class Surface {
         if (fragment.element.firstFragment.source.fullName == file) {
           _addMain(fragment.element);
           _addGrinderTasks(fragment.element);
+          _addFrameworkEntries(file, fragment.element);
         }
+        _addPigeonInputs(file, parsed.unit, fragment);
         // A part whose file does not exist: the library is incomplete.
         for (final d in parsed.unit.directives.whereType<PartDirective>()) {
           final missing = errorList.any((e) =>
@@ -570,6 +576,127 @@ class Surface {
     if (errorCount > 0) {
       diagnostics.add('warn: $errorCount Dart analyzer error diagnostic(s) in the package (status unaffected)');
       diagnostics.addAll(reported);
+    }
+    if (frameworkEntries.isNotEmpty) {
+      final kinds = frameworkEntries.entries.map((e) => '${e.key} ${e.value}').join(', ');
+      diagnostics.add('info: framework entry symbols by convention: $kinds');
+    }
+  }
+
+  /// Framework entry symbols recorded so far, by convention (for one `info:` line).
+  final frameworkEntries = <String, int>{};
+
+  /// The package's pubspec dependency names (regular and dev), read once.
+  late final Set<String> pubspecDeps = () {
+    final file = File(p.join(packageRoot, 'pubspec.yaml'));
+    final out = <String>{};
+    try {
+      final doc = loadYaml(file.readAsStringSync());
+      if (doc is Map) {
+        for (final key in ['dependencies', 'dev_dependencies']) {
+          final deps = doc[key];
+          if (deps is Map) out.addAll(deps.keys.whereType<String>());
+        }
+      }
+    } on Exception {
+      // Unreadable: no framework dependency is known (the path rules still apply).
+    }
+    return out;
+  }();
+
+  /// [addEntrySymbol] for [element], counted under [convention].
+  void _frameworkEntry(Element? element, String name, String convention) {
+    if (element == null) return;
+    final before = entrySymbols.length;
+    addEntrySymbol(element, name);
+    if (entrySymbols.length > before) frameworkEntries[convention] = (frameworkEntries[convention] ?? 0) + 1;
+  }
+
+  /// A top-level function, variable or getter named [name] declared in [library]
+  /// (an explicit getter's synthetic variable is skipped: the getter is the declaration).
+  Element? _topLevelNamed(LibraryElement library, String name) {
+    for (final e in [
+      ...library.topLevelFunctions,
+      ...library.topLevelVariables.where((v) => v.isOriginDeclaration),
+      ...library.getters.where((g) => g.isOriginDeclaration),
+    ]) {
+      if (e.name == name) return e;
+    }
+    return null;
+  }
+
+  /// Declarations a framework loads by file and name, which nothing in code
+  /// references (evaluation batches C and D: false DELETE / DEPRECATE /
+  /// PRIV-DEAD rows in VeryGoodOpenSource and Baseflow). [file] is the
+  /// defining file of [library]; paths are package-relative:
+  ///   - mason hooks: `run` of `pre_gen.dart` / `post_gen.dart` at the root of
+  ///     a hooks package (its dir is named `hooks`, or it depends on mason) or
+  ///     under `hooks/` (mason runs `run(HookContext)` of those files);
+  ///   - dart_frog: `onRequest` of every `routes/**.dart`, `middleware` of a
+  ///     `routes/**/_middleware.dart`, and with a dart_frog dependency `init`
+  ///     and `run` of the root `main.dart` (its custom entrypoint);
+  ///   - analyzer plugins: the top-level `plugin` of `lib/main.dart` in a
+  ///     package that depends on analysis_server_plugin or analyzer_plugin (the
+  ///     analysis server loads it by name). The legacy
+  ///     `tools/analyzer_plugin/bin/plugin.dart` runs its `main`, already an
+  ///     entry symbol (see [_addMain]).
+  void _addFrameworkEntries(String file, LibraryElement library) {
+    final rel = p.posix.joinAll(p.split(p.relative(file, from: packageRoot)));
+    final segs = rel.split('/');
+    final base = segs.last;
+    if (base == 'pre_gen.dart' || base == 'post_gen.dart') {
+      final atRoot = segs.length == 1 && (p.basename(packageRoot) == 'hooks' || pubspecDeps.contains('mason'));
+      if (atRoot || (segs.length == 2 && segs.first == 'hooks')) {
+        _frameworkEntry(_topLevelNamed(library, 'run'), 'run', 'mason hook');
+      }
+    }
+    if (segs.length > 1 && segs.first == 'routes') {
+      _frameworkEntry(_topLevelNamed(library, 'onRequest'), 'onRequest', 'dart_frog route');
+      if (base == '_middleware.dart') {
+        _frameworkEntry(_topLevelNamed(library, 'middleware'), 'middleware', 'dart_frog middleware');
+      }
+    }
+    if (rel == 'main.dart' && pubspecDeps.contains('dart_frog')) {
+      for (final name in ['init', 'run']) {
+        _frameworkEntry(_topLevelNamed(library, name), name, 'dart_frog entrypoint');
+      }
+    }
+    if (rel == 'lib/main.dart' &&
+        (pubspecDeps.contains('analysis_server_plugin') || pubspecDeps.contains('analyzer_plugin'))) {
+      _frameworkEntry(_topLevelNamed(library, 'plugin'), 'plugin', 'analyzer plugin');
+    }
+  }
+
+  /// A pigeon input (`pigeons/messages.dart`: `import 'package:pigeon/pigeon.dart'`,
+  /// `@ConfigurePigeon`, `@HostApi() abstract class ...`) is read by the pigeon
+  /// code generator, never imported: every top-level declaration of such a file
+  /// (outside lib/, where nothing imports pigeon) is an entry symbol, so the
+  /// file's declarations get no verdict and keep what they use alive (the file is
+  /// a codegen input like a build.yaml factory; fluttercommunity workmanager's
+  /// 19 and Baseflow geocoding_android's PRIV-DEAD rows). Detected by the import
+  /// URI text, so an unresolved pigeon (not fetched) still counts.
+  void _addPigeonInputs(String file, CompilationUnit unit, LibraryFragment fragment) {
+    final rel = p.posix.joinAll(p.split(p.relative(file, from: packageRoot)));
+    if (rel.startsWith('lib/')) return;
+    final importsPigeon = unit.directives
+        .whereType<ImportDirective>()
+        .any((d) => (d.uri.stringValue ?? '').startsWith('package:pigeon/'));
+    if (!importsPigeon) return;
+    final fragments = <Fragment>[
+      ...fragment.classes,
+      ...fragment.enums,
+      ...fragment.mixins,
+      ...fragment.extensions,
+      ...fragment.extensionTypes,
+      ...fragment.functions,
+      ...fragment.topLevelVariables,
+      ...fragment.getters,
+      ...fragment.setters,
+      ...fragment.typeAliases,
+    ];
+    for (final f in fragments) {
+      final e = f.element;
+      _frameworkEntry(e, e.name ?? 'declaration', 'pigeon input');
     }
   }
 

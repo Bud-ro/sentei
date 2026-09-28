@@ -1,0 +1,10 @@
+name: acme_lints
+description: "An analyzer plugin: the analysis server loads `plugin` from lib/main.dart (no publish_to: a published library, not an app)."
+version: 0.1.0
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  analysis_server_plugin:
+    path: ../../../stubs/analysis_server_plugin

@@ -383,6 +383,7 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
     expect(r.policy).not.toHaveProperty('assumeClosedWorld');
     expect(r.repos.map((x) => [x.repo, x.index_status]).sort()).toEqual([
       ['acme/dart-app', 'ok'],
+      ['acme/dart-frameworks', 'ok'],
       ['acme/dart-gen', 'ok'],
       ['acme/dart-js', 'ok'],
       ['acme/dart-lib-pub', 'ok'],
@@ -408,6 +409,18 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
     expect(lines).toContain('[discover] acme/dart-samples: promoted ignored-dir manifest example/app/pubspec.yaml to the consumer package '
       + 'pub:acme/dart-samples:acme_sample_app: example app depends on pub:acme/dart-lib-x:acme_x (repo acme/dart-lib-x)');
     expect(rows.filter((x) => x.symbol === 'usedBySample' || x.package_id === 'pub:acme/dart-samples:acme_sample_app')).toEqual([]);
+    // Fix round 8b (evaluation batches C and D), dart-frameworks: mason hooks' `run`, dart_frog
+    // routes' `onRequest` / `middleware`, the pigeon input's declarations and the analyzer
+    // plugin's `plugin` are entry symbols (no finding; each was a false row before); only the
+    // packages' own dead code remains. The mason template (__brick__/) and the two workshop
+    // copies of one app name are no packages; apps without publish_to are private.
+    expect(rows.filter((x) => x.package_id.startsWith('pub:acme/dart-frameworks:')).map((x) => x.symbol).sort())
+      .toEqual(['pigeonApiVersion', 'staleVar', 'unusedInApp', 'unusedRouteHelper']);
+    expect(r.packages.filter((p) => p.repo === 'acme/dart-frameworks').map((p) => [p.name, p.private])).toEqual([
+      ['acme_backend', true], ['acme_brick_hooks', true], ['acme_cli_app', true], ['acme_lints', false], ['acme_pigeon_iface', true],
+    ]);
+    expect(lines).toContain('[discover] acme/dart-frameworks: brick/hooks/pubspec.yaml: an application (mason hooks: pre_gen.dart / post_gen.dart) without publish_to: treated as private');
+    expect(lines).toContain('[discover] acme/dart-frameworks: ignored private duplicate manifest acme/dart-frameworks/workshop/start/pubspec.yaml (same name as acme/dart-frameworks/workshop/finish/pubspec.yaml)');
     // dart-lib-x's own example/ stays ignored: its use of inExample is a note in report.json and SARIF.
     const inExample = allSarifResults(work).find((x) => x.symbol === 'inExample')!;
     expect(inExample.ruleId).toBe('sentei/unexport');
