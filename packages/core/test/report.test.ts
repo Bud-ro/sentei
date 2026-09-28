@@ -301,7 +301,7 @@ describe('buildReport', () => {
     const text = formatSummary(report);
     expect(text).toContain('\npolicy: minAgeDays=180 (applied to 1 of 2 repos) trustPrivateRegistry=true');
     expect(text).toContain(`\nblame: ${s.dated} of ${s.exported} exported symbol(s) dated; ${s.undatedShallow} undated in shallow clones, `
-      + '0 undated otherwise (unknown ages count as old enough)\n');
+      + '0 undated otherwise (unknown ages count as old enough outside full clones)\n');
     expect(text).toContain(`!! WARNING: ${warning}\n`);
     // minAgeDays 0: neither the warning nor the "applied to" / blame lines.
     setPolicy('minAgeDays', 0);
