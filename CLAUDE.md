@@ -12,7 +12,8 @@ Read `PLAN.md` fully before touching anything. Decisions marked DECIDED are sett
   `npm_config_cache` at a writable directory.
 - Dart SDK ≥ 3.11 on `PATH` for the Dart indexer tests (CI uses 3.11.3; they are
   skipped without `dart`). `gh` (or `GITHUB_TOKEN`) only for `discover --org`.
-- Network hosts used: registry.npmjs.org, pub.dev, github.com, api.github.com.
+- Network hosts used: registry.npmjs.org, registry.yarnpkg.com (yarn installs), nodejs.org
+  (pnpm 11/12 downloads the `devEngines` Node runtime), pub.dev, github.com, api.github.com.
 - Temp files go in `$TMPDIR`, never `/tmp`.
 
 ## Conventions

@@ -67,9 +67,22 @@ opens pull requests.
     pinning another Node major still installs.
   pnpm, yarn and corepack state and caches go under `<work>/.pm/`, not `$HOME`
   (npm keeps its usual cache). `--no-install` skips installs altogether.
+  - **Network**: registry.npmjs.org, registry.yarnpkg.com (yarn), and nodejs.org:
+    pnpm 11 / 12 downloads the Node runtime a `devEngines.runtime` field asks for.
+  - **pnpm 12 needs a writable store lock**: it cannot install where the lock
+    directory of its store is on a read-only file system
+    (`ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK`, seen in a sandbox evaluation: 36
+    vitejs and 43 tanstack packages).
+  - **A failed install fails closed**: the package is indexed anyway, but its
+    status is `partial` (the install's error is the `cause`), so it is an
+    `opaque_consumer`: it gets no verdicts and blocks the verdicts of every org
+    package it depends on, which the report lists as blockers. Fix the install (or
+    use `--no-install` with an existing `node_modules`) and rerun `index`.
 - Org dependencies are source-linked: `node_modules/<name>` is the org package's
   checkout at HEAD, or a shadow of it whose unbuilt `dist/` entry targets point at
-  the sources. A deep build-output import (`@acme/x/dist/module/lib/types`) is linked
+  the sources (also for a manifest copied from the build output, as drizzle-orm's
+  `main: ./index.cjs` whose `drizzle-orm/pg-core` exists only in `dist/`: the same
+  path under `src/` or the tsconfig `rootDir`). A deep build-output import (`@acme/x/dist/module/lib/types`) is linked
   to its source through the package's tsconfig outDir→rootDir (or the dist→src
   convention), and its module counts as package surface; one with no source flags the
   package (`opaque_consumer`), so its symbols get no verdict.
@@ -157,8 +170,10 @@ opens pull requests.
   auto-imported `composables/`, `utils/`, `stores/`, `shared/`, `server/utils/`,
   plugins, route middleware, local modules; plus own files the config names, such
   as Starlight's `routeMiddleware: './src/routeData.ts'`). These are seeds, not
-  entry points (see `private_dead` below). An MDX file's fenced code blocks are
-  example code: only its real imports count here. An alias or glob pattern that
+  entry points (see `private_dead` below). An MDX file's fenced code blocks and
+  inline code spans are example code: only its real imports count, for own code and
+  org packages alike (a docs site showing `import … from '@acme/x'` in examples is
+  no consumer of `@acme/x`). An alias or glob pattern that
   names no file is recorded as an unresolved load (`unindexed_loads`, resolved = 0).
 - Importing a module runs its top-level code: a module one of whose declarations
   is reachable (or that a reachable module imports) keeps alive what its
@@ -495,7 +510,9 @@ A `package.json` without `"name"` that declares dependencies (a demo app, a Phoe
 findings of its own, but its uses of org packages count. One without dependencies
 (a bare `{"private": true}` marker) is skipped with a warning. scip-typescript names
 the symbols of every nameless package `npm . .`; ingest gives each such package's
-own symbols its own name and id, so two nameless apps never share a symbol.
+own symbols its own name and id, so two nameless apps never share a symbol. A use
+of the synthetic name resolves only within the repo (every repo's root may be
+`_unnamed/.`).
 
 Manifests and SCIP symbols name dependencies by name only, so a dependency on a
 name several org packages share is resolved per consumer:
@@ -569,8 +586,23 @@ proposed for:
   such type. The index has no signature range, so "signature" is positional: the
   header of a type declaration, a field's definition line, the part of a function's
   definition line before its name (Dart return type), and, in npm packages, any type
-  on the definition line. Parameter types and continuation lines are missed (the
-  symbol then stays an unexport candidate).
+  on the definition line; and for a function, method or constructor everything
+  between its name and its body (parameter types on any line, generic constraints,
+  the return type), found in the checkout's text at ingest (never for a TypeScript
+  `private` member). Missed (the symbol then stays an unexport candidate): an arrow
+  function held by a variable after its first line, and a return type written as a
+  function type after its `=>`.
+
+**Code the package loads by path or by name.** A bin or script importing the
+package's own unbuilt build output (`import { runCli } from '../dist/cli.mjs'`,
+`import('./dist/index.js')`) is mapped to the source (tsconfig outDir → rootDir,
+dist → src): what it takes is a runtime entry (no verdict) that it references.
+Build output that no source maps to makes the package `partial` (its `cause:`
+names the import), never `ok`. A string naming the package's own subpath
+(`serverEntrypoint: '@astrojs/preact/server.js'`,
+`require.resolve('@trpc/upgrade/transforms/provider')`, through `exports`) or an
+own code file (`'./src/routeData.ts'`, `new URL('./worker.ts', import.meta.url)`)
+makes that module's exports runtime entries too (a framework or tool loads them).
 
 Reasons: `no_refs`, `internal_refs_only`, `only_test_refs` (delete the tests
 too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
