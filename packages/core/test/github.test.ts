@@ -311,6 +311,7 @@ describe('selectGithubRepos', () => {
     repo('giant', { size: 700 * 1024 }), // huge HEAD
     repo('mobile'), // excluded by config, but carries manifests
     repo('empty'),
+    repo('starter', { is_template: true }), // a template repo: probed for the record (trpc examples-*)
   ];
   const routes = (): Record<string, Route | Route[]> => ({
     [LIST]: { body: listing },
@@ -323,6 +324,7 @@ describe('selectGithubRepos', () => {
     ...tree('huge', { 'package.json': 100, 'src/main.cc': 2 * 1024 * 1024 }),
     ...tree('giant', { 'package.json': 100, 'data.bin': 600 * 1024 * 1024 }),
     ...tree('mobile', { 'pubspec.yaml': 100, 'packages/ui/pubspec.yaml': 100 }),
+    ...tree('starter', { 'package.json': 100 }),
     [treeUrl('empty')]: { status: 409, body: { message: 'Git Repository is empty.' } },
     ...branch('lib', sha('1')),
     ...branch('app', sha('2')),
@@ -350,6 +352,7 @@ describe('selectGithubRepos', () => {
       mobile: [false, 'excluded by repos.exclude "mobile"'],
       old: [false, 'archived (--include-archived to keep)'],
       site: [true, 'no language detected, but pubspec.yaml'],
+      starter: [false, 'template repository'],
       tools: [true, 'language Shell, but cli/package.json'],
     });
     // One tree request per candidate (and for the explicitly excluded repo); nothing
@@ -358,19 +361,19 @@ describe('selectGithubRepos', () => {
     const urls = calls.map((c) => c.url.slice(API.length));
     for (const skipped of ['old', 'forked']) expect(urls.some((u) => u.includes(`/${skipped}/`))).toBe(false);
     expect(urls.filter((u) => u.includes('/git/trees/')).map((u) => u.split('/')[3]).sort())
-      .toEqual(['app', 'empty', 'giant', 'huge', 'hw-board', 'lib', 'mobile', 'site', 'tools']);
+      .toEqual(['app', 'empty', 'giant', 'huge', 'hw-board', 'lib', 'mobile', 'site', 'starter', 'tools']);
     expect(urls.filter((u) => u.includes('/contents/'))).toEqual(['/repos/acme/site/contents/package.json?ref=main', '/repos/acme/site/contents/pubspec.yaml?ref=main']);
     expect(urls.filter((u) => u.includes('/branches/')).sort()).toEqual([
       '/repos/acme/app/branches/main', '/repos/acme/huge/branches/main', '/repos/acme/lib/branches/main',
       '/repos/acme/site/branches/main', '/repos/acme/tools/branches/main',
     ]);
-    expect(calls).toHaveLength(1 + 9 + 2 + 5);
+    expect(calls).toHaveLength(1 + 10 + 2 + 5);
     expect(sel.apiRequests).toBe(calls.length);
-    expect(logs).toContain('fetching the git tree of 9 repo(s) (package.json/pubspec.yaml anywhere, HEAD size; 1 request each)');
+    expect(logs).toContain('fetching the git tree of 10 repo(s) (package.json/pubspec.yaml anywhere, HEAD size; 1 request each)');
     expect(logs).toContain('acme/site: git tree truncated by GitHub; root manifests only, API size used for repos.maxSizeMb');
-    expect(logs).toContain('selected 5 of 11 repo(s); skipped 1 archived, 1 empty, 1 excluded by include/exclude, 1 fork, 1 language, 1 too large (`sentei repos` lists every reason)');
-    expect(logs).toContain('warning: 2 excluded repo(s) have package manifests and may consume org packages (their references are invisible): '
-      + 'acme/giant (size, 1 manifest), acme/mobile (repos.exclude, 2 manifests)');
+    expect(logs).toContain('selected 5 of 12 repo(s); skipped 1 archived, 1 empty, 1 excluded by include/exclude, 1 fork, 1 language, 1 template, 1 too large (`sentei repos` lists every reason)');
+    expect(logs).toContain('warning: 3 excluded repo(s) have package manifests and may consume org packages (their references are invisible): '
+      + 'acme/giant (size, 1 manifest), acme/mobile (repos.exclude, 2 manifests), acme/starter (template, 1 manifest)');
 
     const lock = readLockfile(lockfile);
     expect(lock.version).toBe(3);
@@ -395,6 +398,7 @@ describe('selectGithubRepos', () => {
       { repo: 'hw-board', reason: 'language C not in repos.languages; no package.json or pubspec.yaml in the HEAD tree', manifests: [] },
       { repo: 'mobile', reason: 'excluded by repos.exclude "mobile"', manifests: ['packages/ui/pubspec.yaml', 'pubspec.yaml'] },
       { repo: 'old', reason: 'archived (--include-archived to keep)', manifests: null },
+      { repo: 'starter', reason: 'template repository', manifests: ['package.json'] },
     ]);
     const text = readFileSync(lockfile, 'utf8');
     expect(text.startsWith('{\n  "version": 3,\n  "org": "acme",')).toBe(true);

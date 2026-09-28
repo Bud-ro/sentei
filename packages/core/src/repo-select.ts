@@ -16,9 +16,9 @@
 //      dirs); `languages: []` disables it.
 // With `probe` on, a repo that reaches rule 4 unprobed, or that an explicit glob
 // decided, gets `needsProbe`: the caller fetches its git tree (one request) and
-// decides again. Explicitly matched repos are probed only for the record (the
-// lockfile, `sentei repos` and the report's excluded-repo warning); repos that
-// cannot be cloned or that rule 3 skips are never probed.
+// decides again. Explicitly matched repos and template repos are probed only for the
+// record (the lockfile, `sentei repos` and the report's excluded-repo warning); repos
+// that cannot be cloned, archived repos and forks are never probed.
 import type { RepoSelectConfig } from './config.ts';
 import { matchGlob } from './glob.ts';
 
@@ -140,7 +140,10 @@ export function decideRepo(f: RepoFacts, s: RepoSelectSettings, nowMs: number, l
   // 3. kinds of repo that are rarely org code.
   if (f.archived && !s.includeArchived) return { include: false, reasons: ['archived (--include-archived to keep)'] };
   if (f.fork && !s.includeForks) return { include: false, reasons: ['fork (--include-forks to keep)'] };
-  if (f.template) return { include: false, reasons: ['template repository'] };
+  // A template repo (trpc's nine `examples-*`) is not org code, but it is a starter
+  // that may import org packages: probed like an explicitly matched repo (for the
+  // record only), so the excluded-repo warning can name it with its manifests.
+  if (f.template) return { include: false, reasons: ['template repository'], ...record };
   if (legacy) return { include: true, reasons: ['listed (lockfile without selection metadata)'] };
   // Rules 4 and 6 read the git tree: fetch it first.
   if (s.probe && f.manifests === undefined) return { include: false, reasons: ['git tree probe pending'], needsProbe: true };

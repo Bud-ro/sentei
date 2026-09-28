@@ -25,6 +25,14 @@ describe('decideRepo', () => {
     expect(decide(facts('f', { fork: true }))).toEqual({ include: false, reasons: ['fork (--include-forks to keep)'] });
     expect(decide(facts('f', { fork: true }), { includeForks: true }).include).toBe(true);
     expect(decide(facts('t', { template: true }))).toEqual({ include: false, reasons: ['template repository'] });
+    // Unprobed, a template repo is probed for the record (it may consume org packages:
+    // trpc's examples-* starters); the decision stays "excluded". Archived repos and
+    // forks are not probed.
+    expect(decide(facts('t', { template: true, manifests: undefined })))
+      .toEqual({ include: false, reasons: ['template repository'], needsProbe: true });
+    expect(decide(facts('t', { template: true, manifests: undefined }), { probe: false })).toEqual({ include: false, reasons: ['template repository'] });
+    expect(decide(facts('a', { archived: true, manifests: undefined })).needsProbe).toBeUndefined();
+    expect(decide(facts('f', { fork: true, manifests: undefined })).needsProbe).toBeUndefined();
     expect(decide(facts('d', { disabled: true }))).toEqual({ include: false, reasons: ['disabled by GitHub'] });
     expect(decide(facts('e', { empty: true })).reasons).toEqual(['empty repository (no commit on the default branch)']);
   });
