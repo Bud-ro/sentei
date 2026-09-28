@@ -190,6 +190,27 @@ export function isIgnoredManifestPath(
 }
 
 /**
+ * Scaffold template dirs: a manifest under one is a file a generator copies, never a
+ * package: an Nx / Angular generator's `files/` (`generators/<name>/files/`,
+ * `schematics/<name>/files/`), mason's `__brick__`, and `.template` / `.templates` dirs.
+ * (`template` / `templates` are in the configurable DEFAULT_IGNORE_MANIFEST_DIRS.)
+ */
+export function isTemplateManifestPath(manifest: string): boolean {
+  const segs = manifest.split('/').slice(0, -1);
+  for (let i = 0; i < segs.length; i += 1) {
+    const s = segs[i]!;
+    if (s === '__brick__' || s === '.template' || s === '.templates') return true;
+    if ((s === 'generators' || s === 'generator' || s === 'schematics') && segs[i + 2] === 'files') return true;
+  }
+  return false;
+}
+
+/** A package name that is a template placeholder (`<%= name %>`, `{{name}}`), never a real package. */
+export function isTemplatedName(name: string): boolean {
+  return name.includes('<%') || name.includes('{{');
+}
+
+/**
  * Workspace membership of dirs in a repo, from every manifest in `files`: pub
  * `workspace:` entries and npm `workspaces` entries (array or `{ packages: [...] }`),
  * relative to the declaring manifest's dir, globs allowed (glob.ts; npm negations
@@ -424,17 +445,20 @@ export function readRepoManifestsWithIgnored(
   const ignored: IgnoredManifest[] = [];
   const skipped: string[] = [];
   const vscode: string[] = [];
+  const templated: string[] = [];
   for (const file of files) {
     const base = posix.basename(file);
     if (base !== 'package.json' && base !== 'pubspec.yaml') continue;
     const dir = posix.dirname(file); // '.' for the root
-    const byDir = isIgnoredManifestPath(file, ignoreDirs, isMember, (d) => manifestDirs.has(d));
+    // A scaffold template (Nx generator `files/`, mason `__brick__`, `.template`) is never a
+    // package, whatever ignoreManifestDirs says: treated like an ignored dir.
+    const byDir = isTemplateManifestPath(file) || isIgnoredManifestPath(file, ignoreDirs, isMember, (d) => manifestDirs.has(d));
     if (byDir || opts.ignoreManifest?.(file)) {
       skipped.push(file);
       const m = readIgnoredManifest(repoRoot, dir, base === 'package.json' ? 'npm' : 'pub', warn);
       if (byDir) {
         m.byDir = true;
-        if (isConsumerManifestPath(file, ignoreDirs)) m.consumerDir = true;
+        if (isConsumerManifestPath(file, ignoreDirs) && !isTemplateManifestPath(file)) m.consumerDir = true;
       }
       ignored.push(m);
       continue;
@@ -461,12 +485,17 @@ export function readRepoManifestsWithIgnored(
       ignored.push({ path: dir, manifest: file, manager, name: null, deps: [], depsUnknown: true, reason: `cannot parse: ${err.detail}` });
       continue;
     }
-    if (pkg && isTemplateName(pkg.name)) {
-      warn(`${file}: package name ${JSON.stringify(pkg.name)} is a template ({{…}}); not an org package`);
-      ignored.push({ path: dir, manifest: file, manager, name: pkg.name, deps: pkg.deps, depsUnknown: false, reason: `template name ${pkg.name}` });
+    if (pkg && isTemplatedName(pkg.name)) {
+      warn(`${file}: package name ${JSON.stringify(pkg.name)} is a template ({{…}} / <%= %>); not an org package`);
+      templated.push(file);
+      ignored.push({ path: dir, manifest: file, manager, name: pkg.name, deps: pkg.deps, depsUnknown: false, byDir: true, reason: `template name ${pkg.name}` });
       continue;
     }
     if (pkg) pkgs.push(pkg);
+  }
+  if (templated.length > 0) {
+    opts.log?.(`skipped ${templated.length} template manifest(s) (a templated name: <%= %> or {{ }}) as not org packages: ${
+      templated.slice(0, 3).join(', ')}${templated.length > 3 ? ', ...' : ''}`);
   }
   if (skipped.length > 0) {
     opts.log?.(`skipped ${skipped.length} manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): ${

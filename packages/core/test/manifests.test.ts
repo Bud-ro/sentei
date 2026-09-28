@@ -1118,6 +1118,33 @@ describe('npm manifests', () => {
     expect(by.get('web')!.runtimeEntryPoints).toEqual([]);
   });
 
+  it('templates are never packages: Nx generator files/, __brick__, .template, a templated name', () => {
+    // tanstack ai: tools/workspace-plugin/src/generators/react-app/files/package.json.
+    pkgJson('tools/plugin/src/generators/react-app/files/package.json', { name: '<%= name %>', dependencies: { '@acme/core': '1' } });
+    pkgJson('bricks/app/__brick__/package.json', { name: 'brick', dependencies: {} });
+    pkgJson('.template/package.json', { name: 'tpl' });
+    // A templated name anywhere else.
+    pkgJson('starter/package.json', { name: '{{project_name}}', dependencies: { x: '1' } });
+    write('starter/pubspec.yaml', 'name: "{{name.snakeCase()}}"\n');
+    // Under examples/ AND a generator: a template, never a promotable consumer.
+    pkgJson('examples/generators/g/files/package.json', { name: 'g-files' });
+    pkgJson('pkgs/real/package.json', { name: 'real' });
+    write('pkgs/real/index.js');
+    const logs: string[] = [];
+    const r = readRepoManifestsWithIgnored(root, warn, undefined, { log: (m) => logs.push(m) });
+    expect(r.packages.map((p) => p.name)).toEqual(['real']);
+    expect(r.ignored.map((m) => [m.manifest, m.byDir, m.consumerDir ?? false])).toEqual([
+      ['.template/package.json', true, false],
+      ['bricks/app/__brick__/package.json', true, false],
+      ['examples/generators/g/files/package.json', true, false],
+      ['starter/package.json', true, false],
+      ['starter/pubspec.yaml', true, false],
+      ['tools/plugin/src/generators/react-app/files/package.json', true, false],
+    ]);
+    expect(r.ignored.find((m) => m.manifest === 'starter/package.json')!.deps.map((d) => d.name)).toEqual(['x']);
+    expect(logs.some((l) => l.startsWith('skipped 2 template manifest(s) (a templated name: <%= %> or {{ }}) as not org packages: starter/package.json'))).toBe(true);
+  });
+
   it('a convention never reaches into a nested package', () => {
     pkgJson('package.json', { name: 'root', dependencies: { nuxt: '3' } });
     write('pages/a.ts');
