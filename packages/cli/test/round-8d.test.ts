@@ -221,12 +221,20 @@ describe('own-module loads: bins loading unbuilt dist/, string entry points (wit
       'src/worker.ts': `export function onMessage(): void {}\n`,
       'src/notes.md': '# not code\n',
       'src/unrelated.ts': `export function notLoaded(): void {}\n`,
+      // A tool config (no entry point) naming an own file: also an own-file load record.
+      'tool.config.mjs': `export default { entry: './src/extra.ts' };\n`,
+      'src/extra.ts': `export function extra(): void {}\n`,
     });
     const r = surface('integration', '@acme/integration', { entryPoints: ['src/index.ts', 'src/server.ts'] });
     expect(r.partial).toBe(false);
     // The anonymous `export default {…}` has no SCIP definition to name (not recorded).
     expect(runtime(r)).toEqual([
-      'src/server.ts#renderToStaticMarkup', 'src/transforms/provider.ts#parser', 'src/transforms/provider.ts#transformer', 'src/worker.ts#onMessage',
+      'src/extra.ts#extra', 'src/server.ts#renderToStaticMarkup', 'src/transforms/provider.ts#parser', 'src/transforms/provider.ts#transformer', 'src/worker.ts#onMessage',
+    ]);
+    // Loads from the entry file need no record (the package's entry set is credible
+    // anyway); the config's load is recorded, so its entry symbols never make it so.
+    expect(r.sidecar.unindexedImports).toEqual([
+      { file: 'tool.config.mjs', module: 'src/extra.ts', targetPackage: '@acme/integration', relative: true },
     ]);
     expect(r.sidecar.shorthandRefs).toEqual([]); // a string is not a reference
   });

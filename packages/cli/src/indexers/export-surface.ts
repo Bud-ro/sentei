@@ -482,7 +482,26 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
           : `warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})${scoped}`,
     );
   }
-  const unindexedImports = [...scanned, ...unresolvedSelf].sort((a, b) => cmp(a.file, b.file) || cmp(a.module, b.module));
+  // A runtime / tool load from a file that is no entry point of the package (a string
+  // entry in `astro.config.mjs` or an integration's source, a script outside every
+  // program) is also recorded as an own-file load (`relative`): ingest's `unindexed_loads`
+  // row keeps the entry symbols it adds from making the package's entry set credible for
+  // private_dead (an app whose real roots sentei cannot see stays skipped, fail closed),
+  // and the loaded module's private top-level declarations are kept as well.
+  const loadRecords: UnindexedImport[] = [];
+  if (selfName !== null) {
+    for (const l of ownLoads.loads) {
+      if (l.scope === 'test' || l.scope === 'docs' || entryFiles.has(l.file)) continue;
+      const indexedFrom = rootsKnown && indexedFiles.has(path.resolve(input.repoRoot, ...l.file.split('/')));
+      if (l.kind !== 'string' && indexedFrom) continue; // an import from indexed code: references only
+      for (const t of l.targets) {
+        loadRecords.push({ file: l.file, module: toRepoRel(t), targetPackage: selfName, relative: true, ...(l.scope !== undefined ? { scope: l.scope } : {}) });
+      }
+    }
+  }
+  const unindexedImports = [...new Map([...scanned, ...unresolvedSelf, ...loadRecords]
+    .map((u) => [`${u.file}\0${u.module}\0${u.relative === true ? 'r' : ''}${u.unresolved === true ? 'u' : ''}`, u])).values()]
+    .sort((a, b) => cmp(a.file, b.file) || cmp(a.module, b.module));
 
   // Generated own files: every walked file plus every own file of the programs
   // (a program may hold files the walk skips, e.g. Nuxt's `.nuxt/*.d.ts`).
