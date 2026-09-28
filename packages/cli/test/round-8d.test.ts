@@ -191,6 +191,8 @@ describe('own-module loads: bins loading unbuilt dist/, string entry points (wit
       'tsconfig.json': TSCONFIG,
       'src/index.ts': `export const x = 1;\n`,
       'bin/run.mjs': `import('./missing.js');\nrequire('../build/Release/addon.node');\n`,
+      // A hand-written declaration file loads no code (withastro cli-kit's utils.d.ts).
+      'utils.d.ts': `export * from './dist/utils/index.d.js';\n`,
     });
     expect(surface('nogap', '@acme/nogap').partial).toBe(false);
   });

@@ -1456,6 +1456,8 @@ export interface OwnLoadScanInput {
 
 /** First path segment of a build-output dir (as in core's distToSrc conventions). */
 const BUILD_OUTPUT = /^(?:dist|build|out|lib)\//;
+/** A TypeScript declaration file. */
+const DECLARATION_FILE = /\.d\.[cm]?ts$/;
 /** A module path that is code (or extension-less, Node-probed). */
 const LOADABLE = /(?:^|\/)[^/.]+$|\.(?:[cm]?[jt]s|[jt]sx)$/;
 /** A string literal that could name an own module: relative with a code extension, or `<self>/<subpath>`. */
@@ -1480,7 +1482,8 @@ const RELATIVE_CODE = /^\.\.?\/.*\.(?:[cm]?[jt]s|[jt]sx)$/;
  *    code file, relative to the file's dir, else to the package dir, directly or through
  *    the dist → src mapping.
  * Existing files named by a module specifier are ordinary imports (TypeScript links
- * them) and are skipped.
+ * them) and are skipped; so are SFCs (scanUnindexedImports) and declaration files
+ * (they load no code).
  */
 export function scanOwnModuleLoads(input: OwnLoadScanInput): { loads: OwnModuleLoad[]; gaps: OwnLoadGap[] } {
   const loads: OwnModuleLoad[] = [];
@@ -1520,7 +1523,9 @@ export function scanOwnModuleLoads(input: OwnLoadScanInput): { loads: OwnModuleL
     return [...out].sort(cmp);
   };
   for (const abs of input.files) {
-    if (SFC_FILE.test(abs)) continue;
+    // SFCs: scanUnindexedImports. Declaration files load no code (a hand-written
+    // `utils.d.ts` re-exporting `./dist/utils/index.d.js` is type surface, the manifest's).
+    if (SFC_FILE.test(abs) || DECLARATION_FILE.test(abs)) continue;
     let text: string;
     try {
       if (statSync(abs).size > 2_000_000) continue;
