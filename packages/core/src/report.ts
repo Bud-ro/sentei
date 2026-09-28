@@ -506,8 +506,15 @@ export function blockerHint(
   const indexRow = failed ?? indexRows[0];
   if (indexRow) {
     const line = firstLine(indexRow.reason);
-    const preNullSafety = /lower bound of "sdk: [^"]*" must be 2\.12\.0/.test(indexRow.reason ?? '');
-    parts.push(`${failed ? 'index failed' : 'index partial'}: ${preNullSafety ? 'pre-null-safety SDK constraint, the current Dart SDK cannot resolve it: ' : ''}${line}${log}`);
+    // pub's words for pre-null-safety code: the package's own SDK lower bound, or a
+    // dependency the solver cannot find a null-safe version of.
+    const reason = indexRow.reason ?? '';
+    const preNullSafety = /lower bound of "sdk: [^"]*" must be 2\.12/.test(reason)
+      ? 'pre-null-safety SDK constraint, the current Dart SDK cannot resolve it: '
+      : /does(?:n't| not) support null safety/.test(reason)
+        ? 'a dependency without null safety, the current Dart SDK cannot resolve it: '
+        : '';
+    parts.push(`${failed ? 'index failed' : 'index partial'}: ${preNullSafety}${line}${log}`);
     if (!hasDependents && p) {
       parts.push(`nothing in the org depends on it; if it is an example or demo, exclude it in the org sentei.json: "ignoreManifests": [${JSON.stringify(ignoreManifestEntry(p))}]`);
     }

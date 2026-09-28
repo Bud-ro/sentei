@@ -22,7 +22,9 @@ import {
   ownLibDartFiles,
   parseOverrideConflicts,
   parseYamlBlock,
+  pubFailureLine,
   pubGet,
+  pubGetArgs,
   dartFileHeader,
   isGeneratedDartFile,
   pubspecDependencyOverrides,
@@ -399,7 +401,7 @@ describe.skipIf(!HAS_DART || !HAS_FLUTTER)(`index stage with scip-dart on the Fl
       const p = ix(repo).packages[0]!;
       expect(p.status, `${repo}: ${JSON.stringify(p.diagnostics)}`).toBe('ok');
       expect(p.packageId).toBe(`pub:${pkg}`);
-      expect(p.diagnostics).toContain('info: ran flutter pub get --offline');
+      expect(p.diagnostics).toContain('info: ran flutter pub get --offline --no-example');
       expect(p.diagnostics.some((d) => d.startsWith('info: Flutter package (depends on flutter); Flutter SDK '))).toBe(true);
       expect(p.diagnostics.filter((d) => d.startsWith('warn:') || d.startsWith('error:'))).toEqual([]);
       const log = readFileSync(path.join(work, 'index', `acme__${repo}`, `pub__${pkg}.log`), 'utf8');
@@ -571,7 +573,7 @@ describe.skipIf(!HAS_DART)('scip-dart on a pub workspace (fixtures/org-dart dart
     expect(existsSync(path.join(tmp, WS, '.dart_tool/package_config.json'))).toBe(true);
     const tools = ix().packages[2]!.diagnostics;
     expect(tools).toContain('info: pub workspace member (root .): resolved once at the workspace root for 3 package(s)');
-    expect(tools).toContain('info: ran dart pub get --offline at the workspace root .');
+    expect(tools).toContain('info: ran dart pub get --offline --no-example at the workspace root .');
     expect(tools.some((d) => d.startsWith('info: removed the pubspec_overrides.yaml an earlier sentei run wrote in workspace member'))).toBe(true);
   });
 
@@ -1228,6 +1230,35 @@ describe('pub get conflict with a source link', () => {
   });
 });
 
+describe('pub get arguments and failure lines', () => {
+  it('pub get never resolves example/ (--no-example), offline unless installs are on', () => {
+    expect(pubGetArgs(false)).toEqual(['pub', 'get', '--offline', '--no-example']);
+    expect(pubGetArgs(true)).toEqual(['pub', 'get', '--no-example']);
+  });
+
+  it('the failure line skips the Flutter startup-lock wait and progress, and joins a wrapped sentence', () => {
+    // fluttercommunity rocket_guide (verbatim stderr).
+    const rocket = 'Waiting for another flutter command to release the startup lock...\n'
+      + 'The lower bound of "sdk: \'>=2.7.0 <3.0.0\'" must be 2.12.0\'\nor higher to enable null safety.\n\n'
+      + 'The current Dart SDK (3.13.4) only supports null safety.\n\nFor details, see https://dart.dev/null-safety\nFailed to update packages.\n';
+    expect(pubFailureLine(rocket, 'Resolving dependencies...\n'))
+      .toBe('The lower bound of "sdk: \'>=2.7.0 <3.0.0\'" must be 2.12.0\' or higher to enable null safety.');
+    // bluefireteam heeve: the SDK-version preamble is not the reason.
+    const heeve = 'The current Dart SDK version is 3.13.4.\n\n'
+      + "Because heeve depends on dartdoc >=0.0.1 <5.0.0 which doesn't support null safety, version solving failed.\n\n"
+      + 'The lower bound of "sdk: \'>=1.9.0 <3.0.0\'" must be 2.12.0 or higher to enable null safety.\nFor details, see https://dart.dev/null-safety\n';
+    expect(pubFailureLine(heeve)).toBe("Because heeve depends on dartdoc >=0.0.1 <5.0.0 which doesn't support null safety, version solving failed.");
+    // Baseflow service_manager: the git error line, not the following `stdout:` block.
+    const git = 'Git error. Command: `git clone --mirror git@github.com:Baseflow/service_manager.git /x/dirQ`\nstdout: \nstderr: Cloning into bare repository\n';
+    expect(pubFailureLine(git)).toBe('Git error. Command: `git clone --mirror git@github.com:Baseflow/service_manager.git /x/dirQ`');
+    // Only noise: the first line all the same; nothing at all: undefined.
+    expect(pubFailureLine('Waiting for another flutter command to release the startup lock...\n')).toBe('Waiting for another flutter command to release the startup lock...');
+    expect(pubFailureLine('', '')).toBeUndefined();
+    expect(pubFailureLine('', 'Resolving dependencies...\nBecause x depends on y, version solving failed.\n')).toBe('Because x depends on y, version solving failed.');
+    expect(pubFailureLine('x'.repeat(400))).toHaveLength(300);
+  });
+});
+
 describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
   let root: string;
   beforeAll(() => {
@@ -1667,10 +1698,10 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
 
     const r = await scipDart.run(inputFor(repos, inner), out);
     expect(r.status, r.diagnostics.join('\n')).toBe('partial');
-    expect(r.diagnostics.some((d) => /^error: dart pub get --offline exited with 65/.test(d))).toBe(true);
+    expect(r.diagnostics.some((d) => /^error: dart pub get --offline --no-example exited with 65/.test(d))).toBe(true);
     // The status came from prepare (pub get): its error is the cause.
     expect(r.diagnostics.filter((d) => d.startsWith('cause: '))).toHaveLength(1);
-    expect(r.diagnostics.find((d) => d.startsWith('cause: '))).toMatch(/^cause: error: dart pub get --offline exited with 65/);
+    expect(r.diagnostics.find((d) => d.startsWith('cause: '))).toMatch(/^cause: error: dart pub get --offline --no-example exited with 65/);
     expect(r.diagnostics.filter((d) => d.startsWith('error: package unresolvable'))).toEqual([
       'error: package unresolvable (pub get failed): 2 own package: import/export URI(s) do not resolve',
     ]);
@@ -1683,6 +1714,44 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
     expect(m.status).toBe('partial');
     expect(m.diagnostics.some((d) => d.startsWith('error: package unresolvable'))).toBe(false);
     expect(readJson<ExportsSidecar>(m.exportsFile).unresolved).toEqual(["lib/acme_selfmiss.dart: export 'package:acme_selfmiss/src/missing.dart'"]);
+  }, 300_000);
+
+  it('after a failed pub get, a scip-dart failure (no package config) keeps the pub get error as the cause', async () => {
+    // bluefireteam snake_chef / Baseflow flutter-essentials: the cause was scip-dart's
+    // `Unable to locate packageConfig`, so the report never named the pre-null-safety bound.
+    write({
+      'oldsdk/pubspec.yaml': "name: acme_oldsdk\nversion: 1.0.0\npublish_to: none\nenvironment:\n  sdk: '>=2.7.0 <3.0.0'\n",
+      'oldsdk/lib/acme_oldsdk.dart': 'int o() => 1;\n',
+    });
+    const repo = repoOf(root, 'oldsdk', pubPackage('acme_oldsdk', ['lib/acme_oldsdk.dart']));
+    repo.localPath = path.join(root, 'oldsdk');
+    const out = path.join(root, 'out-oldsdk');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor([repo], repo), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('failed');
+    expect(r.diagnostics.some((d) => d.startsWith('error: scip-dart exited with'))).toBe(true);
+    const cause = r.diagnostics.filter((d) => d.startsWith('cause: '));
+    expect(cause).toHaveLength(1);
+    expect(cause[0]).toMatch(/^cause: error: dart pub get --offline --no-example exited with 65: The lower bound of "sdk: '>=2\.7\.0 <3\.0\.0'" must be 2\.12\.0'? or higher to enable null safety\.$/);
+  }, 300_000);
+
+  it('pub get does not resolve example/ (--no-example): a broken example does not make its package partial', async () => {
+    // fluttercommunity firestore_helpers (pre-null-safety example), Baseflow service_manager (SSH git dep).
+    write({
+      'withex/pubspec.yaml': pubspec('acme_withex', '1.0.0'),
+      'withex/lib/acme_withex.dart': 'int w() => 1;\n',
+      'withex/example/pubspec.yaml': "name: acme_withex_example\npublish_to: none\nenvironment:\n  sdk: '>=2.7.0 <3.0.0'\ndependencies:\n  acme_withex:\n    path: ..\n",
+      'withex/example/lib/main.dart': "import 'package:acme_withex/acme_withex.dart';\n\nvoid main() => w();\n",
+    });
+    const repo = repoOf(root, 'withex', pubPackage('acme_withex', ['lib/acme_withex.dart']));
+    repo.localPath = path.join(root, 'withex');
+    repo.ignoredManifests = [{ path: 'example' }];
+    const out = path.join(root, 'out-withex');
+    mkdirSync(out);
+    const r = await scipDart.run(inputFor([repo], repo), out);
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(r.diagnostics).toContain('info: ran dart pub get --offline --no-example');
+    expect(existsSync(path.join(root, 'withex/example/.dart_tool'))).toBe(false);
   }, 300_000);
 
   it("keeps pubspec.yaml's own dependency_overrides when it source-links an org dep: pub get resolves", async () => {

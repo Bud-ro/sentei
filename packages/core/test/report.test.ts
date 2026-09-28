@@ -933,6 +933,12 @@ describe('blocker hints', () => {
       + "The lower bound of \"sdk: '>=2.11.0 <3.0.0'\" must be 2.12.0' (log: /w/index/acme__over_react/pub__over_react__todo_client.log); "
       + 'nothing in the org depends on it; if it is an example or demo, exclude it in the org sentei.json: '
       + '"ignoreManifests": ["over_react/app/todo_client/pubspec.yaml"]');
+    // A dependency without null safety (bluefireteam heeve), named as such.
+    const dep = "error: flutter pub get --no-example exited with 1: Because heeve depends on dartdoc >=0.0.1 <5.0.0 which doesn't support null safety, version solving failed.";
+    expect(blockerHint(id, [flag('index_failed', dep)], pkgOf, true, '/w')).toBe(
+      'index failed: a dependency without null safety, the current Dart SDK cannot resolve it: flutter pub get --no-example exited with 1: '
+      + "Because heeve depends on dartdoc >=0.0.1 <5.0.0 which doesn't support null safety, version solving failed. "
+      + '(log: /w/index/acme__over_react/pub__over_react__todo_client.log)');
     // Something depends on it: fix the index, no ignore suggestion.
     expect(blockerHint(id, [flag('index_failed', 'error: tsc crashed')], pkgOf, true, '/w'))
       .toBe('index failed: tsc crashed (log: /w/index/acme__over_react/pub__over_react__todo_client.log)');

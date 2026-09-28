@@ -65,7 +65,20 @@ interface SurfaceOutput extends Omit<ExportsSidecar, 'namespaceSpreadRefs' | 'en
 }
 
 /** The `prepare` diagnostic for a failed `dart pub get` / `flutter pub get` (see [pubGetFailed]). */
-const PUB_GET_FAILED = /^error: (?:dart|flutter) pub get(?: --offline)? exited with /;
+const PUB_GET_FAILED = /^error: (?:dart|flutter) pub get(?: --[\w-]+)* exited with /;
+
+/**
+ * `pub get` arguments. `--no-example`: pub also resolves a package's `example/` by
+ * default, and a broken example (an SSH git dependency, a pre-null-safety SDK bound)
+ * made the package itself `partial` and blocked its own findings (fluttercommunity
+ * firestore_helpers, Baseflow service_manager) although its own package config was
+ * written. The example is no part of the package's index (scip-dart and dart-surface
+ * skip nested packages); an example discover indexes as a package (promoted) runs its
+ * own `pub get` in its own dir, so it stays resolvable.
+ */
+export function pubGetArgs(install: boolean): string[] {
+  return ['pub', 'get', ...(install ? [] : ['--offline']), '--no-example'];
+}
 
 /** The `prepare` diagnostic for a Flutter package when `flutter` is not on PATH. */
 const NO_FLUTTER = /^error: Flutter package .* `flutter` is not on PATH/;
@@ -148,7 +161,7 @@ export const scipDart: Indexer = {
     const links = writeOverrides(input, dir, diagnostics);
     // 2. Resolve. Offline when installs are disabled: path deps and anything
     //    already in the pub cache still resolve. A Flutter package needs `flutter pub get`.
-    const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
+    const args = pubGetArgs(options.install);
     const flutter = flutterReason(input);
     let cmd = 'dart';
     let dart = 'dart';
@@ -169,7 +182,7 @@ export const scipDart: Indexer = {
     const proc = await pubGet(input, dir, args, links, diagnostics, log, exec, cmd);
     if (proc.code !== 0) {
       status = 'partial';
-      const why = firstLine(proc.stderr) ?? firstLine(proc.stdout) ?? '';
+      const why = pubFailureLine(proc.stderr, proc.stdout) ?? '';
       diagnostics.push(`error: ${cmd} ${args.join(' ')} exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
     } else {
       diagnostics.push(`info: ran ${cmd} ${args.join(' ')}`);
@@ -190,11 +203,16 @@ export const scipDart: Indexer = {
      * last one), as the TypeScript adapter does. Without it the progress line of
      * a partial package led with its first `warn:` (`test not source-linked…`)
      * instead of the unresolved import that made it partial. A status inherited
-     * from prepare (pub get failed) starts with prepare's first error.
+     * from prepare (pub get failed) starts with prepare's first error. After a
+     * failed pub get, that error stays the cause: what fails next (scip-dart's
+     * `Unable to locate packageConfig`, the missing `.scip`, unresolved own URIs)
+     * is its consequence, and the report's hints read the cause (a pre-null-safety
+     * SDK bound is named only when the cause is pub's own message).
      */
+    const pubGetError = prepared.diagnostics.find((d) => PUB_GET_FAILED.test(d));
     let cause: string | undefined = prepared.status !== 'ok' ? prepared.diagnostics.find((d) => d.startsWith('error:')) : undefined;
     const worsen = (to: IndexStatus, why: string): void => {
-      if (worstStatus(status, to) !== status) cause = why;
+      if (worstStatus(status, to) !== status) cause = pubGetError ?? why;
       status = worstStatus(status, to);
     };
     const slug = packageSlug(pkg);
@@ -613,7 +631,7 @@ async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<
   const write = (excluded: ReadonlySet<string>): Map<string, string> =>
     writeOverridesFor(deps, ids, names, input.lookup, ws.root, diagnostics, excluded, memberOverrides);
   const links = write(new Set());
-  const args = ['pub', 'get', ...(options.install ? [] : ['--offline'])];
+  const args = pubGetArgs(options.install);
   const flutter = workspaceFlutterReason(input, ws);
   let cmd = 'dart';
   let dart = 'dart';
@@ -633,7 +651,7 @@ async function prepareWorkspace(input: IndexerInput, ws: PubWorkspace): Promise<
   }
   const proc = await pubGet(input, ws.root, args, links, diagnostics, log, exec, cmd, write);
   if (proc.code !== 0) {
-    const why = firstLine(proc.stderr) ?? firstLine(proc.stdout) ?? '';
+    const why = pubFailureLine(proc.stderr, proc.stdout) ?? '';
     diagnostics.push(`error: ${cmd} ${args.join(' ')} exited with ${proc.code ?? proc.signal}${why ? `: ${why}` : ''}`);
     return { shared: { status: 'partial', diagnostics, log }, perPackage };
   }
@@ -1756,6 +1774,41 @@ async function withLock<T>(lockDir: string, fn: () => Promise<T>): Promise<T> {
 
 function firstLine(s: string): string | undefined {
   return s.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== '');
+}
+
+/**
+ * Lines `dart pub get` / `flutter pub get` print that never say why it failed: the
+ * Flutter tool's startup-lock wait (it can be the first stderr line: fluttercommunity
+ * rocket_guide), progress, the SDK version preamble of a solver failure, the
+ * trailing "see" links.
+ */
+const PUB_NOISE: readonly RegExp[] = [
+  /^Waiting for another flutter command to release the startup lock/,
+  /^Resolving dependencies/,
+  /^Downloading packages/,
+  /^Got dependencies/,
+  /^The current Dart SDK version is [^ ]+\.?$/,
+  /^For details, see /,
+  /^Failed to update packages\.?$/,
+];
+
+/**
+ * The line that says why `pub get` failed: the first line of stderr (else stdout)
+ * that is not [PUB_NOISE], with a sentence pub wrapped onto the next line joined
+ * back (`The lower bound of "sdk: '>=2.7.0 <3.0.0'" must be 2.12.0'` + `or higher
+ * to enable null safety.`); capped at 300 characters. Falls back to the first
+ * non-empty line when everything is noise.
+ */
+export function pubFailureLine(stderr: string, stdout = ''): string | undefined {
+  for (const text of [stderr, stdout]) {
+    const lines = text.split(/\r?\n/).map((l) => l.trim());
+    const at = lines.findIndex((l) => l !== '' && !PUB_NOISE.some((r) => r.test(l)));
+    if (at < 0) continue;
+    let line = lines[at]!;
+    for (let i = at + 1; i < lines.length && !/[.!?:`)]$/.test(line) && /^[a-z]/.test(lines[i]!); i++) line += ` ${lines[i]}`;
+    return line.length > 300 ? `${line.slice(0, 299)}…` : line;
+  }
+  return firstLine(stderr) ?? firstLine(stdout);
 }
 
 export interface ExecResult {
