@@ -1031,6 +1031,65 @@ describe('npm manifests', () => {
     expect(warnings.filter((w) => /^(?:www|vp|site|n3|n4)\//.test(w))).toEqual([]);
   });
 
+  it('jscodeshift codemods: transform dirs and transform modules are runtime entries, `parser` an entry symbol', () => {
+    // tanstack query-codemods (CommonJS `module.exports = (file, api) =>`), trpc upgrade
+    // (`export const parser`, surface through `exports`), tanstack ai codemods/.
+    pkgJson('qc/package.json', { name: '@x/query-codemods', private: true, devDependencies: { jscodeshift: '17' } });
+    write('qc/src/v5/is-loading/is-loading.cjs', 'const u = require("../../utils/index.cjs");\nmodule.exports = (file, api) => { return u(file); };');
+    write('qc/src/utils/index.cjs', 'module.exports = ({ root, jscodeshift }) => {};');
+    write('qc/src/v5/is-loading/__tests__/is-loading.test.cjs', 'module.exports = (file, api) => {};');
+    pkgJson('up/package.json', { name: '@x/upgrade', exports: { './transforms/provider': { require: './dist/transforms/provider.cjs' } }, dependencies: { jscodeshift: '17' } });
+    write('up/src/transforms/provider.ts', "export default function transform(file: FileInfo, api: API) {}\nexport const parser = 'tsx';");
+    write('up/src/lib/helper.ts');
+    pkgJson('ai/codemods/package.json', { name: '@x/ai-codemods', private: true });
+    write('ai/codemods/ag-ui/transform.ts', 'export default function transform(\n  fileInfo: FileInfo,\n  api: API,\n) {}');
+    write('ai/codemods/run.mjs');
+    // Not a codemod package: the same text is no convention.
+    pkgJson('plain/package.json', { name: 'plain', private: true, dependencies: { x: '1' } });
+    write('plain/src/transforms/t.ts', "export const parser = 'tsx';");
+    const by = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(by.get('@x/query-codemods')!.runtimeEntryPoints).toEqual(['qc/src/v5/is-loading/is-loading.cjs']);
+    expect(by.get('@x/query-codemods')!.runtimeEntrySymbols).toEqual(['parser']);
+    // A surface file stays surface; `parser` is then kept by name (ingest runtimeEntrySymbols).
+    expect(by.get('@x/upgrade')!.entryPoints).toEqual(['up/src/transforms/provider.ts']);
+    expect(by.get('@x/upgrade')!.runtimeEntrySymbols).toEqual(['parser']);
+    expect(by.get('@x/ai-codemods')!.runtimeEntryPoints).toEqual(['ai/codemods/ag-ui/transform.ts']);
+    expect(by.get('plain')!.runtimeEntryPoints).toEqual([]);
+    expect(by.get('plain')!.runtimeEntrySymbols).toBeUndefined();
+  });
+
+  it('Firebase Functions and terraform entry_point: deployed exports are runtime entries / entry symbols', () => {
+    // invertase tanstack-query-firebase: firebase.json functions.source → functions/, whose
+    // main re-exports its triggers.
+    write('firebase.json', JSON.stringify({ functions: { predeploy: 'npm run build', source: 'functions' }, firestore: {} }));
+    pkgJson('functions/package.json', { name: 'fns', main: 'lib/index.js' });
+    write('functions/src/index.ts', "export { onUser } from './triggers/user';\nexport * from './http.js';\nexport const direct = 1;");
+    write('functions/src/triggers/user.ts');
+    write('functions/src/http.ts');
+    write('functions/src/unused.ts');
+    // extensions-terraform: `entry_point = "translateText"` names an export of a package in the repo.
+    write('ext/terraform/main.tf', 'resource "google_cloudfunctions2_function" "f" {\n  build_config {\n    entry_point = "translateText"\n  }\n}');
+    pkgJson('ext/function/package.json', { name: 'translate', main: 'lib/index.js' });
+    write('ext/function/src/index.ts');
+    // An array of codebases, and a default `functions` source.
+    write('multi/firebase.json', JSON.stringify({ functions: [{ source: 'api', codebase: 'a' }, { codebase: 'b' }] }));
+    pkgJson('multi/api/package.json', { name: 'api', main: 'index.js' });
+    write('multi/api/index.js');
+    pkgJson('multi/functions/package.json', { name: 'mf', main: 'index.js' });
+    write('multi/functions/index.js');
+    pkgJson('other/package.json', { name: 'other', main: 'index.js' });
+    write('other/index.js');
+    const by = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    const fns = by.get('fns')!;
+    expect(fns.entryPoints).toEqual(['functions/src/http.ts', 'functions/src/index.ts', 'functions/src/triggers/user.ts']);
+    // The main stays surface AND is a runtime entry (ingest: its exports are entry symbols).
+    expect(fns.runtimeEntryPoints).toEqual(['functions/src/http.ts', 'functions/src/index.ts', 'functions/src/triggers/user.ts']);
+    expect(by.get('api')!.runtimeEntryPoints).toEqual(['multi/api/index.js']);
+    expect(by.get('mf')!.runtimeEntryPoints).toEqual(['multi/functions/index.js']);
+    expect(by.get('other')!.runtimeEntryPoints).toEqual([]);
+    expect(by.get('translate')!.runtimeEntrySymbols).toEqual(['translateText']);
+  });
+
   it('a convention never reaches into a nested package', () => {
     pkgJson('package.json', { name: 'root', dependencies: { nuxt: '3' } });
     write('pages/a.ts');

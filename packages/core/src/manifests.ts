@@ -601,8 +601,20 @@ export function readNpmPackage(
   const deps = npmDeps(json, manifest, warn);
   const scripts = isObject(json['scripts'])
     ? Object.values(json['scripts']).filter((v): v is string => typeof v === 'string') : [];
-  const conventionAll = conventionEntryPoints(repoRoot, dir, files, new Set(deps.map((d) => d.name)), scripts);
-  const runtimeEntrySymbols = wranglerRuntimeClasses(repoRoot, dir, files);
+  const depNames = new Set(deps.map((d) => d.name));
+  // Firebase Functions (a firebase.json `functions` source): the runtime loads the
+  // package's main and deploys every function it exports, re-exported ones included.
+  const firebase = firebaseFunctionSources(repoRoot, files).has(dir)
+    ? firebaseEntryFiles(repoRoot, dir, resolved.surface, layout) : [];
+  if (firebase.length > 0) log(`${manifest}: Firebase Functions source (firebase.json); its exports are deployed functions: ${firebase.join(', ')}`);
+  const conventionAll = [...new Set([...conventionEntryPoints(repoRoot, dir, files, depNames, scripts), ...firebase])].sort(cmp);
+  const runtimeEntrySymbols = [...new Set([
+    ...wranglerRuntimeClasses(repoRoot, dir, files),
+    // jscodeshift reads a transform module's `parser` export by name.
+    ...(isCodemodPackage(dir, depNames) ? ['parser'] : []),
+    // A Cloud Function deployed by terraform (`entry_point = "translateText"`).
+    ...terraformEntryPoints(repoRoot, files),
+  ])].sort(cmp);
   const convention = conventionAll.filter((f) => !resolved.entryPoints.includes(f) && !clientAll.includes(f));
   if (convention.length > 0) {
     log(`${manifest}: ${convention.length} runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): ${
@@ -613,8 +625,10 @@ export function readNpmPackage(
   // Runtime-loaded files that are not also declared surface (main/exports/…). The index
   // fallback is a guess, not a declaration: a convention naming it (a wrangler main at
   // src/index.ts, with no package.json entry) makes it a runtime entry.
+  // A Firebase Functions main is both: surface as declared, and loaded by the runtime,
+  // which uses every export (ingest: entry symbols, never a verdict).
   const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll, ...conventionAll])]
-    .filter((f) => f === resolved.fallback || !resolved.surface.includes(f)).sort(cmp);
+    .filter((f) => f === resolved.fallback || !resolved.surface.includes(f) || firebase.includes(f)).sort(cmp);
   return {
     manager: 'npm',
     name,
@@ -629,6 +643,92 @@ export function readNpmPackage(
     ...(runtimeEntrySymbols.length > 0 ? { runtimeEntrySymbols } : {}),
     deps,
   };
+}
+
+/** Per repo file list: the package dirs firebase.json files name as Functions sources. */
+const firebaseSourcesCache = new WeakMap<readonly string[], Set<string>>();
+
+/**
+ * Repo-relative dirs that a `firebase.json` anywhere in the repo names as Cloud Functions
+ * sources: `functions.source` (an object, or an array of codebases), relative to the
+ * firebase.json dir; `functions` given without a `source` means `functions` (Firebase's
+ * default). An unparsable firebase.json adds nothing.
+ */
+export function firebaseFunctionSources(repoRoot: string, repoFiles: readonly string[]): Set<string> {
+  const cached = firebaseSourcesCache.get(repoFiles);
+  if (cached) return cached;
+  const out = new Set<string>();
+  for (const f of repoFiles) {
+    if (posix.basename(f) !== 'firebase.json' || f.split('/').includes('node_modules')) continue;
+    let json: unknown;
+    try {
+      json = JSON.parse(stripJsonc(readFileSync(join(repoRoot, f), 'utf8')));
+    } catch {
+      continue;
+    }
+    const fns = isObject(json) ? json['functions'] : undefined;
+    for (const c of Array.isArray(fns) ? fns : fns === undefined ? [] : [fns]) {
+      if (!isObject(c)) continue;
+      const src = typeof c['source'] === 'string' ? c['source'] : 'functions';
+      const n = normalizeRel(posix.join(posix.dirname(f), src));
+      if (n !== null) out.add(n === '' ? '.' : n);
+    }
+  }
+  firebaseSourcesCache.set(repoFiles, out);
+  return out;
+}
+
+/**
+ * The files of a Functions source package whose exports are deployed: its surface entry
+ * files (the resolved `main`), and the modules they re-export from by a relative
+ * specifier (`export { fn } from './fn'`, `export * from './triggers'`), repo-relative.
+ */
+function firebaseEntryFiles(repoRoot: string, dir: string, surface: readonly string[], layout: SourceLayout): string[] {
+  const out = new Set<string>();
+  for (const s of surface) {
+    out.add(s);
+    const rel = dir === '.' ? s : s.slice(dir.length + 1);
+    let text = '';
+    try {
+      text = readFileSync(join(repoRoot, s), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const m of text.matchAll(/\bexport\s+(?:\*(?:\s+as\s+[\w$]+)?|(?:type\s+)?\{[^}]*\})\s*from\s*(['"])(\.{1,2}\/[^'"\n]+)\1/g)) {
+      const n = normalizeRel(posix.join(posix.dirname(rel), m[2]!));
+      const r = n === null || n === '' ? null : resolveEntry(n.replace(/\.[cm]?js$/, ''), layout) ?? resolveEntry(n, layout);
+      if (r !== null && CODE_EXT.test(r)) out.add(joinRel(dir, r));
+    }
+  }
+  return [...out].sort(cmp);
+}
+
+/** Per repo file list: terraform `entry_point` names. */
+const terraformCache = new WeakMap<readonly string[], string[]>();
+
+/**
+ * Function names a terraform file (`*.tf`) anywhere in the repo deploys as Cloud
+ * Functions entry points (`entry_point = "translateText"` in a `google_cloudfunctions*`
+ * `build_config` or resource). Ingest makes an exported declaration of that name in an
+ * entry file of a package of the repo an entry symbol. Sorted, deduplicated.
+ */
+export function terraformEntryPoints(repoRoot: string, repoFiles: readonly string[]): string[] {
+  const cached = terraformCache.get(repoFiles);
+  if (cached) return cached;
+  const out = new Set<string>();
+  for (const f of repoFiles) {
+    if (!f.endsWith('.tf')) continue;
+    let text = '';
+    try {
+      text = readFileSync(join(repoRoot, f), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const m of text.matchAll(/^\s*entry_point\s*=\s*"([A-Za-z_$][\w$]*)"/gm)) out.add(m[1]!);
+  }
+  const list = [...out].sort(cmp);
+  terraformCache.set(repoFiles, list);
+  return list;
 }
 
 /**
@@ -1329,6 +1429,13 @@ export function conventionEntryPoints(
       if (r !== null && r !== cfg && ok(r)) out.add(r);
     }
   }
+  // jscodeshift codemods: transform modules are run by path (`jscodeshift -t x.ts`).
+  if (isCodemodPackage(dir, deps)) {
+    for (const f of pkgFiles) {
+      if (!ok(f)) continue;
+      if (CODEMOD_GLOBS.some((g) => matchGlob(g, f)) || JSCODESHIFT_TRANSFORM.test(read(f))) out.add(f);
+    }
+  }
   // Files the package's own code names by a path relative to itself, to hand to a
   // bundler, a worker or a subprocess (urlReferencedFiles).
   for (const f of pkgFiles) {
@@ -1344,6 +1451,27 @@ export function conventionEntryPoints(
 /** Every relative string literal (`'./x'`, `"../y/z.js"`) of a source text, as written. */
 function relativeLiterals(text: string): string[] {
   return [...text.matchAll(/(['"`])(\.{1,2}\/[^'"`$\n]*)\1/g)].map((m) => m[2]!);
+}
+
+/** Codemod transform dirs (package-relative). */
+const CODEMOD_GLOBS = ['transforms/**', 'src/transforms/**', 'codemods/**', 'src/codemods/**'];
+/**
+ * A jscodeshift transform module: a `parser` export (jscodeshift reads it by name), or a
+ * default / `module.exports` function taking `(file, api)`.
+ */
+const JSCODESHIFT_TRANSFORM = new RegExp([
+  String.raw`\bexport\s+(?:const|let|var|function)\s+parser\b`,
+  String.raw`\b(?:module\.)?exports\.parser\s*=`,
+  String.raw`\bmodule\.exports\s*=\s*(?:async\s+)?(?:function\b[^(]*)?\(\s*(?:file|fileInfo)\s*,\s*api\b`,
+  String.raw`\bexport\s+default\s+(?:async\s+)?function\b[^(]*\(\s*(?:file|fileInfo)\b[^,)]*,\s*api\b`,
+].join('|'));
+
+/**
+ * A jscodeshift codemod package: a `jscodeshift` dependency (any block, `@types` too), or
+ * a package dir named `codemods` / `*-codemods`.
+ */
+function isCodemodPackage(dir: string, deps: ReadonlySet<string>): boolean {
+  return deps.has('jscodeshift') || deps.has('@types/jscodeshift') || /(?:^|-)codemods?$/.test(posix.basename(dir));
 }
 
 /** Quick filter before the regexes of urlReferencedFiles. */
