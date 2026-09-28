@@ -4904,3 +4904,165 @@ summary and SARIF code are unchanged.
 - consumer-checks.ts `UNINDEXED_SKIP_DIRS` (rule 5, above).
 - The install at the workspace root was unit-tested with a fake runner; no live
   pnpm install of tanstack-query-firebase was run.
+
+### Phase 3 fix round 9b: error classes and signatures; lazy loaders; Next dot directories; solution-style tsconfigs; unresolvable extends
+
+From the rerun at `840cd97` (docs/EVAL.md, "Where the remaining wrong rows come
+from"). Adapter `0.4.0+sentei.11`. **Measured** two ways, never writing into the
+evaluation dirs: (a) re-ingesting each evaluation's own index (its `+sentei.10`
+sidecars) into a copy of its DB and re-running analyze at the run's own `now`, with
+the base commit (`bddbd35`) and with this branch (`$TMPDIR/r9b/meas.ts`, `cmp.py`):
+this shows the ingest / SQL rule (1); (b) re-indexing single packages with this
+branch's adapter on a copy of the clone (`rsync` without node_modules, the original
+node_modules symlinked, `prepare` skipped so nothing is written through them), swapping
+their files into a scratch copy of the org's index and re-running (a) (`reidx.ts`,
+`cmp2.py`): this shows the sidecar rules (2–5). The witness was not re-run.
+
+**1. Signatures: error classes and variable-held functions (ingest
+`ERROR_CLASS_ROLE`, `isErrorClassHeader`, `variableSignatureEnd`; analyze.sql
+`signature_pinned`).** The brief read flue's three UNEXPORT rows as a class property's
+type not being pinned. It was pinned: scip-typescript gives properties, property
+signatures and accessors no enclosing range, so `readonly failure:
+FlueExecutionFailure` is enclosed by the class itself and `signature_refs` already had
+(FlueExecutionFailure → FlueExecutionError); interface members and nested type-literal
+members work the same way (an analyze test now covers all three). What was missing:
+FlueExecutionError, the exported class that pins them, is itself internal-only (the
+package throws it and consumers `instanceof` it; its one `throw` is in
+`waitForAgentSubmission`, which index.ts does not re-export, three calls away from the
+public client), so nothing above the property types was public. New: a class whose
+header extends / implements a `…Error` / `…Exception` type (read from the checkout at
+ingest; Dart `implements Exception` too) gets `ERROR_CLASS_ROLE` (`1 << 21`) on its
+definition occurrence, and `signature_pinned` takes such an internal-only export as
+pinned by itself, so the types of its properties follow. The index cannot follow a
+`throw` to the public call it escapes from, so every exported error class counts (fail
+closed: an error class thrown and caught only inside its package keeps its `export`).
+**Deviation:** this is wider than the brief's "property and accessor types", which were
+already covered; without it flue's rows stay. And round 8d's gap "a variable-held arrow
+function after its first line": scip-typescript gives exactly those variables an
+enclosing range (the function initializer), so ingest now marks their type annotation,
+parameters and return type SIGNATURE_ROLE (`export const Comp = ({ … }: CompProps) =>`
+over several lines). Negative tests: a body use, a plain internal-only class and its
+property type stay unexports; `class X extends ErrorBoundary`, a member typed `Error`
+are no error class. Measured (a), rows removed, none added:
+- withastro 950 → 882: deprecation 82 → 76 (the three flue rows FlueExecutionError,
+  -Failure, -Target, FlueApiError and two other published error classes); blocked 679
+  → 617: 44 error classes of the blocked @flue/* packages plus the `ValidationIssue` /
+  `ToolValidationIssue` types of their properties, astro's three `Live*Error`s and the
+  three loader types their properties name, and 10 `@workspace/ui` props types of
+  components held by variables (`PromptInputTextareaProps`, …);
+- invertase 471 → 451: 3 blocked TS rows (react-native-coverage `StrictEmptyError` and
+  the exit code it carries, react-native-google-mobile-ads `NativeError`) and 17 Dart
+  deprecation rows of melos / flutterfire_cli: 13 exception classes plus `Package`,
+  `PackageFilters`, `PackageType`, `MelosLogger`, types of those exceptions' fields;
+- VeryGoodOpenSource 179 → 173 (cli_completion, pub_updater and very_good_core hooks
+  exceptions: deprecation 25 → 21, unexport 2 → 0); nuxt 433 → 433.
+Ingest / analyze time unchanged (withastro 41.2 / 18.5 s either way).
+
+**2. Lazy component loaders (consumer-checks `importedNames`, `lazyLoaderArgument`,
+`memberUses`; export-surface `collectDynamicImportRefs`).** docs.page's `const
+SearchDialog = dynamic(() => import("./search-dialog"))`: SCIP links a dynamic import
+to the module symbol only, which (round 8c) keeps the module's top-level code
+reachable, but `export default function SearchDialog` is a declaration no top-level
+code references, so it and everything only it uses were `private_dead` (7 rows).
+`importedNames`, round 8d's reader of what an own-module load takes, now also reads:
+`default` for an `import()` that is (or that an arrow / function returns as) the
+argument of `dynamic`, `lazy`, `React.lazy`, `defineAsyncComponent` (also its `{
+loader }`), `loadable`, `lazyWithPreload`; `.then((m) => m.X)`; `(await import()).x`;
+`const m = await import()` when every use of `m` in its scope is `m.<name>`. The
+export surface runs it over every indexed own file, for `import()` calls TypeScript
+resolves to an own source module, and turns the names into `shorthandRefs` from the
+literal (through round 8d's `resolveOwnLoads`: references only, never entry symbols).
+A result used as a whole (`register(m)`, `Object.keys(m)`) adds nothing: the
+module-level reference stays the only one, as before. Round 8d's build-output loads
+read the same, narrower names (`import('../dist/x.js').then((m) => m.main())` →
+`main`, was every export). Not covered: a nameless package (`_unnamed/…`: a sidecar
+reference needs a package name; behaviour unchanged), `require()` lazy loads. Fixture:
+org-small `@acme/dual-web`'s page loads `components/dialog.tsx` through `dynamic`:
+`Dialog` and its helper alive, `dialogDead` private_dead. Measured (b), docs.page `app`
+re-indexed: the 7 search-dialog rows go (`SearchDialog`, `SearchResultCommandItem`,
+`TabCommandItem`, `TabCommandItemProps`, `dedupeSearchResults`, `formatDisplayPath`,
+`normalizeResultPath`).
+
+**3. Next.js app-router files under dot directories (export-surface
+`nextDotDirEntries`; adapter `writeRuntimeTsconfig`).** Next serves
+`app/src/app/.well-known/jwks.json/route.ts`, but TypeScript's `**/*` include skips
+dot directories, so it was in no program and its imports invisible (3 private_dead
+rows). For a package depending on `next`, every `route` / `page` / `layout` file under
+a dot directory of `app/` or `src/app/` goes into the runtime tsconfig's `files`, and
+the export surface makes its exports runtime entry symbols (like a router file
+discover lists; not an `unindexed_loads` row, so the entry set stays credible).
+**Manifest side (manifests.ts, not this unit's): the Next convention does not list
+them.** `conventionEntryPoints`' `ok()` drops every path with a dot segment except
+`.vitepress`, so `app/**` never reaches `.well-known/…` (docs.page's discover.json has
+17 other route files, not these three). The sidecar's runtime entry symbols cover the
+analysis; routed below. Fixture: `@acme/dual-web`'s
+`src/app/.well-known/jwks.json/route.ts` (`publicKeys` alive, `keysDead`
+private_dead). Measured (b): docs.page's three `.well-known` routes indexed
+(`[[...slug]]`, `jwks.json`, `mcp/server-card.json`); `getAgentCredentialsPublicJwks`,
+`getAgentCredentialsPublicJwk`, `publicJwks` go (invertase private_dead 121 → 111 with
+item 2; no other package changed).
+
+**4. Solution-style tsconfigs (adapter `writeRuntimeTsconfig`; export-surface
+`hasProjectReferences`, `filesOutsidePrograms({ declarations })`).** astro's
+`packages/astro/tsconfig.json` is `files` + `references` (build, test); its entries
+`client.d.ts`, `types.d.ts`, `env.d.ts`, `astro-jsx.d.ts`, `jsx-runtime.d.ts` are in
+no project, and `components/index.ts` only in the unreferenced
+`tsconfig.components.json`, so the brief's "index with the referenced project that
+contains the entry" finds none. **Which option:** when the tsconfig has project
+references, every surface entry outside all its programs (declaration files included)
+goes into the runtime tsconfig's `files`, compiled with the package tsconfig's options
+(the runtime tsconfig `extends` it; `extends` does not carry `references`). Not a
+sibling tsconfig that happens to include the entry: such a config (astro's
+`tsconfig.test.json`) may reference the same projects again, which scip-typescript
+would index twice. Without references the old rule stays (a surface entry outside the
+tsconfig: partial; negative test). Fixture: org-small `@acme/dual-solution` (`files:
+[]` + a reference; `./components` and `./types` in no project): three deletion
+candidates instead of an opaque package. Measured (b), astro's packages re-indexed:
+@astrojs/cloudflare is no longer opaque (`types.d.ts`); @astrojs/svelte and
+@astrojs/vue lose their shim-entry flag but stay opaque on `discover: unresolved entry
+point ./dist/editor.cjs`; `astro` loses the entry flag and the `JSX` one but **stays
+partial**: `jsx-runtime.d.ts` re-exports `./dist/jsx-runtime/index.js` (unbuilt),
+`components/index.ts` re-exports `./Code.astro` / `./Debug.astro` (no TypeScript
+module), and `test/test-utils.ts` / `test/units/test-utils.ts` (listed as entries)
+re-export types from `../dist/…`. So its 273 blocked rows stay blocked (withastro
+blocked 617 → 624: the newly visible surface of `types.d.ts` and the shims, blocked by
+those same packages). Routed below.
+
+**5. An `extends` that cannot be resolved (adapter `writeBaseTsconfig`,
+`BASE_TSCONFIG`; export-surface `unresolvableExtends`).** very_good_workflows'
+`site/tsconfig.json` extends `@tsconfig/docusaurus/tsconfig.json`, which its lockfile
+install does not provide: scip-typescript failed on the config (TS6053) and the
+package was `failed`. When an `extends` entry names a package TypeScript cannot resolve
+from the tsconfig's dir, the adapter writes `tsconfig.sentei-base.json` next to it: the
+same config without that entry (its compilerOptions, include, files, exclude,
+references and resolvable `extends` kept) plus `allowJs` and, when neither is set,
+`module: esnext` / `moduleResolution: bundler` (what such a base usually sets; an org
+module that still does not resolve makes the result partial as before). It indexes
+through it (the runtime tsconfig then `extends` it), warns, and removes it after the
+run. A missing relative `extends` (a generated `.nuxt/tsconfig.json`,
+`.svelte-kit/tsconfig.json`) is left alone: those carry path aliases and generated
+globals, and dropping them would leave own imports unresolved (negative test: still
+failed). Measured (b): `workflows-docs` failed → ok (5 documents, its `index_failed`
+flag gone); no finding changed (the org has no blocked rows).
+
+**Tests.** `round-9b.test.ts` (importedNames forms and negatives, dynamic-import refs,
+Next dot-dir entries and their runtime entry symbols, the adapter on a solution-style
+and on a plain tsconfig, on a missing package and a missing relative `extends`);
+ingest tests (variable signatures, the error-class role) and an analyze test (class /
+interface / nested property types, an error class, negatives). org-small gains
+`@acme/dual-solution` and `@acme/dual-web`'s dialog and jwks route (discover test: 43
+packages).
+
+**Not verified / open (for routing).**
+- manifests.ts: the Next.js convention should list app-router files under dot
+  directories of `app/` / `src/app/` (`route.*`, `page.*`, `layout.*`); `ok()` skips
+  every dot segment but `.vitepress`. The sidecar's entry symbols cover the analysis,
+  but discover does not show them as runtime entries.
+- astro stays partial (item 4): unbuilt `./dist/…` re-exports from surface `.d.ts`
+  files and from `test/test-utils.ts` (which discover lists as entries), and `.astro`
+  re-exports in `components/index.ts`. Mapping a `./dist/x` re-export of an entry to
+  its source (as round 8d does for bins) is adapter work; whether `test/test-utils.ts`
+  is an entry is manifests.ts's.
+- report.ts: the TS6053 hint for a package-name `extends` now fires only when a
+  resolvable parent itself extends something missing.
+- No org was fully re-indexed; the witness was not re-run on the measured DBs.

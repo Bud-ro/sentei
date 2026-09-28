@@ -121,8 +121,21 @@ opens pull requests.
   they use reachable, never export surface. When the package's tsconfig does not
   include them, they are indexed through a temporary
   `tsconfig.sentei-runtime.json` next to it (it `extends` the package tsconfig and
-  is removed after the run); they never make the package opaque. A `main` /
-  `exports` / `types` entry outside the tsconfig still does. A code file the
+  is removed after the run); they never make the package opaque. So are Next.js
+  app-router files (`route`, `page`, `layout`) under a dot directory of `app/` or
+  `src/app/` (`app/.well-known/jwks.json/route.ts`), which Next serves but
+  TypeScript's `**/*` skips: their exports are runtime entries. A `main` /
+  `exports` / `types` entry outside the tsconfig still makes the package opaque,
+  unless the tsconfig has project references (a solution-style `"files": []` +
+  `references`, astro's packages): then an entry that no referenced project
+  includes (declaration files too: `client.d.ts`) is indexed through the runtime
+  tsconfig with the package tsconfig's options. A tsconfig that `extends` a
+  package that is not installed (`@tsconfig/docusaurus/tsconfig.json` with no such
+  dependency in the lockfile) is indexed through a temporary
+  `tsconfig.sentei-base.json`, the same config without that `extends` (plus
+  `allowJs` and, when neither is set, `module: esnext` / `moduleResolution:
+  bundler`), with a `warn:` line instead of a failed index; a missing relative
+  `extends` (a generated `.nuxt/tsconfig.json`) still fails. A code file the
   package's own source names relative to itself, `new URL('./worker.ts',
   import.meta.url)` or `path.join(__dirname, 'x.js')` (a bundler, worker or
   subprocess input), is such an entry too. So are browser / bundler inputs: the
@@ -609,8 +622,15 @@ proposed for:
   on the definition line; and for a function, method or constructor everything
   between its name and its body (parameter types on any line, generic constraints,
   the return type), found in the checkout's text at ingest (never for a TypeScript
-  `private` member). Missed (the symbol then stays an unexport candidate): an arrow
-  function held by a variable after its first line, and a return type written as a
+  `private` member), and the same for a variable holding a function (`export const
+  f = (\n  a: A,\n): R =>`: its annotation, parameters and return type). The types
+  of properties and accessors of an exported class, interface or type literal
+  (nested ones too) count as that type's signature. An exported **error class** (its
+  header extends or implements a `…Error` / `…Exception` type) is public API by
+  itself, however deep in the package it is thrown: consumers catch it by type
+  (`err instanceof FlueExecutionError`), so it gets no unexport row and the types of
+  its properties (`readonly failure: FlueExecutionFailure`) are pinned through it.
+  Missed (the symbol then stays an unexport candidate): a return type written as a
   function type after its `=>`.
 
 **Code the package loads by path or by name.** A bin or script importing the
@@ -623,6 +643,14 @@ names the import), never `ok`. A string naming the package's own subpath
 `require.resolve('@trpc/upgrade/transforms/provider')`, through `exports`) or an
 own code file (`'./src/routeData.ts'`, `new URL('./worker.ts', import.meta.url)`)
 makes that module's exports runtime entries too (a framework or tool loads them).
+A dynamic `import('./x')` of an own module is linked to the module by the index, not
+to what the import's result is used for; sentei adds a reference to the names it
+takes: `default` when a lazy component loader gets it (`next/dynamic(() =>
+import('./search-dialog'))`, `lazy` / `React.lazy`, `defineAsyncComponent` and its
+`loader`, `loadable`), the destructured or accessed names otherwise
+(`.then((m) => m.Dialog)`, `(await import('./x')).run`, `const m = await
+import('./x')` used only as `m.<name>`). A result used as a whole keeps only the
+module (its top-level code) reachable, as before.
 
 Reasons: `no_refs`, `internal_refs_only`, `only_test_refs` (delete the tests
 too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
