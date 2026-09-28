@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_IGNORE_MANIFEST_DIRS, electronHtmlRefs, pubApplicationReason, readNpmPackage, inlineScriptRefs, webpackEntries, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
+  ALWAYS_SKIP_DIRS, DEFAULT_IGNORE_MANIFEST_DIRS, electronHtmlRefs, pubApplicationReason, readNpmPackage, inlineScriptRefs, webpackEntries, isIgnoredManifestPath, listFiles, pubWorkspaceEntries, workspaceMembership, npmVisibility, parsePubspecYaml, pubVisibility, readRepoManifests, readRepoManifestsWithIgnored,
   dockerfileTargets, runnerTargets, sourceForBuildOutput, stripJsonc, tsconfigOutDirs, urlReferencedFiles,
 } from '../src/manifests.ts';
 
@@ -70,9 +70,19 @@ describe('listFiles', () => {
     rmSync(join(root, 'gone.ts')); // tracked, deleted from the work tree
     write('untracked.ts'); // untracked, not ignored
     write('node_modules/m/index.js');
+    // Package-manager / build-tool state, tracked or not: never scanned (invertase's .nx/cache).
+    for (const d of ['.nx/cache/1/lib/index.js', '.turbo/cache/x.js', '.yarn/plugins/p.cjs', 'packages/build/.pnpm-store/v3/f.js']) write(d);
+    git('add', '-f', '.yarn');
     expect(listFiles(root)).toEqual([
       '.gitignore', 'a/c.ts', 'a-b.ts', 'packages/build/package.json', 'packages/build/src/index.ts', 'untracked.ts', 'vendor/lib/x.ts',
     ]);
+  });
+
+  it('ALWAYS_SKIP_DIRS holds installed deps, VCS metadata and package-manager / build-tool state', () => {
+    expect([...ALWAYS_SKIP_DIRS].sort()).toEqual(['.dart_tool', '.git', '.nx', '.pnpm-store', '.turbo', '.yarn', 'node_modules']);
+    for (const d of ['.nx', '.turbo', '.yarn', '.pnpm-store']) write(`${d}/x/package.json`, '{"name": "cached"}');
+    write('pkgs/a/src/x.ts');
+    expect(listFiles(root)).toEqual(['pkgs/a/src/x.ts']);
   });
 });
 

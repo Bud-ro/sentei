@@ -79,10 +79,14 @@ export type Warn = (message: string) => void;
 
 /**
  * Directory names never descended into, at any depth, in a git checkout or not:
- * installed dependencies and VCS / tool metadata.
+ * installed dependencies, VCS / tool metadata, and package-manager / build-tool
+ * state (nx and turbo caches, yarn berry's `.yarn/` cache and plugins, the pnpm
+ * store): copies of built or installed code, never a package's source. invertase's
+ * react-native-google-mobile-ads left 40 `.nx/cache/` files that each flagged
+ * `unindexed_consumer`.
  */
 export const ALWAYS_SKIP_DIRS: ReadonlySet<string> = new Set([
-  'node_modules', '.git', '.dart_tool',
+  'node_modules', '.git', '.dart_tool', '.nx', '.turbo', '.yarn', '.pnpm-store',
 ]);
 
 /**
