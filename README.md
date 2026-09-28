@@ -616,7 +616,8 @@ test-file uses of it count as references even under a regular dependency
 `*_test_utils`, `*_testing`, … (pub `lib/test.dart`, npm `./testing` →
 `src/testing.ts` or `src/testing/index.ts`), symbols under `lib/src/test*/`,
 `lib/src/mocks/`, `lib/testing/`, `src/testing/`, `src/test-utils/`, and every
-symbol of a package named `*testkit`, `*_test`, `*_test_utils`, `*-testing`, …,
+symbol of a package named `*testkit`, `*_test`, `*_test_utils`, `*-testing`,
+`*-e2e`, `*_e2e` (a shared end-to-end suite), …,
 and symbols defined in a pub `lib/` library named that way
 (`lib/src/code_assets/testing.dart`). An entry of another org package of the
 same repo counts too: matcher's `closeTo`, re-exported by `package:test`'s
@@ -634,9 +635,12 @@ Dart symbol only when its file exports Dart to JS (`@JSExport`).
 
 Test, docs, generated and script files are recognized by path
 (`packages/core/src/globs.ts`: `test/`, `tests/`, `__tests__/`, `*.test.*`,
-`*.spec.*`, `*_test.dart`, `mocks/`, `fixtures/`, `e2e/`, `type-tests/`,
+`*.spec.*`, `*_test.dart`, `mocks/`, `fixtures/`, `e2e/`, `tests-e2e/`,
+`e2e-tests/`, `type-tests/`,
 `cypress/`, `playwright/`, Flutter `test_driver/` and `integration_test/`,
-`test-utils.*`, `test_utils.*`, `test_util.*`, `testutils.*`, ...),
+`test-utils.*`, `test_utils.*`, `test_util.*`, `testutils.*`, ...; docs:
+`docs/`, `examples/`, `example/`, `demo/`, Docusaurus `blog/` and
+`versioned_docs/`, VitePress `.vitepress/`),
 except that nothing under a pub package's `lib/` is ever one of them: every file
 there is importable library code. TypeScript files are also generated when a
 comment in their first 20 lines says so (`@generated`, "do not edit", "do not

@@ -55,6 +55,10 @@ export const TEST_GLOBS: readonly string[] = Object.freeze([
   '**/test_utils.*',
   '**/test_util.*',
   '**/testutils.*',
+  // Phase 3 fix round 8d (tanstack cli `tests-e2e/helpers.ts`: 28 private_dead rows):
+  // the dash-joined spellings of an e2e test dir.
+  '**/tests-e2e/**',
+  '**/e2e-tests/**',
 ]);
 
 /**
@@ -90,6 +94,11 @@ export const DOCS_GLOBS: readonly string[] = Object.freeze([
   '**/examples/**',
   '**/example/**',
   '**/demo/**',
+  // Phase 3 fix round 8d (trpc www: Docusaurus `blog/` and `versioned_docs/` MDX were
+  // unscoped consumers; vitejs: VitePress theme / config under `.vitepress/`).
+  '**/blog/**',
+  '**/versioned_docs/**',
+  '**/.vitepress/**',
 ]);
 
 /**

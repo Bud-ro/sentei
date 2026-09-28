@@ -186,7 +186,9 @@ WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'setupTests.*'
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'test_utils.*'
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'test_util.*'
-    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'testutils.*');
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'testutils.*'
+    OR ('/' || file) GLOB '*/tests-e2e/*'
+    OR ('/' || file) GLOB '*/e2e-tests/*');
 
 -- Docs globs: docs and in-package examples / demos. `rel` is the repo-relative path,
 -- except for a package promoted from an ignored-dir manifest (promoted_packages: an
@@ -205,7 +207,10 @@ WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file
   AND (('/' || rel) GLOB '*/docs/*'
     OR ('/' || rel) GLOB '*/examples/*'
     OR ('/' || rel) GLOB '*/example/*'
-    OR ('/' || rel) GLOB '*/demo/*');
+    OR ('/' || rel) GLOB '*/demo/*'
+    OR ('/' || rel) GLOB '*/blog/*'
+    OR ('/' || rel) GLOB '*/versioned_docs/*'
+    OR ('/' || rel) GLOB '*/.vitepress/*');
 
 -- Vendored files: a `third_party/`, `vendor/` or `vendored/` directory BELOW the
 -- package root (the path is made package-relative first, so a package whose own root
@@ -323,12 +328,15 @@ JOIN symbol_ancestors a ON a.symbol_id = r.symbol_id;
 -- point's stem (`lib/test.dart`, `lib/testing.dart`, `src/test-utils.ts`, or the dir of
 -- an index file: `src/testing/index.ts`) or a package name without its npm scope
 -- (`@acme/testkit`, `acme-testkit`, `over_react_test`, `built_redux_test_utils`,
--- `react_testing_library`, `w_transport_mock`). See test_support_symbols.
+-- `react_testing_library`, `w_transport_mock`), plus shared end-to-end suites (round 8d,
+-- tanstack: `@tanstack/db-collection-e2e`'s `createMutationsTestSuite`, used by four
+-- packages' e2e tests, came out a deletion). See test_support_symbols.
 CREATE VIEW test_support_names (pattern) AS
 VALUES ('test'), ('testing'), ('testkit'), ('*testkit'), ('test_utils'), ('test-utils'),
        ('*_test_utils'), ('*-test-utils'), ('*_test_util'), ('*-test-util'),
        ('*_testing'), ('*-testing'), ('*_testing_library'), ('*-testing-library'), ('*_test'),
-       ('mock'), ('mocks'), ('*_mock'), ('*_mocks'), ('*-mock'), ('*-mocks');
+       ('mock'), ('mocks'), ('*_mock'), ('*_mocks'), ('*-mock'), ('*-mocks'),
+       ('e2e'), ('*-e2e'), ('*_e2e');
 
 -- Test-support surface: symbols whose purpose is to be used by OTHER packages' tests
 -- (Workiva codemod's `lib/test.dart`, depended on as a regular dependency by other

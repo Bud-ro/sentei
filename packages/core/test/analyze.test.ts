@@ -501,6 +501,25 @@ describe('analyzeOrg on hand-built rows', () => {
       expect(findings()).toEqual([f('notSupport', 'needs_review', ['only_test_refs', 'witness_pending'])]);
     });
 
+    it('a shared e2e suite package (`*-e2e`, `*_e2e`) is test support; `e2e` only as a whole name segment (round 8d, tanstack)', () => {
+      const suites = pkg('@acme/db-collection-e2e');
+      const snake = pkg('acme_widgets_e2e');
+      const lookalike = pkg('@acme/e2easy');
+      for (const p of [suites, snake, lookalike]) dep(app, p);
+      doc(suites, 'src/index.ts', true);
+      doc(snake, 'src/index.ts', true);
+      doc(lookalike, 'src/index.ts', true);
+      const suite = sym(suites, 'src/index.ts', 'createMutationsTestSuite', { exported: true });
+      const snakeFn = sym(snake, 'src/index.ts', 'widgetSuite', { exported: true });
+      const other = sym(lookalike, 'src/index.ts', 'notASuite', { exported: true });
+      const testMod = doc(app, 'src/db.e2e.test.ts');
+      for (const s of [suite, snakeFn, other]) use(testMod, s, 'src/db.e2e.test.ts');
+      analyze();
+      expect(supportIds()).toEqual([suite, snakeFn]);
+      // Negative: a package merely starting with "e2e" stays a normal library.
+      expect(findings()).toEqual([f('notASuite', 'needs_review', ['only_test_refs', 'witness_pending'])]);
+    });
+
     it('matches pub test-support dirs under lib/ relative to the package dir', () => {
       run('INSERT INTO repos (repo) VALUES (?)', 'acme/mono');
       run("INSERT INTO packages (package_id, repo, path, manager, name, version, visibility) VALUES (?, ?, 'pkgs/kit', 'pub', 'acme_kit', '1.0.0', 'private')",

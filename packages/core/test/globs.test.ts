@@ -144,6 +144,28 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
       db.close();
     }
   });
+
+  it('fix round 8d globs: tests-e2e / e2e-tests dirs are tests; Docusaurus blog / versioned_docs and .vitepress are docs', () => {
+    const tests = ['packages/cli/tests-e2e/helpers.ts', 'e2e-tests/run.ts'];
+    const docs = ['www/blog/2023-01-17-post.mdx', 'www/versioned_docs/version-10.x/setup.mdx', 'docs/.vitepress/config.ts', '.vitepress/theme/index.ts'];
+    const not = ['packages/db-collection-e2e/src/suite.ts', 'src/tests-e2e.ts', 'src/blogger/a.ts', 'src/blog.ts', 'src/vitepress/a.ts', 'versioned_docs.ts'];
+    for (const p of tests) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(true);
+    for (const p of docs) expect(DOCS_GLOBS.some((g) => matchGlob(g, p)), p).toBe(true);
+    for (const p of not) expect([...TEST_GLOBS, ...DOCS_GLOBS].some((g) => matchGlob(g, p)), p).toBe(false);
+    const db = openDb(':memory:');
+    try {
+      db.exec("INSERT INTO repos (repo) VALUES ('acme/a')");
+      db.exec("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/a:a', 'acme/a', '.', 'npm', 'a', 'private')");
+      const ins = db.prepare("INSERT INTO documents (package_id, file) VALUES ('npm:acme/a:a', ?)");
+      for (const p of [...tests, ...docs, ...not]) ins.run(p);
+      db.exec(analyzeSql());
+      const inView = (v: string): string[] => (db.prepare(`SELECT file FROM ${v} ORDER BY file`).all() as Array<{ file: string }>).map((r) => r.file);
+      expect(inView('test_files')).toEqual([...tests].sort());
+      expect(inView('doc_files')).toEqual([...docs].sort());
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('SURFACE_DIRS: nothing under a pub package lib/ is a test, docs or script file', () => {
