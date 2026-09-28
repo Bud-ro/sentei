@@ -1,8 +1,8 @@
 // Raw `git` subprocess helpers (PLAN.md §11: prefer raw subprocess over simple-git).
 // Always execFile (argv array, no shell). Sections are owned by the stage that uses them.
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 // ---------------------------------------------------------------- process ---
 
@@ -113,6 +113,15 @@ export function authEnv(cloneUrl: string, token: string | null | undefined): Rec
  * An existing full checkout is never made shallow (it is a superset of a shallow
  * request), and nothing is unshallowed unless `full` is set. Throws if `dir` exists
  * but is not a git checkout (never deletes it).
+ *
+ * An interrupted clone (killed during the fetch: `dir/.git` exists, HEAD names no commit,
+ * nothing is checked out) is removed and cloned again: without that every rerun failed
+ * on `rev-parse HEAD` ("unknown revision"), and with --allow-clone-failures the repo was
+ * silently dropped. Only a directory that holds nothing but `.git`, with no commit at
+ * HEAD and an `origin` that is `cloneUrl` (or none, or a `.git` git does not recognise),
+ * is removed: that is all a clone leaves before its checkout. Anything else still throws.
+ * git never looks above `dir` for a repository (GIT_CEILING_DIRECTORIES), so a broken
+ * `dir/.git` cannot make it read the repo the work dir lives in.
  */
 export async function ensureClone(opts: EnsureCloneOptions): Promise<EnsureCloneResult> {
   // The sha may come from a lockfile: never let it reach argv as an option.
@@ -122,8 +131,11 @@ export async function ensureClone(opts: EnsureCloneOptions): Promise<EnsureClone
   // LFS: a smudge filter (if git-lfs is installed) would download every LFS object
   // at checkout; analysis never needs them, and hardware repos can hold gigabytes.
   const env = { ...authEnv(opts.cloneUrl, opts.token), GIT_LFS_SKIP_SMUDGE: '1' };
-  const head = async (): Promise<string> => (await run(['rev-parse', 'HEAD'], { cwd })).trim();
-  const shallowNow = async (): Promise<boolean> => (await run(['rev-parse', '--is-shallow-repository'], { cwd })).trim() === 'true';
+  // Never let git climb from a broken `dir/.git` to a repository above `dir`.
+  const local = { GIT_CEILING_DIRECTORIES: dirname(resolve(opts.dir)) };
+  const head = async (): Promise<string> => (await run(['rev-parse', 'HEAD'], { cwd, env: local })).trim();
+  const shallowNow = async (): Promise<boolean> =>
+    (await run(['rev-parse', '--is-shallow-repository'], { cwd, env: local })).trim() === 'true';
   /** Fetch `sha` (whole history when the checkout is full; skipped when a full checkout has it) and check it out. */
   const pin = async (full: boolean): Promise<void> => {
     let present = false;
@@ -143,6 +155,9 @@ export async function ensureClone(opts: EnsureCloneOptions): Promise<EnsureClone
     if (h !== opts.sha) throw new Error(`sentei: ${opts.dir}: HEAD is ${h} after checkout, expected ${opts.sha}`);
   };
 
+  if (existsSync(join(opts.dir, '.git')) && !(await hasCommit(run, opts.dir, local))) {
+    await removeInterruptedClone(run, opts, local);
+  }
   if (existsSync(join(opts.dir, '.git'))) {
     let full = !(await shallowNow());
     const atSha = (await head()) === opts.sha;
@@ -169,4 +184,41 @@ export async function ensureClone(opts: EnsureCloneOptions): Promise<EnsureClone
   }
   await verify();
   return { status: 'cloned', full };
+}
+
+/** True when HEAD of the repository at `dir` names a commit (false: unborn HEAD, or not a repository). */
+async function hasCommit(
+  run: (args: readonly string[], opts: GitOptions) => Promise<string>, dir: string, env: Record<string, string>,
+): Promise<boolean> {
+  try {
+    await run(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { cwd: dir, env });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Removes `opts.dir` when it is what an interrupted `git clone` leaves (see ensureClone):
+ * nothing but `.git`, and an `origin` that is the clone URL, or none. Throws otherwise.
+ */
+async function removeInterruptedClone(
+  run: (args: readonly string[], opts: GitOptions) => Promise<string>, opts: EnsureCloneOptions, env: Record<string, string>,
+): Promise<void> {
+  const others = readdirSync(opts.dir).filter((e) => e !== '.git');
+  if (others.length > 0) {
+    throw new Error(`sentei: ${opts.dir}: .git has no commit at HEAD but the directory holds other files `
+      + `(${others.slice(0, 3).join(', ')}${others.length > 3 ? ', …' : ''}); not an interrupted clone, move it away and rerun`);
+  }
+  let origin = '';
+  try {
+    origin = (await run(['config', '--get', 'remote.origin.url'], { cwd: opts.dir, env })).trim();
+  } catch {
+    origin = ''; // no origin yet, or a .git git does not recognise
+  }
+  if (origin !== '' && origin !== opts.cloneUrl) {
+    throw new Error(`sentei: ${opts.dir}: .git has no commit at HEAD and its origin is ${origin}, not ${opts.cloneUrl}; move it away and rerun`);
+  }
+  opts.log?.(`${opts.dir}: interrupted clone (no commit at HEAD, nothing checked out), removing it and cloning again`);
+  rmSync(opts.dir, { recursive: true, force: true });
 }
