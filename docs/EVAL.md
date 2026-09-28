@@ -69,3 +69,64 @@ VeryGoodOpenSource needed the `ignoreManifests` entries in their
 pnpm 12 cannot install in the sandbox these runs used (a store-lock error on a
 read-only path), which left 36 vitejs and 43 tanstack packages partial: that is
 the environment, not the orgs.
+
+## Phase 3 rerun at `840cd97` (2026-09-28)
+
+The four orgs with the most wrong rows above, rerun on the tool after fix
+round 8 (8a–8f) with the same lockfiles (same commits, same repo selection,
+shallow clones, one org at a time or two at once). Every package re-indexed
+(the adapters changed: scip-typescript `0.4.0+sentei.10`, scip-dart
+`1.7.0+sentei.15`). Spot checks as above; nuxt's are the rows I checked
+myself, the others an agent's seeded sample (all private-dead rows for
+withastro, twenty for invertase).
+
+| org | packages | index ok / partial / failed | index | DELETE | DEPRECATE | UNEXPORT | PRIV-DEAD | REVIEW | BLOCKED | skew | spot check |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| nuxt | 101 | 51 / 18 / 32 | 7 min | 0 | 0 | 2 | 9 | 0 | 422 | 189 | 2 / 11 |
+| withastro | 134 | 97 / 35 / 2 | 13 min | 0 | 54 | 83 | 32 | 0 | 679 | 4 | 42 / 52 |
+| VeryGoodOpenSource | 30 | 29 / 0 / 1 | 6 min | 11 | 60 | 27 | 5 | 0 | 0 | 0 | 35 / 35 |
+| invertase | 42 | 25 / 17 / 0 | 2 min | 0 | 12 | 64 | 115 | 0 | 274 | 0 | 26 / 35 |
+
+Against the `f25900a` run: PRIV-DEAD 87 → 9 (nuxt), 494 → 32 (withastro),
+32 → 5 (VeryGoodOpenSource), 128 → 115 (invertase); BLOCKED 544 → 422,
+997 → 679, 0, 293 → 274; VeryGoodOpenSource lost nine mason `__brick__`
+"packages" (templates, round 8b) and its ten failed indexes (unnamed
+extensions, fork patch 15). No view gained a wrong row that a spot check
+found, except the `type-test.tsx` rows in invertase (right: the file is
+orphaned upstream, but sentei does not know it as a type test).
+
+**Where the remaining wrong rows come from** (numbers are rows in the run):
+
+- Loaders sentei cannot see: learn.nuxt.com's own Nuxt module reads
+  `content/**/.template/**` from disk as playground data (all 9 nuxt
+  PRIV-DEAD rows); a `next/dynamic(() => import('./x'))` reaches the module
+  but not its default export (docs.page, 7 rows); a `tsm src/stats.ts`
+  script (houston-discord, 3 rows: `tsm` is not a known runner); an
+  `import type` by relative path into another workspace package (marlo,
+  1 row).
+- Files outside the TypeScript program: Next app-router routes under a dot
+  directory (`app/.well-known/jwks.json/route.ts`; TypeScript's `**/*`
+  skips dot directories: docs.page, 3 rows); Expo config plugins whose
+  `app.plugin.js` requires the unbuilt `plugin/build` (12 opaque invertase
+  packages, the top blockers of 131 rows each); a React Native app's
+  `index.js` (`AppRegistry.registerComponent`, no exports) not taken as an
+  entry (RNGoogleMobileAdsExample, blocks 197 rows); an Electron entry
+  `dist-electron/main.js` built by astro-electron from `src/electron/`
+  (marlo, blocks 386 withastro rows); astro's solution-style tsconfig
+  (`files` + `references`) leaving its entries out of the program.
+- A type in a public signature not pinned: a class property's type
+  (`readonly failure: FlueExecutionFailure` on an exported class; 3 flue
+  UNEXPORT rows). Round 8d pinned parameter and constraint types only.
+- Build caches scanned as consumers: `.nx/cache/**` created by the install
+  (react-native-google-mobile-ads).
+- An install at the wrong level: a stale `package-lock.json` inside a pnpm
+  workspace package made sentei run `npm ci` there instead of at the
+  workspace root (@tanstack-query-firebase/react, 54 blocked rows).
+- Policy, not defects: test-only uses (`getCartSubtotal`, melos
+  `writeTextFile`: tests are not consumers, the rows carry the note);
+  bun benchmark scripts that run themselves (`await run()` at top level,
+  no importer: 45 invertase rows); `env.require(...)` constants whose
+  initializer is a startup check; a release-please version marker.
+
+The `org_dead` view is still written to `report.json` (every view) although
+the default report no longer uses it.
