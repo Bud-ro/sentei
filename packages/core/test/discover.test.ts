@@ -422,7 +422,7 @@ describe('discoverLocal on a synthetic org', () => {
       ['docs_site/package.json', true, expect.stringMatching(/^cannot parse: /)],
     ]);
     expect(logs.some((l) => l.startsWith('warning: acme/tpl: docs_site/package.json: cannot parse ('))).toBe(true);
-    expect(logs).toContain('warning: acme/tpl: app/pubspec.yaml: package name "{{project_name.snakeCase()}}_android" is a template ({{…}}); not an org package');
+    expect(logs).toContain('warning: acme/tpl: app/pubspec.yaml: package name "{{project_name.snakeCase()}}_android" is a template ({{…}} / <%= %>); not an org package');
     writeDiscoverToDb(db, m);
     expect(all('SELECT manifest FROM ignored_manifests ORDER BY manifest')).toEqual([{ manifest: 'app/pubspec.yaml' }, { manifest: 'docs_site/package.json' }]);
   });
