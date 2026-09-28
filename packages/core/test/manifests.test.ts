@@ -79,10 +79,14 @@ describe('listFiles', () => {
   });
 
   it('ALWAYS_SKIP_DIRS holds installed deps, VCS metadata and package-manager / build-tool state', () => {
-    expect([...ALWAYS_SKIP_DIRS].sort()).toEqual(['.dart_tool', '.git', '.nx', '.pnpm-store', '.turbo', '.yarn', 'node_modules']);
-    for (const d of ['.nx', '.turbo', '.yarn', '.pnpm-store']) write(`${d}/x/package.json`, '{"name": "cached"}');
+    expect([...ALWAYS_SKIP_DIRS].sort()).toEqual(['.cache', '.dart_tool', '.git', '.nx', '.parcel-cache', '.pnpm-store', '.turbo', '.yarn', 'node_modules']);
+    for (const d of ['.nx', '.turbo', '.yarn', '.pnpm-store', '.cache', '.parcel-cache', 'pkgs/a/.nx/workspace-data']) write(`${d}/x/package.json`, '{"name": "cached"}');
+    write('.nx/cache/8781/packages/core/lib/commonjs/index.js', "require('@acme/core');");
+    write('pkgs/a/.parcel-cache/y.js');
+    // Other dot dirs are not caches (`.vitepress` holds a site's code; `.storybook` config).
+    write('pkgs/a/.storybook/main.ts');
     write('pkgs/a/src/x.ts');
-    expect(listFiles(root)).toEqual(['pkgs/a/src/x.ts']);
+    expect(listFiles(root)).toEqual(['pkgs/a/.storybook/main.ts', 'pkgs/a/src/x.ts']);
   });
 });
 

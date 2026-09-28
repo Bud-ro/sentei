@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { matchGlob } from './glob.ts';
-import { TEST_GLOBS } from './globs.ts';
+import { BUILD_CACHE_DIRS, TEST_GLOBS } from './globs.ts';
 
 export type Manager = 'npm' | 'pub';
 export type Visibility = 'private' | 'published-private' | 'published-public';
@@ -79,15 +79,13 @@ export type Warn = (message: string) => void;
 
 /**
  * Directory names never descended into, at any depth, in a git checkout or not:
- * installed dependencies, VCS / tool metadata, and package-manager / build-tool
- * state (nx and turbo caches, yarn berry's `.yarn/` cache and plugins, the pnpm
- * store): copies of built or installed code, never a package's source. invertase's
- * react-native-google-mobile-ads left 40 `.nx/cache/` files that each flagged
- * `unindexed_consumer`.
+ * VCS / tool metadata and globs.ts BUILD_CACHE_DIRS (installed dependencies,
+ * package-manager / build-tool state: nx, turbo, Parcel and `.cache` caches, yarn
+ * berry's `.yarn/`, the pnpm store): copies of built or installed code, never a
+ * package's source. invertase's react-native-google-mobile-ads left 40 `.nx/cache/`
+ * files that each flagged `unindexed_consumer`.
  */
-export const ALWAYS_SKIP_DIRS: ReadonlySet<string> = new Set([
-  'node_modules', '.git', '.dart_tool', '.nx', '.turbo', '.yarn', '.pnpm-store',
-]);
+export const ALWAYS_SKIP_DIRS: ReadonlySet<string> = new Set(['.git', '.dart_tool', ...BUILD_CACHE_DIRS]);
 
 /**
  * Directory names also skipped when the repo is NOT a git checkout (fixtures, plain

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { analyzeSql } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
 import { matchGlob } from '../src/glob.ts';
-import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS, VENDORED_GLOBS } from '../src/globs.ts';
+import { BUILD_CACHE_DIRS, DOCS_GLOBS, GENERATED_GLOBS, inBuildCacheDir, inSurfaceDir, inVendoredDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS, VENDORED_GLOBS } from '../src/globs.ts';
 
 // analyze.sql spells the test/docs globs as SQLite GLOB conditions (it is loaded
 // verbatim). Parse them back and compare with the TypeScript lists the witness uses.
@@ -300,6 +300,20 @@ describe('doc_files for a promoted consumer (Phase 3 decision 3): docs globs on 
       expect(inView('test_files')).toEqual(['example/app/test/c_test.dart']);
     } finally {
       db.close();
+    }
+  });
+});
+
+describe('BUILD_CACHE_DIRS', () => {
+  it('names package-manager and build-tool state dirs at any depth, never a source dir', () => {
+    expect(BUILD_CACHE_DIRS).toContain('.nx');
+    for (const f of ['.nx/cache/1/lib/commonjs/a.js', 'pkgs/a/.turbo/x.js', '.yarn/cache/z.zip', '.pnpm-store/v3/f.js',
+      'node_modules/m/i.js', '.cache/b.js', 'web/.parcel-cache/c.js', '.nx/workspace-data/d.json']) {
+      expect(inBuildCacheDir(f), f).toBe(true);
+    }
+    // A file named like a cache dir, a look-alike dir, other dot dirs: not caches.
+    for (const f of ['src/.cache', 'src/cache/a.ts', '.vitepress/config.ts', 'nx/x.ts', 'my.nx/a.ts']) {
+      expect(inBuildCacheDir(f), f).toBe(false);
     }
   });
 });

@@ -88,6 +88,25 @@ export function inSurfaceDir(file: string, manager: string, pkgPath: string): bo
   return (SURFACE_DIRS[manager] ?? []).some((d) => file.startsWith(`${base}${d}/`));
 }
 
+/**
+ * Directory names that hold package-manager and build-tool state, at any depth:
+ * installed dependencies, the nx / turbo / Parcel / generic tool caches, yarn berry's
+ * `.yarn/` (cache, plugins, releases), the pnpm store. They hold copies of built or
+ * installed code, created by an install or a build, never a package's source and never
+ * a consumer: every file listing sentei scans skips them (manifests.ts
+ * ALWAYS_SKIP_DIRS: discover, the witness, entry resolution). react-native-google-mobile-ads'
+ * install left `.nx/cache/<hash>/packages/core/lib/commonjs/*.js`, which flagged its
+ * monorepo root `unindexed_consumer`.
+ */
+export const BUILD_CACHE_DIRS: readonly string[] = Object.freeze([
+  'node_modules', '.nx', '.turbo', '.cache', '.parcel-cache', '.yarn', '.pnpm-store',
+]);
+
+/** True when repo-relative `file` lies under a BUILD_CACHE_DIRS directory. */
+export function inBuildCacheDir(file: string): boolean {
+  return file.split('/').slice(0, -1).some((seg) => BUILD_CACHE_DIRS.includes(seg));
+}
+
 /** Files that are documentation or examples. */
 export const DOCS_GLOBS: readonly string[] = Object.freeze([
   '**/docs/**',
