@@ -1,0 +1,69 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/expo-plugin/app.plugin.js",
+    "packages/expo-plugin/plugin/src/index.ts"
+  ],
+  "entrySymbols": [
+    {
+      "col": 16,
+      "file": "packages/expo-plugin/plugin/src/index.ts",
+      "kind": "runtime",
+      "line": 3,
+      "name": "withAcme"
+    }
+  ],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/expo-plugin/plugin/src/index.ts",
+      "exportedAs": "default",
+      "file": "packages/expo-plugin/plugin/src/index.ts",
+      "line": 3,
+      "name": "withAcme",
+      "sites": [
+        {
+          "col": 15,
+          "file": "packages/expo-plugin/plugin/src/index.ts",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "packages/expo-plugin/plugin/src/index.ts",
+      "exportedAs": "withAcme",
+      "file": "packages/expo-plugin/plugin/src/index.ts",
+      "line": 3,
+      "name": "withAcme",
+      "sites": [
+        {
+          "col": 15,
+          "file": "packages/expo-plugin/plugin/src/index.ts",
+          "line": 7
+        }
+      ]
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/expo-plugin",
+  "shorthandRefs": [
+    {
+      "col": 25,
+      "file": "packages/expo-plugin/app.plugin.js",
+      "line": 1,
+      "member": "default",
+      "targetCol": 16,
+      "targetFile": "plugin/src/index.ts",
+      "targetLine": 3,
+      "targetPackage": "@acme/expo-plugin"
+    }
+  ],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

@@ -1,0 +1,32 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## app.plugin.js
+  // Expo loads this file by path; plugin/build is the unbuilt output of plugin/src.
+//^ definition scip-typescript npm @acme/expo-plugin . `app.plugin.js`/ enclosing [1:0-2:0]
+  module.exports = require('./plugin/build');
+//^^^^^^ reference local 1
+//       ^^^^^^^ reference local 1
+
+## plugin/src/index.ts
+  // An Expo config plugin (compiled to plugin/build, which app.plugin.js requires).
+//^ definition scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ enclosing [1:0-8:0]
+  type ExpoConfig = { name: string; plugins?: string[] };
+//     ^^^^^^^^^^ definition scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ExpoConfig# enclosing [1:0-1:55]
+//                    ^^^^ definition scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ExpoConfig#typeLiteral0:name.
+//                                  ^^^^^^^ definition scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ExpoConfig#typeLiteral0:plugins.
+
+  export function withAcme(config: ExpoConfig): ExpoConfig {
+//                ^^^^^^^^ definition scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/withAcme(). enclosing [3:0-5:1]
+//                         ^^^^^^ definition scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/withAcme().(config)
+//                                 ^^^^^^^^^^ reference scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ExpoConfig#
+//                                              ^^^^^^^^^^ reference scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ExpoConfig#
+    return { ...config, plugins: [...(config.plugins ?? []), 'acme'] };
+//              ^^^^^^ reference scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/withAcme().(config)
+//                      ^^^^^^^ reference scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ExpoConfig#typeLiteral0:plugins.
+//                                    ^^^^^^ reference scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/withAcme().(config)
+//                                           ^^^^^^^ reference scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/ExpoConfig#typeLiteral0:plugins.
+  }
+
+  export default withAcme;
+//               ^^^^^^^^ reference scip-typescript npm @acme/expo-plugin . plugin/src/`index.ts`/withAcme().

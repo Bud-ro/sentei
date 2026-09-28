@@ -580,6 +580,52 @@ describe('npm manifests', () => {
     expect(q!.unresolvedEntryPoints).toEqual(['dist-electron/main.js']);
   });
 
+  it('sourceForBuildOutput: a nested build dir maps to the src beside it (Expo plugin/build → plugin/src)', () => {
+    pkgJson('ads/package.json', { name: '@x/ads', main: 'lib/commonjs/index.js', 'react-native': 'src/index.ts' });
+    write('ads/src/index.ts');
+    write('ads/plugin/src/index.ts');
+    write('ads/tools/gen/src/run.ts');
+    expect(sourceForBuildOutput(root, 'ads', 'plugin/build')).toBe('plugin/src/index.ts');
+    expect(sourceForBuildOutput(root, 'ads', 'plugin/build/index.js')).toBe('plugin/src/index.ts');
+    expect(sourceForBuildOutput(root, 'ads', 'tools/gen/dist/run.js')).toBe('tools/gen/src/run.ts');
+    // Existence-checked; `lib/` nested is a source dir name as often as a build dir.
+    expect(sourceForBuildOutput(root, 'ads', 'plugin/build/gone.js')).toBeNull();
+    expect(sourceForBuildOutput(root, 'ads', 'other/build')).toBeNull();
+    write('ads/tools/lib/src/x.ts');
+    expect(sourceForBuildOutput(root, 'ads', 'tools/lib/x.js')).toBeNull();
+  });
+
+  it('an Expo config plugin: app.plugin.js and the source of the plugin/build it requires are runtime entries', () => {
+    pkgJson('applovin/package.json', {
+      name: '@x/applovin', main: 'lib/commonjs/index.js', 'react-native': 'src/index.ts',
+      exports: { '.': { source: './src/index.ts', default: './lib/commonjs/index.js' }, './app.plugin.js': './app.plugin.js' },
+      devDependencies: { '@expo/config-plugins': '^54.0.0' },
+    });
+    write('applovin/app.plugin.js', "module.exports = require('./plugin/out');\n");
+    // The plugin's own tsconfig names another output dir: the rootDir index is found through it.
+    write('applovin/plugin/tsconfig.json', '{ "extends": "expo-module-scripts/tsconfig.plugin", "compilerOptions": { "outDir": "out", "rootDir": "lib" } }');
+    write('applovin/plugin/lib/index.ts');
+    write('applovin/src/index.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+    expect(p!.entryPoints).toEqual(['applovin/app.plugin.js', 'applovin/plugin/lib/index.ts', 'applovin/src/index.ts']);
+    // app.plugin.js is surface (an exports leaf) AND loaded by Expo, like a Firebase main.
+    expect(p!.runtimeEntryPoints).toEqual(['applovin/app.plugin.js', 'applovin/plugin/lib/index.ts']);
+  });
+
+  it('no Expo config plugin: an expo dependency alone, or app.plugin.js requiring a missing build, adds nothing else', () => {
+    pkgJson('a/package.json', { name: 'a', main: 'src/index.ts', dependencies: { expo: '^54.0.0' } });
+    write('a/src/index.ts');
+    write('a/plugin/src/index.ts');
+    pkgJson('b/package.json', { name: 'b', main: 'src/index.ts' });
+    write('b/src/index.ts');
+    write('b/app.plugin.js', "module.exports = require('./plugin/build');\n");
+    const [a, b] = readRepoManifests(root, warn);
+    expect(a!.runtimeEntryPoints).toEqual([]);
+    expect(b!.runtimeEntryPoints).toEqual(['b/app.plugin.js']);
+    expect(b!.entryPoints).toEqual(['b/app.plugin.js', 'b/src/index.ts']);
+  });
+
   it('a tsconfig rootDir other than src, allowJs sources, and .mjs → .mts', () => {
     pkgJson('package.json', { name: 'x', main: 'out/cjs/main.js', exports: { './m': './out/esm/m.mjs', './j': './out/esm/j.js' } });
     write('tsconfig.json', '{ "compilerOptions": { "outDir": "out/cjs", "rootDir": "lib", "allowJs": true } }');

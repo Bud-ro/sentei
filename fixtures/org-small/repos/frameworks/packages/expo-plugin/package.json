@@ -1,0 +1,15 @@
+{
+  "name": "@acme/expo-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "exports": {
+    "./app.plugin.js": "./app.plugin.js",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "dependencies": {
+    "@acme/core": "^1.0.0"
+  }
+}

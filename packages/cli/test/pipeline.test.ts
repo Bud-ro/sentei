@@ -160,6 +160,13 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     // and the Nx generator template (`"name": "<%= name %>"`) is no package.
     expect(r.blockers.some((b) => b.blocker_package_id.startsWith('npm:acme/frameworks:'))).toBe(false);
     expect(r.packages.some((p) => p.name.includes('<%'))).toBe(false);
+    // Fix round 9a: @acme/expo-plugin's app.plugin.js (`module.exports = require('./plugin/build')`,
+    // an exports leaf outside the tsconfig program) is an Expo config plugin loaded by path,
+    // whose source is plugin/src/index.ts: the package is not opaque and blocks nothing
+    // (before, its `default` export was unresolved surface and it blocked @acme/core).
+    const expo = r.packages.find((p) => p.name === '@acme/expo-plugin');
+    expect(expo?.opaque).toBe(false);
+    expect(expo?.flags).toEqual([]);
     // Consumer-only packages without entry points (the nameless demos, the promoted example
     // app) never had private_dead rows either; the note now says so.
     expect(r.packages.filter((p) => p.private_dead_skipped !== undefined).map((p) => p.name)).toEqual([

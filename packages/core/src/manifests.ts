@@ -636,7 +636,10 @@ export function readNpmPackage(
   const firebase = firebaseFunctionSources(repoRoot, files).has(dir)
     ? firebaseEntryFiles(repoRoot, dir, resolved.surface, layout) : [];
   if (firebase.length > 0) log(`${manifest}: Firebase Functions source (firebase.json); its exports are deployed functions: ${firebase.join(', ')}`);
-  const conventionAll = [...new Set([...conventionEntryPoints(repoRoot, dir, files, depNames, scripts), ...firebase])].sort(cmp);
+  // Expo config plugins: Expo loads `app.plugin.js` by path and calls its default export.
+  const expo = expoConfigPluginEntries(repoRoot, dir, files, layout);
+  if (expo.length > 0) log(`${manifest}: Expo config plugin (app.plugin.*) and its source: ${expo.join(', ')}`);
+  const conventionAll = [...new Set([...conventionEntryPoints(repoRoot, dir, files, depNames, scripts), ...firebase, ...expo])].sort(cmp);
   const runtimeEntrySymbols = [...new Set([
     ...wranglerRuntimeClasses(repoRoot, dir, files),
     // jscodeshift reads a transform module's `parser` export by name.
@@ -645,7 +648,7 @@ export function readNpmPackage(
     ...terraformEntryPoints(repoRoot, files),
   ])].sort(cmp);
   const convention = conventionAll.filter((f) => !resolved.entryPoints.includes(f) && !clientAll.includes(f));
-  const conventionLog = convention.filter((f) => !firebase.includes(f)); // (logged above)
+  const conventionLog = convention.filter((f) => !firebase.includes(f) && !expo.includes(f)); // (logged above)
   if (conventionLog.length > 0) {
     log(`${manifest}: ${conventionLog.length} runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): ${
       conventionLog.slice(0, 5).join(', ')}${conventionLog.length > 5 ? ', ...' : ''}`);
@@ -657,9 +660,11 @@ export function readNpmPackage(
   // a convention naming it (a wrangler main at src/index.ts, with no package.json entry)
   // makes it a runtime entry.
   // A Firebase Functions main is both: surface as declared, and loaded by the runtime,
-  // which uses every export (ingest: entry symbols, never a verdict).
+  // which uses every export (ingest: entry symbols, never a verdict). So is an Expo
+  // config plugin's `app.plugin.js` (an `exports` leaf Expo loads by path).
   const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll, ...conventionAll])]
-    .filter((f) => f === resolved.fallback || resolved.layoutOnly.includes(f) || !resolved.surface.includes(f) || firebase.includes(f)).sort(cmp);
+    .filter((f) => f === resolved.fallback || resolved.layoutOnly.includes(f) || !resolved.surface.includes(f)
+      || firebase.includes(f) || expo.includes(f)).sort(cmp);
   return {
     manager: 'npm',
     name,
@@ -674,6 +679,56 @@ export function readNpmPackage(
     ...(runtimeEntrySymbols.length > 0 ? { runtimeEntrySymbols } : {}),
     deps,
   };
+}
+
+/** A package-root Expo config plugin file (`app.plugin.js`; Expo also takes `.cjs` / `.mjs` / `.ts`). */
+const EXPO_PLUGIN_FILE = /^app\.plugin\.(?:[cm]?js|ts)$/;
+
+/**
+ * Expo config plugins (repo-relative, sorted): Expo loads a package's root `app.plugin.js`
+ * by path (`plugins: ['pkg']` in an app config) and calls its default export. It is
+ * usually `module.exports = require('./plugin/build')`, the unbuilt output of
+ * `plugin/src/index.ts`, compiled by a tsconfig of its own in `plugin/` (the
+ * react-native-google-mobile-ads adapters, react-native-coverage). The file itself and
+ * every own code file it names with a relative literal, mapped like a deep build-output
+ * import (sourceForLayout: the file, Node probing, the dist→src rules, among them the
+ * nested `plugin/build/` → `plugin/src/`), else through the tsconfig outDir → rootDir of
+ * the literal's top dir (`plugin/tsconfig.json`), are runtime entries. The condition is
+ * the file itself (an `expo` / `@expo/config-plugins` dependency without one names
+ * nothing to load). Existence-checked: it only adds runtime entries.
+ */
+export function expoConfigPluginEntries(
+  repoRoot: string, dir: string, repoFiles: readonly string[], layout?: SourceLayout,
+): string[] {
+  const pkgFiles = packageFiles(dir, repoFiles);
+  const plugins = pkgFiles.filter((f) => EXPO_PLUGIN_FILE.test(f));
+  if (plugins.length === 0) return [];
+  const lay = layout ?? sourceLayout(repoRoot, dir, pkgFiles);
+  const out = new Set(plugins);
+  for (const plugin of plugins) {
+    let text: string;
+    try {
+      text = readFileSync(join(repoRoot, joinRel(dir, plugin)), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const lit of relativeLiterals(text)) {
+      const n = normalizeRel(lit);
+      if (n === null || n === '') continue;
+      let r = sourceForLayout(n, lay);
+      const slash = n.indexOf('/');
+      if (r === null && slash > 0) {
+        // The build of a sub-project with its own tsconfig (`plugin/tsconfig.json`:
+        // outDir `build`, rootDir `src`).
+        const sub = n.slice(0, slash);
+        const subFiles = pkgFiles.filter((f) => f.startsWith(`${sub}/`)).map((f) => f.slice(sub.length + 1));
+        const hit = sourceForLayout(n.slice(slash + 1), sourceLayout(repoRoot, joinRel(dir, sub), subFiles));
+        if (hit !== null) r = `${sub}/${hit}`;
+      }
+      if (r !== null && r !== plugin && CODE_EXT.test(r) && !/\.d\.[cm]?ts$/.test(r) && !r.split('/').includes('node_modules')) out.add(r);
+    }
+  }
+  return [...out].map((f) => joinRel(dir, f)).sort(cmp);
 }
 
 /** Per repo file list: the package dirs firebase.json files name as Functions sources. */
@@ -1994,7 +2049,8 @@ const ROOTDIR_SOURCE_EXT = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs'
  * f. a bundler named input whose name is the path's stem or its last segments
  *    (SourceLayout.namedInputs: `dist/node/internal.js` → `src/node/internalIndex.ts`);
  * g. a build dir named for one target (`dist-electron/main.js` → `src/electron/main.ts`,
- *    then `electron/main.*`, then `src/main.ts`; namedBuildDirGroups).
+ *    then `electron/main.*`, then `src/main.ts`; namedBuildDirGroups);
+ * h. a nested build dir (`plugin/build/index.js` → `plugin/src/index.ts`; nestedBuildDirGroups).
  * Every rule is guarded by existence (resolveEntry keeps the first candidate that is a
  * package file); a later rule only matters when the earlier ones name nothing.
  * [] if the path is not build-output-shaped.
@@ -2008,7 +2064,7 @@ function distToSrcGroups(p: string, layout: SourceLayout, nested = false): strin
     const stem = joinRel(rootDir === '' ? '.' : rootDir, p.slice(outDir.length + 1)).replace(BUILT_EXT, '');
     out.push(...stemGroups(stem, rootDir, decl, ROOTDIR_SOURCE_EXT));
   }
-  if (!nested) out.push(...namedBuildDirGroups(p, decl));
+  if (!nested) out.push(...namedBuildDirGroups(p, decl), ...nestedBuildDirGroups(p, decl));
   if (!BUILD_DIR.test(p)) return out;
   out.push(...stemGroups(p.replace(BUILD_DIR, 'src/').replace(BUILT_EXT, ''), 'src', decl, ['.ts', '.tsx']));
   const segs = p.split('/');
@@ -2088,6 +2144,20 @@ function namedBuildDirGroups(p: string, decl: boolean): string[][] {
 }
 
 /**
+ * h. A build dir nested in the package with the source beside it: `<d>/build/<p>` →
+ * `<d>/src/<p>` (also `dist/`, `out/`; never `lib/`, which is as often a source dir), at
+ * any depth (an Expo config plugin's `require('./plugin/build')` → `plugin/src/index.ts`,
+ * compiled by `plugin/tsconfig.json`). Existence is the caller's check.
+ */
+function nestedBuildDirGroups(p: string, decl: boolean): string[][] {
+  if (p.includes('*')) return [];
+  const m = /^((?:[^/]+\/)*?[^/]+)\/(?:dist|build|out)\/(.+)$/.exec(p);
+  if (m === null || m[1]!.split('/').includes('node_modules')) return [];
+  const root = `${m[1]!}/src`;
+  return stemGroups(`${root}/${m[2]!.replace(BUILT_EXT, '')}`, root, decl, ROOTDIR_SOURCE_EXT);
+}
+
+/**
  * Directory names bundlers give one output format inside the build dir (`dist/esm/`,
  * `lib/commonjs/`, `lib/typescript/`): never a source subpath of their own, so they are
  * dropped when mapping build output back to source (distToSrcGroups e).
@@ -2129,7 +2199,11 @@ export function sourceForBuildOutput(
   const n = normalizeRel(rel);
   if (n === null || n === '') return null;
   const pkgFiles = packageFiles(dir, repoFiles ?? listFiles(repoRoot));
-  const layout = sourceLayout(repoRoot, dir, pkgFiles);
+  return sourceForLayout(n, sourceLayout(repoRoot, dir, pkgFiles));
+}
+
+/** sourceForBuildOutput for a normalized package-relative path and a known layout. */
+function sourceForLayout(n: string, layout: SourceLayout): string | null {
   const direct = resolveEntry(n, layout);
   if (direct !== null) return direct;
   if (posix.extname(n) !== '' && BUILT_EXT.test(n)) return null;

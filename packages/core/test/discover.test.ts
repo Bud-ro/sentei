@@ -44,6 +44,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       'acme/frameworks: packages/codemods/package.json: 1 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/codemods/src/transforms/rename-api.ts',
       'acme/frameworks: packages/docs-site/package.json: 5 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/docs-site/docusaurus.config.ts, packages/docs-site/remark-plugin.ts, packages/docs-site/sidebars.ts, packages/docs-site/src/pages/index.ts, packages/docs-site/src/theme/Footer.ts',
       'acme/frameworks: packages/electron-url/package.json: client entry points from HTML / vite / rollup / webpack config: packages/electron-url/src/renderer.js',
+      // Fix round 9a: an Expo config plugin and the source of the build it requires.
+      'acme/frameworks: packages/expo-plugin/package.json: Expo config plugin (app.plugin.*) and its source: packages/expo-plugin/app.plugin.js, packages/expo-plugin/plugin/src/index.ts',
       'acme/frameworks: packages/functions/package.json: Firebase Functions source (firebase.json); its exports are deployed functions: packages/functions/src/auth.ts, packages/functions/src/index.ts',
       'acme/frameworks: packages/nuxt-app/package.json: 3 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/nuxt-app/app/composables/useCounter.ts, packages/nuxt-app/nuxt.config.ts, packages/nuxt-app/server/api/health.ts',
       'acme/frameworks: packages/rn-lib/package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/rn-lib/src/Button.android.ts, packages/rn-lib/src/Button.ios.ts',
@@ -94,6 +96,7 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:acme/frameworks:@acme/distlayout-app', repo: 'acme/frameworks', path: 'packages/distlayout-app', manager: 'npm', name: '@acme/distlayout-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/distlayout-app/src/main.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/docs-site', repo: 'acme/frameworks', path: 'packages/docs-site', manager: 'npm', name: '@acme/docs-site', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/docs-site/docusaurus.config.ts","packages/docs-site/remark-plugin.ts","packages/docs-site/sidebars.ts","packages/docs-site/src/pages/index.ts","packages/docs-site/src/theme/Footer.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/electron-url', repo: 'acme/frameworks', path: 'packages/electron-url', manager: 'npm', name: '@acme/electron-url', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/electron-url/src/main.js","packages/electron-url/src/renderer.js"]' },
+      { package_id: 'npm:acme/frameworks:@acme/expo-plugin', repo: 'acme/frameworks', path: 'packages/expo-plugin', manager: 'npm', name: '@acme/expo-plugin', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/expo-plugin/app.plugin.js","packages/expo-plugin/plugin/src/index.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/functions', repo: 'acme/frameworks', path: 'packages/functions', manager: 'npm', name: '@acme/functions', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/functions/src/auth.ts","packages/functions/src/index.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/nuxt-app', repo: 'acme/frameworks', path: 'packages/nuxt-app', manager: 'npm', name: '@acme/nuxt-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/nuxt-app/app/composables/useCounter.ts","packages/nuxt-app/nuxt.config.ts","packages/nuxt-app/server/api/health.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/rn-lib', repo: 'acme/frameworks', path: 'packages/rn-lib', manager: 'npm', name: '@acme/rn-lib', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/rn-lib/src/Button.android.ts","packages/rn-lib/src/Button.ios.ts","packages/rn-lib/src/index.ts"]' },
@@ -144,6 +147,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       { consumer_package_id: 'npm:acme/frameworks:@acme/codemods', dep_name: 'jscodeshift', dep_manager: 'npm', dep_constraint: '^17', resolved_package_id: null, dev: 1, resolution: null, ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/distlayout-app', dep_name: '@acme/distlayout', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/frameworks:@acme/distlayout', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/docs-site', dep_name: '@docusaurus/core', dep_manager: 'npm', dep_constraint: '^3', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/expo-plugin', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/expo-plugin', dep_name: 'expo', dep_manager: 'npm', dep_constraint: '*', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/rn-lib', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/rn-lib', dep_name: 'react-native', dep_manager: 'npm', dep_constraint: '*', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/vp-docs', dep_name: 'vitepress', dep_manager: 'npm', dep_constraint: '^1', resolved_package_id: null, dev: 1, resolution: null, ambiguous: 0 },
@@ -992,7 +997,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 42 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 43 }]);
   });
 });
 
