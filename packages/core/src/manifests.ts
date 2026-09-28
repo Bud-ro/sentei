@@ -639,7 +639,10 @@ export function readNpmPackage(
   // Expo config plugins: Expo loads `app.plugin.js` by path and calls its default export.
   const expo = expoConfigPluginEntries(repoRoot, dir, files, layout);
   if (expo.length > 0) log(`${manifest}: Expo config plugin (app.plugin.*) and its source: ${expo.join(', ')}`);
-  const conventionAll = [...new Set([...conventionEntryPoints(repoRoot, dir, files, depNames, scripts), ...firebase, ...expo])].sort(cmp);
+  // A React Native app: Metro starts at the root index.js (AppRegistry.registerComponent).
+  const rnApp = reactNativeAppEntries(dir, files, depNames);
+  if (rnApp.length > 0) log(`${manifest}: React Native app entries: ${rnApp.join(', ')}`);
+  const conventionAll = [...new Set([...conventionEntryPoints(repoRoot, dir, files, depNames, scripts), ...firebase, ...expo, ...rnApp])].sort(cmp);
   const runtimeEntrySymbols = [...new Set([
     ...wranglerRuntimeClasses(repoRoot, dir, files),
     // jscodeshift reads a transform module's `parser` export by name.
@@ -648,7 +651,7 @@ export function readNpmPackage(
     ...terraformEntryPoints(repoRoot, files),
   ])].sort(cmp);
   const convention = conventionAll.filter((f) => !resolved.entryPoints.includes(f) && !clientAll.includes(f));
-  const conventionLog = convention.filter((f) => !firebase.includes(f) && !expo.includes(f)); // (logged above)
+  const conventionLog = convention.filter((f) => !firebase.includes(f) && !expo.includes(f) && !rnApp.includes(f)); // (logged above)
   if (conventionLog.length > 0) {
     log(`${manifest}: ${conventionLog.length} runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): ${
       conventionLog.slice(0, 5).join(', ')}${conventionLog.length > 5 ? ', ...' : ''}`);
@@ -661,10 +664,11 @@ export function readNpmPackage(
   // makes it a runtime entry.
   // A Firebase Functions main is both: surface as declared, and loaded by the runtime,
   // which uses every export (ingest: entry symbols, never a verdict). So is an Expo
-  // config plugin's `app.plugin.js` (an `exports` leaf Expo loads by path).
+  // config plugin's `app.plugin.js` (an `exports` leaf Expo loads by path), and a React
+  // Native app's `main: index.js`, which Metro runs.
   const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll, ...conventionAll])]
     .filter((f) => f === resolved.fallback || resolved.layoutOnly.includes(f) || !resolved.surface.includes(f)
-      || firebase.includes(f) || expo.includes(f)).sort(cmp);
+      || firebase.includes(f) || expo.includes(f) || rnApp.includes(f)).sort(cmp);
   return {
     manager: 'npm',
     name,
@@ -729,6 +733,24 @@ export function expoConfigPluginEntries(
     }
   }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/** The files a React Native app starts from, package-root only (reactNativeAppEntries). */
+const RN_APP_ENTRY = /^(?:index|App)\.(?:[cm]?js|jsx|tsx?)$/;
+
+/**
+ * A React Native app's entries (repo-relative, sorted): the root `index.js` (also
+ * `.jsx` / `.ts` / `.tsx`), where Metro starts (`AppRegistry.registerComponent(appName,
+ * () => App)`, no exports: RNGoogleMobileAdsExample), and the root `App.tsx` (`.ts` /
+ * `.js` / `.jsx`) it or Expo's `AppEntry` registers. For a package that declares
+ * `react-native` or `expo` (any block) or has an `app.json` at its root. Its imports then
+ * count as uses of org packages, as for any entry. A declared `main: index.js` stays
+ * surface too (like a Firebase main). Existence-checked: it only adds runtime entries.
+ */
+export function reactNativeAppEntries(dir: string, repoFiles: readonly string[], deps: ReadonlySet<string>): string[] {
+  const pkgFiles = packageFiles(dir, repoFiles);
+  if (!deps.has('react-native') && !deps.has('expo') && !pkgFiles.includes('app.json')) return [];
+  return pkgFiles.filter((f) => RN_APP_ENTRY.test(f) && !/\.d\.[cm]?ts$/.test(f)).map((f) => joinRel(dir, f)).sort(cmp);
 }
 
 /** Per repo file list: the package dirs firebase.json files name as Functions sources. */

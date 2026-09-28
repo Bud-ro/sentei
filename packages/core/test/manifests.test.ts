@@ -1287,8 +1287,32 @@ describe('npm manifests', () => {
     write('web/x.web.js');
     const by = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
     expect(by.get('rn')!.runtimeEntryPoints).toEqual(['lib/AppleButton.android.js', 'lib/AppleButton.ios.js', 'lib/AppleButton.macos.js']);
-    expect(by.get('expo-app')!.runtimeEntryPoints).toEqual(['app/index.web.js']);
+    // Since fix round 9a the app's declared main is a runtime entry too (reactNativeAppEntries).
+    expect(by.get('expo-app')!.runtimeEntryPoints).toEqual(['app/index.js', 'app/index.web.js']);
     expect(by.get('web')!.runtimeEntryPoints).toEqual([]);
+  });
+
+  it('a React Native app: the root index.js (AppRegistry, no exports) and App.tsx are runtime entries', () => {
+    // RNGoogleMobileAdsExample: no main, index.js registers App; react-native dependency.
+    pkgJson('mobile/package.json', { name: 'RNExample', private: true, dependencies: { 'react-native': '0.86.0', 'rn-lib': '*' } });
+    write('mobile/index.js', "import { AppRegistry } from 'react-native';\nimport App from './App';\nAppRegistry.registerComponent('x', () => App);\n");
+    write('mobile/App.tsx', 'export default function App() { return null; }\n');
+    write('mobile/src/screens/Home.tsx');
+    write('mobile/index.d.ts');
+    // An app.json beside index.js is enough (no react-native dependency declared).
+    pkgJson('bare/package.json', { name: 'bare', private: true, dependencies: { 'left-pad': '*' } });
+    write('bare/app.json', '{ "name": "bare" }');
+    write('bare/index.js');
+    // Not React Native: index.js stays the index fallback, a surface guess, not a runtime entry.
+    pkgJson('web/package.json', { name: 'web', private: true, dependencies: { react: '*' } });
+    write('web/index.js');
+    write('web/App.js');
+    const by = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(by.get('RNExample')!.runtimeEntryPoints).toEqual(['mobile/App.tsx', 'mobile/index.js']);
+    expect(by.get('RNExample')!.entryPoints).toEqual(['mobile/App.tsx', 'mobile/index.js']);
+    expect(by.get('bare')!.runtimeEntryPoints).toEqual(['bare/index.js']);
+    expect(by.get('web')!.runtimeEntryPoints).toEqual([]);
+    expect(by.get('web')!.entryPoints).toEqual(['web/index.js']);
   });
 
   it('templates are never packages: Nx generator files/, __brick__, .template, a templated name', () => {
