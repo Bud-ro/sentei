@@ -815,14 +815,28 @@ const PROGRAM_EXT = /(?<!\.d)\.(?:[cm]?[jt]s|[jt]sx)$/;
  * can load (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`, not `.d.ts`).
  * These are the runtime entries scip-typescript would otherwise not index. Sorted.
  */
-export function filesOutsidePrograms(tsconfig: string, pkgDir: string, candidates: readonly string[]): string[] {
+export function filesOutsidePrograms(
+  tsconfig: string, pkgDir: string, candidates: readonly string[], opts: { declarations?: boolean } = {},
+): string[] {
   assertTypescript5();
   const specs = createPrograms({ tsconfig, pkgDir, repoRoot: pkgDir, entryPoints: [] }, []);
   if (specs === undefined) return []; // an unreadable tsconfig: scip-typescript reports it
   const roots = new Set(specs.flatMap((s) => s.rootNames.map((f) => path.resolve(f))));
   return [...new Set(candidates.map((f) => path.resolve(f)))]
-    .filter((f) => PROGRAM_EXT.test(f) && !roots.has(f) && existsSync(f))
+    .filter((f) => (PROGRAM_EXT.test(f) || (opts.declarations === true && /\.d\.[cm]?ts$/.test(f))) && !roots.has(f) && existsSync(f))
     .sort(cmp);
+}
+
+/**
+ * Whether a tsconfig has project `references` (read without `extends`, which does not
+ * carry them): a solution-style config (`"files": []` + references, astro's packages) or
+ * a mixed one. Its entries that no referenced project includes are indexed through the
+ * runtime tsconfig (scip-typescript.ts writeRuntimeTsconfig, round 9b).
+ */
+export function hasProjectReferences(tsconfig: string): boolean {
+  const read = ts.readConfigFile(tsconfig, ts.sys.readFile);
+  const refs = (read.config as { references?: unknown } | undefined)?.references;
+  return Array.isArray(refs) && refs.length > 0;
 }
 
 /**

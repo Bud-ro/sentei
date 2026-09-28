@@ -517,7 +517,9 @@ function runtimeEntryPointsOf(pkg: DiscoveredPackage): string[] {
  * `next.config.*` / middleware, `bin`, `imports` arms, client entries) is a file
  * TypeScript can load that no program of the package's tsconfig has (a
  * `scripts/serve.mjs` beside `include: ["src"]`), and so is a Next.js app-router file
- * under a dot directory of `app/` (nextDotDirEntries). It `extends` the package tsconfig
+ * under a dot directory of `app/` (nextDotDirEntries), or, when the tsconfig has project
+ * references (a solution-style `files: []` + `references`), a surface entry (declaration
+ * files included) that no referenced project includes. It `extends` the package tsconfig
  * (same paths, module resolution, typings), sets `allowJs`, and lists exactly those
  * files (`include: []`), so scip-typescript indexes them as one more project and their
  * references to the package's own code count. Returns its absolute path, or undefined
@@ -532,20 +534,36 @@ async function writeRuntimeTsconfig(
   if (!existsSync(tsconfig)) return undefined;
   const inside = (abs: string, d: string): boolean => abs.startsWith(d + path.sep);
   // Loaded only here: the orchestrator otherwise never holds the compiler.
-  const { filesOutsidePrograms, nextDotDirEntries } = await import('./export-surface.ts');
+  const { filesOutsidePrograms, hasProjectReferences, nextDotDirEntries } = await import('./export-surface.ts');
+  const own = (abs: string): boolean => inside(abs, dir) && !nested.some((d) => inside(abs, d)) && !abs.split(path.sep).includes('node_modules');
+  const runtime = runtimeEntryPointsOf(pkg);
   const candidates = [
-    ...runtimeEntryPointsOf(pkg).map((f) => path.resolve(repoRoot, ...f.split('/'))),
+    ...runtime.map((f) => path.resolve(repoRoot, ...f.split('/'))),
     // Next.js app-router files under a dot directory (`app/.well-known/jwks.json/route.ts`):
     // Next serves them, TypeScript's `**/*` skips them (round 9b).
     ...nextDotDirEntries(dir, nested),
-  ].filter((abs) => inside(abs, dir) && !nested.some((d) => inside(abs, d)) && !abs.split(path.sep).includes('node_modules'));
-  if (candidates.length === 0) return undefined;
-  const outside = filesOutsidePrograms(tsconfig, dir, candidates);
-  if (outside.length === 0) return undefined;
+  ].filter(own);
+  // Surface entries of a tsconfig with project references (astro's solution-style
+  // `files` + `references`) that no referenced project includes (round 9b): indexed with
+  // the package tsconfig's options instead of leaving the surface unknown (partial).
+  // Declaration entries (`client.d.ts`, `types.d.ts`) too: their declarations are the surface.
+  const surface = hasProjectReferences(tsconfig)
+    ? pkg.entryPoints.filter((e) => !runtime.includes(e)).map((f) => path.resolve(repoRoot, ...f.split('/'))).filter(own)
+    : [];
+  if (candidates.length === 0 && surface.length === 0) return undefined;
+  const outside = candidates.length > 0 ? filesOutsidePrograms(tsconfig, dir, candidates) : [];
+  const outsideSurface = surface.length > 0 ? filesOutsidePrograms(tsconfig, dir, surface, { declarations: true }).filter((f) => !outside.includes(f)) : [];
+  if (outside.length === 0 && outsideSurface.length === 0) return undefined;
   const rel = (abs: string): string => `./${path.relative(dir, abs).split(path.sep).join('/')}`;
-  const config = { extends: './tsconfig.json', compilerOptions: { allowJs: true }, include: [], files: outside.map(rel) };
+  const files = [...outside, ...outsideSurface].sort();
+  const config = { extends: './tsconfig.json', compilerOptions: { allowJs: true }, include: [], files: files.map(rel) };
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
-  diagnostics.push(`info: ${outside.length} runtime entry point(s) outside the tsconfig program indexed through ${RUNTIME_TSCONFIG}: ${outside.map((f) => rel(f).slice(2)).join(', ')}`);
+  if (outside.length > 0) {
+    diagnostics.push(`info: ${outside.length} runtime entry point(s) outside the tsconfig program indexed through ${RUNTIME_TSCONFIG}: ${outside.map((f) => rel(f).slice(2)).join(', ')}`);
+  }
+  if (outsideSurface.length > 0) {
+    diagnostics.push(`info: ${outsideSurface.length} entry point(s) in no project of the solution-style tsconfig (project references) indexed through ${RUNTIME_TSCONFIG}: ${outsideSurface.map((f) => rel(f).slice(2)).join(', ')}`);
+  }
   return file;
 }
 

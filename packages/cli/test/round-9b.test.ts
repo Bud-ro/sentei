@@ -3,13 +3,16 @@
 // directories (`app/.well-known/jwks.json/route.ts`), solution-style tsconfigs whose
 // entries are in no program (astro), and an `extends` that cannot be resolved
 // (very_good_workflows' docs site).
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { importedNames } from '../src/indexers/consumer-checks.ts';
 import { computeExportSurface, nextDotDirEntries } from '../src/indexers/export-surface.ts';
+import { readScipIndex } from '@sentei/core/scip';
+import { RUNTIME_TSCONFIG, scipTypescript } from '../src/indexers/scip-typescript.ts';
+import type { DiscoveredPackage, DiscoveredRepo, ExportsSidecar, IndexerInput } from '../src/indexers/types.ts';
 
 let root: string;
 
@@ -125,4 +128,50 @@ describe('Next.js app-router files under a dot directory (docs.page app/.well-kn
     write('not-next', { 'package.json': { name: 'x', version: '1.0.0' }, 'app/.well-known/route.ts': `export function GET() {}\n` });
     expect(nextDotDirEntries(path.join(root, 'repos/not-next'))).toEqual([]);
   });
+});
+
+/** The adapter on a one-package repo (installs off): writes `files`, returns its input. */
+function adapterInput(repo: string, files: Record<string, string | object>, pkg: Partial<DiscoveredPackage> = {}): IndexerInput {
+  write(repo, files);
+  const p: DiscoveredPackage = { packageId: `npm:acme/${repo}:${repo}`, path: '.', manager: 'npm', name: repo, version: '1.0.0', entryPoints: [], deps: [], ...pkg };
+  const r: DiscoveredRepo = { repo: `acme/${repo}`, localPath: path.join(root, 'repos', repo), headSha: null, packages: [p] };
+  return { repo: r, pkg: p, lookup: () => undefined, orgPackages: [{ repo: r, pkg: p }], options: { install: false, maxOldSpaceMb: 2048 } };
+}
+async function runAdapter(inp: IndexerInput) {
+  const out = path.join(root, `out-${inp.pkg.name}`);
+  mkdirSync(out, { recursive: true });
+  const r = await scipTypescript.run(inp, out);
+  return { ...r, sidecar: JSON.parse(readFileSync(r.exportsFile, 'utf8')) as ExportsSidecar, docs: readScipIndex(r.scipFile).documents.map((d) => d.relativePath).sort() };
+}
+
+describe('solution-style tsconfigs: entries in no referenced project (astro packages/astro)', () => {
+  const opts = { strict: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler', noEmit: true, skipLibCheck: true, types: [] };
+  const sources = {
+    'package.json': { name: 'solution', version: '1.0.0' },
+    'tsconfig.build.json': { compilerOptions: opts, include: ['src'] },
+    'src/index.ts': `export const main = 1;\n`,
+    'components/index.ts': `export function component() { return 1; }\n`,
+    'types.d.ts': `export type Tag = 'a';\n`,
+  };
+  const entries = { entryPoints: ['src/index.ts', 'components/index.ts', 'types.d.ts'] };
+
+  it('are indexed through the runtime tsconfig with the package options: surface known, status ok', async () => {
+    const r = await runAdapter(adapterInput('solution', {
+      ...sources, 'tsconfig.json': { compilerOptions: opts, files: [], references: [{ path: './tsconfig.build.json' }] },
+    }, entries));
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(r.diagnostics).toContain(`info: 2 entry point(s) in no project of the solution-style tsconfig (project references) indexed through ${RUNTIME_TSCONFIG}: components/index.ts, types.d.ts`);
+    expect(r.docs).toEqual(['components/index.ts', 'src/index.ts', 'types.d.ts']);
+    expect(r.sidecar.exports.map((e) => `${e.entry}#${e.exportedAs}`)).toEqual(['components/index.ts#component', 'src/index.ts#main', 'types.d.ts#Tag']);
+    expect(r.sidecar.missingEntryPoints).toEqual([]);
+    expect(existsSync(path.join(root, 'repos/solution', RUNTIME_TSCONFIG))).toBe(false); // removed after the run
+  }, 120_000);
+
+  it('negative: without project references an entry outside the program still leaves the surface unknown (partial)', async () => {
+    const r = await runAdapter(adapterInput('plain', {
+      ...sources, 'package.json': { name: 'plain', version: '1.0.0' }, 'tsconfig.json': { compilerOptions: opts, include: ['src'] },
+    }, entries));
+    expect(r.status).toBe('partial');
+    expect(r.diagnostics.at(-1)).toBe('cause: warn: entry point(s) not in the TypeScript program, export surface unknown: components/index.ts, types.d.ts');
+  }, 120_000);
 });

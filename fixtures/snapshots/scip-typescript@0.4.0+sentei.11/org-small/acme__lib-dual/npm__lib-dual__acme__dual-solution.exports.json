@@ -1,0 +1,48 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-solution/components/index.ts",
+    "packages/dual-solution/src/index.ts",
+    "packages/dual-solution/types.d.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 12,
+      "entry": "packages/dual-solution/types.d.ts",
+      "exportedAs": "SolutionTag",
+      "file": "packages/dual-solution/types.d.ts",
+      "line": 3,
+      "name": "SolutionTag",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual-solution/components/index.ts",
+      "exportedAs": "componentUnused",
+      "file": "packages/dual-solution/components/index.ts",
+      "line": 4,
+      "name": "componentUnused",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual-solution/src/index.ts",
+      "exportedAs": "solutionUnused",
+      "file": "packages/dual-solution/src/index.ts",
+      "line": 3,
+      "name": "solutionUnused",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-solution",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

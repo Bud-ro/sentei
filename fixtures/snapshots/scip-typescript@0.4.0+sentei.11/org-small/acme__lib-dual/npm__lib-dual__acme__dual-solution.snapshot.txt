@@ -1,0 +1,31 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## components/index.ts
+  // The `./components` entry: in no project of the solution-style tsconfig (astro's
+//^ definition scip-typescript npm @acme/dual-solution . components/`index.ts`/ enclosing [4:0-7:0]
+  // components/index.ts); indexed through the runtime tsconfig.
+
+  // Expected: deletion_candidate (private, nothing uses it).
+  export function componentUnused(): string {
+//                ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-solution . components/`index.ts`/componentUnused(). enclosing [4:0-6:1]
+    return 'component';
+  }
+
+## src/index.ts
+  // The `.` entry, in the referenced tsconfig.build.json.
+//^ definition scip-typescript npm @acme/dual-solution . src/`index.ts`/ enclosing [3:0-6:0]
+
+  // Expected: deletion_candidate (private, nothing uses it).
+  export function solutionUnused(): number {
+//                ^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-solution . src/`index.ts`/solutionUnused(). enclosing [3:0-5:1]
+    return 1;
+  }
+
+## types.d.ts
+  // The `./types` entry: a hand-written declaration file in no project (astro's types.d.ts).
+//^ definition scip-typescript npm @acme/dual-solution . `types.d.ts`/ enclosing [3:0-4:0]
+
+  // Expected: deletion_candidate (private, nothing uses it).
+  export type SolutionTag = 'a' | 'b';
+//            ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-solution . `types.d.ts`/SolutionTag# enclosing [3:0-3:36]

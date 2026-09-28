@@ -1,0 +1,13 @@
+{
+  // Solution-style (astro's packages): no files of its own, the sources in a reference.
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "files": [],
+  "references": [{ "path": "./tsconfig.build.json" }]
+}
