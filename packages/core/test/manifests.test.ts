@@ -730,6 +730,13 @@ describe('npm manifests', () => {
     expect(electronHtmlRefs("w.loadFile('./ui/index.html'); w.loadURL('file://' + __dirname + '/b.html'); w.loadURL('https://x.y/c.html'); w.loadFile(page)"))
       .toEqual(['ui/index.html', 'b.html']);
     expect(electronHtmlRefs('no windows here')).toEqual([]);
+    // bluefireteam SpritesheetMapper: url.format({ pathname: path.join(__dirname, 'index.html') }) over several lines.
+    expect(electronHtmlRefs('win.loadURL(url.format({\n    pathname: path.join(__dirname, "index.html"),\n    protocol: "file:",\n    slashes: true\n  }));'))
+      .toEqual(['index.html']);
+    expect(electronHtmlRefs("w.loadURL('file://' + path.join(__dirname, 'ui', 'app.html'))")).toEqual(['ui/app.html']);
+    expect(webpackEntries("entry: path.resolve(__dirname, 'src/main.ts'), output: { filename: 'x.js' }"))
+      .toEqual([{ name: 'main', path: 'src/main.ts' }]);
+    expect(webpackEntries('entry: getEntries()')).toEqual([]);
   });
 
   it('package.json imports: every condition target that resolves to local code is an entry point (ocache #crypto)', () => {

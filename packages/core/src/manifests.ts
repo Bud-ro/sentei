@@ -1199,15 +1199,33 @@ export function inlineScriptRefs(body: string): string[] {
 /**
  * HTML files an Electron main process opens by path, as written: the `.html` literal of
  * `loadFile('…')`, and the path after `file://`, `${__dirname}` or `__dirname + '` in
- * `loadURL(…)` (`loadURL(`file://${__dirname}/app/index.html`)` → `app/index.html`).
+ * `loadURL(…)` (`loadURL(`file://${__dirname}/app/index.html`)` → `app/index.html`), or the
+ * `path.join(__dirname, …)` segments anywhere in its argument (`loadURL(url.format({
+ * pathname: path.join(__dirname, 'index.html'), protocol: 'file:' }))`, over several lines).
  */
 export function electronHtmlRefs(text: string): string[] {
   if (!/\bload(?:File|URL)\s*\(/.test(text)) return [];
   const out: string[] = [];
   for (const m of text.matchAll(/\bloadFile\s*\(\s*(['"`])([^'"`$\n]+\.html?)\1/g)) out.push(m[2]!.replace(/^\.\//, ''));
-  for (const m of text.matchAll(/\bloadURL\s*\(([^)\n]*)\)/g)) {
-    const arg = m[1]!;
+  for (const m of text.matchAll(/\bloadURL\s*\(/g)) {
+    // The whole argument, across lines and nested calls (`url.format({ pathname:
+    // path.join(__dirname, 'index.html'), protocol: 'file:' })`), at most 2000 chars.
+    let depth = 1;
+    let end = m.index + m[0].length;
+    for (; end < text.length && end - m.index < 2000 && depth > 0; end += 1) {
+      if (text[end] === '(') depth += 1;
+      else if (text[end] === ')') depth -= 1;
+    }
+    const arg = text.slice(m.index + m[0].length, end - 1);
     if (!/file:|__dirname/.test(arg)) continue;
+    // `path.join(__dirname, 'app', 'index.html')`: the joined segments.
+    const joined = [...arg.matchAll(/\b(?:join|resolve)\(\s*__dirname\s*((?:,\s*(['"`])[^'"`$\n]+\2\s*)+)\)/g)]
+      .map((j) => posix.join(...[...j[1]!.matchAll(/(['"`])([^'"`$\n]+)\1/g)].map((x) => x[2]!)))
+      .filter((p) => /\.html?$/.test(p));
+    if (joined.length > 0) {
+      out.push(...joined.map((p) => p.replace(/^\.\//, '')));
+      continue;
+    }
     const tail = /(?:file:\/\/|\}|['"`])\/?((?:[\w.-]+\/)*[\w.-]+\.html?)\b/.exec(arg);
     if (tail) out.push(tail[1]!.replace(/^\.\//, ''));
   }
