@@ -3545,6 +3545,111 @@ simulated as described above; the dart-surface re-runs used the clones' existing
 
 ## Phase 3 (2026-09-27): decisions from Budro
 
+1. **`blame` never runs without a full clone.** The blame stage used to
+   unshallow every shallow clone (a fetch of the whole history: most of the
+   1280 s dart-lang blame) and then blame. Now blame runs only on checkouts whose
+   `git rev-parse --is-shallow-repository` is `false`; shallow repos are skipped
+   with one log line each and one summary line, and their symbols are treated as
+   **infinitely old**: `symbol_age_ok` passes a symbol whose age is unknown. Git
+   history is never fetched implicitly. Shallow cloning stays the default; full
+   clones are an explicit opt-in (`repos.clone: "full"`, `--full-clone`), and the
+   lockfile records per repo which one the checkout is. Using `minAgeDays` > 0
+   with shallow repos is loudly documented and warned about (blame and analyze
+   `warn:` lines, a report `!! WARNING`, and `minAgeDays=180 (applied to K of M
+   repos)` on the summary's policy line). Parallel blame (`--clone-concurrency`)
+   and the token handling (env header only) stay as they were.
+
+### Phase 3: blame only on full clones
+
+**Cloning (git.ts, github.ts).** `ensureClone({ full })` clones without
+`--depth` (still `--single-branch --no-tags`, `GIT_LFS_SKIP_SMUDGE=1`, not
+blobless: a blobless clone would make blame fetch every blob it reads). An
+existing shallow checkout is upgraded with `git fetch --unshallow --no-tags
+origin` when `full` is asked for (status `updated`, even when HEAD is already
+at the pinned sha). An existing full checkout is reused for a shallow request
+(a superset): pinning a new sha then fetches without `--depth` (or not at all
+when the commit is already present), because `fetch --depth=1` into a full
+repo would graft it shallow again. `ensureClone` returns `{ status, full }`;
+`cloneRepos` passes it on, and `discoverGithub` writes `clone: "full" |
+"shallow"` per repo into the lockfile (next to `cloneError`, rewritten only
+when it changed) and into discover.json (`repos[].clone`, informational: blame
+asks git). The mode is `--full-clone` (discover/run with `--org` only; a usage
+error elsewhere), else `repos.clone` in the org sentei.json, else `shallow`.
+`sentei repos` prints `cloned (last discover): K full, S shallow[, U not
+recorded]` with a `--full-clone` hint when S > 0; `--json` rows carry `clone`.
+The lockfile format stays version 3: `clone` is an optional per-repo key, and
+older readers ignore unknown keys.
+
+**Blame (blame.ts).** Per analysed repo (every row of `repos`, not only repos
+with target symbols): no discover entry / no `.git` / a failing or odd
+`--is-shallow-repository` → history `none` (logged and counted as skipped only
+when the repo has targets); `true` → `shallow`: one line `[blame] <repo>:
+shallow clone, not blamed: N symbol age(s) unknown, treated as old enough (pass
+--full-clone ...)`, no cache read, no fetch, no blame, no token lookup;
+`false` → `full`, blamed exactly as before (cache first, then one `git blame`
+per file, repos `--clone-concurrency` at a time sharing one pool of 8 blame
+processes). A cache for a shallow repo is not used even when complete: a
+shallow repo is undated, full stop, so the report's counts mean what they say.
+The token is now only needed for a partial clone's promisor blob fetches.
+Summary: `[blame] N symbol(s): a blamed, b cached, c undated (d shallow, ...);
+e repo(s) skipped` and `[blame] S of M repo(s) are shallow clones: not blamed
+(never unshallowed), their d symbol(s) have unknown ages, treated as old
+enough; pass --full-clone (repos.clone: "full") to date symbols`.
+`BlameCounts` gained `shallowRepos`. `ensureFullHistory` is gone.
+
+**Age rule (analyze.sql).** `symbol_age_ok` passes `first_seen_at IS NULL`
+whenever `minAgeDays` is set: shallow clones, repos without git history, and
+single lines blame could not date (beyond the file, a failed promisor fetch)
+alike, as the decision says ("blame row absent / NULL"). A missing `minAgeDays`
+still passes nothing, and a dated symbol still needs `now`. This reverses the
+previous fail-closed reading of unknown ages; the warnings below are what keeps
+it honest.
+
+**Coverage and warnings.** New additive table `repo_history (repo, history
+'full' | 'shallow' | 'none')`, a cascade child of `repos` (so discover resets
+it), rewritten by every blame run. `ageCoverage(db)` counts, over repos that
+export at least one symbol (apps have nothing for the age rule to gate):
+`full` (repo_history `full` and at least one dated exported symbol), `shallow`,
+`noHistory`, `notBlamed` (no row, or `full` with nothing dated: ingest resets
+every age, so blame was not rerun after it), plus exported symbols dated /
+undated in shallow repos / undated otherwise. `minAgeWarning` is null when
+`minAgeDays` is 0 or missing or every counted repo is full; otherwise e.g.
+`minAgeDays=180 has no effect on 30 of 33 repos (shallow clones: symbol ages
+unknown, treated as old enough); pass --full-clone (repos.clone: "full") to
+date symbols` (mixed causes are listed with counts). blame prints it as
+`[blame] warn: ...`, the analyze stage as `[analyze] warn: ...` (`--quiet`
+now keeps `warn:` lines), and the report adds it to `warnings` (the `!!
+WARNING` banner, and SARIF like every warning). report.json gains
+`ageCoverage`; the summary's policy line reads `minAgeDays=180 (applied to K
+of M repos)` and, with minAgeDays > 0, a `blame: D of E exported symbol(s)
+dated; U undated in shallow clones, O undated otherwise (unknown ages count as
+old enough)` line follows it.
+
+**Tests.** git.test: full-clone argv and shallow→full upgrade on a fake git
+(no `--depth=1`, `fetch --unshallow`, no fetch without `full`), and on real
+`file://` repos (full clone pinned to an older sha, full kept full for a
+shallow request, shallow upgraded). github.test: repos.clone / `clone:
+'full'` through discoverGithub with real clones, lockfile round-trip and
+validation of `clone`. repo-select.test: `repos.clone` parsing. main.test:
+`--full-clone` validation, discover `--full-clone` → lockfile, discover.json
+and `sentei repos` (table and JSON), the analyze stage's `warn:` line.
+blame.test: a real `--depth=1` clone is not blamed or fetched (even with a
+complete cache), its stale ages are reset, one line, the summary and warning;
+a fake org with alternating shallow repos (no blame or fetch argv for them,
+full ones dated, no token lookup for an all-shallow org); full clones in
+parallel as before; repo_history rows for repos with and without targets;
+ageCoverage / minAgeWarning unit cases. analyze.test: NULL age passes with
+minAgeDays 180. report.test: warning, policy and blame lines with a shallow
+repo, none with minAgeDays 0 or every repo dated. schema.test: repo_history
+CHECK, FK and cascade. The org-small / org-dup / org-dart fixtures are plain
+directories (history `none`) with `minAgeDays: 0`, so their findings and
+summaries do not change.
+
+**Not verified:** a real `--full-clone` run against GitHub (network clones and
+`fetch --unshallow` over https are only exercised against local `file://`
+repos) and its cost on a large org; the dart-lang timing with shallow repos
+skipped (expected: blame in seconds, since it now only runs `rev-parse`).
+
 2. **`closedOrg` replaces `org_dead`; `deprecate` stays the default.** "For the
    purposes of evaluation it's okay to stop using `org_dead` (it actually takes
    away info). `deprecate` is ostensibly the correct default setting unless the

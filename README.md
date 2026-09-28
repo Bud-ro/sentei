@@ -146,7 +146,7 @@ S="node packages/cli/src/main.ts"
 $S discover --org unjs --lockfile fixtures/orgs/unjs.lock.json   # list (lockfile written on first run, read after), shallow-clone
 $S index      # SCIP indexes per package (cached by head sha; --force, --retry-failed, --no-install)
 $S ingest     # load .scip files into work/sentei.db
-$S blame      # first-seen dates for exported symbols (unshallows clones, --clone-concurrency at a time)
+$S blame      # first-seen dates for exported symbols (full clones only, see below; --clone-concurrency at a time)
 $S analyze    # reachability + verdicts
 $S witness    # text-search check: witnessed candidates become deletion/deprecation candidates
 $S report     # report.json, SARIF, summary on stdout (--view delete,... to pick views)
@@ -158,7 +158,9 @@ $S run --org unjs --lockfile fixtures/orgs/unjs.lock.json
 `repos/<name>/`, see `fixtures/org-small`). Useful options: `--work <dir>`
 (default `./work`), `--db <file>` (default `<work>/sentei.db`), `--include/--exclude <glob>`,
 `--include-forks`, `--include-archived`, `--clone-concurrency <n>` (parallel clones,
-and repos unshallowed and blamed at once by `blame`),
+and repos blamed at once by `blame`), `--full-clone` (discover/run `--org`: clone
+whole histories so `blame` can date symbols for `minAgeDays`, see
+[Shallow or full clones](#shallow-or-full-clones-symbol-ages)),
 `--allow-clone-failures` (see [Choosing repos](#choosing-repos)),
 `--update-lockfile`, `--config-dir <dir>` (where the org `sentei.json` lives;
 default the cwd if it has one), `--max-old-space-mb <n>`, `--quiet`, `--verbose`.
@@ -195,7 +197,8 @@ it. `--update-lockfile` relists (new repos, new head shas). The lockfile
 full-history size, `pushedAt`, fork/archived/template), what the git tree probe
 found (`manifests`: every `package.json` / `pubspec.yaml` path, `headTreeKb`: the
 HEAD size, `probe`: `tree`, `truncated` or `root`), the pinned `headSha`, the
-decision (`selected`, `reasons`) and the last `cloneError`; its `selection` header
+decision (`selected`, `reasons`), the last `cloneError` and, after a clone, `clone`
+(`"full"` or `"shallow"`: the checkout's history, which `sentei repos` sums up); its `selection` header
 records the settings used, and `excluded` lists every excluded repo with its reason
 and manifests, for auditing what was skipped. When the settings change, the
 decisions are recomputed from the recorded facts (pins kept) and the API is only
@@ -254,7 +257,8 @@ Org `sentei.json`:
     "includeForks": false,
     "includeArchived": false,
     "probe": true,
-    "cloneConcurrency": 8
+    "cloneConcurrency": 8,
+    "clone": "shallow"
   }
 }
 ```
@@ -269,6 +273,7 @@ Org `sentei.json`:
 | `includeForks` / `includeArchived` | false | overridden by `--include-forks` / `--include-archived` (and `--no-…`) |
 | `probe` | true | read each candidate's git tree (manifests anywhere, HEAD size); `false`: language and API size only, no per-repo requests before pinning |
 | `cloneConcurrency` | 8 | parallel clones; overridden by `--clone-concurrency` (1–32) |
+| `clone` | `"shallow"` | `"shallow"` (`--depth=1`: fast, but symbol ages are unknown and `minAgeDays` has no effect) or `"full"` (whole history, so `blame` dates symbols); `--full-clone` sets `"full"`, see [Shallow or full clones](#shallow-or-full-clones-symbol-ages) |
 
 CLI flags override the config: `--include`/`--exclude` rank above
 `repos.include`/`repos.exclude` (rule 1), the boolean flags replace the config
@@ -277,9 +282,11 @@ values.
 ### Cloning
 
 Selected repos are cloned in parallel (`--clone-concurrency`, default 8) with
-`git clone --depth=1 --single-branch --no-tags` and `GIT_LFS_SKIP_SMUDGE=1` (LFS
+`git clone --depth=1 --single-branch --no-tags` (without `--depth=1` for
+[full clones](#shallow-or-full-clones-symbol-ages)) and `GIT_LFS_SKIP_SMUDGE=1` (LFS
 objects are never downloaded), then pinned to the lockfile's sha. Existing
-clones at the right sha are reused. Progress looks like
+clones at the right sha are reused (a full clone also for a shallow request).
+Progress looks like
 `[discover] cloned 37/100 (12 cached) 4.2 MB/s avg, slowest: big-repo 48 s`, and
 discover ends with the ten slowest clones and their sizes: if one of them is not
 worth analysing, add it to `repos.exclude`.
@@ -291,6 +298,40 @@ that could not be cloned; rerunning retries only those. With
 (`discover.json` lists them under `source.cloneFailures`). Every package in a
 skipped repo is then unknown to the run: its uses of other org packages are not
 counted, so exports only it uses can be reported as dead.
+
+### Shallow or full clones (symbol ages)
+
+`minAgeDays` (default 180) keeps young exports out of every verdict: a symbol is
+only a candidate once the last edit of its definition line (`git blame`) is at
+least that many days old. Dating needs the repo's history, and **clones are
+shallow by default** (`--depth=1`: one commit, the fastest clone), so by default
+sentei does not know symbol ages:
+
+- `blame` runs only on checkouts with full history (`git rev-parse
+  --is-shallow-repository` is `false`). A shallow repo is skipped with one line
+  (`[blame] acme/app: shallow clone, not blamed: ...`) and a summary line; its
+  history is never fetched implicitly.
+- A symbol whose age is unknown (a shallow clone, a directory without git
+  history, a line blame could not date) is treated as **old enough**: for that
+  repo `minAgeDays` has no effect, and a symbol added yesterday can be a
+  candidate.
+- Whenever `minAgeDays` > 0 and some repo that exports symbols is not dated
+  (a shallow clone, no git history, or `blame` not rerun after `ingest`), `blame`
+  and `analyze` print a `warn:` line and the report a `!! WARNING`, e.g.
+  `minAgeDays=180 has no effect on 30 of 33 repos (shallow clones: symbol ages
+  unknown, treated as old enough); pass --full-clone (repos.clone: "full") to date
+  symbols`, and the summary's policy line says `minAgeDays=180 (applied to 3 of
+  33 repos)`. Repos without exports (apps) are not counted.
+
+To date symbols, clone with full history: `discover --full-clone` (or `run
+--full-clone`), or `"repos": { "clone": "full" }` in the org `sentei.json`. It
+costs the whole history of every selected repo: far more data and time than a
+shallow clone for old, busy repos (unshallowing dart-lang's 31 repos and blaming
+them took about 21 minutes). Existing shallow checkouts are upgraded in place
+(`git fetch --unshallow`), a full checkout is reused as it is by later shallow
+runs, and the lockfile records each repo's `clone` mode (`sentei repos` prints
+the counts). `blame` then dates full repos `--clone-concurrency` at a time.
+With `minAgeDays: 0` the ages are not used and shallow clones lose nothing.
 
 ### GitHub API limits
 
@@ -318,7 +359,7 @@ limits.
 work/
   discover.json            org model: repos, packages, deps, policy, overlays
   <org>.lock.json          --org listing, selection and pinned shas (--lockfile to move)
-  repos/<name>/            shallow clones (--org; --clones-dir to move)
+  repos/<name>/            clones, shallow unless --full-clone (--org; --clones-dir to move)
   index/<owner>__<repo>/   index.json; per package <pkg>.scip, <pkg>.exports.json
                            (sidecar) and <pkg>.log (indexer and install output)
   .pm/                     package-manager caches and state for installs
@@ -339,7 +380,7 @@ keys and wrong types are errors, so a typo cannot silently fail open.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `minAgeDays` | 180 | every verdict on an export needs its blame date to be at least this old; unknown dates block them |
+| `minAgeDays` | 180 | every verdict on an export needs its blame date to be at least this old; an unknown date (shallow clone, no git history) counts as old enough, with a warning, see [Shallow or full clones](#shallow-or-full-clones-symbol-ages) |
 | `trustPrivateRegistry` | true | `published-private` packages count as private (nobody outside the org can depend on them) |
 | `countTestsAsConsumers` | false | references from test files count as uses (always, without it, for a dev-only dependency and for test-support code, below) |
 | `countDocsAsConsumers` | false | references from docs files count as uses |
@@ -605,6 +646,15 @@ below), or pass `--strict` in CI to make them exit 2.
 The report stage prints: the policy line (with `closedOrg=true`, followed by
 `(asserted: nothing outside the org depends on published packages)`), and the
 selected views with `--view`; a `!!` warning banner (`minAgeDays` 0, repos whose index was partial
+
+The report stage prints: the policy line, where `minAgeDays=180 (applied to K of
+M repos)` counts the repos whose symbols `blame` could date (full clones; see
+[Shallow or full clones](#shallow-or-full-clones-symbol-ages)), and with
+`minAgeDays` > 0 a `blame:` line, e.g. `blame: 1200 of 5400 exported symbol(s)
+dated; 4150 undated in shallow clones, 50 undated otherwise (unknown ages count
+as old enough)` (the same numbers are `ageCoverage` in `report.json`); the
+selected views with `--view`; a `!!` warning banner (`minAgeDays` 0, `minAgeDays`
+without effect on shallow or undated repos, repos whose index was partial
 or failed, dependencies on a name several org packages share, excluded or
 uncloned repos that carry manifests, manifests excluded by `ignoreManifests`:
 the first ten on stdout, all of them in `report.json`); a per-package
@@ -625,7 +675,11 @@ the wrong ones (there is no way to pin a dependency to one package id), or the
 unindexed / dynamic code that makes a package opaque; and
 the version skew count, with one line per class of unresolved references that
 are indexing gaps rather than skew. `blame` dates the last edit of the definition line, not
-its creation, which errs toward younger (the safe direction).
+its creation, which errs toward younger (the safe direction). The `blame` stage
+itself ends with `[blame] N symbol(s): a blamed, b cached, c undated (d shallow,
+...); e repo(s) skipped`, and, when some repos are shallow, `[blame] S of M
+repo(s) are shallow clones: not blamed ...` plus the `warn:` line about
+`minAgeDays`.
 
 ## Debugging with SQL
 
@@ -636,6 +690,7 @@ sqlite> SELECT * FROM findings WHERE verdict = 'deletion_candidate';
 sqlite> SELECT * FROM private_packages;       -- deletion (listed) vs deprecation (not)
 sqlite> SELECT * FROM package_flags;          -- why a package is opaque
 sqlite> SELECT * FROM blocked_packages;       -- who blocks whom
+sqlite> SELECT * FROM repo_history;           -- which repos blame dated (full / shallow / none)
 ```
 
 `packages/core/sql/analyze.sql` (recreated on every `analyze`) defines the
