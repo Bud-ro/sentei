@@ -44,7 +44,11 @@ opens pull requests.
   default; git does not).
 - npm packages are installed with their own lockfile before indexing
   (`npm ci`, `--frozen-lockfile` / `--immutable`, scripts off), found from the
-  package dir up to the repo root. How the install is chosen:
+  package dir up to the repo root. No lifecycle script of the repo or its
+  dependencies runs: yarn berry gets `--mode=skip-build` and
+  `YARN_ENABLE_SCRIPTS=false`, and reads a copy of the repo's `.yarnrc.yml`
+  without its `plugins` (yarn plugins are repo code; one ran the root
+  `postinstallDev` script). How the install is chosen:
   - **Manager**: the `packageManager` field (`pnpm@9.12.0`, `yarn@4.5.0`,
     `npm@10`) when that manager's lockfile is there, then
     `devEngines.packageManager`, then the first lockfile in the order

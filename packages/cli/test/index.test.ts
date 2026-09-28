@@ -10,7 +10,7 @@ import { readScipIndex } from '@sentei/core/scip';
 import { statusReason } from '../../core/src/ingest.ts';
 import { failureInputHash, isCached, toolchainVersion } from '../src/indexers/cache.ts';
 import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { choosePackageManager, hermeticEnv, install, installArgs, noFilesIndexed, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, installArgs, noFilesIndexed, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner, writeYarnrcWithoutPlugins, YARNRC_WITHOUT_PLUGINS, yarnrcWithoutPlugins } from '../src/indexers/scip-typescript.ts';
 import { typescriptVersionProblem } from '../src/indexers/export-surface.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, prepareLine, progressStep, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
@@ -985,6 +985,87 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const calls2: Array<[string, string[]]> = [];
     await install(berry, berry, [], [], fakeRunner([], calls2), root);
     expect(calls2).toEqual([['yarn', ['install', '--immutable', '--mode=skip-build']]]);
+  });
+
+  it('(8a) yarn berry: scripts off in the env, and the repo .yarnrc.yml plugins are not loaded', async () => {
+    // react-native-google-mobile-ads: plugin-postinstall-dev (a .yarnrc.yml plugin, repo
+    // code) ran the root `postinstallDev` → lerna / nx / bob builds, --mode=skip-build or not.
+    const rc = [
+      'nodeLinker: node-modules',
+      'plugins:',
+      '  - checksum: abc',
+      '    path: .yarn/plugins/@yarnpkg/plugin-postinstall-dev.cjs',
+      '    spec: "https://example.test/plugin-postinstall-dev.js"',
+      'yarnPath: .yarn/releases/yarn-4.10.3.cjs',
+      '',
+    ].join('\n');
+    const dir = repo('berry-plugins', { 'package.json': JSON.stringify({ packageManager: 'yarn@4.10.3' }), 'yarn.lock': '', '.yarnrc.yml': rc });
+    mkdirSync(path.join(dir, 'sub'), { recursive: true });
+    const seen: Array<{ cmd: string; args: string[]; env: NodeJS.ProcessEnv; copy: string | undefined }> = [];
+    const runner: Runner = async (cmd, args, cwd, env) => {
+      const copyFile = path.join(cwd, env.YARN_RC_FILENAME ?? '.none');
+      seen.push({ cmd, args, env, copy: existsSync(copyFile) ? readFileSync(copyFile, 'utf8') : undefined });
+      return { code: 0, signal: null, stdout: '', stderr: '' };
+    };
+    const diagnostics: string[] = [];
+    const log: string[] = [];
+    expect(await install(dir, dir, diagnostics, log, runner, root)).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.args).toEqual(['install', '--immutable', '--mode=skip-build']);
+    expect(seen[0]!.env).toMatchObject({ YARN_ENABLE_SCRIPTS: 'false', YARN_RC_FILENAME: YARNRC_WITHOUT_PLUGINS, YARN_ENABLE_STRICT_SETTINGS: 'false' });
+    expect(seen[0]!.copy).toBe('nodeLinker: node-modules\nyarnPath: .yarn/releases/yarn-4.10.3.cjs\n');
+    expect(existsSync(path.join(dir, YARNRC_WITHOUT_PLUGINS))).toBe(false); // removed after the install
+    expect(readFileSync(path.join(dir, '.yarnrc.yml'), 'utf8')).toBe(rc); // the repo's own file is untouched
+    expect(diagnostics).toContain(`info: .yarnrc.yml lists yarn plugins (repo code); the install reads a copy without them (${YARNRC_WITHOUT_PLUGINS})`);
+    expect(log.find((l) => l.startsWith('# install env'))).toContain('YARN_ENABLE_SCRIPTS');
+
+    // A failing install removes the copy too.
+    const failing: Runner = async () => ({ code: 1, signal: null, stdout: '', stderr: 'boom\n' });
+    expect(await install(dir, dir, [], [], failing, root)).toBe(false);
+    expect(existsSync(path.join(dir, YARNRC_WITHOUT_PLUGINS))).toBe(false);
+
+    // yarn classic keeps --ignore-scripts and reads its rc files as usual.
+    const classic = repo('classic-scripts', { 'package.json': '{}', 'yarn.lock': '# yarn lockfile v1\n', '.yarnrc.yml': rc });
+    const classicSeen: Array<[string[], NodeJS.ProcessEnv]> = [];
+    await install(classic, classic, [], [], async (_c, args, _cwd, env) => {
+      classicSeen.push([args, env]);
+      return { code: 0, signal: null, stdout: '', stderr: '' };
+    }, root);
+    expect(classicSeen[0]![0]).toContain('--ignore-scripts');
+    expect(classicSeen[0]![1].YARN_RC_FILENAME).toBeUndefined();
+    expect(existsSync(path.join(classic, YARNRC_WITHOUT_PLUGINS))).toBe(false);
+  });
+
+  it('(8a) yarnrcWithoutPlugins drops only the top-level plugins key, in any YAML shape', () => {
+    const cases: Array<[string, string, boolean]> = [
+      ['a: 1\nplugins:\n  - path: p.cjs\n    spec: s\n\n  # c\nb: 2\n', 'a: 1\nb: 2\n', true],
+      ['plugins:\n- path: p.cjs\n  spec: s\n- q.cjs\nnodeLinker: pnp', 'nodeLinker: pnp', true],
+      ['"plugins": [p.cjs, q.cjs]\r\nx: y\r\n', 'x: y\n', true],
+      ['nodeLinker: node-modules\npackageExtensions:\n  plugins@*:\n    dependencies: {}\n', 'nodeLinker: node-modules\npackageExtensions:\n  plugins@*:\n    dependencies: {}\n', false],
+      ['pluginsFoo: 1\n', 'pluginsFoo: 1\n', false],
+    ];
+    for (const [input, text, dropped] of cases) expect(yarnrcWithoutPlugins(input), input).toEqual({ text, dropped });
+  });
+
+  it('(8a) writes the plugin-free copies from the install dir up to the repo root, never through a symlink', () => {
+    const top = repo('rc-nested', { '.yarnrc.yml': 'plugins:\n  - a.cjs\nenableTelemetry: false\n' });
+    const inner = path.join(top, 'packages', 'app');
+    mkdirSync(inner, { recursive: true });
+    writeFileSync(path.join(inner, '.yarnrc.yml'), 'nodeLinker: node-modules\n');
+    const outside = path.join(root, 'outside-target.yml');
+    writeFileSync(outside, 'untouched');
+    symlinkSync(outside, path.join(top, YARNRC_WITHOUT_PLUGINS));
+    const r = writeYarnrcWithoutPlugins(top, inner);
+    try {
+      expect(r.written).toEqual([path.join(inner, YARNRC_WITHOUT_PLUGINS), path.join(top, YARNRC_WITHOUT_PLUGINS)]);
+      expect(r.dropped).toEqual(['.yarnrc.yml']);
+      expect(readFileSync(outside, 'utf8')).toBe('untouched');
+      expect(lstatSync(path.join(top, YARNRC_WITHOUT_PLUGINS)).isSymbolicLink()).toBe(false);
+      expect(readFileSync(path.join(top, YARNRC_WITHOUT_PLUGINS), 'utf8')).toBe('enableTelemetry: false\n');
+      expect(readFileSync(path.join(inner, YARNRC_WITHOUT_PLUGINS), 'utf8')).toBe('nodeLinker: node-modules\n');
+    } finally {
+      for (const f of r.written) rmSync(f, { force: true });
+    }
   });
 
   it('(hermetic) passes HTTP_PROXY to yarn only when set, and never overrides YARN_* proxies', () => {

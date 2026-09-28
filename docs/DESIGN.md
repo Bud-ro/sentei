@@ -3878,3 +3878,94 @@ dart-lang / Workiva, where same-repo examples were the main source of
 `used by ignored manifest` rows, is not measured; expect those rows to become
 notes and their candidates to return to delete / unexport, and a handful of
 promoted example apps in sample repos).
+
+### Phase 3 fix round 8a: yarn scripts off; error text; test_utils
+
+Evaluation batch D (tool at f25900a).
+
+**Yarn berry ran repo code during the install.** In
+invertase/react-native-google-mobile-ads, `yarn install --immutable
+--mode=skip-build` (yarn 4.10.3) ended with `lerna run prepare` over 11
+projects (nx, bob, tsc), leaving `.nx/cache/` and `lib/typescript/` in the
+checkout (then 40 `unindexed_consumer` rows for `.nx/cache` files). The brief
+blamed the root project's `prepare` / `postinstall`; the evidence says
+otherwise. The repo's `.yarnrc.yml` loads `plugin-postinstall-dev` (a file
+under `.yarn/plugins/`, i.e. repo code), whose `afterAllInstalled` hook runs
+the root `postinstallDev` script (`yarn prepare` → `lerna run prepare`). Checked
+against yarn 4.10.3 on a one-package project with that plugin and
+`postinstall` / `postinstallDev` / `prepare` scripts:
+
+| install | postinstall | postinstallDev (plugin) |
+|---|---|---|
+| plain | ran | ran |
+| `--mode=skip-build` | — | ran |
+| `YARN_ENABLE_SCRIPTS=false` | ran | ran |
+| both | — | ran |
+
+Berry never runs `prepare` on install; `--mode=skip-build` already skips every
+build (the root workspace's `postinstall` included, `a==="skip-build"` returns
+before the build step); `enableScripts: false` disables third-party build
+scripts only ("workspaces will still see their postinstall scripts
+evaluated"), and does not touch plugins, which call
+`scriptUtils.executePackageScript` directly. So `YARN_ENABLE_SCRIPTS=false`
+alone would not have fixed this run. What changed:
+- `hermeticEnv` sets `YARN_ENABLE_SCRIPTS=false` (as briefed; belt and braces
+  with `--mode=skip-build`, ignored by yarn classic, which keeps
+  `--ignore-scripts`).
+- For a berry install, `install` writes `.yarnrc.sentei-install.yml` next to
+  every `.yarnrc.yml` from the install dir up to the repo root: the same text
+  without the top-level `plugins` key (`yarnrcWithoutPlugins`: block,
+  indentless or flow sequence), and sets `YARN_RC_FILENAME` to it and
+  `YARN_ENABLE_STRICT_SETTINGS=false` (a setting a dropped plugin defined is
+  then ignored, not fatal). The copies are removed after the install, failed
+  or not; an existing entry at the copy's path (a symlink planted in the
+  checkout) is removed first and the copy created with `wx`. Everything else in
+  the rc is kept verbatim in the same directory, so `nodeLinker`, `yarnPath`,
+  `cacheFolder` and relative paths behave as before. An `info:` names each rc
+  file whose plugins were dropped. With the change, the same yarn 4.10.3
+  project installs (node_modules linker kept) and runs neither script.
+- Trade-offs: an install that needs a plugin (a custom protocol or resolver)
+  now fails `--immutable` and the package is reported failed (fail closed,
+  never dead); yarn 4 has the official plugins built in. The home folder's
+  `.yarnrc.yml` is read under its fixed name either way, but rc files ABOVE the
+  checkout are no longer read (they are not the repo's; the work dir is
+  hermetic anyway).
+- Not changed: `yarnPath` (`.yarn/releases/yarn-x.cjs`) still runs the repo's
+  checked-in yarn release. `YARN_IGNORE_PATH=1` would run the npm-exec'd yarn
+  instead, but a different berry version can rewrite the lockfile and fail
+  `--immutable`; the release is the package manager itself, as pinned by
+  `packageManager`.
+- Not changed here (manifests.ts is another unit's): `.nx`, `.turbo`, `.yarn`,
+  `.pnpm-store` are not in `ALWAYS_SKIP_DIRS`, so tool caches left in a
+  checkout that is not gitignoring them still reach `listFiles` (the
+  `.nx/cache` rows). Proposed one-line change in `packages/core/src/manifests.ts`:
+  `new Set(['node_modules', '.git', '.dart_tool', '.nx', '.turbo', '.yarn', '.pnpm-store'])`.
+
+**Multi-line errors were cut to one line.** `formatError` (main.ts) printed
+the first line of every error, so discover's duplicate-package-name error lost
+its manifest list and the `ignoreManifests` entries it suggests (Baseflow
+flutter-meetup: only `--verbose` showed them, inside the stack). A sentei error
+(message starting `sentei:` / `sentei <stage>:`) is now printed whole,
+continuation lines indented two spaces; `--verbose` then adds only the stack
+frames, not the message again. Any other error (an unexpected exception) keeps
+the one-line form and the full stack under `--verbose`.
+
+**`test_utils.*` was not a test glob.** Only `test-utils.*` was, so
+material-color-utilities' `typescript/utils/test_utils.ts` (used only by specs)
+came out `private_dead`. TEST_GLOBS and the `test_files` view gain
+`**/test_utils.*`, `**/test_util.*`, `**/testutils.*` (file names; globs.test.ts
+parses the view back). A pub package's `lib/test_utils.dart` stays library code
+(SURFACE_DIRS), which the new test checks.
+
+Tests: index.test.ts (berry env has `YARN_ENABLE_SCRIPTS=false`,
+`YARN_RC_FILENAME`, strict settings off; the copy the runner sees has no
+plugins and keeps `nodeLinker` / `yarnPath`; removed after a passing and a
+failing install; the repo's `.yarnrc.yml` untouched; classic keeps
+`--ignore-scripts` and no copy; `yarnrcWithoutPlugins` shapes; nested rc files
+and a planted symlink), main.test.ts (duplicate-name error whole and indented,
+`--verbose` frames once, unexpected exception one line), globs.test.ts.
+
+**Not verified:** react-native-google-mobile-ads was not re-indexed (2570
+packages over the network); the fix was checked with yarn 4.10.3 on the small
+project above (`install()` itself, through the npm exec fallback). yarn 2 / 3
+read `YARN_RC_FILENAME` the same way per their docs; not run.

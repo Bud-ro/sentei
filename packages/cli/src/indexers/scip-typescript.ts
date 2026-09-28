@@ -157,7 +157,8 @@ function isBerry(version: string | undefined): boolean {
  *   yarn classic  `--ignore-engines` (it checks the root package's engines too);
  *   yarn berry  none: engines are not checked ("engine checking isn't a core
  *     feature anymore"), and it has neither --frozen-lockfile nor
- *     --ignore-scripts (`--immutable` / `--mode=skip-build` instead);
+ *     --ignore-scripts (`--immutable` / `--mode=skip-build` instead; the env adds
+ *     YARN_ENABLE_SCRIPTS=false, and `install` hides the repo's .yarnrc.yml plugins);
  *   bun  none: bun does not enforce engines.
  */
 export function installArgs(pm: PackageManager, version: string | undefined, storeDir: string): string[] {
@@ -754,6 +755,66 @@ export function stderrTail(
  */
 const ERROR_LINE = /\b(?:error|ERROR|Error)\b|\bERR_[A-Z0-9_]+|\b[A-Z]\w*Error\b|\bE[A-Z]{4,}\b/;
 
+/** The file name yarn berry reads instead of `.yarnrc.yml` during an install (YARN_RC_FILENAME). */
+export const YARNRC_WITHOUT_PLUGINS = '.yarnrc.sentei-install.yml';
+
+/**
+ * A `.yarnrc.yml` text without its top-level `plugins` key (block, indentless
+ * or flow sequence, with any comment or blank lines inside it); `dropped` says
+ * whether there was one. Everything else is kept verbatim, so relative paths
+ * (`yarnPath`, `cacheFolder`) still resolve from the copy's directory.
+ */
+export function yarnrcWithoutPlugins(text: string): { text: string; dropped: boolean } {
+  const out: string[] = [];
+  let skipping = false;
+  let dropped = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^["']?plugins["']?\s*:/.test(line)) {
+      skipping = true;
+      dropped = true;
+      continue;
+    }
+    // Inside the block: indented lines, `- ` items of an indentless sequence,
+    // blank and comment lines. The next top-level key ends it.
+    if (skipping && (line === '' || /^[\s#-]/.test(line))) continue;
+    skipping = false;
+    out.push(line);
+  }
+  return { text: out.join('\n'), dropped };
+}
+
+/**
+ * Writes `YARNRC_WITHOUT_PLUGINS` next to every `.yarnrc.yml` from `dir` up to
+ * `repoRoot` (yarn berry reads the rc file of each ancestor dir; the home
+ * folder's `.yarnrc.yml` is read under its fixed name either way, and rc files
+ * above the checkout are no longer read). Returns the files written (to remove
+ * after the install) and the repo-relative rc files that listed plugins. An
+ * existing entry at the copy's path (a symlink in the checkout) is removed
+ * first and the copy is created exclusively, so nothing outside is written.
+ */
+export function writeYarnrcWithoutPlugins(repoRoot: string, dir: string): { written: string[]; dropped: string[] } {
+  const written: string[] = [];
+  const dropped: string[] = [];
+  for (let d = dir; ; d = path.dirname(d)) {
+    let text: string | undefined;
+    try {
+      text = readFileSync(path.join(d, '.yarnrc.yml'), 'utf8');
+    } catch {
+      text = undefined;
+    }
+    if (text !== undefined) {
+      const copy = yarnrcWithoutPlugins(text);
+      const file = path.join(d, YARNRC_WITHOUT_PLUGINS);
+      rmSync(file, { force: true });
+      writeFileSync(file, copy.text, { flag: 'wx' });
+      written.push(file);
+      if (copy.dropped) dropped.push(path.relative(repoRoot, path.join(d, '.yarnrc.yml')).split(path.sep).join('/'));
+    }
+    if (d === repoRoot || path.dirname(d) === d) break;
+  }
+  return { written, dropped: dropped.reverse() };
+}
+
 /**
  * The environment of every install subprocess: all global, state and cache
  * writes of the package managers go under `<workDir>/.pm/` (sandboxed or shared
@@ -773,6 +834,11 @@ export function hermeticEnv(workDir: string, base: NodeJS.ProcessEnv = process.e
     // yarn berry: global folder in the work dir, cache per project (.yarn/cache).
     YARN_GLOBAL_FOLDER: path.join(pm, 'yarn-global'),
     YARN_ENABLE_GLOBAL_CACHE: 'false',
+    // yarn berry: no dependency build scripts (`enableScripts`), on top of
+    // --mode=skip-build. It does not stop a workspace's own postinstall (yarn
+    // runs those whatever enableScripts says; skip-build stops them) nor rc
+    // plugins (see install). yarn classic ignores it (--ignore-scripts).
+    YARN_ENABLE_SCRIPTS: 'false',
     // corepack shims: downloads under the work dir, no strict packageManager check.
     COREPACK_HOME: path.join(pm, 'corepack'),
     COREPACK_ENABLE_STRICT: '0',
@@ -842,7 +908,6 @@ export async function install(
       for (const k of ['XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'PNPM_HOME', 'YARN_GLOBAL_FOLDER', 'COREPACK_HOME']) {
         mkdirSync(env[k]!, { recursive: true });
       }
-      log.push(`# install env (hermetic, under ${path.resolve(workDir, '.pm')}): ${keys.join(', ')}`);
       // The version to fall back to; for yarn it also picks classic or berry flags.
       let want = pm === 'npm' ? undefined : packageManagerVersion(repoRoot, d, pm, lockfile);
       // pnpm: the major that wrote the lockfile. An older pinned major cannot read it
@@ -857,57 +922,79 @@ export async function install(
         want = lockPin;
       }
       const args = installArgs(pm, want?.version, pnpmStoreDir(workDir));
-      // Windows: npm/pnpm/yarn are .cmd shims and need a shell.
-      const shell = process.platform === 'win32';
-      let cmd: string = pm;
-      let cmdArgs = args;
-      let proc = await run(cmd, cmdArgs, d, env, shell);
-      log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
-      if (proc.errno === 'ENOENT' && want !== undefined) {
-        const fb = npmExecFallback(pm, want.version);
-        diagnostics.push(
-          `info: ${pm} is not installed (spawn ${pm} ENOENT); falling back to npm exec --yes --package=${fb.spec} ` +
-            `(version ${want.version} ${want.source})`,
-        );
-        cmd = 'npm';
-        // npm 11 checks the `devEngines` of the package.json at its local prefix
-        // before `exec` (EBADDEVENGINES: `runtime` node ^24 on node 26, or
-        // `packageManager` pnpm ≠ npm) and engine-strict does not turn that off;
-        // only --force would, and it leaks into pnpm as npm_config_force (a
-        // forced reinstall). So the prefix is an empty dir in the work dir: no
-        // package.json, no devEngines check. The command still runs in `d`
-        // (npm exec's run path is the cwd), and pnpm@x lands in npm's npx cache.
-        const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
-        mkdirSync(execPrefix, { recursive: true });
-        cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...args];
-        proc = await run(cmd, cmdArgs, d, env, shell);
+      // yarn berry: the repo's .yarnrc.yml plugins are repo code that runs inside
+      // every yarn command (plugin-postinstall-dev runs the root `postinstallDev`
+      // script after the install, --mode=skip-build or not), so the install reads a
+      // copy of each .yarnrc.yml without its `plugins` (YARN_RC_FILENAME), removed
+      // again afterwards. Strict settings are off so a setting a dropped plugin
+      // defined is ignored rather than fatal.
+      const rcCopies: string[] = [];
+      if (pm === 'yarn' && args.includes('--immutable')) {
+        const rc = writeYarnrcWithoutPlugins(repoRoot, d);
+        rcCopies.push(...rc.written);
+        env.YARN_RC_FILENAME = YARNRC_WITHOUT_PLUGINS;
+        env.YARN_ENABLE_STRICT_SETTINGS = 'false';
+        keys.push('YARN_RC_FILENAME', 'YARN_ENABLE_STRICT_SETTINGS');
+        for (const f of rc.dropped) {
+          diagnostics.push(`info: ${f} lists yarn plugins (repo code); the install reads a copy without them (${YARNRC_WITHOUT_PLUGINS})`);
+        }
+      }
+      log.push(`# install env (hermetic, under ${path.resolve(workDir, '.pm')}): ${keys.join(', ')}`);
+      try {
+        // Windows: npm/pnpm/yarn are .cmd shims and need a shell.
+        const shell = process.platform === 'win32';
+        let cmd: string = pm;
+        let cmdArgs = args;
+        let proc = await run(cmd, cmdArgs, d, env, shell);
         log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+        if (proc.errno === 'ENOENT' && want !== undefined) {
+          const fb = npmExecFallback(pm, want.version);
+          diagnostics.push(
+            `info: ${pm} is not installed (spawn ${pm} ENOENT); falling back to npm exec --yes --package=${fb.spec} ` +
+              `(version ${want.version} ${want.source})`,
+          );
+          cmd = 'npm';
+          // npm 11 checks the `devEngines` of the package.json at its local prefix
+          // before `exec` (EBADDEVENGINES: `runtime` node ^24 on node 26, or
+          // `packageManager` pnpm ≠ npm) and engine-strict does not turn that off;
+          // only --force would, and it leaks into pnpm as npm_config_force (a
+          // forced reinstall). So the prefix is an empty dir in the work dir: no
+          // package.json, no devEngines check. The command still runs in `d`
+          // (npm exec's run path is the cwd), and pnpm@x lands in npm's npx cache.
+          const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
+          mkdirSync(execPrefix, { recursive: true });
+          cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...args];
+          proc = await run(cmd, cmdArgs, d, env, shell);
+          log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+        }
+        // A pnpm (on PATH, or the pinned one) that cannot read the lockfile: once more at
+        // the lockfile's major, through npm exec.
+        if (
+          lockPin !== undefined && proc.errno === undefined && proc.code !== 0 &&
+          /ERR_PNPM_LOCKFILE_BREAKING_CHANGE/.test(`${proc.stdout}\n${proc.stderr}`) &&
+          !cmdArgs.includes(`--package=pnpm@${lockPin.version}`)
+        ) {
+          const fb = npmExecFallback('pnpm', lockPin.version);
+          diagnostics.push(
+            `info: ${cmd === 'npm' ? cmdArgs.find((a) => a.startsWith('--package='))!.slice('--package='.length) : 'pnpm'} cannot read ${lockfile} ` +
+              `(ERR_PNPM_LOCKFILE_BREAKING_CHANGE); retrying with npm exec --yes --package=${fb.spec} (version ${lockPin.version} ${lockPin.source})`,
+          );
+          cmd = 'npm';
+          const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
+          mkdirSync(execPrefix, { recursive: true });
+          cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...args];
+          proc = await run(cmd, cmdArgs, d, env, shell);
+          log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
+        }
+        if (proc.errno !== undefined || proc.code !== 0) {
+          diagnostics.push(`error: ${cmd} ${cmdArgs.join(' ')} in ${rel} ${describeExit(proc)}${proc.errno === undefined ? stderrTail(proc) : ''}`);
+          return false;
+        }
+        diagnostics.push(`info: ran ${cmd} ${cmdArgs.join(' ')} in ${rel}`);
+        return true;
+      } finally {
+        for (const f of rcCopies) rmSync(f, { force: true });
       }
-      // A pnpm (on PATH, or the pinned one) that cannot read the lockfile: once more at
-      // the lockfile's major, through npm exec.
-      if (
-        lockPin !== undefined && proc.errno === undefined && proc.code !== 0 &&
-        /ERR_PNPM_LOCKFILE_BREAKING_CHANGE/.test(`${proc.stdout}\n${proc.stderr}`) &&
-        !cmdArgs.includes(`--package=pnpm@${lockPin.version}`)
-      ) {
-        const fb = npmExecFallback('pnpm', lockPin.version);
-        diagnostics.push(
-          `info: ${cmd === 'npm' ? cmdArgs.find((a) => a.startsWith('--package='))!.slice('--package='.length) : 'pnpm'} cannot read ${lockfile} ` +
-            `(ERR_PNPM_LOCKFILE_BREAKING_CHANGE); retrying with npm exec --yes --package=${fb.spec} (version ${lockPin.version} ${lockPin.source})`,
-        );
-        cmd = 'npm';
-        const execPrefix = path.resolve(workDir, '.pm', 'npm-exec-prefix');
-        mkdirSync(execPrefix, { recursive: true });
-        cmdArgs = ['exec', '--yes', '--no-engine-strict', `--prefix=${execPrefix}`, `--package=${fb.spec}`, '--', fb.bin, ...args];
-        proc = await run(cmd, cmdArgs, d, env, shell);
-        log.push(`$ ${cmd} ${cmdArgs.join(' ')}  (cwd ${d})`, '--- stdout', proc.stdout, '--- stderr', proc.stderr);
-      }
-      if (proc.errno !== undefined || proc.code !== 0) {
-        diagnostics.push(`error: ${cmd} ${cmdArgs.join(' ')} in ${rel} ${describeExit(proc)}${proc.errno === undefined ? stderrTail(proc) : ''}`);
-        return false;
-      }
-      diagnostics.push(`info: ran ${cmd} ${cmdArgs.join(' ')} in ${rel}`);
-      return true;
     }
     if (d === repoRoot || path.dirname(d) === d) break;
   }
