@@ -213,7 +213,11 @@ size (the HEAD tree; `api` marks the full-history size when the tree was not rea
 the number of manifests found (`-` = not probed) and the reasons. **Excluded repos
 that carry manifests are named** there, in the selection log and as a report
 warning: they may use org packages, and those uses are invisible to the analysis,
-so an export only they use can come out dead. Include them, or treat findings
+so an export only they use can come out dead. A repo of example apps or benchmarks
+(a `flutter/samples`-style repo) is worth selecting: its apps under `example/`,
+`samples/`, `benchmarks/`, ... that depend on another repo's org package are indexed
+as consumers (see `ignoreManifestDirs` below); `sentei repos` cannot tell, since it
+reads no manifest contents, but `discover` logs every such promotion. Include them, or treat findings
 touching what they might use with care.
 
 Rules, first match wins:
@@ -386,8 +390,8 @@ keys and wrong types are errors, so a typo cannot silently fail open.
 | `countDocsAsConsumers` | false | references from docs files count as uses |
 | `closedOrg` | false | the org **asserts** that nothing outside it depends on its published packages: their unused exports are `delete` (deletion candidates, witness still required), not `deprecate`. sentei cannot check this; the summary's policy line, `report.json` `assertions` and SARIF state it. No re-index (see [Views](#views)) |
 | `keep` | `[]` | never report these: `"npm:@acme/foo#sym"` (every package named `@acme/foo`), `"npm:acme/foo:@acme/foo#sym"` (only the one in repo `acme/foo`), `"pub:bar#*"` |
-| `ignoreManifestDirs` | built-in list | directory names (fixtures, templates, examples, test, ...) whose manifests are not org packages; replaces the default. A name matching any *ancestor* of the manifest's dir always ignores it; matching the manifest's *own* dir ignores it unless that dir is a monorepo member: its parent is `pkgs`, `packages`, `apps`, `libs` or `modules` (`pkgs/test` is the `test` package), or it is a pub `workspace:` / npm `workspaces` member (or has `resolution: workspace`) whose parent dir holds no manifest (a package's own `example/` stays ignored) |
-| `ignoreManifests` | `[]` | globs `"<repo>/<manifest path>"` (repo name without the org), e.g. `"vscode/package.json"`, `"over_react/app/**"`: those manifests are not org packages (never indexed, never a blocker, not a counted consumer; the text witness still scans their code, fail closed). The report lists every one in a warning. Use it for a package that cannot be indexed and that nothing depends on (a pre-Dart-2.12 example app, a repo-internal demo); a blocker's hint gives the exact entry |
+| `ignoreManifestDirs` | built-in list | directory names (fixtures, templates, examples, test, ...) whose manifests are not org packages; replaces the default. A name matching any *ancestor* of the manifest's dir always ignores it; matching the manifest's *own* dir ignores it unless that dir is a monorepo member: its parent is `pkgs`, `packages`, `apps`, `libs` or `modules` (`pkgs/test` is the `test` package), or it is a pub `workspace:` / npm `workspaces` member (or has `resolution: workspace`) whose parent dir holds no manifest (a package's own `example/` stays ignored). **Examples and benchmarks of another repo are consumers:** an ignored manifest whose ignored dirs are all example-like (`example(s)`, `sample(s)`, `demo(s)`, `benchmark(s)`, `bench`, `playground(s)`, `sandbox`) and that has a regular (non-dev) dependency on an org package of ANOTHER repo is indexed as a private consumer package (no export surface; `discover` logs `promoted ignored-dir manifest … : example app depends on <package id> (repo <repo>)`). Its uses of other repos' packages count like any consumer's (the docs globs match paths below its own root, so its files are not docs files); its uses of its own repo's packages count as docs uses (`only_docs_refs`). An ignored manifest that uses only its own repo's packages never counts: the witness notes its uses (`note:used by …`) without changing a verdict. Test / fixture / template dirs are never promoted |
+| `ignoreManifests` | `[]` | globs `"<repo>/<manifest path>"` (repo name without the org), e.g. `"vscode/package.json"`, `"over_react/app/**"`: those manifests are not org packages (never indexed, never a blocker, not a counted consumer; the text witness still scans their code, fail closed). The report lists every one in a warning. Use it for a package that cannot be indexed and that nothing depends on (a pre-Dart-2.12 example app, a repo-internal demo); a blocker's hint gives the exact entry. It also keeps an example app of another repo from being promoted to a consumer package (e.g. one that fails to index and would block what it uses) |
 | `repos` | `{}` | which GitHub repos to clone, see [Choosing repos](#choosing-repos) |
 
 **Per-repo `sentei.json`** (repo root) holds overlays only; per-repo policy
@@ -479,14 +483,18 @@ proposed for:
 
 Reasons: `no_refs`, `internal_refs_only`, `only_test_refs` (delete the tests
 too), `only_docs_refs` (used only in docs / examples, e.g. the package's own
-`example/`, which count as consumers only with `countDocsAsConsumers`; next to
+`example/` or an example app of its own repo, which count as consumers only with `countDocsAsConsumers`; next to
 `only_test_refs` when both exist), `witness_pending` (analyze output before `witness` runs),
 `witness_mismatch:<consumer>:<file>:<line>` (1-based; `<consumer>` is a package
 id, `self`, `self-string` or `ignored:<repo>/<manifest>`, and `<file>:<line>` can be
 `checkout missing`; a hit on a member name of a Dart extension, which is used
 through its members, ends ` (member <name>)`; an unexport re-checked against code
 the index never saw ends ` (used by ignored manifest <org>/<repo>:<manifest>)` or
-` (used in a docs/example file)`), `dead_island` (exports used only by other candidates, so they
+` (used in a docs/example file)`), `note:used by <manifest> (<file>:<line>)` /
+`note:used by <file>:<line>` (not a policy reason, never changes a verdict or a view:
+the witness found the symbol in the package's OWN repo's example / benchmark / docs
+code, an ignored `example/` app or a docs file, which is no consumer; with
+`countDocsAsConsumers` such a hit is a `witness_mismatch` instead), `dead_island` (exports used only by other candidates, so they
 go together: a would-be unexport that becomes a deletion, or a deprecation in a
 published package), `already_unreachable` (an existing private island),
 `unlocked_by:<symbol>` (dead once that candidate goes). `blocked_by` entries are
@@ -691,6 +699,8 @@ sqlite> SELECT * FROM private_packages;       -- deletion (listed) vs deprecatio
 sqlite> SELECT * FROM package_flags;          -- why a package is opaque
 sqlite> SELECT * FROM blocked_packages;       -- who blocks whom
 sqlite> SELECT * FROM repo_history;           -- which repos blame dated (full / shallow / none)
+
+sqlite> SELECT * FROM promoted_packages;      -- example apps / benchmarks indexed as consumers, and why
 ```
 
 `packages/core/sql/analyze.sql` (recreated on every `analyze`) defines the

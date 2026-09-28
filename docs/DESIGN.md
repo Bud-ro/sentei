@@ -3570,6 +3570,14 @@ simulated as described above; the dart-surface re-runs used the clones' existing
    `deletion_candidate` like a private package's. `org_dead` leaves the default
    summary and SARIF and survives only as an explicit, legacy `--view org_dead`.
 
+3. **Examples and benchmarks count only across repos.** "`benchmarks/`,
+   `example/`, etc. inside the repo itself should not count as consumers. But if
+   external packages use it (in which case it's way more likely that it's under
+   `src/main.dart`) then that usage should count." A repo's own example /
+   benchmark / docs code never keeps its packages' exports alive and never
+   downgrades a verdict (the use is kept as a note); an example app or benchmark
+   in ANOTHER repo is an ordinary consumer and is indexed.
+
 ### Phase 3: blame only on full clones
 
 **Fail-closed qualification (merge note).** As merged, an unknown age passes the
@@ -3743,3 +3751,130 @@ fixture repos are not
 git checkouts, so its index stage re-indexes instead of hitting the cache; that
 the cache is untouched is only covered by the failureInputHash unit test and by
 `closedOrg` not being an index input).
+
+### Phase 3: examples and benchmarks as consumers
+
+Before: every manifest under `ignoreManifestDirs` was skipped whatever it
+depended on; its code was read only by the witness, which turned a hit into
+`needs_review` (`used by ignored manifest …`), and a package's own docs /
+example FILES gave `only_docs_refs` (or, for an unexport, `needs_review`
+through the docs re-check). A `flutter/samples`-style repo of example apps was
+therefore invisible to the index, and a library's own `example/` kept
+candidates out of the delete / unexport lists.
+
+**Rule 1: same repo, never a consumer (witness.ts `noteOnly`).** Unless
+`countDocsAsConsumers`, a witness hit in code of P's own repo that is example /
+benchmark / docs code does not change the verdict:
+- an ignored manifest skipped by the dir rule (discover.json
+  `ignoredManifests[].byDir`, new) in P's repo, in the pending step and in the
+  unexport re-check;
+- a promoted consumer package (rule 2) in P's repo (its witness_files too);
+- docs / example files of P, or of a consumer in P's repo, in the unexport
+  re-check.
+The information is kept as a reason `note:used by <repo-relative manifest>
+(<file>:<line>[, member <name>])` or `note:used by <file>:<line>` (at most five
+per finding), on the passed candidate (witness_ok written as for any pass), on
+the kept unexport (delete + re-insert: findings is insert-only), or next to real
+`witness_mismatch` reasons. **Deviation from the brief (no `notes` field):**
+findings has no notes column, and report.ts / sarif.ts (owned by other units
+this round) print `reasons` verbatim and classify rows with `includes()`
+(views, the DELETE / DEPRECATE reason breakdown, `isInternalOnly`), so a
+prefixed reason reaches report.json and the SARIF message (`reasons: …,
+note:used by …`) and changes no view or count; the org-dart pipeline test pins
+the SARIF text. With `countDocsAsConsumers` such code counts (analyze counts
+the docs uses too), so its hits downgrade as before. Unchanged, fail closed:
+a manifest without `byDir` (an `ignoreManifests` glob, a VS Code extension, a
+private duplicate, an older discover.json), an ignored manifest of another
+repo that was not promoted, docs files of consumers in other repos.
+`only_docs_refs` stays the reason for a package's own docs / example files.
+
+**Rule 2: another repo, a real consumer (discover.ts, promotion pass).** An
+ignored manifest is promoted to a consumer package when
+- the dir rule skipped it and every ignored dir on its path is a consumer dir
+  (manifests.ts `CONSUMER_MANIFEST_DIRS`: `example(s)`, `sample(s)`,
+  `demo(s)`, `benchmark(s)`, `bench`, `playground(s)`, `sandbox`;
+  `IgnoredManifest.consumerDir`),
+- its manifest parses, and a regular (non-dev) dependency resolves
+  (unambiguously) to an org package of another repo,
+- no org `ignoreManifests` glob matches it (checked here even though the dir
+  rule won: the glob is recorded like any glob exclusion, `ignored_manifests`
+  and the report warning, and no longer warns "matched no manifest"), and
+- its name is not already an org package name of its manager (nor a promoted
+  one in the same repo), so no dependency resolution elsewhere can change.
+It is read with the normal manifest reader, then made private, `isLibrary`
+false, `entryPoints` [] and no unresolved entry points (no export surface, never
+opaque by its own entries; runtime entries such as bins stay seeds), recorded
+as `DiscoverPackage.promoted` (the reason) and in the new additive table
+`promoted_packages` (package_id, reason; SCHEMA_VERSION unchanged), logged
+(`promoted ignored-dir manifest example/app/pubspec.yaml to the consumer
+package …: example app depends on pub:acme/dart-lib-x:acme_x (repo
+acme/dart-lib-x)`, plus a count) and listed on discover's per-repo summary line.
+`sentei repos` cannot show it: it decides from the git tree before cloning and
+never reads a manifest. Being an org package, a promoted example leaves the
+witness's ignored-manifest scan and is scanned as a manifest consumer instead
+(the witness keeps reading every consumer, indexed or not).
+
+Deviations and decisions:
+- **Test, fixture, golden and template dirs are never promoted** (the brief
+  says "ignored-dir manifest"). Their manifests are the reason the ignore list
+  exists: dartdoc's `testing/test_package_bad` is broken on purpose, and a
+  promoted package that fails to index gets `index_failed`, which blocks every
+  package it depends on. They keep the old behaviour for other repos' packages
+  (witness downgrade) and get notes for their own repo's.
+- **Dev-only dependencies do not promote.** An example's dev dependency on the
+  org's lints or test package (dart-lang `dart_flutter_team_lints`, Workiva
+  `workiva_analysis_options`) says nothing about its code and would have
+  promoted nearly every same-repo example. Ambiguous dependencies do not
+  promote either (a promotion would add `ambiguous_dep` blocks).
+- **Mixed examples: the rule is per (consumer, target) pair.** An example that
+  uses its own repo's package AND another repo's (flame examples on flame +
+  another repo's package) is promoted; analyze.sql `external_ref_occurrences`
+  marks its uses of packages of its OWN repo `in_docs` (so they give
+  `only_docs_refs`, exactly like the package's own `example/` files), and only
+  its uses of other repos' packages count. Without this, promotion would have
+  let a repo's own examples count again whenever they also used any other org
+  package.
+- **Docs globs are package-relative for a promoted package; test globs are
+  not.** analyze.sql `doc_files` matches DOCS_GLOBS against `rel`, the path
+  below the package root for a package in `promoted_packages` (repo-relative
+  for every other package), so `example/app/bin/main.dart` is no docs file while
+  the app's own `example/` or `docs/` below its root still is; the witness does
+  the same (`ConsumerLoc.globBase` = the package dir for a promoted package).
+  TEST_GLOBS stay repo-relative: a consumer dir on a promotable path contains
+  no test-dir segment that the ignore list names, and an example under a test
+  dir that is not in the list (`e2e/example/app`) is test code whose uses
+  should not count. globs.test.ts parses `('/' || rel)` as the doc_files form.
+- A promoted example that cannot be indexed blocks what it depends on, like
+  any consumer (fail closed); the `ignoreManifests` glob is the escape hatch
+  and the blocker hint already names it.
+- **analyze.sql and schema.sql were edited** although the brief listed
+  analyze.sql as owned by another unit this round: the package-relative docs
+  rule and the per-pair own-repo rule are analysis policy, which lives in
+  analyze.sql, and nothing outside SQL can express either (paths stay
+  repo-relative in the DB). The change is two views (`doc_files`,
+  `external_ref_occurrences.in_docs`) plus the new table, in their own commit.
+
+Fixtures: org-dart `dart-lib-x/example/` (same repo): `AcmeLoader`
+needs_review → deletion_candidate `["no_refs", "note:used by
+example/pubspec.yaml (example/bin/demo.dart:8, member loadAcme)"]`, `inExample`
+needs_review → unexport_candidate `["internal_refs_only", "note:used by
+example/pubspec.yaml (example/bin/demo.dart:9)"]`. New org-dart repo
+`dart-samples` (`example/app/`, `acme_sample_app`, hosted dep on `acme_x`):
+promoted; acme_x's new `usedBySample`, used only there, has no finding. New
+org-small repo `samples` (`examples/app/`, `@acme/sample-app` on `@acme/core`):
+promoted, indexed ok, no doc_files row, its `usedFn` uses are external_refs;
+witness-corruption.test.ts drops them from its index and the witness finds
+them in the promoted package. Unit tests: discover (promotion, and the six
+negative cases), globs (doc_files for promoted packages, test globs
+unchanged), analyze (another repo's example counts, the own repo's is
+`only_docs_refs`), schema (promoted_packages FK / PK / NOT NULL / cascade),
+witness (notes for a same-repo byDir manifest on a candidate, an extension
+member and an unexport; downgrades with countDocs, without byDir and for
+another repo; a promoted consumer scanned with package-relative globs and a
+same-repo promoted one noted).
+
+**Not verified:** no real org was rerun (the effect on flame-engine /
+dart-lang / Workiva, where same-repo examples were the main source of
+`used by ignored manifest` rows, is not measured; expect those rows to become
+notes and their candidates to return to delete / unexport, and a handful of
+promoted example apps in sample repos).

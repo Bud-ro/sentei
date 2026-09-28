@@ -161,8 +161,10 @@
 //
 // Test / docs globs (globs.ts, shared with analyze.sql) are matched against the
 // repo-relative path for org packages (as analyze does) and against the path relative
-// to the manifest dir for an ignored manifest (an example project under `examples/`
-// is itself the consumer being checked; its own tests/docs are still skipped).
+// to the manifest dir for an ignored manifest and for a package promoted from one
+// (discover `promoted`; analyze.sql doc_files does the same for its docs globs): an
+// example project under `examples/` is itself the consumer being checked; its own
+// tests/docs are still skipped.
 // Exception, mirroring analyze.sql `external_refs`: a consumer whose dependency on P is
 // dev-only (package_deps.dev = 1) has its test files scanned too, whatever
 // countTestsAsConsumers says (a test-support library is consumed by tests); so does
