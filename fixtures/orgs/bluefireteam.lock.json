@@ -1,0 +1,905 @@
+{
+  "version": 3,
+  "org": "bluefireteam",
+  "generatedAt": "2026-09-28T02:44:32.427Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": "SpritesheetMapper",
+      "defaultBranch": "master",
+      "headSha": "acd1dd3e7a43851a87c90f26ab3b4708abb0808b",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 245,
+      "headTreeKb": 359,
+      "pushedAt": "2022-12-08T15:56:52Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "airplane-resource-pack",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 104,
+      "headTreeKb": 120,
+      "pushedAt": "2019-02-27T01:53:36Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "audioplayers",
+      "defaultBranch": "main",
+      "headSha": "cd475c760b2e730c4306c1f102f3ac6f4313109e",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 25364,
+      "headTreeKb": 12941,
+      "pushedAt": "2026-07-23T19:18:52Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/audioplayers/example/pubspec.yaml",
+        "packages/audioplayers/example/server/pubspec.yaml",
+        "packages/audioplayers/pubspec.yaml",
+        "packages/audioplayers_android/pubspec.yaml",
+        "packages/audioplayers_android_exo/pubspec.yaml",
+        "packages/audioplayers_darwin/pubspec.yaml",
+        "packages/audioplayers_linux/pubspec.yaml",
+        "packages/audioplayers_platform_interface/pubspec.yaml",
+        "packages/audioplayers_web/pubspec.yaml",
+        "packages/audioplayers_windows/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "bgug",
+      "defaultBranch": "master",
+      "headSha": "d92523e3ad171a72ac0f946b4ecafdd55e426f82",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 24094,
+      "headTreeKb": 15043,
+      "pushedAt": "2020-07-27T16:49:58Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "bitmap",
+      "defaultBranch": "main",
+      "headSha": "3c6b8ec26f63dfc0a810b485e41c6517192dd23d",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 411,
+      "headTreeKb": 333,
+      "pushedAt": "2026-01-05T21:45:23Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "blue-fire-site",
+      "defaultBranch": "main",
+      "headSha": "873b255bb20c0d1eb4781cdd789895174c471de1",
+      "fork": false,
+      "language": "HTML",
+      "sizeKb": 3090,
+      "headTreeKb": 3523,
+      "pushedAt": "2023-11-12T20:20:57Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language HTML, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "cached_value",
+      "defaultBranch": "main",
+      "headSha": "c325e03b99b100abd1d4a6988ac9f94acb0c0c5d",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 54,
+      "headTreeKb": 38,
+      "pushedAt": "2024-07-15T17:32:48Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "canvas_test",
+      "defaultBranch": "main",
+      "headSha": "8f0f2657e713816f9b3ae0cb1a12a1b213232f7a",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 26,
+      "headTreeKb": 24,
+      "pushedAt": "2021-11-30T14:01:05Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "dartdoc_json",
+      "defaultBranch": "main",
+      "headSha": "bf18d41a46e606bf07ee926e81a9a2dea2d30181",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 51,
+      "headTreeKb": 76,
+      "pushedAt": "2026-06-22T11:11:52Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "dashbook",
+      "defaultBranch": "main",
+      "headSha": "a4f6f9313afea1ea288640ea9e6dda269bf39cec",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 14639,
+      "headTreeKb": 1792,
+      "pushedAt": "2026-08-07T16:49:04Z",
+      "probe": "tree",
+      "manifests": [
+        "bricks/dashbook_gallery/__brick__/gallery/pubspec.yaml",
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "daylight",
+      "defaultBranch": "main",
+      "headSha": "41dcfd1d239898f108198b0a603b7213688535cd",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 49,
+      "headTreeKb": 31,
+      "pushedAt": "2026-02-17T07:14:11Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "deposit",
+      "defaultBranch": "main",
+      "headSha": "4a261304425691c5f7a3a5aaae4404e459b14dcd",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 92,
+      "headTreeKb": 92,
+      "pushedAt": "2022-03-21T19:51:45Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/deposit/pubspec.yaml",
+        "packages/deposit_firestore/pubspec.yaml",
+        "packages/deposit_supabase/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "ember_bot",
+      "defaultBranch": "main",
+      "headSha": "87742c738b58d06b78e8ee9eef35f9571c12e088",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 19,
+      "headTreeKb": 15,
+      "pushedAt": "2022-05-22T17:36:11Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "fast_noise",
+      "defaultBranch": "main",
+      "headSha": "37312e41a885ed585dfbea3e28c1079b25c82e5f",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 199,
+      "headTreeKb": 144,
+      "pushedAt": "2023-07-27T15:31:06Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "firescore",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 11765,
+      "pushedAt": "2025-09-10T17:34:37Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "fireslime-discord-bot",
+      "defaultBranch": "master",
+      "headSha": "32e672b6c0bc215cf2dfbab98d1d3e20e701b5ee",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 190,
+      "headTreeKb": 125,
+      "pushedAt": "2022-12-03T00:08:10Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "fireslime.github.io",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "HTML",
+      "sizeKb": 7440,
+      "pushedAt": "2023-10-02T00:26:47Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "flame-examples",
+      "defaultBranch": "master",
+      "headSha": "e466a6b16c6bad54884172241e301c87c9c1c6ac",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 121,
+      "headTreeKb": 298,
+      "pushedAt": "2019-10-29T23:14:00Z",
+      "probe": "tree",
+      "manifests": [
+        "flare_rotation/pubspec.yaml",
+        "isometric/pubspec.yaml",
+        "shadow_sprites/pubspec.yaml",
+        "simple_camera/pubspec.yaml",
+        "stack_controls/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flame_and_watch",
+      "defaultBranch": "master",
+      "headSha": "b56b9a2976738bc62d8a6fac3da30dfa503935e6",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1348,
+      "headTreeKb": 666,
+      "pushedAt": "2023-09-01T12:02:38Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flame_centipede",
+      "defaultBranch": "main",
+      "headSha": "1bd951fac4ae6784c4cf536e89303b5a0d6084e4",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 7924,
+      "headTreeKb": 2929,
+      "pushedAt": "2023-01-27T21:46:08Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-gh-pages",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": null,
+      "sizeKb": 48,
+      "pushedAt": "2025-02-18T21:20:49Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter-itchio-desktop",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 10,
+      "headTreeKb": 7,
+      "pushedAt": "2024-03-04T12:56:14Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "flutter_and_friends_2025_flame_3d_workshop_template",
+      "defaultBranch": "main",
+      "headSha": "c093a9cbd3112b6100e1e06d30ac825b94b9b937",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 4159,
+      "headTreeKb": 8070,
+      "pushedAt": "2025-09-02T13:49:06Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/playground/pubspec.yaml",
+        "packages/slides/pubspec.yaml",
+        "packages/template/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_gapless_audio_loop",
+      "defaultBranch": "master",
+      "headSha": "7d2bb35d1224f68d8f65a4d19aa5eaf27d68f784",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 2385,
+      "headTreeKb": 2581,
+      "pushedAt": "2020-05-09T13:51:37Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "ghost-vs-wonderland",
+      "defaultBranch": "master",
+      "headSha": "79a7587004f9c33b01bee47173b4cad6842569c1",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 4686,
+      "headTreeKb": 3577,
+      "pushedAt": "2021-10-31T19:32:20Z",
+      "probe": "tree",
+      "manifests": [
+        "game/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "gravitational_waves",
+      "defaultBranch": "main",
+      "headSha": "febdea40623e83657afd31b97aa8ec5a8b657a1b",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 8597,
+      "headTreeKb": 11483,
+      "pushedAt": "2024-07-16T03:19:34Z",
+      "probe": "tree",
+      "manifests": [
+        "game/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "heeve",
+      "defaultBranch": "main",
+      "headSha": "2dd1352097deab952dcd93f0f514344f69cec803",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 18849,
+      "headTreeKb": 19762,
+      "pushedAt": "2021-12-02T12:53:39Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "homura",
+      "defaultBranch": "master",
+      "headSha": "bfa2f9d8980991a32399c0a329502e3b7c9a0927",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 176,
+      "headTreeKb": 603,
+      "pushedAt": "2019-02-28T00:23:48Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "melos-action",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 280,
+      "headTreeKb": 177,
+      "pushedAt": "2026-09-01T20:42:51Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "mini_hub",
+      "defaultBranch": "gh-pages",
+      "fork": false,
+      "language": null,
+      "sizeKb": 11,
+      "headTreeKb": 11,
+      "pushedAt": "2022-08-19T14:53:28Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "mini_sprite",
+      "defaultBranch": "main",
+      "headSha": "65eec165a61a7b3f70f23f22ae98056b3192ab93",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 9943,
+      "headTreeKb": 1111,
+      "pushedAt": "2026-09-23T19:15:30Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/flame_mini_sprite/example/pubspec.yaml",
+        "packages/flame_mini_sprite/pubspec.yaml",
+        "packages/flutter_mini_sprite/example/pubspec.yaml",
+        "packages/flutter_mini_sprite/pubspec.yaml",
+        "packages/mini_sprite/pubspec.yaml",
+        "packages/mini_sprite_editor/pubspec.yaml",
+        "packages/mini_treasure_quest/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "ocarina",
+      "defaultBranch": "main",
+      "headSha": "3c8e574854d3ff8c640e2f9c018be4c373ebd4ef",
+      "fork": false,
+      "language": "Swift",
+      "sizeKb": 2406,
+      "headTreeKb": 2716,
+      "pushedAt": "2024-07-26T13:41:26Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Swift, but 2 manifests (example/pubspec.yaml, pubspec.yaml)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "ordered_set",
+      "defaultBranch": "main",
+      "headSha": "69828e70e6b61c59667d8afd4eec06fe77f9d925",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 144,
+      "headTreeKb": 305,
+      "pushedAt": "2026-07-22T07:30:56Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "padracing",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 192,
+      "pushedAt": "2022-05-28T12:41:53Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "photo_view",
+      "defaultBranch": "main",
+      "headSha": "a13ca2fc387a3fb1276126959e092c44d0029987",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 59208,
+      "headTreeKb": 16795,
+      "pushedAt": "2024-09-04T06:46:42Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "pocket-dungeons",
+      "defaultBranch": "master",
+      "headSha": "cd3f3dd98eb244004ecc016824007c038869eb1a",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 221,
+      "headTreeKb": 236,
+      "pushedAt": "2019-08-19T00:21:38Z",
+      "probe": "tree",
+      "manifests": [
+        "game/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "qri",
+      "defaultBranch": "master",
+      "headSha": "387f6b01edcad530203299535a4641f9625242ca",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 21836,
+      "headTreeKb": 15498,
+      "pushedAt": "2023-01-14T00:07:06Z",
+      "probe": "tree",
+      "manifests": [
+        "console/package.json",
+        "console/plugins/cordova-plugin-screen-orientation/package.json",
+        "console/plugins/cordova-plugin-screen-orientation/tests/package.json",
+        "console/plugins/cordova-plugin-whitelist/package.json",
+        "console/plugins/es6-promise-plugin/package.json",
+        "console/src/package.json",
+        "engine/package.json",
+        "ide/package.json",
+        "tools/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "rogue_shooter",
+      "defaultBranch": "master",
+      "headSha": "26250922af7e1741fd4a280049eb707c8f721e6f",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1868,
+      "headTreeKb": 1263,
+      "pushedAt": "2020-09-24T17:13:58Z",
+      "probe": "tree",
+      "manifests": [
+        "game/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "snake-chef",
+      "defaultBranch": "master",
+      "headSha": "e01c2a62e2d01ee8aeda46359d92570b046b3661",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 50937,
+      "headTreeKb": 29806,
+      "pushedAt": "2021-01-18T23:28:18Z",
+      "probe": "tree",
+      "manifests": [
+        "snake_chef/pubspec.yaml",
+        "tools/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "spec-action",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "Shell",
+      "sizeKb": 6,
+      "headTreeKb": 4,
+      "pushedAt": "2022-10-21T13:41:03Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "super_flutter_maker",
+      "defaultBranch": "master",
+      "headSha": "afa750d1fa08c29679701a898966981b839a823d",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 17910,
+      "headTreeKb": 14163,
+      "pushedAt": "2020-02-01T22:20:25Z",
+      "probe": "tree",
+      "manifests": [
+        "game/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "tile_patcher",
+      "defaultBranch": "main",
+      "headSha": "9caa8d3416b1d4ef658df7d4a9ebb732e5e271e6",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 467,
+      "headTreeKb": 481,
+      "pushedAt": "2025-10-21T20:58:48Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "trex-flame",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 638,
+      "pushedAt": "2022-06-06T11:12:55Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "vscode-dart-import",
+      "defaultBranch": "master",
+      "headSha": "28c375f14c8f0d87e96c6af567dacee91523143c",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 181,
+      "headTreeKb": 137,
+      "pushedAt": "2022-12-30T20:30:37Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    }
+  ],
+  "excluded": [
+    {
+      "repo": "airplane-resource-pack",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "firescore",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "fireslime.github.io",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter-gh-pages",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter-itchio-desktop",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "melos-action",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "mini_hub",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "padracing",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "spec-action",
+      "reason": "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "trex-flame",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    }
+  ]
+}

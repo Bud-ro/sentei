@@ -1,0 +1,799 @@
+{
+  "version": 3,
+  "org": "VeryGoodOpenSource",
+  "generatedAt": "2026-09-28T02:44:32.444Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": ".github",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 120,
+      "headTreeKb": 70,
+      "pushedAt": "2026-04-09T16:51:27Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "changelogs",
+      "defaultBranch": "main",
+      "headSha": "547230a751fbb17efa93e4b8957eb2c5305a7676",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 237,
+      "headTreeKb": 304,
+      "pushedAt": "2026-09-28T00:40:11Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "cli_completion",
+      "defaultBranch": "main",
+      "headSha": "53e722af02fcbd18c83f97c89f52aad89d2743a2",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 883,
+      "headTreeKb": 962,
+      "pushedAt": "2026-09-21T15:07:39Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flame_behaviors",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 178,
+      "pushedAt": "2025-10-21T14:17:13Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "flame_steering_behaviors",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 66,
+      "pushedAt": "2023-10-31T15:33:15Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "flutter_and_friends_tic_tac_toe",
+      "defaultBranch": "main",
+      "headSha": "082bb40bb649aa15bb57caa96952483a7eb85050",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 53,
+      "headTreeKb": 69,
+      "pushedAt": "2024-09-03T08:55:03Z",
+      "probe": "tree",
+      "manifests": [
+        "backend/pubspec.yaml",
+        "frontend/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_web_preloader",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 44,
+      "pushedAt": "2026-03-19T10:53:11Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "formz",
+      "defaultBranch": "main",
+      "headSha": "9789e8ce7b7cd29aae7eda043b32ee7dc6602b2b",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 320,
+      "headTreeKb": 405,
+      "pushedAt": "2026-09-21T11:51:29Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "genui_jaspr",
+      "defaultBranch": "main",
+      "headSha": "3df1946649b0cfb86911d1101a9779e1f611f6c1",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 348,
+      "headTreeKb": 509,
+      "pushedAt": "2026-09-24T12:50:11Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "leap",
+      "defaultBranch": "main",
+      "fork": true,
+      "archived": true,
+      "language": null,
+      "sizeKb": 7509,
+      "pushedAt": "2024-02-28T18:40:45Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "mockingjay",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 251,
+      "pushedAt": "2026-04-14T15:18:20Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "pub_updater",
+      "defaultBranch": "main",
+      "headSha": "76f6ead002dd14c6d641275d0730077697191fb9",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 151,
+      "headTreeKb": 87,
+      "pushedAt": "2026-09-21T09:33:38Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "r13n",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 322,
+      "pushedAt": "2026-03-06T10:53:02Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very-good-claude-code-marketplace",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 31,
+      "headTreeKb": 14,
+      "pushedAt": "2026-09-25T20:37:44Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "very_good_analysis",
+      "defaultBranch": "main",
+      "headSha": "1e84c310252ce0d0a1532c53e43ce0cd9f6ef7ec",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 289,
+      "headTreeKb": 521,
+      "pushedAt": "2026-09-03T14:28:05Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml",
+        "tool/bump_version/pubspec.yaml",
+        "tool/linter_rules/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "very_good_cli",
+      "defaultBranch": "main",
+      "headSha": "1c867dbf24efc21d7d5d8c1386fa0c9791a14113",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 31100,
+      "headTreeKb": 7694,
+      "pushedAt": "2026-09-25T10:06:59Z",
+      "probe": "tree",
+      "manifests": [
+        "bricks/test_optimizer/hooks/pubspec.yaml",
+        "e2e/pubspec.yaml",
+        "e2e/test/commands/test/async_main/fixture/pubspec.yaml",
+        "e2e/test/commands/test/compilation_error/fixture/pubspec.yaml",
+        "e2e/test/commands/test/no_project/fixture/pubspec.yaml",
+        "e2e/test/commands/test/optimization_annotations/fixture/pubspec.yaml",
+        "e2e/test/commands/test/optimization_annotations/flutter_fixture/pubspec.yaml",
+        "e2e/test/commands/test/optimization_annotations/timeout_fixture/pubspec.yaml",
+        "e2e/test/commands/test/optimization_exclude/fixture/pubspec.yaml",
+        "e2e/test/commands/test/spaced_golden_file_name/fixture/pubspec.yaml",
+        "e2e/test/commands/test/very_good_config/fixture/pubspec.yaml",
+        "e2e/test/commands/test/very_good_config/malformed_fixture/pubspec.yaml",
+        "pubspec.yaml",
+        "site/package.json",
+        "tool/spdx_license/hooks/pubspec.yaml",
+        "tool/spdx_license/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "very_good_core",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "C++",
+      "sizeKb": 3768,
+      "pushedAt": "2024-02-21T07:30:12Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_coverage",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 2922,
+      "pushedAt": "2026-03-31T13:19:22Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_dart_cli",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 146,
+      "pushedAt": "2024-02-21T07:49:30Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_dart_package",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 84,
+      "pushedAt": "2024-02-21T07:43:06Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_dictionaries",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 26,
+      "headTreeKb": 16,
+      "pushedAt": "2025-10-07T12:50:53Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "very_good_docs_site",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 1014,
+      "pushedAt": "2024-02-21T07:53:04Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_flame_game",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 4133,
+      "pushedAt": "2024-02-21T08:16:46Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_flutter_package",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 80,
+      "pushedAt": "2024-02-21T07:48:06Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_flutter_plugin",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 664,
+      "pushedAt": "2024-02-23T14:58:17Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_hub",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 226,
+      "pushedAt": "2025-11-20T17:20:02Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_infinite_list",
+      "defaultBranch": "main",
+      "headSha": "bb55a058b72095d991178ff51be6792db09fa715",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1702,
+      "headTreeKb": 1828,
+      "pushedAt": "2026-09-21T12:34:24Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "very_good_performance",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "C++",
+      "sizeKb": 921,
+      "pushedAt": "2023-01-10T18:04:35Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_ranch",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 85697,
+      "pushedAt": "2023-10-26T17:16:57Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_templates",
+      "defaultBranch": "main",
+      "headSha": "6a82f2bcd73dcb57a5cc84439e232d818769da8a",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 3558,
+      "headTreeKb": 3539,
+      "pushedAt": "2026-09-21T16:32:09Z",
+      "probe": "tree",
+      "manifests": [
+        "tool/dependency_tightener/pubspec.yaml",
+        "very_good_app_ui/__brick__/pubspec.yaml",
+        "very_good_app_ui/__brick__/widgetbook/pubspec.yaml",
+        "very_good_app_ui/hooks/pubspec.yaml",
+        "very_good_core/__brick__/pubspec.yaml",
+        "very_good_core/hooks/pubspec.yaml",
+        "very_good_dart_cli/__brick__/pubspec.yaml",
+        "very_good_dart_cli/hooks/pubspec.yaml",
+        "very_good_dart_package/__brick__/pubspec.yaml",
+        "very_good_dart_package/hooks/pubspec.yaml",
+        "very_good_docs_site/__brick__/package.json",
+        "very_good_docs_site/hooks/pubspec.yaml",
+        "very_good_flame_game/__brick__/pubspec.yaml",
+        "very_good_flame_game/hooks/pubspec.yaml",
+        "very_good_flutter_package/__brick__/pubspec.yaml",
+        "very_good_flutter_package/hooks/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{#android}}{{project_name.snakeCase()}}_android{{/android}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{#darwin}}{{project_name.snakeCase()}}_darwin{{/darwin}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{#ios}}{{project_name.snakeCase()}}_ios{{/ios}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{#linux}}{{project_name.snakeCase()}}_linux{{/linux}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{#macos}}{{project_name.snakeCase()}}_macos{{/macos}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{#web}}{{project_name.snakeCase()}}_web{{/web}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{#windows}}{{project_name.snakeCase()}}_windows{{/windows}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{project_name.snakeCase()}}/example/actions/check_platform_name/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{project_name.snakeCase()}}/example/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{project_name.snakeCase()}}/pubspec.yaml",
+        "very_good_flutter_plugin/__brick__/{{project_name.snakeCase()}}_platform_interface/pubspec.yaml",
+        "very_good_flutter_plugin/hooks/pubspec.yaml",
+        "very_good_wear_app/__brick__/pubspec.yaml",
+        "very_good_wear_app/hooks/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "very_good_test_runner",
+      "defaultBranch": "main",
+      "headSha": "4731f747407d1b5b017ebdd8328c3eddb4d3d1fc",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 98,
+      "headTreeKb": 90,
+      "pushedAt": "2026-09-08T12:33:49Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "very_good_wear_app",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 365,
+      "pushedAt": "2024-02-21T07:40:46Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "very_good_workflows",
+      "defaultBranch": "main",
+      "headSha": "7923125cd505d3db8b0de086c68ca27ecb6e369b",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 3978,
+      "headTreeKb": 2042,
+      "pushedAt": "2026-09-25T23:35:23Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/dart_package/pubspec.yaml",
+        "examples/flutter_package/pubspec.yaml",
+        "site/package.json",
+        "test/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "vgv-ai-flutter-plugin",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "Shell",
+      "sizeKb": 13149,
+      "headTreeKb": 747,
+      "pushedAt": "2026-09-22T11:01:10Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "vgv-ffca-plugin",
+      "defaultBranch": "main",
+      "headSha": "91accd98d90c4237e8afc86dd73a68eeb7f54bcb",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 147,
+      "headTreeKb": 115,
+      "pushedAt": "2026-09-24T17:06:48Z",
+      "probe": "tree",
+      "manifests": [
+        "scripts/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/apps/mobile_app/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/alpha/alpha_data/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/alpha/alpha_domain/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/beta/beta_data/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/beta/beta_domain/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/beta/beta_presentation/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/delta/delta_data/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/delta/delta_domain/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/epsilon/epsilon_domain/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/eta/eta_data/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/eta/eta_domain/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/gamma/gamma_domain/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/gamma/gamma_presentation/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/orders/orders_service/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/theta/theta_data/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/features/zeta/zeta_domain/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/pubspec.yaml",
+        "scripts/test/fixtures/invalid_workspace/shared/bad_shared/pubspec.yaml",
+        "scripts/test/fixtures/not_ffca/packages/some_pkg/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/apps/mobile_app/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/auth/auth_data_firebase/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/auth/auth_domain/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/cart/cart_data/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/cart/cart_domain/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/cart/cart_presentation/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/product/product_data/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/product/product_domain/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/features/product/product_presentation/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/shared/api_client/pubspec.yaml",
+        "scripts/test/fixtures/valid_workspace/shared/ui_kit/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "vgv-wingspan",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "Shell",
+      "sizeKb": 8643,
+      "headTreeKb": 478,
+      "pushedAt": "2026-09-21T13:23:56Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "web_installers",
+      "defaultBranch": "master",
+      "fork": true,
+      "archived": true,
+      "language": null,
+      "sizeKb": 13723,
+      "pushedAt": "2023-05-02T11:38:33Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "repo": ".github",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "flame_behaviors",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flame_steering_behaviors",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_web_preloader",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "leap",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "mockingjay",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "r13n",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very-good-claude-code-marketplace",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "very_good_core",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_coverage",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_dart_cli",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_dart_package",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_dictionaries",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "very_good_docs_site",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_flame_game",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_flutter_package",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_flutter_plugin",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_hub",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_performance",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_ranch",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "very_good_wear_app",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "vgv-ai-flutter-plugin",
+      "reason": "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "vgv-wingspan",
+      "reason": "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "web_installers",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    }
+  ]
+}

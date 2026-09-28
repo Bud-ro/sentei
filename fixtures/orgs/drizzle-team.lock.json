@@ -1,0 +1,912 @@
+{
+  "version": 3,
+  "org": "drizzle-team",
+  "generatedAt": "2026-09-28T02:44:31.480Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": "3310snake",
+      "defaultBranch": "master",
+      "headSha": "2672e4dbe34654d567da5873c82572bb1076cecb",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1424,
+      "headTreeKb": 1090,
+      "pushedAt": "2024-08-19T09:24:35Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "brocli",
+      "defaultBranch": "main",
+      "headSha": "5bfd06b8e322ce757d29afad56bae7dff3d4f4f8",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 258,
+      "headTreeKb": 236,
+      "pushedAt": "2026-09-04T17:47:23Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "bunsql-repro",
+      "defaultBranch": "main",
+      "headSha": "f7a244779ee845ca751c789675ceb239ef43f310",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 16,
+      "headTreeKb": 52,
+      "pushedAt": "2025-01-26T13:37:50Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-benchmarks",
+      "defaultBranch": "main",
+      "headSha": "2ae27415a69f00b4f0f734ebb0a98e7799008819",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 13308,
+      "headTreeKb": 39906,
+      "pushedAt": "2026-07-17T13:45:36Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-bun",
+      "defaultBranch": "main",
+      "headSha": "b9ef08d7faada4d6a6acfc5a657ffc780614c4f9",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 11876,
+      "headTreeKb": 38238,
+      "pushedAt": "2023-01-23T03:34:50Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-bun-litefs",
+      "defaultBranch": "main",
+      "headSha": "67a7c0012b5fb233b232dbfaed1598de834f25d0",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 15,
+      "headTreeKb": 31,
+      "pushedAt": "2022-12-09T20:25:15Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-drops",
+      "defaultBranch": "main",
+      "headSha": "87fe450e7b985357d021b3a39098dabbfa15a979",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 66,
+      "headTreeKb": 166,
+      "pushedAt": "2023-09-12T13:09:12Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-examples",
+      "defaultBranch": "main",
+      "fork": false,
+      "empty": true,
+      "language": null,
+      "sizeKb": 0,
+      "pushedAt": "2024-04-12T08:45:30Z",
+      "selected": false,
+      "reasons": [
+        "empty repository (no commit on the default branch)"
+      ]
+    },
+    {
+      "name": "drizzle-flyio-litefs",
+      "defaultBranch": "main",
+      "headSha": "1924479d834d48ad6f787b79005b94b28bc7b4ab",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 37,
+      "headTreeKb": 18,
+      "pushedAt": "2022-12-07T19:01:32Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-graphql",
+      "defaultBranch": "main",
+      "headSha": "c558249fadcc7bd1af8ec17faf292d8cf2d365c5",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 725,
+      "headTreeKb": 633,
+      "pushedAt": "2024-08-12T16:41:56Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-kit-mirror",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 6316,
+      "pushedAt": "2024-11-06T19:55:20Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "drizzle-knex",
+      "defaultBranch": "main",
+      "headSha": "20637474a336de5e0ce77f0b97666a3386201e2c",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 13113,
+      "headTreeKb": 44643,
+      "pushedAt": "2023-03-26T22:15:15Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-kysely",
+      "defaultBranch": "main",
+      "headSha": "14f4694b9e330316a2813458cc7950988f281b04",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 13116,
+      "headTreeKb": 44640,
+      "pushedAt": "2023-03-26T22:15:36Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-northwind-benchmarks",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 34385,
+      "pushedAt": "2024-05-06T17:25:50Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "drizzle-northwind-benchmarks-pg",
+      "defaultBranch": "main",
+      "headSha": "c225260a8c75c88e905592a8ff7995940abb4e0e",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 267,
+      "headTreeKb": 444,
+      "pushedAt": "2023-08-04T11:41:00Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-northwind-traders",
+      "defaultBranch": "main",
+      "headSha": "7299a9a18c80b580c30abeef502fedfabd2ee824",
+      "fork": false,
+      "language": null,
+      "sizeKb": 0,
+      "headTreeKb": 1,
+      "pushedAt": "2022-09-19T10:51:51Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "no language detected, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-orm",
+      "defaultBranch": "main",
+      "headSha": "15454dbe49d827c6081f3d0231e2e7985e517295",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 58933,
+      "headTreeKb": 17867,
+      "pushedAt": "2026-09-27T08:51:57Z",
+      "probe": "tree",
+      "manifests": [
+        "drizzle-arktype/package.json",
+        "drizzle-kit/package.json",
+        "drizzle-orm/package.json",
+        "drizzle-seed/package.json",
+        "drizzle-typebox/package.json",
+        "drizzle-valibot/package.json",
+        "drizzle-zod/package.json",
+        "eslint-plugin-drizzle/package.json",
+        "integration-tests/package.json",
+        "integration-tests/type-tests/join-nodenext/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-orm-backup2",
+      "defaultBranch": "main",
+      "headSha": "cac3cd4b9d8ff16e56bd69a3a942d0d9b8b913c6",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 535,
+      "headTreeKb": 448,
+      "pushedAt": "2022-10-20T13:09:07Z",
+      "probe": "tree",
+      "manifests": [
+        "drizzle-orm-mysql/package.json",
+        "drizzle-orm-pg/package.json",
+        "drizzle-orm/package.json",
+        "integration-tests/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-orm-d1-example",
+      "defaultBranch": "main",
+      "headSha": "4d681cbe0055e7448776105fa7c108582910c7fc",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 26,
+      "headTreeKb": 15,
+      "pushedAt": "2022-12-07T16:55:50Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-orm-docs",
+      "defaultBranch": "main",
+      "headSha": "236d7ea7aaa3178af732aabca5511bd639ae6a2f",
+      "fork": false,
+      "language": "MDX",
+      "sizeKb": 75658,
+      "headTreeKb": 56597,
+      "pushedAt": "2026-09-23T09:15:36Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language MDX, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-prisma-generator",
+      "defaultBranch": "main",
+      "headSha": "d7a5ab9238dae9957324e637c690c19ed06984c5",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 71,
+      "headTreeKb": 112,
+      "pushedAt": "2024-08-13T15:19:49Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-pulse",
+      "defaultBranch": "main",
+      "headSha": "160d0107e1c5d310526764b7d08be51b73da4cd5",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2517,
+      "headTreeKb": 798,
+      "pushedAt": "2026-08-24T15:00:19Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/drizzle-pulse/package.json",
+        "packages/integration-tests/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-single-db-monorepo-example",
+      "defaultBranch": "main",
+      "headSha": "94eb0ccb0e4ce0df467c562c4cc2db2bc369b19f",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 107,
+      "headTreeKb": 109,
+      "pushedAt": "2023-03-29T06:31:13Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "projects/planetscale-mysql2/package.json",
+        "projects/planetscale-sls/package.json",
+        "projects/projectA/package.json",
+        "projects/projectB/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-singlestore",
+      "defaultBranch": "main",
+      "headSha": "acdc4f59f020d4cba8550af73a170528834ddc1a",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 20,
+      "headTreeKb": 57,
+      "pushedAt": "2025-07-18T12:45:24Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-sqljs",
+      "defaultBranch": "master",
+      "headSha": "a1b0c40e80956c286a8abb964aff7a0374627674",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 11588,
+      "headTreeKb": 1757,
+      "pushedAt": "2023-04-08T11:01:10Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-studio-expo",
+      "defaultBranch": "main",
+      "headSha": "8f810c20572e1dbcd0fe24875e3dd215b8decf8f",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2498,
+      "headTreeKb": 3777,
+      "pushedAt": "2025-10-11T17:19:47Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "webui/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-studio-npm",
+      "defaultBranch": "main",
+      "headSha": "5909664ea8dd354d02e005599eb7c18c58628edc",
+      "fork": false,
+      "language": null,
+      "sizeKb": 32,
+      "headTreeKb": 5,
+      "pushedAt": "2026-05-24T09:22:17Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "no language detected, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "drizzle-trpc-zod",
+      "defaultBranch": "main",
+      "headSha": "b2444e82f39496087094d11ee8867020c63c2a02",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 6,
+      "headTreeKb": 7,
+      "pushedAt": "2023-07-15T17:11:20Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "fastabase",
+      "defaultBranch": "main",
+      "headSha": "990cac1a03e3fb2ecd9cdd95d21f9de78e90f8cb",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 383,
+      "headTreeKb": 915,
+      "pushedAt": "2025-07-31T15:31:56Z",
+      "probe": "tree",
+      "manifests": [
+        "containers/postgraphile/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "gateway-website",
+      "defaultBranch": "main",
+      "headSha": "455603aaf8ff2b56339813957d1bf81dd416692e",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 2188,
+      "headTreeKb": 2802,
+      "pushedAt": "2026-08-28T12:49:35Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "hanji",
+      "defaultBranch": "master",
+      "headSha": "96430391482a6340d8ab7facdadb38c8bc43feb4",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 45,
+      "headTreeKb": 64,
+      "pushedAt": "2026-03-15T11:01:01Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "minipg",
+      "defaultBranch": "main",
+      "headSha": "70a3f4339fb43edf4225d8e295ed6f8d40887d53",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 3202,
+      "headTreeKb": 3309,
+      "pushedAt": "2026-08-25T08:34:25Z",
+      "probe": "tree",
+      "manifests": [
+        "infra/aurora-test/package.json",
+        "issue-cache/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "neon-cf-example",
+      "defaultBranch": "main",
+      "headSha": "2dc1be26df2022472b3a2e1882ad9d3972718ebc",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 30,
+      "headTreeKb": 71,
+      "pushedAt": "2022-12-13T14:47:43Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "nodepg-postgresjs",
+      "defaultBranch": "main",
+      "headSha": "c63274c87fe466f454da8da2fcc4ecc5cbb68608",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 29,
+      "headTreeKb": 110,
+      "pushedAt": "2023-10-07T10:36:11Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "onedollarstats-package",
+      "defaultBranch": "main",
+      "headSha": "613bc6596ce80d631418ef0a280a475261173706",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 518,
+      "headTreeKb": 1334,
+      "pushedAt": "2026-03-27T08:40:24Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/angular/package.json",
+        "examples/astro/package.json",
+        "examples/next/package.json",
+        "examples/nuxt/package.json",
+        "examples/remix/package.json",
+        "examples/svelte-spa/package.json",
+        "examples/svelte-ssr/package.json",
+        "examples/vite-react-router-v7/package.json",
+        "examples/vite-react/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "onedollarstats-script",
+      "defaultBranch": "master",
+      "headSha": "c18a4428b1c191af043feeb4797d17be13724d09",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 633,
+      "headTreeKb": 1204,
+      "pushedAt": "2026-05-20T13:53:17Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "test/expo/package.json",
+        "test/mpa/package.json",
+        "test/spa/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "pathtrami-planetscale",
+      "defaultBranch": "main",
+      "headSha": "c333d5d5c6fcd9cc920116edcf5d1724c3134bae",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1732,
+      "headTreeKb": 1729,
+      "pushedAt": "2022-07-31T23:23:32Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "react-data-grid",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": "TypeScript",
+      "sizeKb": 20576,
+      "pushedAt": "2026-03-30T11:44:00Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "sql-single-vs-multiple-queries",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": "TypeScript",
+      "sizeKb": 128,
+      "pushedAt": "2023-08-06T17:36:50Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "sst-drizzle-example",
+      "defaultBranch": "main",
+      "headSha": "5c55997ee80da61e7c3ab8ef2d6fc293b2d5456e",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 323,
+      "headTreeKb": 1922,
+      "pushedAt": "2024-02-20T21:01:16Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/core/package.json",
+        "packages/functions/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "stonksjs",
+      "defaultBranch": "main",
+      "fork": false,
+      "empty": true,
+      "language": null,
+      "sizeKb": 0,
+      "pushedAt": "2024-09-09T09:43:17Z",
+      "selected": false,
+      "reasons": [
+        "empty repository (no commit on the default branch)"
+      ]
+    },
+    {
+      "name": "tento",
+      "defaultBranch": "main",
+      "headSha": "632a318b4ffcb9dead06e33b44a5cba1f572165a",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 394,
+      "headTreeKb": 298,
+      "pushedAt": "2024-11-25T10:49:49Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/oauth/package.json",
+        "package.json",
+        "tests/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "tento-website",
+      "defaultBranch": "main",
+      "headSha": "caa3a983a28f5dd7846d238a932568aa894dce63",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 3501,
+      "headTreeKb": 4233,
+      "pushedAt": "2024-11-27T13:59:27Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "waddler",
+      "defaultBranch": "main",
+      "headSha": "f34ef09ca21c1d1a7737950fc9ee4ff5881ef2b8",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1753,
+      "headTreeKb": 1092,
+      "pushedAt": "2025-12-02T13:43:12Z",
+      "probe": "tree",
+      "manifests": [
+        "integration-tests/package.json",
+        "package.json",
+        "waddler/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "waddler-website",
+      "defaultBranch": "main",
+      "headSha": "568f40595a57234b7080ba5f3cf532c7874b0f18",
+      "fork": false,
+      "language": "MDX",
+      "sizeKb": 12356,
+      "headTreeKb": 1889,
+      "pushedAt": "2025-09-09T12:45:49Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language MDX, but package.json"
+      ],
+      "clone": "shallow"
+    }
+  ],
+  "excluded": [
+    {
+      "repo": "drizzle-examples",
+      "reason": "empty repository (no commit on the default branch)",
+      "manifests": null
+    },
+    {
+      "repo": "drizzle-kit-mirror",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "drizzle-northwind-benchmarks",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "react-data-grid",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "sql-single-vs-multiple-queries",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "stonksjs",
+      "reason": "empty repository (no commit on the default branch)",
+      "manifests": null
+    }
+  ]
+}

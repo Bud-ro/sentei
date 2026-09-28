@@ -1,0 +1,1853 @@
+{
+  "version": 3,
+  "org": "Baseflow",
+  "generatedAt": "2026-09-28T02:45:01.684Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": ".github",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 137,
+      "headTreeKb": 21,
+      "pushedAt": "2026-08-07T07:50:38Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "AndroidSlidingUpPanelXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 331,
+      "headTreeKb": 393,
+      "pushedAt": "2020-05-14T11:36:55Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "AutoLinkTextViewXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 140,
+      "headTreeKb": 282,
+      "pushedAt": "2020-05-14T11:35:49Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "AutoscaleEditTextXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 83,
+      "headTreeKb": 135,
+      "pushedAt": "2020-05-14T11:32:59Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "Chameleon",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 13275,
+      "headTreeKb": 10295,
+      "pushedAt": "2024-11-08T15:32:43Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "DSTV.Net",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 164,
+      "headTreeKb": 157,
+      "pushedAt": "2025-10-23T13:26:06Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "DiagonalLayoutXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 624,
+      "headTreeKb": 797,
+      "pushedAt": "2020-05-14T11:37:25Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "EllipsizeTextViewXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 146,
+      "headTreeKb": 295,
+      "pushedAt": "2020-05-14T11:35:33Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "ExoPlayerXamarin",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 104527,
+      "headTreeKb": 8336,
+      "pushedAt": "2024-01-23T12:54:35Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "FFmpegMediaMetadataRetrieverXamarin",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 55117,
+      "headTreeKb": 35394,
+      "pushedAt": "2020-05-14T11:38:24Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "FantasySlideXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 502,
+      "headTreeKb": 757,
+      "pushedAt": "2020-05-14T11:34:34Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "FlipShareXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 167,
+      "headTreeKb": 314,
+      "pushedAt": "2020-05-14T11:34:17Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "FloatingNavigationView",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 165,
+      "headTreeKb": 347,
+      "pushedAt": "2020-05-14T11:35:18Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "FoldingCell",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 23156,
+      "headTreeKb": 23300,
+      "pushedAt": "2020-05-14T11:36:41Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "GoogleVRXamarin",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 4817,
+      "headTreeKb": 4945,
+      "pushedAt": "2020-05-14T11:30:27Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "GuardedActions",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 782,
+      "headTreeKb": 580,
+      "pushedAt": "2020-08-20T13:59:26Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "GuardedActions.Samples",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 399,
+      "headTreeKb": 895,
+      "pushedAt": "2020-07-01T22:57:11Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "HoverXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 186,
+      "headTreeKb": 240,
+      "pushedAt": "2020-05-14T11:36:25Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "HugoStructuredData",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "HTML",
+      "sizeKb": 30,
+      "headTreeKb": 41,
+      "pushedAt": "2020-05-14T11:37:43Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "InfiniteCycleViewPagerXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 244,
+      "headTreeKb": 373,
+      "pushedAt": "2020-05-14T11:33:15Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "InteractiveMediaAdsXamarin",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 4425,
+      "headTreeKb": 3125,
+      "pushedAt": "2020-06-24T14:27:52Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "LoaderViewXamarin",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 467,
+      "headTreeKb": 676,
+      "pushedAt": "2020-05-14T11:38:03Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "LottieXamarin",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 39795,
+      "headTreeKb": 26229,
+      "pushedAt": "2024-04-05T08:02:21Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "MaterialDesignHelpers",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 150,
+      "headTreeKb": 442,
+      "pushedAt": "2020-05-14T11:34:50Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "MvxForms",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 345,
+      "headTreeKb": 2428,
+      "pushedAt": "2020-05-14T11:28:51Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "NavigationTabBarXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 145,
+      "headTreeKb": 165,
+      "pushedAt": "2020-05-14T11:33:31Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "NavigationTabStripXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 84,
+      "headTreeKb": 134,
+      "pushedAt": "2020-05-14T11:34:00Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "PhotoView",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "Java",
+      "sizeKb": 16896,
+      "headTreeKb": 300,
+      "pushedAt": "2022-03-25T09:53:49Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Java not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "SICK-RFID",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 53,
+      "headTreeKb": 41,
+      "pushedAt": "2024-09-11T08:01:28Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "VerticalViewPagerXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 803,
+      "headTreeKb": 1113,
+      "pushedAt": "2020-05-14T11:32:42Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "VlcXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 163616,
+      "headTreeKb": 58221,
+      "pushedAt": "2020-05-14T11:36:10Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "WaveSideBarXamarin",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 146,
+      "headTreeKb": 295,
+      "pushedAt": "2020-05-14T11:35:04Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "XF-Material-Library",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 10839,
+      "headTreeKb": 11036,
+      "pushedAt": "2024-06-13T11:47:17Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "Xamarin-Sidebar",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 50051,
+      "headTreeKb": 987,
+      "pushedAt": "2023-01-24T20:12:49Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "XamarinItemTouchHelper",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 416,
+      "headTreeKb": 554,
+      "pushedAt": "2020-05-14T11:37:09Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "XamarinMediaManager",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 20658,
+      "headTreeKb": 882,
+      "pushedAt": "2024-07-03T14:22:02Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "accessibility_linter",
+      "defaultBranch": "main",
+      "headSha": "7d0ad47d7adf827a49ea8eb693d5f42d641c59e3",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 354,
+      "headTreeKb": 521,
+      "pushedAt": "2026-05-27T08:46:45Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "adafruit-motor-hat-cpp-library",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "C++",
+      "sizeKb": 80,
+      "pushedAt": "2022-03-31T06:43:44Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "baseflow_plugin_template",
+      "defaultBranch": "main",
+      "headSha": "fe07a481da4483446fc33f5f85d28d789bd1e14e",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 228,
+      "headTreeKb": 232,
+      "pushedAt": "2025-11-24T08:59:08Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "byteplot",
+      "defaultBranch": "develop",
+      "headSha": "3f74305b1b0a86f949424f339f31d9b58e319ace",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 286,
+      "headTreeKb": 295,
+      "pushedAt": "2020-05-14T11:31:03Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "cg-dmf-poc",
+      "defaultBranch": "develop",
+      "headSha": "cee759b27cb45caad43c4d6b76e80f1422e8bebb",
+      "fork": false,
+      "language": "Kotlin",
+      "sizeKb": 284982,
+      "headTreeKb": 101808,
+      "pushedAt": "2026-09-11T02:17:17Z",
+      "probe": "tree",
+      "manifests": [
+        ".bruno/CG-DMF/package.json",
+        "frontend/admin-portal/package.json",
+        "frontend/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Kotlin, but 3 manifests (.bruno/CG-DMF/package.json, frontend/admin-portal/package.json, frontend/package.json)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "cheat-sheets",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 15,
+      "headTreeKb": 13,
+      "pushedAt": "2024-02-29T14:40:12Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "codelabs",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 26837,
+      "pushedAt": "2023-03-07T01:16:52Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "collection-view-bug",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "C#",
+      "sizeKb": 309,
+      "headTreeKb": 492,
+      "pushedAt": "2020-05-14T11:31:19Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "cunning_document_scanner",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": null,
+      "sizeKb": 213,
+      "pushedAt": "2024-10-16T05:27:12Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "drc-browser",
+      "defaultBranch": "main",
+      "headSha": "1d794914dfc22a684229999a363caf10b7fdefc7",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1851,
+      "headTreeKb": 627,
+      "pushedAt": "2026-09-13T22:42:09Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "duration",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 52,
+      "pushedAt": "2020-03-24T09:24:27Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter-blues",
+      "defaultBranch": "develop",
+      "headSha": "c74f0ab462a27e56113b4490f74769ca32caf688",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 147,
+      "headTreeKb": 465,
+      "pushedAt": "2020-09-10T09:57:02Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-contacts-plugin",
+      "defaultBranch": "develop",
+      "headSha": "2708c56e4e5300e8912fcb035ef8791f2fb82ffc",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 133,
+      "headTreeKb": 184,
+      "pushedAt": "2020-05-14T11:31:55Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-essentials",
+      "defaultBranch": "develop",
+      "headSha": "4ecc879ad216dc25dbe27a6b01c3662007dc83cf",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 14,
+      "headTreeKb": 21,
+      "pushedAt": "2020-05-14T11:32:11Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-geocoding",
+      "defaultBranch": "main",
+      "headSha": "f5c2e699de5c25e0855a1c8b50405a9ba15d41e7",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 804,
+      "headTreeKb": 1307,
+      "pushedAt": "2026-09-21T03:04:42Z",
+      "probe": "tree",
+      "manifests": [
+        "geocoding/example/pubspec.yaml",
+        "geocoding/pubspec.yaml",
+        "geocoding_android/example/pubspec.yaml",
+        "geocoding_android/pubspec.yaml",
+        "geocoding_darwin/example/pubspec.yaml",
+        "geocoding_darwin/pubspec.yaml",
+        "geocoding_platform_interface/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-geolocator",
+      "defaultBranch": "main",
+      "headSha": "1aeb359cf94631cda17a517b949fd83fe6030bb9",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 2165,
+      "headTreeKb": 1933,
+      "pushedAt": "2026-09-27T14:51:25Z",
+      "probe": "tree",
+      "manifests": [
+        "geolocator/example/pubspec.yaml",
+        "geolocator/pubspec.yaml",
+        "geolocator_android/example/pubspec.yaml",
+        "geolocator_android/pubspec.yaml",
+        "geolocator_apple/example/pubspec.yaml",
+        "geolocator_apple/pubspec.yaml",
+        "geolocator_linux/example/pubspec.yaml",
+        "geolocator_linux/pubspec.yaml",
+        "geolocator_platform_interface/pubspec.yaml",
+        "geolocator_web/example/pubspec.yaml",
+        "geolocator_web/pubspec.yaml",
+        "geolocator_windows/example/pubspec.yaml",
+        "geolocator_windows/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-google-api-availability",
+      "defaultBranch": "main",
+      "headSha": "5ccac6d52bae86d14f5a504aed0b011b56c77262",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 264,
+      "headTreeKb": 142,
+      "pushedAt": "2025-02-25T12:22:25Z",
+      "probe": "tree",
+      "manifests": [
+        "google_api_availability/example/pubspec.yaml",
+        "google_api_availability/pubspec.yaml",
+        "google_api_availability_android/example/pubspec.yaml",
+        "google_api_availability_android/pubspec.yaml",
+        "google_api_availability_platform_interface/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-meetup",
+      "defaultBranch": "master",
+      "headSha": "25efb372d2375d3c57d5ee24e1905538db065a4c",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 31184,
+      "headTreeKb": 1130,
+      "pushedAt": "2021-09-07T14:22:13Z",
+      "probe": "tree",
+      "manifests": [
+        "bloc_counter/finished/pubspec.yaml",
+        "bloc_counter/start/pubspec.yaml",
+        "slurp/final_basic/pubspec.yaml",
+        "slurp/final_cubit/pubspec.yaml",
+        "slurp/start/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-permission-handler",
+      "defaultBranch": "main",
+      "headSha": "06844691889603bf867ef03e8f3ca24b83f9f1a0",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 7941,
+      "headTreeKb": 1122,
+      "pushedAt": "2026-09-26T16:05:32Z",
+      "probe": "tree",
+      "manifests": [
+        "permission_handler/example/pubspec.yaml",
+        "permission_handler/pubspec.yaml",
+        "permission_handler_android/example/pubspec.yaml",
+        "permission_handler_android/pubspec.yaml",
+        "permission_handler_apple/example/pubspec.yaml",
+        "permission_handler_apple/pubspec.yaml",
+        "permission_handler_html/example/pubspec.yaml",
+        "permission_handler_html/pubspec.yaml",
+        "permission_handler_platform_interface/pubspec.yaml",
+        "permission_handler_windows/example/pubspec.yaml",
+        "permission_handler_windows/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-permission-plugins",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 205,
+      "pushedAt": "2021-10-05T10:31:32Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "flutter-plugins",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 36453,
+      "pushedAt": "2022-12-07T21:03:25Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter-style-guide",
+      "defaultBranch": "main",
+      "headSha": "381a1c3b90e6b9dbb42f1aef2e28712bef5d51d3",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 60,
+      "headTreeKb": 116,
+      "pushedAt": "2020-12-18T14:33:13Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-video-bloc",
+      "defaultBranch": "master",
+      "headSha": "7a085791735794a86b236bb5c4887725da0b940b",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 167,
+      "headTreeKb": 273,
+      "pushedAt": "2021-06-04T16:03:12Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_blue",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 17214,
+      "pushedAt": "2019-11-04T08:43:56Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter_cache_manager",
+      "defaultBranch": "main",
+      "headSha": "6670e3687a18aa3e91a920ad331e1591c5871559",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1097,
+      "headTreeKb": 728,
+      "pushedAt": "2026-09-23T19:25:24Z",
+      "probe": "tree",
+      "manifests": [
+        "flutter_cache_manager/example/pubspec.yaml",
+        "flutter_cache_manager/pubspec.yaml",
+        "flutter_cache_manager_firebase/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_cached_network_image",
+      "defaultBranch": "main",
+      "headSha": "90619b976bd05454f4a1dbdbfe243f83239f7042",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1096,
+      "headTreeKb": 659,
+      "pushedAt": "2026-09-24T05:06:27Z",
+      "probe": "tree",
+      "manifests": [
+        "cached_network_image/example/pubspec.yaml",
+        "cached_network_image/pubspec.yaml",
+        "cached_network_image_platform_interface/pubspec.yaml",
+        "cached_network_image_web/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_cached_network_image_git_advanced_temp",
+      "defaultBranch": "develop",
+      "fork": true,
+      "language": null,
+      "sizeKb": 999,
+      "pushedAt": "2025-05-19T10:32:02Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter_camera_x",
+      "defaultBranch": "master",
+      "headSha": "71b851c941703be85f224c6dbcae379de74eda86",
+      "fork": false,
+      "language": "Java",
+      "sizeKb": 63,
+      "headTreeKb": 123,
+      "pushedAt": "2021-02-22T13:57:35Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Java, but 2 manifests (example/pubspec.yaml, pubspec.yaml)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_date_picker",
+      "defaultBranch": "master",
+      "headSha": "ac7971d5bb06195f91ab9024c730a617abefcfc1",
+      "fork": false,
+      "language": "C++",
+      "sizeKb": 210,
+      "headTreeKb": 359,
+      "pushedAt": "2025-02-04T09:40:34Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language C++, but 2 manifests (example/pubspec.yaml, pubspec.yaml)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_document_scanner",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 56888,
+      "pushedAt": "2024-06-20T13:17:00Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter_instance_manager",
+      "defaultBranch": "main",
+      "headSha": "2da5a5d0071665aeab3471b563c6066e001c678e",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 149,
+      "headTreeKb": 224,
+      "pushedAt": "2024-09-02T15:28:22Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_ioc",
+      "defaultBranch": "main",
+      "headSha": "5fd5e1ddafb5b433c0ee6502aa7a6f3eb15e55e3",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 83,
+      "headTreeKb": 110,
+      "pushedAt": "2025-11-21T23:10:38Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/flutter_ioc/example/pubspec.yaml",
+        "packages/flutter_ioc/pubspec.yaml",
+        "packages/flutter_ioc_get_it/example/pubspec.yaml",
+        "packages/flutter_ioc_get_it/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_nfc_kit",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 369,
+      "pushedAt": "2024-04-23T10:01:13Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter_packages",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": null,
+      "sizeKb": 98506,
+      "pushedAt": "2023-10-01T07:11:35Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "flutter_software_architecture",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 6,
+      "headTreeKb": 6,
+      "pushedAt": "2024-03-04T09:15:01Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "flutter_state_management_demo",
+      "defaultBranch": "main",
+      "headSha": "0dd513b2fd2416d1cdfefcb7b1e846a87008c9e2",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 320,
+      "headTreeKb": 90,
+      "pushedAt": "2024-01-18T14:36:02Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_swipe_detector",
+      "defaultBranch": "main",
+      "headSha": "5b51998034c55a67313c5fa2cc93b308f7617b96",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 101,
+      "headTreeKb": 156,
+      "pushedAt": "2023-05-10T09:17:43Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_uwb",
+      "defaultBranch": "main",
+      "headSha": "f7031532ed38900658e3e07510acd5688f3f1f23",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 300,
+      "headTreeKb": 208,
+      "pushedAt": "2022-06-29T20:25:11Z",
+      "probe": "tree",
+      "manifests": [
+        "uwb/example/pubspec.yaml",
+        "uwb/pubspec.yaml",
+        "uwb_ios/example/pubspec.yaml",
+        "uwb_ios/pubspec.yaml",
+        "uwb_platform_interface/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_wizard",
+      "defaultBranch": "master",
+      "headSha": "69f30b647f989f900f73723d151d58531db4136f",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 167,
+      "headTreeKb": 219,
+      "pushedAt": "2022-05-24T07:16:25Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "full-stack-on-rust",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "Rust",
+      "sizeKb": 237,
+      "headTreeKb": 152,
+      "pushedAt": "2022-10-23T11:10:38Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Rust not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "konami_detector",
+      "defaultBranch": "main",
+      "headSha": "5db5ea1e95f4c8feb96686cfdcd8e797002f8772",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 95,
+      "headTreeKb": 155,
+      "pushedAt": "2021-11-13T18:04:32Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "mender-server",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Python",
+      "sizeKb": 1277,
+      "pushedAt": "2018-12-03T13:37:45Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "moneybird-webinar",
+      "defaultBranch": "master",
+      "headSha": "2c79007a81370469e7aa34285f8b8af286b0754a",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1136,
+      "headTreeKb": 1770,
+      "pushedAt": "2021-02-22T17:50:13Z",
+      "probe": "tree",
+      "manifests": [
+        "moneybird_intro/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "mug-manager",
+      "defaultBranch": "main",
+      "headSha": "e17978b180cdab313de33034e0a4ed43c298f4a9",
+      "fork": false,
+      "language": "C++",
+      "sizeKb": 3056,
+      "headTreeKb": 3322,
+      "pushedAt": "2023-03-22T00:09:48Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language C++, but pubspec.yaml"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "nominatim-k8s",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Shell",
+      "sizeKb": 44,
+      "pushedAt": "2023-04-17T09:41:41Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "octo_image",
+      "defaultBranch": "main",
+      "headSha": "c16eadc196d28d3dac295ce2d1d7c89deda64e21",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 722,
+      "headTreeKb": 828,
+      "pushedAt": "2026-09-23T19:24:00Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "oxybox",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "Rust",
+      "sizeKb": 1180,
+      "headTreeKb": 1412,
+      "pushedAt": "2026-07-24T14:10:13Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Rust not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "screenrecorder",
+      "defaultBranch": "main",
+      "headSha": "b98e33652411fe7c262cbea66631b6e0f6765d2a",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 209,
+      "headTreeKb": 282,
+      "pushedAt": "2025-11-21T01:09:17Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "service_manager",
+      "defaultBranch": "master",
+      "headSha": "62853483d2af4b443cbfa85f290b65c4adefc296",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 180,
+      "headTreeKb": 226,
+      "pushedAt": "2022-11-08T17:29:22Z",
+      "probe": "tree",
+      "manifests": [
+        "service_manager/example/pubspec.yaml",
+        "service_manager/pubspec.yaml",
+        "service_manager_platform_interface/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "speckle-sharp",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": null,
+      "sizeKb": 194135,
+      "pushedAt": "2023-03-04T00:23:48Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "stellar-rust-sdk",
+      "defaultBranch": "develop",
+      "fork": false,
+      "language": "Rust",
+      "sizeKb": 591,
+      "headTreeKb": 614,
+      "pushedAt": "2024-09-13T12:17:12Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Rust not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "terraform-demo",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "HCL",
+      "sizeKb": 18,
+      "headTreeKb": 42,
+      "pushedAt": "2023-07-13T15:26:41Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language HCL not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "traefik_rpthandler",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "Go",
+      "sizeKb": 10,
+      "headTreeKb": 6,
+      "pushedAt": "2026-06-10T12:16:59Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Go not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "twinspect-version-page",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 27,
+      "headTreeKb": 1,
+      "pushedAt": "2026-09-24T19:52:51Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "valtimo",
+      "defaultBranch": "next-minor",
+      "fork": true,
+      "language": "Kotlin",
+      "sizeKb": 91637,
+      "pushedAt": "2026-08-20T05:18:21Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "version",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 21,
+      "pushedAt": "2021-10-26T11:02:48Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "repo": ".github",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "AndroidSlidingUpPanelXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "AutoLinkTextViewXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "AutoscaleEditTextXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "Chameleon",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "DSTV.Net",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "DiagonalLayoutXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "EllipsizeTextViewXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "ExoPlayerXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "FFmpegMediaMetadataRetrieverXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "FantasySlideXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "FlipShareXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "FloatingNavigationView",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "FoldingCell",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "GoogleVRXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "GuardedActions",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "GuardedActions.Samples",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "HoverXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "HugoStructuredData",
+      "reason": "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "InfiniteCycleViewPagerXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "InteractiveMediaAdsXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "LoaderViewXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "LottieXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "MaterialDesignHelpers",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "MvxForms",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "NavigationTabBarXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "NavigationTabStripXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "PhotoView",
+      "reason": "language Java not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "SICK-RFID",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "VerticalViewPagerXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "VlcXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "WaveSideBarXamarin",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "XF-Material-Library",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "Xamarin-Sidebar",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "XamarinItemTouchHelper",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "XamarinMediaManager",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "adafruit-motor-hat-cpp-library",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "cheat-sheets",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "codelabs",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "collection-view-bug",
+      "reason": "language C# not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "cunning_document_scanner",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "duration",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter-permission-plugins",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter-plugins",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_blue",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_cached_network_image_git_advanced_temp",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_document_scanner",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_nfc_kit",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_packages",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_software_architecture",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "full-stack-on-rust",
+      "reason": "language Rust not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "mender-server",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "nominatim-k8s",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "oxybox",
+      "reason": "language Rust not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "speckle-sharp",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "stellar-rust-sdk",
+      "reason": "language Rust not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "terraform-demo",
+      "reason": "language HCL not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "traefik_rpthandler",
+      "reason": "language Go not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "twinspect-version-page",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "valtimo",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "version",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    }
+  ]
+}

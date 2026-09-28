@@ -1,0 +1,1 @@
+{ "minAgeDays": 180, "trustPrivateRegistry": true, "countTestsAsConsumers": false, "countDocsAsConsumers": false, "keep": [] }

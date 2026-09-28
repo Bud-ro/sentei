@@ -1,0 +1,487 @@
+{
+  "version": 3,
+  "org": "trpc",
+  "generatedAt": "2026-09-28T02:44:03.771Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": "assets",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 67767,
+      "headTreeKb": 60034,
+      "pushedAt": "2024-09-20T11:12:37Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "examples-kitchen-sink",
+      "defaultBranch": "main",
+      "headSha": "034c67e8cdf3d1301c15cd1845ba32836855ac8f",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 344,
+      "headTreeKb": 230,
+      "pushedAt": "2023-12-15T05:50:12Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "examples-minimal",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 137,
+      "pushedAt": "2026-09-27T11:35:23Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-minimal-react",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 163,
+      "pushedAt": "2026-09-27T11:36:05Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-next-app-dir",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 123,
+      "pushedAt": "2026-09-27T11:35:50Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-next-big-router",
+      "defaultBranch": "main",
+      "headSha": "e197fb3b250199586a60f8ad0c7e63fe88808497",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 106,
+      "headTreeKb": 8,
+      "pushedAt": "2026-09-27T11:34:35Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "examples-next-formdata",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 45,
+      "pushedAt": "2026-09-27T11:34:33Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-next-minimal-starter",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 10242,
+      "pushedAt": "2026-09-27T11:35:32Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-next-prisma-starter",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 415,
+      "pushedAt": "2026-09-27T11:36:51Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-next-prisma-todomvc",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 8626,
+      "pushedAt": "2026-09-27T11:35:10Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-next-prisma-websockets-starter",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 4191,
+      "pushedAt": "2026-09-27T11:36:08Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-next-sse-chat",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 95,
+      "pushedAt": "2026-09-27T11:34:58Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "examples-npm-monorepo",
+      "defaultBranch": "main",
+      "headSha": "c055560eee1f498e8b88903832f7d1e7f00c4417",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 29,
+      "headTreeKb": 94,
+      "pushedAt": "2025-06-27T15:25:50Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/client/package.json",
+        "packages/server/package.json",
+        "tooling/typescript/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "examples-v10-next-prisma-starter-sqlite",
+      "defaultBranch": "next",
+      "fork": false,
+      "template": true,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 51,
+      "pushedAt": "2022-10-10T20:51:58Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "github-webhook-filter-bot",
+      "defaultBranch": "main",
+      "headSha": "0dd016a91cc6acd8acdf308712f5c273901ffc54",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 27,
+      "headTreeKb": 40,
+      "pushedAt": "2022-04-11T20:47:52Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "next-13",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 197,
+      "pushedAt": "2023-04-12T13:05:22Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "trpc",
+      "defaultBranch": "main",
+      "headSha": "ec0b0a47ab6c6ffabcb2ba6b80fa08c1410145a9",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 71221,
+      "headTreeKb": 7301,
+      "pushedAt": "2026-09-27T11:31:26Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/.experimental/next-app-dir/package.json",
+        "examples/.experimental/next-app-dir/src/trpc/package.json",
+        "examples/.test/diagnostics-big-router/package.json",
+        "examples/.test/internal-types-export/package.json",
+        "examples/.test/monotest-api-router01/package.json",
+        "examples/.test/monotest-api/package.json",
+        "examples/.test/monotest-app/package.json",
+        "examples/.test/monotest-trpc/package.json",
+        "examples/.test/monotest-tsconfig/package.json",
+        "examples/.test/ssg-infinite-serialization/package.json",
+        "examples/.test/ssg/package.json",
+        "examples/bun/package.json",
+        "examples/cloudflare-workers/package.json",
+        "examples/express-minimal/package.json",
+        "examples/express-server/package.json",
+        "examples/fastify-server/package.json",
+        "examples/lambda-api-gateway-streaming/package.json",
+        "examples/lambda-api-gateway/package.json",
+        "examples/lambda-url/package.json",
+        "examples/lazy-load/package.json",
+        "examples/minimal-content-types/client/package.json",
+        "examples/minimal-content-types/package.json",
+        "examples/minimal-content-types/server/package.json",
+        "examples/minimal-per-procedure-errors/client/package.json",
+        "examples/minimal-per-procedure-errors/package.json",
+        "examples/minimal-per-procedure-errors/server/package.json",
+        "examples/minimal-react/client/package.json",
+        "examples/minimal-react/package.json",
+        "examples/minimal-react/server/package.json",
+        "examples/minimal/package.json",
+        "examples/next-big-router/package.json",
+        "examples/next-edge-runtime/package.json",
+        "examples/next-formdata/package.json",
+        "examples/next-minimal-starter/package.json",
+        "examples/next-prisma-starter/package.json",
+        "examples/next-prisma-todomvc/package.json",
+        "examples/next-prisma-websockets-starter/package.json",
+        "examples/next-sse-chat/package.json",
+        "examples/next-websockets-encoder/package.json",
+        "examples/nuxt/package.json",
+        "examples/openapi-codegen/package.json",
+        "examples/soa/package.json",
+        "examples/standalone-server/package.json",
+        "examples/vercel-edge-runtime/package.json",
+        "package.json",
+        "packages/client/package.json",
+        "packages/next/package.json",
+        "packages/openapi/package.json",
+        "packages/react-query/package.json",
+        "packages/server/package.json",
+        "packages/tanstack-react-query/package.json",
+        "packages/tests/package.json",
+        "packages/upgrade/package.json",
+        "www/og-image/package.json",
+        "www/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "trpc-openapi",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 4788,
+      "pushedAt": "2024-11-19T18:07:10Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "tupleson",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 446,
+      "pushedAt": "2024-01-04T06:34:56Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "use-client-stream-hydration",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 94,
+      "pushedAt": "2023-06-04T15:16:55Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "v10-playground",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 267,
+      "pushedAt": "2022-04-25T14:07:22Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "zart",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 476,
+      "pushedAt": "2022-09-28T17:26:01Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "repo": "assets",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "examples-minimal",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-minimal-react",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-next-app-dir",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-next-formdata",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-next-minimal-starter",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-next-prisma-starter",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-next-prisma-todomvc",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-next-prisma-websockets-starter",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-next-sse-chat",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "examples-v10-next-prisma-starter-sqlite",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "next-13",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "trpc-openapi",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "tupleson",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "use-client-stream-hydration",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "v10-playground",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "zart",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    }
+  ]
+}

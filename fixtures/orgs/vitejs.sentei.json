@@ -1,0 +1,2 @@
+{ "minAgeDays": 180, "trustPrivateRegistry": true, "countTestsAsConsumers": false, "countDocsAsConsumers": false, "keep": [],
+  "ignoreManifests": ["vite-ts-monorepo-rfc/with-exports-conditions/packages/lib/package.json", "vite-ts-monorepo-rfc/with-tsconfig-paths/packages/lib/package.json"] }

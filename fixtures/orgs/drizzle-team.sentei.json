@@ -1,0 +1,7 @@
+{
+  "ignoreManifests": [
+    "drizzle-single-db-monorepo-example/projects/planetscale-sls/package.json",
+    "drizzle-single-db-monorepo-example/projects/projectA/package.json",
+    "drizzle-single-db-monorepo-example/projects/projectB/package.json"
+  ]
+}

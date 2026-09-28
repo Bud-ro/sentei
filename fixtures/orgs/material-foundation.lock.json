@@ -1,0 +1,934 @@
+{
+  "version": 3,
+  "org": "material-foundation",
+  "generatedAt": "2026-09-28T02:45:01.686Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": ".allstar",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 0,
+      "pushedAt": "2022-12-06T23:08:18Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": ".github",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 0,
+      "pushedAt": "2022-10-26T03:48:13Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "SettingsKit",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 35,
+      "pushedAt": "2019-02-24T05:05:21Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "arc-hook-conphig",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "PHP",
+      "sizeKb": 12,
+      "pushedAt": "2016-08-09T18:14:23Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "arc-hook-github-issues",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "PHP",
+      "sizeKb": 17,
+      "pushedAt": "2016-12-07T03:33:29Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "arc-tsclint",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "PHP",
+      "sizeKb": 8,
+      "pushedAt": "2016-12-07T09:30:29Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "arc-tslint",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "PHP",
+      "sizeKb": 8,
+      "pushedAt": "2017-01-16T17:18:22Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "bazel-apple-framework-relative-headers",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Python",
+      "sizeKb": 7,
+      "pushedAt": "2020-01-03T14:17:17Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "bazel-test-host-apple",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Python",
+      "sizeKb": 7,
+      "pushedAt": "2020-01-02T18:48:51Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "bazel-workspace-apple",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Python",
+      "sizeKb": 10,
+      "pushedAt": "2020-01-03T21:40:54Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "bazel_ios_warnings",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Python",
+      "sizeKb": 16,
+      "pushedAt": "2023-05-01T20:40:16Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "buildless-jsx",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 965,
+      "pushedAt": "2023-11-06T18:28:04Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "clang-format",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Shell",
+      "sizeKb": 13,
+      "pushedAt": "2019-02-12T23:07:50Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "clang-format-ci",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Shell",
+      "sizeKb": 34,
+      "pushedAt": "2019-11-14T14:32:27Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "cocoapods-catalog-by-convention",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 492,
+      "pushedAt": "2025-06-24T23:48:24Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "codereview.cc",
+      "defaultBranch": "master",
+      "fork": true,
+      "archived": true,
+      "language": "Shell",
+      "sizeKb": 33,
+      "pushedAt": "2017-03-29T04:38:21Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "compute-oss-dashboard",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Shell",
+      "sizeKb": 17,
+      "pushedAt": "2016-07-10T08:44:36Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "flutter-packages",
+      "defaultBranch": "main",
+      "headSha": "7b5711d0689e9bd8677a31c823078e9700cdc992",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 37835,
+      "headTreeKb": 1292,
+      "pushedAt": "2026-09-01T05:17:36Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/dynamic_color/example/pubspec.yaml",
+        "packages/dynamic_color/pubspec.yaml",
+        "packages/dynamic_color_testing/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "gh",
+      "defaultBranch": "master",
+      "fork": true,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 1863,
+      "pushedAt": "2016-09-15T22:27:37Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "github-comment",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Swift",
+      "sizeKb": 20,
+      "pushedAt": "2018-11-28T15:59:40Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "github-squash-and-merge-pr-descriptions",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 9,
+      "pushedAt": "2019-09-09T21:04:03Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "graphite-oss-daemon",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 21,
+      "pushedAt": "2016-07-10T08:40:17Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "ios-simulator-utils",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "Shell",
+      "sizeKb": 7,
+      "pushedAt": "2019-01-15T20:03:58Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "ios-snapshot-test-case",
+      "defaultBranch": "master",
+      "fork": true,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 1359,
+      "pushedAt": "2019-03-18T13:03:43Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "kokoro-ios-runner",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Shell",
+      "sizeKb": 48,
+      "pushedAt": "2018-05-19T23:55:37Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-arc-tools",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 11,
+      "pushedAt": "2016-12-07T09:31:14Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-automation",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Swift",
+      "sizeKb": 62,
+      "pushedAt": "2018-09-25T16:00:57Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-color-utilities",
+      "defaultBranch": "main",
+      "headSha": "5b3618b16fdc3825e21d5679bafd144662088ea1",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 4124,
+      "headTreeKb": 5361,
+      "pushedAt": "2026-08-21T20:13:31Z",
+      "probe": "tree",
+      "manifests": [
+        "dart/pubspec.yaml",
+        "typescript/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "material-components-flutter-adaptive",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 359,
+      "pushedAt": "2023-02-02T20:34:57Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-dynamic-color-flutter",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 18356,
+      "pushedAt": "2023-02-02T00:41:36Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-font-disk-loader-ios",
+      "defaultBranch": "stable",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 109,
+      "pushedAt": "2017-02-17T20:32:11Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-foundation-conventions-android",
+      "defaultBranch": "develop",
+      "fork": true,
+      "archived": true,
+      "language": null,
+      "sizeKb": 110,
+      "pushedAt": "2016-07-12T18:56:37Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-foundation-conventions-objc",
+      "defaultBranch": "master",
+      "fork": true,
+      "archived": true,
+      "language": "Shell",
+      "sizeKb": 15,
+      "pushedAt": "2019-12-23T15:43:35Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-internationalization-ios",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 886,
+      "pushedAt": "2022-08-17T00:41:29Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-remixer",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 35,
+      "pushedAt": "2018-04-16T23:13:29Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-remixer-android",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Java",
+      "sizeKb": 950,
+      "pushedAt": "2021-11-12T20:41:30Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-remixer-ios",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 976,
+      "pushedAt": "2017-05-09T16:10:25Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-remixer-js",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 878,
+      "pushedAt": "2017-05-09T07:12:11Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-remixer-remote-web",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 123,
+      "pushedAt": "2017-11-06T04:58:42Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-roboto-font-loader-ios",
+      "defaultBranch": "stable",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 1030,
+      "pushedAt": "2021-08-27T16:19:48Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-scrollview-delegate-multiplexer-ios",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 53,
+      "pushedAt": "2019-03-12T14:20:55Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-sprited-animation-view-ios",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 109,
+      "pushedAt": "2019-12-27T18:56:21Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-symbols-and-variable-fonts",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 11147,
+      "pushedAt": "2022-05-16T17:34:40Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-testing-ios",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Python",
+      "sizeKb": 43,
+      "pushedAt": "2020-01-14T14:52:16Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-text-accessibility-ios",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "Objective-C",
+      "sizeKb": 104,
+      "pushedAt": "2022-06-30T03:20:17Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-theme-builder",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 34371,
+      "pushedAt": "2025-05-21T00:29:14Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "material-tokens",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "CSS",
+      "sizeKb": 2229,
+      "pushedAt": "2023-08-15T03:44:52Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "pesto_flutter",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 13432,
+      "pushedAt": "2023-01-31T19:06:34Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "trapeze",
+      "defaultBranch": "develop",
+      "headSha": "3609ea13f4c4c00cf12f424092501ef6a882f8f0",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2995,
+      "headTreeKb": 2784,
+      "pushedAt": "2026-01-09T22:05:41Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/core/package.json",
+        "packages/demos/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "xctestrunner",
+      "defaultBranch": "master",
+      "fork": true,
+      "archived": true,
+      "language": "Python",
+      "sizeKb": 212,
+      "pushedAt": "2020-01-03T20:29:22Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "repo": ".allstar",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": ".github",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "SettingsKit",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "arc-hook-conphig",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "arc-hook-github-issues",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "arc-tsclint",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "arc-tslint",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "bazel-apple-framework-relative-headers",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "bazel-test-host-apple",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "bazel-workspace-apple",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "bazel_ios_warnings",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "buildless-jsx",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "clang-format",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "clang-format-ci",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "cocoapods-catalog-by-convention",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "codereview.cc",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "compute-oss-dashboard",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "gh",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "github-comment",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "github-squash-and-merge-pr-descriptions",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "graphite-oss-daemon",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "ios-simulator-utils",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "ios-snapshot-test-case",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "kokoro-ios-runner",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-arc-tools",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-automation",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-components-flutter-adaptive",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-dynamic-color-flutter",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-font-disk-loader-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-foundation-conventions-android",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-foundation-conventions-objc",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-internationalization-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-remixer",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-remixer-android",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-remixer-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-remixer-js",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-remixer-remote-web",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-roboto-font-loader-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-scrollview-delegate-multiplexer-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-sprited-animation-view-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-symbols-and-variable-fonts",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-testing-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-text-accessibility-ios",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-theme-builder",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "material-tokens",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "pesto_flutter",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "xctestrunner",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    }
+  ]
+}

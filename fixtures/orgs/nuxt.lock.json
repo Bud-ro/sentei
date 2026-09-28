@@ -1,0 +1,1479 @@
+{
+  "version": 3,
+  "org": "nuxt",
+  "generatedAt": "2026-09-28T02:44:31.487Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": ".github",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 111,
+      "headTreeKb": 24,
+      "pushedAt": "2026-08-31T06:43:08Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "a11y",
+      "defaultBranch": "main",
+      "headSha": "e056826dda69b010b240a49e75cc873916d02b84",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 3661,
+      "headTreeKb": 1558,
+      "pushedAt": "2026-09-28T00:27:30Z",
+      "probe": "tree",
+      "manifests": [
+        "client/package.json",
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "actions-yarn",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "Shell",
+      "sizeKb": 16,
+      "headTreeKb": 7,
+      "pushedAt": "2025-12-10T11:42:42Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "awesome",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 1121,
+      "headTreeKb": 430,
+      "pushedAt": "2025-09-15T21:53:32Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "babel-preset-app",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 68,
+      "pushedAt": "2019-08-05T12:58:26Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "benchmarks",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 666,
+      "pushedAt": "2021-05-09T20:39:00Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "blueprints",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 831,
+      "pushedAt": "2019-10-11T08:53:49Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "bridge",
+      "defaultBranch": "main",
+      "headSha": "89f6abee564d32ddf867d08570e205e6cd7bfb56",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 7256,
+      "headTreeKb": 1059,
+      "pushedAt": "2026-09-26T11:47:32Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/bridge-schema/package.json",
+        "packages/bridge/package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "cli",
+      "defaultBranch": "main",
+      "headSha": "55eb3246211804e60f07e53c21f5fd5708aaed48",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 9798,
+      "headTreeKb": 3472,
+      "pushedAt": "2026-09-28T00:25:54Z",
+      "probe": "tree",
+      "manifests": [
+        "capture/fixture/package.json",
+        "package.json",
+        "packages/create-nuxt-app/package.json",
+        "packages/create-nuxt/package.json",
+        "packages/nuxi/package.json",
+        "packages/nuxt-cli/package.json",
+        "packages/nuxt-cli/test/fixtures/dev/package.json",
+        "playground-nightly/package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "cli-draft",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 37,
+      "pushedAt": "2020-11-10T16:19:52Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "codesandbox-nuxt",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "Vue",
+      "sizeKb": 1070,
+      "pushedAt": "2025-09-25T17:04:54Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "components",
+      "defaultBranch": "main",
+      "headSha": "86ab5e0b508186f647c3d79ac4a4cc67cae11f19",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1388,
+      "headTreeKb": 599,
+      "pushedAt": "2026-09-27T04:23:48Z",
+      "probe": "tree",
+      "manifests": [
+        "example/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "content",
+      "defaultBranch": "main",
+      "headSha": "75eff79a94b25a1e3f4f161efcbfc5d6b4ff3f5e",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 58932,
+      "headTreeKb": 21614,
+      "pushedAt": "2026-09-24T15:04:46Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "examples/basic/package.json",
+        "examples/blog/package.json",
+        "examples/i18n/package.json",
+        "examples/ui/package.json",
+        "package.json",
+        "playground/package.json",
+        "test/fixtures/basic/package.json",
+        "test/fixtures/csv/package.json",
+        "test/fixtures/multi-collection-hmr/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "create-nuxt-app",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 6114,
+      "pushedAt": "2025-03-04T15:06:30Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "css-loader",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "JavaScript",
+      "sizeKb": 1025,
+      "pushedAt": "2024-06-05T05:34:32Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "devtools",
+      "defaultBranch": "main",
+      "headSha": "c7122b3b7e65d149821dfb757daa3d2ce26ea7a2",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 18409,
+      "headTreeKb": 3428,
+      "pushedAt": "2026-09-25T01:44:27Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json",
+        "packages/devtools-assets/package.json",
+        "packages/devtools-kit/package.json",
+        "packages/devtools-ui-kit/package.json",
+        "packages/devtools/package.json",
+        "playgrounds-ecosystem/modules/package.json",
+        "playgrounds-ecosystem/nuxt4/package.json",
+        "playgrounds-ecosystem/nuxt5/package.json",
+        "playgrounds/empty/package.json",
+        "playgrounds/module-starter/client/package.json",
+        "playgrounds/module-starter/package.json",
+        "playgrounds/module-starter/playground/package.json",
+        "playgrounds/module-starter/test/fixtures/basic/package.json",
+        "playgrounds/spa/package.json",
+        "playgrounds/tab-layers/package.json",
+        "playgrounds/tab-seo/package.json",
+        "playgrounds/tab-server-route/package.json",
+        "playgrounds/tab-timeline/package.json",
+        "playgrounds/v4/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "docs",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 5226,
+      "pushedAt": "2024-06-29T11:59:13Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "ecosystem-ci",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": "TypeScript",
+      "sizeKb": 1229,
+      "pushedAt": "2026-09-23T21:58:42Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "eslint",
+      "defaultBranch": "main",
+      "headSha": "07aebbced575c549bba37f20d6e980b5696597ea",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 9237,
+      "headTreeKb": 2691,
+      "pushedAt": "2026-09-27T12:36:32Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json",
+        "packages/eslint-config/package.json",
+        "packages/eslint-plugin/package.json",
+        "packages/module/package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "eslint-plugin-nuxt",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 3929,
+      "pushedAt": "2024-03-19T14:51:52Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "example-auth0",
+      "defaultBranch": "master",
+      "headSha": "765b8584d4d08f1908974d464de33bf59ea3bb08",
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 492,
+      "headTreeKb": 363,
+      "pushedAt": "2026-09-25T22:26:10Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "example-layers-monorepo",
+      "defaultBranch": "main",
+      "headSha": "e9f7410e9d329210bce259035bef10e17ec083eb",
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 1908,
+      "headTreeKb": 326,
+      "pushedAt": "2026-09-21T08:10:06Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/my-app/package.json",
+        "packages/my-layer/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but 3 manifests (package.json, packages/my-app/package.json, packages/my-layer/package.json)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "examples",
+      "defaultBranch": "main",
+      "headSha": "a7e4a6a5cfdbf351444c131f61f08e872979da65",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2973,
+      "headTreeKb": 1394,
+      "pushedAt": "2026-09-28T00:31:41Z",
+      "probe": "tree",
+      "manifests": [
+        ".e2e/package.json",
+        "examples/advanced/config-extends/package.json",
+        "examples/advanced/error-handling/package.json",
+        "examples/advanced/jsx/package.json",
+        "examples/advanced/locale/package.json",
+        "examples/advanced/module-extend-pages/package.json",
+        "examples/advanced/teleport/package.json",
+        "examples/advanced/testing/package.json",
+        "examples/advanced/use-cookie/package.json",
+        "examples/advanced/use-custom-fetch-composable/package.json",
+        "examples/auth/local/package.json",
+        "examples/experimental/wasm/package.json",
+        "examples/features/auto-imports/package.json",
+        "examples/features/data-fetching/package.json",
+        "examples/features/layouts/package.json",
+        "examples/features/meta-tags/package.json",
+        "examples/features/state-management/package.json",
+        "examples/hello-world/package.json",
+        "examples/routing/middleware/package.json",
+        "examples/routing/pages/package.json",
+        "examples/routing/universal-router/package.json",
+        "examples/ui/daisyui/package.json",
+        "examples/ui/sass/package.json",
+        "examples/ui/tailwindcss/package.json",
+        "examples/ui/vuetify/package.json",
+        "package.json",
+        "shared/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "fonts",
+      "defaultBranch": "main",
+      "headSha": "c779bdf833f88e0bf4cfbf7e617cb0abbc4964c1",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 7535,
+      "headTreeKb": 2835,
+      "pushedAt": "2026-09-28T00:30:57Z",
+      "probe": "tree",
+      "manifests": [
+        "client/package.json",
+        "docs/package.json",
+        "package.json",
+        "playgrounds/basic/package.json",
+        "playgrounds/nuxt5/package.json",
+        "playgrounds/scss/package.json",
+        "playgrounds/tailwindcss/package.json",
+        "playgrounds/unocss/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "framework",
+      "defaultBranch": "readme",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 51237,
+      "pushedAt": "2023-04-06T12:07:26Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "friendly-errors-webpack-plugin",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "JavaScript",
+      "sizeKb": 779,
+      "pushedAt": "2024-06-05T05:37:27Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "governance",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 21,
+      "headTreeKb": 11,
+      "pushedAt": "2025-07-12T08:32:12Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "hacker-news-pwas",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "CSS",
+      "sizeKb": 4179,
+      "pushedAt": "2023-04-03T23:02:14Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "hackernews",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 4249,
+      "pushedAt": "2026-09-28T00:28:32Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "hints",
+      "defaultBranch": "main",
+      "headSha": "2e1f91a78a04430c806ab1a3c2757e352bbd3e3a",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2697,
+      "headTreeKb": 838,
+      "pushedAt": "2026-09-27T00:27:49Z",
+      "probe": "tree",
+      "manifests": [
+        "client/package.json",
+        "package.json",
+        "playground/package.json",
+        "test/fixtures/basic/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "http",
+      "defaultBranch": "master",
+      "headSha": "e20a347bedd1edfda7a14234f76c2bbb9986c9d1",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 4223,
+      "headTreeKb": 994,
+      "pushedAt": "2026-09-24T20:59:42Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "icon",
+      "defaultBranch": "main",
+      "headSha": "b878f5b22f56c9f9c609c874aee7506e86e7f7c7",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 2982,
+      "headTreeKb": 697,
+      "pushedAt": "2026-09-28T00:29:36Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "playgrounds/nuxt/package.json",
+        "playgrounds/nuxt5/package.json",
+        "playgrounds/vite/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "image",
+      "defaultBranch": "main",
+      "headSha": "2aa7ca67a72e90189d2e9d3958b31d4381bd12a0",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 29593,
+      "headTreeKb": 18525,
+      "pushedAt": "2026-09-28T00:23:44Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "example/package.json",
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "learn.nuxt.com",
+      "defaultBranch": "main",
+      "headSha": "fbb71dc4d4ff3193f772ad7125f52887f594b2c1",
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 2910,
+      "headTreeKb": 1154,
+      "pushedAt": "2026-04-09T12:51:37Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "templates/basic/.layer-playground/package.json",
+        "templates/basic/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but 3 manifests (package.json, templates/basic/.layer-playground/package.json, templates/basic/package.json)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "loading-screen",
+      "defaultBranch": "main",
+      "headSha": "7dc6d302e23f0ebb63fd0fa1ce6eb15d50d4e1d3",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 821,
+      "headTreeKb": 420,
+      "pushedAt": "2026-08-26T22:49:15Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "module-builder",
+      "defaultBranch": "main",
+      "headSha": "98247fae3a98339c0f97ddf75589bcb95a39a845",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 5146,
+      "headTreeKb": 450,
+      "pushedAt": "2026-09-28T00:30:57Z",
+      "probe": "tree",
+      "manifests": [
+        "example/package.json",
+        "example/playground/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "modules",
+      "defaultBranch": "main",
+      "headSha": "3786c45ac987ed5145cc8c7c11abeb516b8be76e",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 22802,
+      "headTreeKb": 13844,
+      "pushedAt": "2026-09-28T00:23:24Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "movies",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "TypeScript",
+      "sizeKb": 2642,
+      "pushedAt": "2026-09-09T08:04:04Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "nitro-demo",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Vue",
+      "sizeKb": 4899,
+      "pushedAt": "2022-03-26T13:18:22Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "nuxt",
+      "defaultBranch": "main",
+      "headSha": "9ceeba8c6d6a2faaded90d1fbb5efb1a8ee86945",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 153226,
+      "headTreeKb": 7921,
+      "pushedAt": "2026-09-28T00:32:47Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "package.json",
+        "packages/kit/package.json",
+        "packages/nitro-server/package.json",
+        "packages/nuxt/package.json",
+        "packages/nuxt/test/package-fixture/pkg/package.json",
+        "packages/rspack/package.json",
+        "packages/schema/package.json",
+        "packages/ui-templates/package.json",
+        "packages/vite-server/package.json",
+        "packages/vite/package.json",
+        "packages/webpack/package.json",
+        "playground/package.json",
+        "test/fixtures/base-url/package.json",
+        "test/fixtures/basic-types/_local-modules/hook-augmenting-module/package.json",
+        "test/fixtures/basic-types/package.json",
+        "test/fixtures/basic/deps/nested-dep/package.json",
+        "test/fixtures/basic/package.json",
+        "test/fixtures/build-assets-dir-collision/package.json",
+        "test/fixtures/chunk-error/package.json",
+        "test/fixtures/dev-error-client/package.json",
+        "test/fixtures/dev-error-default-page/package.json",
+        "test/fixtures/dev-error-plugin/package.json",
+        "test/fixtures/dev-error-sourcemap/package.json",
+        "test/fixtures/dynamic-paths/package.json",
+        "test/fixtures/external-vue-resolution/package.json",
+        "test/fixtures/hmr-sibling-layer/package.json",
+        "test/fixtures/hmr/package.json",
+        "test/fixtures/inline-styles/package.json",
+        "test/fixtures/lazy-hydration/package.json",
+        "test/fixtures/minimal-pages/package.json",
+        "test/fixtures/minimal-types/package.json",
+        "test/fixtures/minimal/package.json",
+        "test/fixtures/nested-suspense/package.json",
+        "test/fixtures/nitro-legacy/package.json",
+        "test/fixtures/nitro-module-compat/package.json",
+        "test/fixtures/nitro-vite-environment/package.json",
+        "test/fixtures/no-scripts/package.json",
+        "test/fixtures/nuxt-time/package.json",
+        "test/fixtures/payload-cache-leak/package.json",
+        "test/fixtures/preview/package.json",
+        "test/fixtures/route-scroll/package.json",
+        "test/fixtures/route-types-isomorphic/package.json",
+        "test/fixtures/route-types-permissive/package.json",
+        "test/fixtures/runtime-compiler/package.json",
+        "test/fixtures/server-components/package.json",
+        "test/fixtures/server-page-css/package.json",
+        "test/fixtures/server-path-fallback-disabled/package.json",
+        "test/fixtures/server-path-fallback/package.json",
+        "test/fixtures/spa-loader/package.json",
+        "test/fixtures/spa-only/package.json",
+        "test/fixtures/spa/package.json",
+        "test/fixtures/ssr-streaming/package.json",
+        "test/fixtures/standalone-renderer/package.json",
+        "test/fixtures/suspense-layout/package.json",
+        "test/fixtures/suspense/package.json",
+        "test/fixtures/ui-templates/package.json",
+        "test/fixtures/vapor/package.json",
+        "test/fixtures/vite-server-cloudflare/package.json",
+        "test/fixtures/vite-server-dev-error/package.json",
+        "test/fixtures/vite-server-generate/package.json",
+        "test/fixtures/vite-server-netlify/package.json",
+        "test/fixtures/vite-server-spa/package.json",
+        "test/fixtures/vite-server-ssr/package.json",
+        "test/fixtures/vite-server-universal-deploy/package.json",
+        "test/fixtures/worker-assets/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "nuxt-evals",
+      "defaultBranch": "main",
+      "headSha": "4d1ae52ce994e6ddba109c5e93d3682b85ebd0f1",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1376,
+      "headTreeKb": 1027,
+      "pushedAt": "2026-09-25T00:40:02Z",
+      "probe": "tree",
+      "manifests": [
+        "evals/nuxt-000-fix-data-fetching/package.json",
+        "evals/nuxt-001-prefer-nuxt-link/package.json",
+        "evals/nuxt-002-state-composables/package.json",
+        "evals/nuxt-003-page-meta/package.json",
+        "evals/nuxt-004-error-handling/package.json",
+        "evals/nuxt-005-fix-seo-meta/package.json",
+        "evals/nuxt-006-runtime-config/package.json",
+        "evals/nuxt-007-avoid-redundant-ref/package.json",
+        "evals/nuxt-008-fix-exposed-secret/package.json",
+        "evals/nuxt-009-cache-api-response/package.json",
+        "evals/nuxt-010-fix-watch-fetch/package.json",
+        "evals/nuxt-011-fix-sequential-fetching/package.json",
+        "evals/nuxt-012-nuxt3-to-nuxt4-migration/package.json",
+        "evals/nuxt-013-prefer-nuxt-image/package.json",
+        "evals/nuxt-014-prefer-use-cookie/package.json",
+        "evals/nuxt-015-shared-source-of-truth/package.json",
+        "evals/nuxt-016-hydration-mismatch/package.json",
+        "evals/nuxt-017-shallow-reactivity/package.json",
+        "evals/nuxt-018-nuxt5-migration/package.json",
+        "evals/nuxt-019-nuxt5-runtime-semantics/package.json",
+        "evals/nuxt-020-fix-nuxt-module/package.json",
+        "evals/nuxt-content-000-navigation/package.json",
+        "evals/nuxt-content-001-data-collection/package.json",
+        "evals/nuxt-ui-000-theming/package.json",
+        "evals/nuxt-ui-001-fix-raw-html-page/package.json",
+        "evals/nuxt-ui-002-dashboard-layout/package.json",
+        "evals/nuxt-ui-003-fix-raw-form/package.json",
+        "evals/nuxt-ui-004-table/package.json",
+        "evals/nuxt-ui-005-modal/package.json",
+        "evals/nuxt-ui-006-command-palette/package.json",
+        "evals/nuxt-ui-007-dropdown-menu/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "nuxt-redirects",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 60,
+      "headTreeKb": 7,
+      "pushedAt": "2024-07-17T17:52:37Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "nuxt-services-experimental",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 239,
+      "pushedAt": "2019-08-05T12:35:25Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "nuxt.com",
+      "defaultBranch": "main",
+      "headSha": "9dae0db8d6b24f2b23209d2d6d3bebf6d5f82e2f",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 424839,
+      "headTreeKb": 117549,
+      "pushedAt": "2026-09-27T13:46:50Z",
+      "probe": "tree",
+      "manifests": [
+        "layers/nuxi/package.json",
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "nuxt.new",
+      "defaultBranch": "main",
+      "headSha": "a34105bba48306deaa24d35c508a769d5d4f6b58",
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 11831,
+      "headTreeKb": 1236,
+      "pushedAt": "2026-09-28T00:29:51Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "nuxt3-stubs",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 217,
+      "pushedAt": "2025-09-10T22:13:43Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "nuxters",
+      "defaultBranch": "main",
+      "headSha": "57219c60fb769db84a6091f13320542cf55573f7",
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 36920,
+      "headTreeKb": 8782,
+      "pushedAt": "2026-09-28T00:31:41Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "postcss8",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 624,
+      "pushedAt": "2025-09-25T17:14:40Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "press",
+      "defaultBranch": "develop",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 1462,
+      "pushedAt": "2021-06-12T23:08:05Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "renovate-config-nuxt",
+      "defaultBranch": "main",
+      "headSha": "92e1886aa2894f163a31aa07532c0f0997a8f5ff",
+      "fork": false,
+      "language": null,
+      "sizeKb": 1398,
+      "headTreeKb": 189,
+      "pushedAt": "2026-09-28T00:27:21Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "no language detected, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "rfcs",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 8,
+      "headTreeKb": 4,
+      "pushedAt": "2023-12-15T14:27:57Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "scripts",
+      "defaultBranch": "main",
+      "headSha": "4bb52cc42673d25e0d2257e14c3120ac5ff58a7a",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 10982,
+      "headTreeKb": 4417,
+      "pushedAt": "2026-09-27T00:22:50Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/cookie-consent/package.json",
+        "examples/custom-script/package.json",
+        "examples/granular-consent/package.json",
+        "examples/performance/package.json",
+        "examples/regional-consent/package.json",
+        "package.json",
+        "packages/cli/package.json",
+        "packages/devtools-app/package.json",
+        "packages/script/package.json",
+        "playground/package.json",
+        "test/fixtures/ahrefs-analytics/package.json",
+        "test/fixtures/basic/package.json",
+        "test/fixtures/calendly/package.json",
+        "test/fixtures/first-party/package.json",
+        "test/fixtures/issue-759/package.json",
+        "test/fixtures/issue-783/package.json",
+        "test/fixtures/linkedin-insight/package.json",
+        "test/fixtures/map-hydration/package.json",
+        "test/fixtures/maplibre/package.json",
+        "test/fixtures/partytown/package.json",
+        "test/fixtures/production-compile/package.json",
+        "test/fixtures/proxy-alias/package.json",
+        "test/fixtures/script-status-hydration/package.json",
+        "test/fixtures/speedcurve/package.json",
+        "test/fixtures/tiktok-pixel/package.json",
+        "test/fixtures/usercentrics/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "starter",
+      "defaultBranch": "templates",
+      "headSha": "1f391e58fa5f108d2b2bd98c1d604ca625f0290e",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 4273,
+      "headTreeKb": 23,
+      "pushedAt": "2026-09-28T00:30:11Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "telemetry",
+      "defaultBranch": "main",
+      "headSha": "2c4f24904bebfe7ccfb69d1c896493569dbb7618",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 4745,
+      "headTreeKb": 431,
+      "pushedAt": "2026-09-28T00:29:49Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "test-utils",
+      "defaultBranch": "main",
+      "headSha": "b29ae4b1e939d4a8b9a6ca9e96b7450a940ee279",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 65624,
+      "headTreeKb": 1391,
+      "pushedAt": "2026-09-28T00:26:15Z",
+      "probe": "tree",
+      "manifests": [
+        "examples/app-bun/package.json",
+        "examples/app-cucumber/package.json",
+        "examples/app-jest/package.json",
+        "examples/app-playwright/package.json",
+        "examples/app-vitest-browser/package.json",
+        "examples/app-vitest-full/package.json",
+        "examples/app-vitest-workspace/package.json",
+        "examples/app-vitest/package.json",
+        "examples/content/package.json",
+        "examples/i18n/package.json",
+        "examples/module/package.json",
+        "examples/module/playground/package.json",
+        "examples/module/test/fixtures/basic/package.json",
+        "examples/module/test/fixtures/dot-config/package.json",
+        "examples/nitro-v3/package.json",
+        "examples/nitro-vite-env/package.json",
+        "examples/nuxt-ui/package.json",
+        "package.json",
+        "stubs/vitest-environment-nuxt/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "todomvc",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "Vue",
+      "sizeKb": 96,
+      "pushedAt": "2021-01-31T22:55:28Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "typescript",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 7616,
+      "pushedAt": "2026-08-26T22:44:59Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "ui",
+      "defaultBranch": "v4",
+      "headSha": "e8756fd3a8aaab3cb434f1dfe8d32559330f38a9",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 130430,
+      "headTreeKb": 75532,
+      "pushedAt": "2026-09-28T00:26:55Z",
+      "probe": "tree",
+      "manifests": [
+        "cli/package.json",
+        "docs/package.json",
+        "package.json",
+        "playgrounds/nuxt/package.json",
+        "playgrounds/repl/package.json",
+        "playgrounds/vue/package.json",
+        "test/bundle/nuxt-detection/package.json",
+        "test/bundle/nuxt-full/package.json",
+        "test/bundle/nuxt/package.json",
+        "test/bundle/vue-detection/package.json",
+        "test/bundle/vue/package.json",
+        "test/fixtures/consumer/full/package.json",
+        "test/fixtures/consumer/minimal/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "ui-templates",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "HTML",
+      "sizeKb": 5477,
+      "pushedAt": "2024-05-07T08:28:00Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "vercel-builder",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 8590,
+      "pushedAt": "2025-02-17T21:03:48Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "vite",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 1466,
+      "pushedAt": "2023-01-04T14:12:59Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "vue-devtools",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "JavaScript",
+      "sizeKb": 6465,
+      "pushedAt": "2024-06-05T05:30:47Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "vue-meta",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 5736,
+      "pushedAt": "2025-09-25T17:50:31Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "website-v2",
+      "defaultBranch": "main",
+      "headSha": "8be195a0d3d058c44958e3559e06c68fb95f9967",
+      "fork": false,
+      "language": "Vue",
+      "sizeKb": 93193,
+      "headTreeKb": 36705,
+      "pushedAt": "2026-09-26T09:05:03Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Vue, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "youch",
+      "defaultBranch": "develop",
+      "fork": true,
+      "language": "HTML",
+      "sizeKb": 71,
+      "pushedAt": "2024-06-06T08:45:20Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "repo": ".github",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "actions-yarn",
+      "reason": "language Shell not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "awesome",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "babel-preset-app",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "benchmarks",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "blueprints",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "cli-draft",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "codesandbox-nuxt",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "create-nuxt-app",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "css-loader",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "docs",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "ecosystem-ci",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "eslint-plugin-nuxt",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "framework",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "friendly-errors-webpack-plugin",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "governance",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "hacker-news-pwas",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "hackernews",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "movies",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "nitro-demo",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "nuxt-redirects",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "nuxt-services-experimental",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "nuxt3-stubs",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "postcss8",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "press",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "rfcs",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "todomvc",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "typescript",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "ui-templates",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "vercel-builder",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "vite",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "vue-devtools",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "vue-meta",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "youch",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    }
+  ]
+}

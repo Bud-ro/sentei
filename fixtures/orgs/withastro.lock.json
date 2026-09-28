@@ -1,0 +1,1819 @@
+{
+  "version": 3,
+  "org": "withastro",
+  "generatedAt": "2026-09-28T02:44:31.481Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": ".github",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 104,
+      "headTreeKb": 55,
+      "pushedAt": "2026-09-17T13:41:39Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "action",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 95,
+      "headTreeKb": 16,
+      "pushedAt": "2026-09-14T15:20:02Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "action-studio",
+      "defaultBranch": "main",
+      "headSha": "446e915062824aa51b2a6ab4291b879c48c77780",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 430,
+      "headTreeKb": 1176,
+      "pushedAt": "2024-08-19T18:03:35Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "adapters",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "JavaScript",
+      "sizeKb": 21413,
+      "pushedAt": "2025-02-10T14:14:10Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "astro",
+      "defaultBranch": "main",
+      "headSha": "d047b5c23c273d993470258a84bf71852889c76e",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 236473,
+      "headTreeKb": 50198,
+      "pushedAt": "2026-09-28T01:18:14Z",
+      "probe": "tree",
+      "manifests": [
+        "benchmark/package.json",
+        "benchmark/packages/adapter/package.json",
+        "benchmark/packages/timer/package.json",
+        "benchmark/static-projects/build-hybrid/package.json",
+        "benchmark/static-projects/build-server/package.json",
+        "benchmark/static-projects/build-static/package.json",
+        "examples/advanced-routing/package.json",
+        "examples/basics/package.json",
+        "examples/blog/package.json",
+        "examples/component/package.json",
+        "examples/container-with-vitest/package.json",
+        "examples/framework-alpine/package.json",
+        "examples/framework-multiple/package.json",
+        "examples/framework-preact/package.json",
+        "examples/framework-react/package.json",
+        "examples/framework-solid/package.json",
+        "examples/framework-svelte/package.json",
+        "examples/framework-vue/package.json",
+        "examples/hackernews/package.json",
+        "examples/integration/package.json",
+        "examples/minimal/package.json",
+        "examples/portfolio/package.json",
+        "examples/ssr/package.json",
+        "examples/starlog/package.json",
+        "examples/toolbar-app/package.json",
+        "examples/with-markdoc/package.json",
+        "examples/with-mdx/package.json",
+        "examples/with-nanostores/package.json",
+        "examples/with-tailwindcss/package.json",
+        "examples/with-vitest/package.json",
+        "package.json",
+        "packages/astro-prism/package.json",
+        "packages/astro-rss/package.json",
+        "packages/astro/e2e/fixtures/_deps/astro-linked-lib/package.json",
+        "packages/astro/e2e/fixtures/actions-blog/package.json",
+        "packages/astro/e2e/fixtures/actions-react-19/package.json",
+        "packages/astro/e2e/fixtures/astro-component/package.json",
+        "packages/astro/e2e/fixtures/astro-envs/package.json",
+        "packages/astro/e2e/fixtures/astro-island-hydration-error/package.json",
+        "packages/astro/e2e/fixtures/client-idle-timeout/package.json",
+        "packages/astro/e2e/fixtures/client-only/package.json",
+        "packages/astro/e2e/fixtures/cloudflare-node-prerender-hmr/package.json",
+        "packages/astro/e2e/fixtures/cloudflare/package.json",
+        "packages/astro/e2e/fixtures/cloudflare/packages/my-lib/package.json",
+        "packages/astro/e2e/fixtures/content-collections/package.json",
+        "packages/astro/e2e/fixtures/csp-server-islands/package.json",
+        "packages/astro/e2e/fixtures/css/package.json",
+        "packages/astro/e2e/fixtures/custom-client-directives/package.json",
+        "packages/astro/e2e/fixtures/dev-toolbar/package.json",
+        "packages/astro/e2e/fixtures/error-cyclic/package.json",
+        "packages/astro/e2e/fixtures/error-sass/package.json",
+        "packages/astro/e2e/fixtures/errors/package.json",
+        "packages/astro/e2e/fixtures/hmr/package.json",
+        "packages/astro/e2e/fixtures/hydration-race/package.json",
+        "packages/astro/e2e/fixtures/i18n/package.json",
+        "packages/astro/e2e/fixtures/multiple-frameworks/package.json",
+        "packages/astro/e2e/fixtures/namespaced-component/package.json",
+        "packages/astro/e2e/fixtures/nested-in-preact/package.json",
+        "packages/astro/e2e/fixtures/nested-in-react/package.json",
+        "packages/astro/e2e/fixtures/nested-in-solid/package.json",
+        "packages/astro/e2e/fixtures/nested-in-svelte/package.json",
+        "packages/astro/e2e/fixtures/nested-in-vue/package.json",
+        "packages/astro/e2e/fixtures/nested-recursive/package.json",
+        "packages/astro/e2e/fixtures/nested-styles/package.json",
+        "packages/astro/e2e/fixtures/pass-js/package.json",
+        "packages/astro/e2e/fixtures/preact-compat-component/package.json",
+        "packages/astro/e2e/fixtures/preact-component/package.json",
+        "packages/astro/e2e/fixtures/preact-lazy-component/package.json",
+        "packages/astro/e2e/fixtures/prefetch/package.json",
+        "packages/astro/e2e/fixtures/react-compiler/package.json",
+        "packages/astro/e2e/fixtures/react-component/package.json",
+        "packages/astro/e2e/fixtures/react19-preact-hook-error/package.json",
+        "packages/astro/e2e/fixtures/server-islands-key/package.json",
+        "packages/astro/e2e/fixtures/server-islands/package.json",
+        "packages/astro/e2e/fixtures/solid-circular/package.json",
+        "packages/astro/e2e/fixtures/solid-component/package.json",
+        "packages/astro/e2e/fixtures/solid-recurse/package.json",
+        "packages/astro/e2e/fixtures/svelte-component/package.json",
+        "packages/astro/e2e/fixtures/tailwindcss/package.json",
+        "packages/astro/e2e/fixtures/ts-resolution/package.json",
+        "packages/astro/e2e/fixtures/view-transitions/package.json",
+        "packages/astro/e2e/fixtures/vue-component/package.json",
+        "packages/astro/package.json",
+        "packages/astro/performance/fixtures/md/package.json",
+        "packages/astro/performance/fixtures/mdoc/package.json",
+        "packages/astro/performance/fixtures/mdx/package.json",
+        "packages/astro/performance/fixtures/utils/package.json",
+        "packages/astro/performance/package.json",
+        "packages/astro/test/fixtures/0-css/package.json",
+        "packages/astro/test/fixtures/actions/package.json",
+        "packages/astro/test/fixtures/alias-css-url-data-uri/package.json",
+        "packages/astro/test/fixtures/alias-css-url/package.json",
+        "packages/astro/test/fixtures/alias-path-alias-style/package.json",
+        "packages/astro/test/fixtures/alias-tsconfig-no-baseurl/package.json",
+        "packages/astro/test/fixtures/alias-tsconfig/deps/namespace-package/package.json",
+        "packages/astro/test/fixtures/alias-tsconfig/package.json",
+        "packages/astro/test/fixtures/alias/package.json",
+        "packages/astro/test/fixtures/api-routes/package.json",
+        "packages/astro/test/fixtures/asset-query-params-chunks/package.json",
+        "packages/astro/test/fixtures/asset-url-base/package.json",
+        "packages/astro/test/fixtures/astro pages/package.json",
+        "packages/astro/test/fixtures/astro-assets-prefix/package.json",
+        "packages/astro/test/fixtures/astro-assets/package.json",
+        "packages/astro/test/fixtures/astro-basic/package.json",
+        "packages/astro/test/fixtures/astro-check-errors/package.json",
+        "packages/astro/test/fixtures/astro-check-no-errors/package.json",
+        "packages/astro/test/fixtures/astro-check-watch/package.json",
+        "packages/astro/test/fixtures/astro-children/package.json",
+        "packages/astro/test/fixtures/astro-client-only/package.json",
+        "packages/astro/test/fixtures/astro-client-only/pkg/package.json",
+        "packages/astro/test/fixtures/astro-component-bundling/package.json",
+        "packages/astro/test/fixtures/astro-component-code/package.json",
+        "packages/astro/test/fixtures/astro-css-bundling/package.json",
+        "packages/astro/test/fixtures/astro-dev-headers/package.json",
+        "packages/astro/test/fixtures/astro-dev-http2/package.json",
+        "packages/astro/test/fixtures/astro-doctype/package.json",
+        "packages/astro/test/fixtures/astro-dynamic/package.json",
+        "packages/astro/test/fixtures/astro-env-content-collections/package.json",
+        "packages/astro/test/fixtures/astro-env-required-public/package.json",
+        "packages/astro/test/fixtures/astro-env-server-fail/package.json",
+        "packages/astro/test/fixtures/astro-env-server-secret/package.json",
+        "packages/astro/test/fixtures/astro-env/package.json",
+        "packages/astro/test/fixtures/astro-envs/package.json",
+        "packages/astro/test/fixtures/astro-expr/package.json",
+        "packages/astro/test/fixtures/astro-get-static-paths/package.json",
+        "packages/astro/test/fixtures/astro-head/package.json",
+        "packages/astro/test/fixtures/astro-manifest-client-script/package.json",
+        "packages/astro/test/fixtures/astro-manifest-invalid/package.json",
+        "packages/astro/test/fixtures/astro-manifest/package.json",
+        "packages/astro/test/fixtures/astro-markdown-frontmatter-injection/package.json",
+        "packages/astro/test/fixtures/astro-markdown-plugins/package.json",
+        "packages/astro/test/fixtures/astro-markdown-remarkRehype/package.json",
+        "packages/astro/test/fixtures/astro-markdown-shiki/default-color/package.json",
+        "packages/astro/test/fixtures/astro-markdown-shiki/langs/package.json",
+        "packages/astro/test/fixtures/astro-markdown-shiki/themes-custom/package.json",
+        "packages/astro/test/fixtures/astro-markdown-shiki/themes-integrated/package.json",
+        "packages/astro/test/fixtures/astro-markdown-shiki/wrap-false/package.json",
+        "packages/astro/test/fixtures/astro-markdown-shiki/wrap-null/package.json",
+        "packages/astro/test/fixtures/astro-markdown-shiki/wrap-true/package.json",
+        "packages/astro/test/fixtures/astro-markdown-url/package.json",
+        "packages/astro/test/fixtures/astro-markdown/package.json",
+        "packages/astro/test/fixtures/astro-mode/package.json",
+        "packages/astro/test/fixtures/astro-page-directory-url/package.json",
+        "packages/astro/test/fixtures/astro-partial-html/package.json",
+        "packages/astro/test/fixtures/astro-preview-allowed-hosts/package.json",
+        "packages/astro/test/fixtures/astro-preview-headers/package.json",
+        "packages/astro/test/fixtures/astro-public/package.json",
+        "packages/astro/test/fixtures/astro-script-template-dedup/package.json",
+        "packages/astro/test/fixtures/astro-scripts/package.json",
+        "packages/astro/test/fixtures/astro-slots-nested/package.json",
+        "packages/astro/test/fixtures/before-hydration/package.json",
+        "packages/astro/test/fixtures/build-assets/package.json",
+        "packages/astro/test/fixtures/build-concurrency-i18n-fallback/package.json",
+        "packages/astro/test/fixtures/build-concurrency/package.json",
+        "packages/astro/test/fixtures/build-readonly-file/package.json",
+        "packages/astro/test/fixtures/cache-memory-query-include/package.json",
+        "packages/astro/test/fixtures/cache-memory-query/package.json",
+        "packages/astro/test/fixtures/client-address-node/package.json",
+        "packages/astro/test/fixtures/client-only-child-styles/package.json",
+        "packages/astro/test/fixtures/client-only-css-chunk-leak/package.json",
+        "packages/astro/test/fixtures/code-component/package.json",
+        "packages/astro/test/fixtures/component-library-shared/package.json",
+        "packages/astro/test/fixtures/component-library/package.json",
+        "packages/astro/test/fixtures/config-vite-css-target-no-minify/package.json",
+        "packages/astro/test/fixtures/config-vite-css-target/package.json",
+        "packages/astro/test/fixtures/config-vite/package.json",
+        "packages/astro/test/fixtures/container-custom-renderers/package.json",
+        "packages/astro/test/fixtures/content with spaces in folder name/package.json",
+        "packages/astro/test/fixtures/content-collection-picture-render/package.json",
+        "packages/astro/test/fixtures/content-collection-references/package.json",
+        "packages/astro/test/fixtures/content-collection-tla-svg/package.json",
+        "packages/astro/test/fixtures/content-collections-base/package.json",
+        "packages/astro/test/fixtures/content-collections-empty-dir/package.json",
+        "packages/astro/test/fixtures/content-collections-empty-md-file/package.json",
+        "packages/astro/test/fixtures/content-collections-image-hmr/package.json",
+        "packages/astro/test/fixtures/content-collections-mutation/package.json",
+        "packages/astro/test/fixtures/content-collections-number-id/package.json",
+        "packages/astro/test/fixtures/content-collections-type-inference/package.json",
+        "packages/astro/test/fixtures/content-collections-with-config-mjs/package.json",
+        "packages/astro/test/fixtures/content-collections/package.json",
+        "packages/astro/test/fixtures/content-frontmatter/package.json",
+        "packages/astro/test/fixtures/content-intellisense/package.json",
+        "packages/astro/test/fixtures/content-layer-loader-schema-function/package.json",
+        "packages/astro/test/fixtures/content-layer-remark-plugins/package.json",
+        "packages/astro/test/fixtures/content-layer/package.json",
+        "packages/astro/test/fixtures/content-ssr-integration/package.json",
+        "packages/astro/test/fixtures/content-static-paths-integration/package.json",
+        "packages/astro/test/fixtures/content/package.json",
+        "packages/astro/test/fixtures/core-image-data-url/package.json",
+        "packages/astro/test/fixtures/core-image-deletion-ssr/package.json",
+        "packages/astro/test/fixtures/core-image-deletion/package.json",
+        "packages/astro/test/fixtures/core-image-errors/package.json",
+        "packages/astro/test/fixtures/core-image-fs-config/package.json",
+        "packages/astro/test/fixtures/core-image-infersize/package.json",
+        "packages/astro/test/fixtures/core-image-layout/package.json",
+        "packages/astro/test/fixtures/core-image-picture-emit-file/package.json",
+        "packages/astro/test/fixtures/core-image-remark-imgattr/package.json",
+        "packages/astro/test/fixtures/core-image-ssg/package.json",
+        "packages/astro/test/fixtures/core-image-ssr/package.json",
+        "packages/astro/test/fixtures/core-image-svg-in-island/package.json",
+        "packages/astro/test/fixtures/core-image-svg/package.json",
+        "packages/astro/test/fixtures/core-image-unconventional-settings/package.json",
+        "packages/astro/test/fixtures/core-image/package.json",
+        "packages/astro/test/fixtures/csp-adapter/package.json",
+        "packages/astro/test/fixtures/csp-fonts/package.json",
+        "packages/astro/test/fixtures/csp/package.json",
+        "packages/astro/test/fixtures/css-assets/package.json",
+        "packages/astro/test/fixtures/css-assets/packages/font-awesome/package.json",
+        "packages/astro/test/fixtures/css-dangling-references/package.json",
+        "packages/astro/test/fixtures/css-deduplication/package.json",
+        "packages/astro/test/fixtures/css-double-bundle/package.json",
+        "packages/astro/test/fixtures/css-dynamic-import-dev/package.json",
+        "packages/astro/test/fixtures/css-import-as-inline/package.json",
+        "packages/astro/test/fixtures/css-inline-stylesheets/package.json",
+        "packages/astro/test/fixtures/css-no-code-split/package.json",
+        "packages/astro/test/fixtures/css-order-dynamic-import/package.json",
+        "packages/astro/test/fixtures/css-order-import/package.json",
+        "packages/astro/test/fixtures/css-order-layout/package.json",
+        "packages/astro/test/fixtures/css-order/package.json",
+        "packages/astro/test/fixtures/css-path-case/package.json",
+        "packages/astro/test/fixtures/css-pure-chunk-query-params/package.json",
+        "packages/astro/test/fixtures/css-server-output-dedup/package.json",
+        "packages/astro/test/fixtures/custom-404-injected-from-dep/package.json",
+        "packages/astro/test/fixtures/custom-404-pkg/package.json",
+        "packages/astro/test/fixtures/custom-fetch-error-pages/package.json",
+        "packages/astro/test/fixtures/custom-renderer/package.json",
+        "packages/astro/test/fixtures/data-collections-schema/package.json",
+        "packages/astro/test/fixtures/data-collections/package.json",
+        "packages/astro/test/fixtures/debug-component/package.json",
+        "packages/astro/test/fixtures/dev-container/package.json",
+        "packages/astro/test/fixtures/dev-render/package.json",
+        "packages/astro/test/fixtures/dev-request-url/package.json",
+        "packages/astro/test/fixtures/dont-delete-me/package.json",
+        "packages/astro/test/fixtures/dynamic-endpoint-collision/package.json",
+        "packages/astro/test/fixtures/dynamic-route-build-file/package.json",
+        "packages/astro/test/fixtures/endpoint-routing/package.json",
+        "packages/astro/test/fixtures/error-bad-js/package.json",
+        "packages/astro/test/fixtures/error-build-location/package.json",
+        "packages/astro/test/fixtures/error-non-error/package.json",
+        "packages/astro/test/fixtures/extension-matching/package.json",
+        "packages/astro/test/fixtures/fetch/package.json",
+        "packages/astro/test/fixtures/fonts/package.json",
+        "packages/astro/test/fixtures/fontsource-package/package.json",
+        "packages/astro/test/fixtures/get-static-paths-pages/package.json",
+        "packages/astro/test/fixtures/glob-pages-css/package.json",
+        "packages/astro/test/fixtures/head-propagation-prerender-env/package.json",
+        "packages/astro/test/fixtures/hmr-markdown/package.json",
+        "packages/astro/test/fixtures/hmr-middleware/package.json",
+        "packages/astro/test/fixtures/hmr-new-page/package.json",
+        "packages/astro/test/fixtures/hmr-slots-render/package.json",
+        "packages/astro/test/fixtures/hoisted-imports/package.json",
+        "packages/astro/test/fixtures/html-component/package.json",
+        "packages/astro/test/fixtures/html-escape/package.json",
+        "packages/astro/test/fixtures/html-page/package.json",
+        "packages/astro/test/fixtures/html-slots/package.json",
+        "packages/astro/test/fixtures/hydration-race/package.json",
+        "packages/astro/test/fixtures/i18n-client-import/package.json",
+        "packages/astro/test/fixtures/i18n-css-leak-basic/package.json",
+        "packages/astro/test/fixtures/import-ts-with-js/package.json",
+        "packages/astro/test/fixtures/impostor-mdx-file/package.json",
+        "packages/astro/test/fixtures/incremental-build-client-only/package.json",
+        "packages/astro/test/fixtures/incremental-build-concurrency/package.json",
+        "packages/astro/test/fixtures/incremental-build-content/package.json",
+        "packages/astro/test/fixtures/incremental-build-drop-key/package.json",
+        "packages/astro/test/fixtures/incremental-build-dynamic-import/package.json",
+        "packages/astro/test/fixtures/incremental-build-fonts/package.json",
+        "packages/astro/test/fixtures/incremental-build-headers/package.json",
+        "packages/astro/test/fixtures/incremental-build-images/package.json",
+        "packages/astro/test/fixtures/incremental-build-islands/package.json",
+        "packages/astro/test/fixtures/incremental-build-no-output/package.json",
+        "packages/astro/test/fixtures/incremental-build-referenced-images/package.json",
+        "packages/astro/test/fixtures/incremental-build-script/package.json",
+        "packages/astro/test/fixtures/incremental-build/package.json",
+        "packages/astro/test/fixtures/integration-add-page-extension/package.json",
+        "packages/astro/test/fixtures/integration-server-setup/package.json",
+        "packages/astro/test/fixtures/jsx-queue-rendering/package.json",
+        "packages/astro/test/fixtures/jsx/package.json",
+        "packages/astro/test/fixtures/large-array/package.json",
+        "packages/astro/test/fixtures/lazy-layout/package.json",
+        "packages/astro/test/fixtures/legacy-collections-backwards-compat/package.json",
+        "packages/astro/test/fixtures/lightningcss-css-modules-content/package.json",
+        "packages/astro/test/fixtures/lightningcss-scoped-nesting/package.json",
+        "packages/astro/test/fixtures/live-loaders/package.json",
+        "packages/astro/test/fixtures/markdown/package.json",
+        "packages/astro/test/fixtures/middleware space/package.json",
+        "packages/astro/test/fixtures/middleware-full-ssr/package.json",
+        "packages/astro/test/fixtures/middleware-no-user-middleware/package.json",
+        "packages/astro/test/fixtures/middleware-tailwind/package.json",
+        "packages/astro/test/fixtures/minification-html-default/package.json",
+        "packages/astro/test/fixtures/minification-html-jsx/package.json",
+        "packages/astro/test/fixtures/minification-html/package.json",
+        "packages/astro/test/fixtures/multiple-jsx-renderers/package.json",
+        "packages/astro/test/fixtures/multiple-renderers/package.json",
+        "packages/astro/test/fixtures/multiple-renderers/renderers/one/package.json",
+        "packages/astro/test/fixtures/multiple-renderers/renderers/two/package.json",
+        "packages/astro/test/fixtures/non-ascii-path/测试/package.json",
+        "packages/astro/test/fixtures/non-html-pages/package.json",
+        "packages/astro/test/fixtures/page-format/package.json",
+        "packages/astro/test/fixtures/page-level-styles/package.json",
+        "packages/astro/test/fixtures/parallel/package.json",
+        "packages/astro/test/fixtures/partials-css-boundary/package.json",
+        "packages/astro/test/fixtures/partials/package.json",
+        "packages/astro/test/fixtures/passthrough-image-service/package.json",
+        "packages/astro/test/fixtures/postcss/package.json",
+        "packages/astro/test/fixtures/preact-compat-component/package.json",
+        "packages/astro/test/fixtures/preact-compat-component/packages/react-lib/package.json",
+        "packages/astro/test/fixtures/preact-component/package.json",
+        "packages/astro/test/fixtures/prerender-conflict-dynamic-dynamic/package.json",
+        "packages/astro/test/fixtures/prerender-conflict-same-route/package.json",
+        "packages/astro/test/fixtures/prerender-conflict-static-dynamic/package.json",
+        "packages/astro/test/fixtures/react-and-solid/package.json",
+        "packages/astro/test/fixtures/react-jsx-export/package.json",
+        "packages/astro/test/fixtures/reexport-astro-containing-client-component/package.json",
+        "packages/astro/test/fixtures/remote-css/package.json",
+        "packages/astro/test/fixtures/request-signal/package.json",
+        "packages/astro/test/fixtures/reuse-injected-entrypoint/package.json",
+        "packages/astro/test/fixtures/root-srcdir-css/package.json",
+        "packages/astro/test/fixtures/runtime-logger/package.json",
+        "packages/astro/test/fixtures/scoped-style-strategy/package.json",
+        "packages/astro/test/fixtures/server-entry/fake-adapter/package.json",
+        "packages/astro/test/fixtures/server-entry/package.json",
+        "packages/astro/test/fixtures/server-islands/hybrid/package.json",
+        "packages/astro/test/fixtures/server-islands/ssr/package.json",
+        "packages/astro/test/fixtures/session-false/package.json",
+        "packages/astro/test/fixtures/session-tree-shake/package.json",
+        "packages/astro/test/fixtures/sessions/package.json",
+        "packages/astro/test/fixtures/slots-preact/package.json",
+        "packages/astro/test/fixtures/slots-react/package.json",
+        "packages/astro/test/fixtures/slots-solid/package.json",
+        "packages/astro/test/fixtures/slots-svelte/package.json",
+        "packages/astro/test/fixtures/slots-vue/package.json",
+        "packages/astro/test/fixtures/solid-component/deps/solid-jsx-component/package.json",
+        "packages/astro/test/fixtures/solid-component/package.json",
+        "packages/astro/test/fixtures/sourcemap/package.json",
+        "packages/astro/test/fixtures/space in folder name/app/package.json",
+        "packages/astro/test/fixtures/special-chars-in-component-imports/package.json",
+        "packages/astro/test/fixtures/ssr-assets/package.json",
+        "packages/astro/test/fixtures/ssr-dynamic/package.json",
+        "packages/astro/test/fixtures/ssr-partytown/package.json",
+        "packages/astro/test/fixtures/ssr-prerender-get-static-paths/package.json",
+        "packages/astro/test/fixtures/ssr-prerender/package.json",
+        "packages/astro/test/fixtures/ssr-preview/package.json",
+        "packages/astro/test/fixtures/ssr-renderers-static-vue/package.json",
+        "packages/astro/test/fixtures/ssr-request/package.json",
+        "packages/astro/test/fixtures/ssr-script/package.json",
+        "packages/astro/test/fixtures/ssr-scripts/package.json",
+        "packages/astro/test/fixtures/static-build-code-component/package.json",
+        "packages/astro/test/fixtures/static-build-dir/package.json",
+        "packages/astro/test/fixtures/static-build-frameworks/package.json",
+        "packages/astro/test/fixtures/static-build-page-url-format/package.json",
+        "packages/astro/test/fixtures/static-build-ssr/package.json",
+        "packages/astro/test/fixtures/static-build/package.json",
+        "packages/astro/test/fixtures/static-build/pkg/package.json",
+        "packages/astro/test/fixtures/static-redirect/package.json",
+        "packages/astro/test/fixtures/svelte-component/package.json",
+        "packages/astro/test/fixtures/svg-deduplication/package.json",
+        "packages/astro/test/fixtures/tailwindcss/package.json",
+        "packages/astro/test/fixtures/third-party-astro/package.json",
+        "packages/astro/test/fixtures/url-import-suffix/package.json",
+        "packages/astro/test/fixtures/view-transitions/package.json",
+        "packages/astro/test/fixtures/virtual-astro-file/package.json",
+        "packages/astro/test/fixtures/vite-virtual-modules/package.json",
+        "packages/astro/test/fixtures/vitest/package.json",
+        "packages/astro/test/fixtures/vue-component/package.json",
+        "packages/astro/test/fixtures/vue-with-multi-renderer/package.json",
+        "packages/create-astro/package.json",
+        "packages/create-astro/test/fixtures/not-empty/package.json",
+        "packages/integrations/alpinejs/package.json",
+        "packages/integrations/alpinejs/test/fixtures/basics/package.json",
+        "packages/integrations/alpinejs/test/fixtures/directive/package.json",
+        "packages/integrations/alpinejs/test/fixtures/plugin-script-import/package.json",
+        "packages/integrations/cloudflare/package.json",
+        "packages/integrations/cloudflare/test/fixtures/allowed-hosts/package.json",
+        "packages/integrations/cloudflare/test/fixtures/astro-dev-platform/package.json",
+        "packages/integrations/cloudflare/test/fixtures/astro-env/package.json",
+        "packages/integrations/cloudflare/test/fixtures/binding-image-cache/package.json",
+        "packages/integrations/cloudflare/test/fixtures/binding-image-service/package.json",
+        "packages/integrations/cloudflare/test/fixtures/cache-provider-wait-until/package.json",
+        "packages/integrations/cloudflare/test/fixtures/cache-provider/package.json",
+        "packages/integrations/cloudflare/test/fixtures/client-address/package.json",
+        "packages/integrations/cloudflare/test/fixtures/compile-custom-image-service/package.json",
+        "packages/integrations/cloudflare/test/fixtures/compile-image-service/package.json",
+        "packages/integrations/cloudflare/test/fixtures/custom-entryfile-fetch-state/package.json",
+        "packages/integrations/cloudflare/test/fixtures/custom-entryfile/package.json",
+        "packages/integrations/cloudflare/test/fixtures/custom-image-service/package.json",
+        "packages/integrations/cloudflare/test/fixtures/default-image-service-server/package.json",
+        "packages/integrations/cloudflare/test/fixtures/default-image-service-static/package.json",
+        "packages/integrations/cloudflare/test/fixtures/dev-image-endpoint/package.json",
+        "packages/integrations/cloudflare/test/fixtures/external-image-service/package.json",
+        "packages/integrations/cloudflare/test/fixtures/external-redirects/package.json",
+        "packages/integrations/cloudflare/test/fixtures/head-metadata-invalidation/package.json",
+        "packages/integrations/cloudflare/test/fixtures/incremental-concurrency/package.json",
+        "packages/integrations/cloudflare/test/fixtures/incremental-images/package.json",
+        "packages/integrations/cloudflare/test/fixtures/internal-redirects/package.json",
+        "packages/integrations/cloudflare/test/fixtures/no-output/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerender-durable-object-exports/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerender-durable-object/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerender-node-env/fake-svelte-pkg/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerender-node-env/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerender-nodejs-compat/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerender-queue-consumers/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerender-styles/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerenderer-errors/package.json",
+        "packages/integrations/cloudflare/test/fixtures/prerenderer-render-error/package.json",
+        "packages/integrations/cloudflare/test/fixtures/production-async-hooks/package.json",
+        "packages/integrations/cloudflare/test/fixtures/routing-priority/package.json",
+        "packages/integrations/cloudflare/test/fixtures/server-entry/package.json",
+        "packages/integrations/cloudflare/test/fixtures/server-island-prerender-framework/package.json",
+        "packages/integrations/cloudflare/test/fixtures/sessions/package.json",
+        "packages/integrations/cloudflare/test/fixtures/sql-import/package.json",
+        "packages/integrations/cloudflare/test/fixtures/ssr-deps/package.json",
+        "packages/integrations/cloudflare/test/fixtures/static/package.json",
+        "packages/integrations/cloudflare/test/fixtures/svelte-rune-deps/package.json",
+        "packages/integrations/cloudflare/test/fixtures/top-level-return/package.json",
+        "packages/integrations/cloudflare/test/fixtures/user-optimize-deps/package.json",
+        "packages/integrations/cloudflare/test/fixtures/user-optimize-deps/packages/fake-data-pkg/package.json",
+        "packages/integrations/cloudflare/test/fixtures/vite-plugin/package.json",
+        "packages/integrations/cloudflare/test/fixtures/vitest-actions/package.json",
+        "packages/integrations/cloudflare/test/fixtures/with-base/package.json",
+        "packages/integrations/cloudflare/test/fixtures/with-react/package.json",
+        "packages/integrations/cloudflare/test/fixtures/with-solid-js/package.json",
+        "packages/integrations/cloudflare/test/fixtures/with-svelte/package.json",
+        "packages/integrations/cloudflare/test/fixtures/with-vue/package.json",
+        "packages/integrations/cloudflare/test/fixtures/wrangler-preview-platform/package.json",
+        "packages/integrations/markdoc/package.json",
+        "packages/integrations/markdoc/test/fixtures/content-collections/package.json",
+        "packages/integrations/markdoc/test/fixtures/content-layer/package.json",
+        "packages/integrations/markdoc/test/fixtures/headings-custom/package.json",
+        "packages/integrations/markdoc/test/fixtures/headings/package.json",
+        "packages/integrations/markdoc/test/fixtures/image-assets-custom/package.json",
+        "packages/integrations/markdoc/test/fixtures/image-assets/package.json",
+        "packages/integrations/markdoc/test/fixtures/propagated-assets/package.json",
+        "packages/integrations/markdoc/test/fixtures/render with-space/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-html/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-null/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-partials/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-simple/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-table-attrs/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-this-context/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-typographer/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-with-components/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-with-config/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-with-extends-components/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-with-indented-components/package.json",
+        "packages/integrations/markdoc/test/fixtures/render-with-transform/package.json",
+        "packages/integrations/markdoc/test/fixtures/variables/package.json",
+        "packages/integrations/mdx/package.json",
+        "packages/integrations/mdx/test/fixtures/content-layer/package.json",
+        "packages/integrations/mdx/test/fixtures/css-head-mdx/package.json",
+        "packages/integrations/mdx/test/fixtures/image-remark-imgattr/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-astro-container-escape/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-frontmatter-injection/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-images/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-infinite-loop/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-namespace/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-optimize/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-page/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-plus-react-errors/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-plus-react/package.json",
+        "packages/integrations/mdx/test/fixtures/mdx-vite-env-vars/package.json",
+        "packages/integrations/netlify/package.json",
+        "packages/integrations/netlify/test/development/fixtures/primitives/package.json",
+        "packages/integrations/netlify/test/functions/fixtures/cookies/package.json",
+        "packages/integrations/netlify/test/functions/fixtures/includes/package.json",
+        "packages/integrations/netlify/test/functions/fixtures/middleware/package.json",
+        "packages/integrations/netlify/test/functions/fixtures/redirects/package.json",
+        "packages/integrations/netlify/test/functions/fixtures/sessions/package.json",
+        "packages/integrations/netlify/test/functions/fixtures/skew-protection/package.json",
+        "packages/integrations/netlify/test/hosted/hosted-astro-project/package.json",
+        "packages/integrations/netlify/test/static/fixtures/image-missing-dimension/package.json",
+        "packages/integrations/netlify/test/static/fixtures/redirects/package.json",
+        "packages/integrations/netlify/test/static/fixtures/static-headers/package.json",
+        "packages/integrations/node/package.json",
+        "packages/integrations/node/test/fixtures/aborted-request/package.json",
+        "packages/integrations/node/test/fixtures/api-route/package.json",
+        "packages/integrations/node/test/fixtures/bad-urls/package.json",
+        "packages/integrations/node/test/fixtures/encoded/package.json",
+        "packages/integrations/node/test/fixtures/errors/package.json",
+        "packages/integrations/node/test/fixtures/headers/package.json",
+        "packages/integrations/node/test/fixtures/image/package.json",
+        "packages/integrations/node/test/fixtures/locals/package.json",
+        "packages/integrations/node/test/fixtures/node-middleware/package.json",
+        "packages/integrations/node/test/fixtures/prerender-404-500/package.json",
+        "packages/integrations/node/test/fixtures/prerender/package.json",
+        "packages/integrations/node/test/fixtures/prerendered-error-page-fetch/package.json",
+        "packages/integrations/node/test/fixtures/preview-headers/package.json",
+        "packages/integrations/node/test/fixtures/redirects/package.json",
+        "packages/integrations/node/test/fixtures/sessions/package.json",
+        "packages/integrations/node/test/fixtures/ssr-assets-middleware/package.json",
+        "packages/integrations/node/test/fixtures/static-headers/package.json",
+        "packages/integrations/node/test/fixtures/trailing-slash/package.json",
+        "packages/integrations/node/test/fixtures/url/package.json",
+        "packages/integrations/node/test/fixtures/well-known-locations/package.json",
+        "packages/integrations/partytown/package.json",
+        "packages/integrations/preact/package.json",
+        "packages/integrations/react/package.json",
+        "packages/integrations/react/test/fixtures/react-19-preloads/package.json",
+        "packages/integrations/react/test/fixtures/react-compiler-disabled/package.json",
+        "packages/integrations/react/test/fixtures/react-compiler/package.json",
+        "packages/integrations/react/test/fixtures/react-component/package.json",
+        "packages/integrations/sitemap/package.json",
+        "packages/integrations/sitemap/test/fixtures/chunks/package.json",
+        "packages/integrations/sitemap/test/fixtures/dynamic/package.json",
+        "packages/integrations/sitemap/test/fixtures/i18n-fallback/package.json",
+        "packages/integrations/sitemap/test/fixtures/ssr/package.json",
+        "packages/integrations/sitemap/test/fixtures/static/package.json",
+        "packages/integrations/sitemap/test/fixtures/trailing-slash/package.json",
+        "packages/integrations/solid/package.json",
+        "packages/integrations/svelte/package.json",
+        "packages/integrations/svelte/test/fixtures/async-rendering/package.json",
+        "packages/integrations/svelte/test/fixtures/conditional-rendering/package.json",
+        "packages/integrations/svelte/test/fixtures/empty-class/package.json",
+        "packages/integrations/svelte/test/fixtures/prop-types/package.json",
+        "packages/integrations/vercel/package.json",
+        "packages/integrations/vercel/test/fixtures/basic/package.json",
+        "packages/integrations/vercel/test/fixtures/image/package.json",
+        "packages/integrations/vercel/test/fixtures/integration-assets/package.json",
+        "packages/integrations/vercel/test/fixtures/isr-edge-no-middleware/package.json",
+        "packages/integrations/vercel/test/fixtures/isr-with-edge-middleware/package.json",
+        "packages/integrations/vercel/test/fixtures/isr/package.json",
+        "packages/integrations/vercel/test/fixtures/max-duration/package.json",
+        "packages/integrations/vercel/test/fixtures/middleware-with-edge-file/package.json",
+        "packages/integrations/vercel/test/fixtures/middleware-without-edge-file/package.json",
+        "packages/integrations/vercel/test/fixtures/no-output/package.json",
+        "packages/integrations/vercel/test/fixtures/outdir-outside-root/app/package.json",
+        "packages/integrations/vercel/test/fixtures/prerendered-error-pages/package.json",
+        "packages/integrations/vercel/test/fixtures/redirects-serverless/package.json",
+        "packages/integrations/vercel/test/fixtures/redirects/package.json",
+        "packages/integrations/vercel/test/fixtures/server-islands-static/package.json",
+        "packages/integrations/vercel/test/fixtures/server-islands/package.json",
+        "packages/integrations/vercel/test/fixtures/serverless-prerender/package.json",
+        "packages/integrations/vercel/test/fixtures/serverless-with-dynamic-routes/package.json",
+        "packages/integrations/vercel/test/fixtures/static-assets/package.json",
+        "packages/integrations/vercel/test/fixtures/static-headers/package.json",
+        "packages/integrations/vercel/test/fixtures/static/package.json",
+        "packages/integrations/vercel/test/fixtures/streaming/package.json",
+        "packages/integrations/vercel/test/fixtures/with-web-analytics-enabled/output-as-static/package.json",
+        "packages/integrations/vercel/test/hosted/hosted-astro-project/package.json",
+        "packages/integrations/vue/package.json",
+        "packages/integrations/vue/test/fixtures/app-entrypoint-async/package.json",
+        "packages/integrations/vue/test/fixtures/app-entrypoint-css/package.json",
+        "packages/integrations/vue/test/fixtures/app-entrypoint-no-export-default/package.json",
+        "packages/integrations/vue/test/fixtures/app-entrypoint-relative/package.json",
+        "packages/integrations/vue/test/fixtures/app-entrypoint-src-absolute/package.json",
+        "packages/integrations/vue/test/fixtures/app-entrypoint/package.json",
+        "packages/integrations/vue/test/fixtures/basics/package.json",
+        "packages/integrations/vue/test/fixtures/multi-renderer/package.json",
+        "packages/integrations/vue/test/fixtures/prop-types/package.json",
+        "packages/internal-helpers/package.json",
+        "packages/language-tools/astro-check/package.json",
+        "packages/language-tools/language-server/package.json",
+        "packages/language-tools/language-server/test/fixture/package.json",
+        "packages/language-tools/language-server/test/package.json",
+        "packages/language-tools/ts-content-mapper/package.json",
+        "packages/language-tools/ts-plugin/package.json",
+        "packages/language-tools/vscode/package.json",
+        "packages/language-tools/yaml2ts/package.json",
+        "packages/markdown/remark/package.json",
+        "packages/markdown/satteri/package.json",
+        "packages/telemetry/package.json",
+        "packages/underscore-redirects/package.json",
+        "packages/upgrade/package.json",
+        "scripts/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "astro-ecosystem-ci",
+      "defaultBranch": "astro",
+      "headSha": "d6b88a4526568ee04eba438df81605aa83be4e7d",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 592,
+      "headTreeKb": 108,
+      "pushedAt": "2025-02-13T12:50:16Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "astro-issues",
+      "defaultBranch": "main",
+      "headSha": "9c9232070287141b1af81fda59b6568670cd397b",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 944,
+      "headTreeKb": 5477,
+      "pushedAt": "2026-09-27T06:25:32Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "astro-maintainer-skills",
+      "defaultBranch": "main",
+      "headSha": "acf1887034e05b2057c4145a147391b7da73d6f9",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 3812,
+      "headTreeKb": 9977,
+      "pushedAt": "2026-07-15T12:53:24Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "astro-netlify-skew-protection",
+      "defaultBranch": "main",
+      "headSha": "4e9da280fe1985440f4641d4d7cd936972304f71",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 211,
+      "headTreeKb": 391,
+      "pushedAt": "2025-10-27T17:54:47Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "astro-playground",
+      "defaultBranch": "main",
+      "headSha": "6ef5e0419ea2b155dc6bee4054a9407fd56f3b42",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1162,
+      "headTreeKb": 1027,
+      "pushedAt": "2026-09-23T15:46:31Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/lang-astro/package.json",
+        "packages/playground/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "astro-repl",
+      "defaultBranch": "main",
+      "headSha": "c67d37b95ce98fb1692037b1370fdabd4bc5e3b7",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1170,
+      "headTreeKb": 409,
+      "pushedAt": "2026-07-13T12:30:06Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "astro-test",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 5,
+      "headTreeKb": 1,
+      "pushedAt": "2026-08-11T14:47:30Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "astro.build",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "MDX",
+      "sizeKb": 1139383,
+      "headTreeKb": 571862,
+      "pushedAt": "2026-09-27T21:39:20Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": false,
+      "reasons": [
+        "HEAD size 558 MB over repos.maxSizeMb 500"
+      ]
+    },
+    {
+      "name": "astro.new",
+      "defaultBranch": "main",
+      "headSha": "299580dd9de2ccb3e2dd84b41c3c9194ef007a3b",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 9740,
+      "headTreeKb": 1149,
+      "pushedAt": "2026-09-28T01:23:42Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "automation",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 158,
+      "headTreeKb": 37,
+      "pushedAt": "2026-09-27T22:25:16Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "blog-tutorial-demo",
+      "defaultBranch": "complete",
+      "headSha": "b3e12cc12d3292eff8c1237fb14f9b93f31ec33e",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 580,
+      "headTreeKb": 194,
+      "pushedAt": "2026-07-13T12:33:05Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "cli-kit",
+      "defaultBranch": "main",
+      "headSha": "277224ffeccbf022a9b315716504ffdd51d2fc08",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 304,
+      "headTreeKb": 81,
+      "pushedAt": "2026-07-13T12:31:57Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "codesandbox-client",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": null,
+      "sizeKb": 511455,
+      "pushedAt": "2022-03-11T04:20:40Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "community-support",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 1,
+      "headTreeKb": 1,
+      "pushedAt": "2026-08-19T09:11:15Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "compiler",
+      "defaultBranch": "main",
+      "headSha": "3f9a7761992d1216a38239b306e255c5d263c5b4",
+      "fork": false,
+      "language": "Go",
+      "sizeKb": 20503,
+      "headTreeKb": 1967,
+      "pushedAt": "2026-09-17T14:10:25Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/compiler/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Go, but 2 manifests (package.json, packages/compiler/package.json)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "compiler-rs",
+      "defaultBranch": "main",
+      "headSha": "3fd9d58f7e3054ef4a4ac399a6f9f2cb37596598",
+      "fork": false,
+      "language": "Rust",
+      "sizeKb": 21246,
+      "headTreeKb": 1739,
+      "pushedAt": "2026-09-28T02:41:45Z",
+      "probe": "tree",
+      "manifests": [
+        "crates/astro2tsx/package.json",
+        "crates/astro_napi/package.json",
+        "package.json",
+        "packages/compiler/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Rust, but 4 manifests (crates/astro2tsx/package.json, crates/astro_napi/package.json, package.json, …)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "contribute.docs.astro.build",
+      "defaultBranch": "main",
+      "headSha": "5a3a1f9303a59a3e7716af392fe44a856a99fcc0",
+      "fork": false,
+      "language": "MDX",
+      "sizeKb": 2182,
+      "headTreeKb": 2167,
+      "pushedAt": "2026-07-22T19:37:34Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language MDX, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "discord-auto-threader",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": "TypeScript",
+      "sizeKb": 151,
+      "pushedAt": "2022-01-25T21:17:35Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "docs",
+      "defaultBranch": "main",
+      "headSha": "02beeaa4ca0d5c72aa2ee63e70fc23be6b296326",
+      "fork": false,
+      "language": "MDX",
+      "sizeKb": 125058,
+      "headTreeKb": 78248,
+      "pushedAt": "2026-09-27T21:15:56Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language MDX, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "docs-mcp",
+      "defaultBranch": "main",
+      "headSha": "aa08802b05a85cadaa53875f98b592a3baed14e6",
+      "fork": false,
+      "language": "HTML",
+      "sizeKb": 70,
+      "headTreeKb": 128,
+      "pushedAt": "2025-10-25T18:57:45Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language HTML, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "expressive-code",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": null,
+      "sizeKb": 3657,
+      "pushedAt": "2026-08-18T14:56:03Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "factory",
+      "defaultBranch": "main",
+      "headSha": "56dc02b3f140d8dcb10a4a30b72eb8f8adbd463f",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 569,
+      "headTreeKb": 944,
+      "pushedAt": "2026-09-26T19:23:19Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flue",
+      "defaultBranch": "main",
+      "headSha": "a52a72c32c6e3131493de3d61b676291b43f347c",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 19469,
+      "headTreeKb": 11850,
+      "pushedAt": "2026-09-25T21:37:23Z",
+      "probe": "tree",
+      "manifests": [
+        "apps/docs/package.json",
+        "apps/www/package.json",
+        "demo/package.json",
+        "examples/assistant/package.json",
+        "examples/braintrust/package.json",
+        "examples/chat-sdk/package.json",
+        "examples/cloudflare/package.json",
+        "examples/discord-channel/package.json",
+        "examples/github-channel/package.json",
+        "examples/google-chat-channel/package.json",
+        "examples/hello-world/package.json",
+        "examples/imported-skill/package.json",
+        "examples/intercom-channel/package.json",
+        "examples/linear-channel/package.json",
+        "examples/messenger-channel/package.json",
+        "examples/node-schedules/package.json",
+        "examples/notion-channel/package.json",
+        "examples/react-chat/package.json",
+        "examples/resend-channel/package.json",
+        "examples/salesforce-marketing-cloud-channel/package.json",
+        "examples/sentry/package.json",
+        "examples/shopify-channel/package.json",
+        "examples/slack-channel/package.json",
+        "examples/stripe-channel/package.json",
+        "examples/support-desk/package.json",
+        "examples/teams-channel/package.json",
+        "examples/telegram-channel/package.json",
+        "examples/twilio-channel/package.json",
+        "examples/vitest-evals/package.json",
+        "examples/whatsapp-channel/package.json",
+        "examples/zendesk-channel/package.json",
+        "package.json",
+        "packages/cli/package.json",
+        "packages/discord/package.json",
+        "packages/github/package.json",
+        "packages/google-chat/package.json",
+        "packages/intercom/package.json",
+        "packages/libsql/package.json",
+        "packages/linear/package.json",
+        "packages/messenger/package.json",
+        "packages/mongodb/package.json",
+        "packages/mysql/package.json",
+        "packages/notion/package.json",
+        "packages/opentelemetry/package.json",
+        "packages/postgres/package.json",
+        "packages/react/package.json",
+        "packages/redis/package.json",
+        "packages/resend/package.json",
+        "packages/runtime/package.json",
+        "packages/salesforce-marketing-cloud/package.json",
+        "packages/sdk/package.json",
+        "packages/shopify/package.json",
+        "packages/slack/package.json",
+        "packages/stripe/package.json",
+        "packages/teams/package.json",
+        "packages/telegram/package.json",
+        "packages/twilio/package.json",
+        "packages/vite/package.json",
+        "packages/whatsapp/package.json",
+        "packages/zendesk/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "github-pages",
+      "defaultBranch": "main",
+      "fork": false,
+      "template": true,
+      "language": "Astro",
+      "sizeKb": 145,
+      "pushedAt": "2026-07-13T12:31:48Z",
+      "selected": false,
+      "reasons": [
+        "template repository"
+      ]
+    },
+    {
+      "name": "houston-discord",
+      "defaultBranch": "main",
+      "headSha": "1cc94c7cc470c1e6865d7b37e32f3530108c7792",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 354,
+      "headTreeKb": 165,
+      "pushedAt": "2026-08-04T10:22:59Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "houston-vscode",
+      "defaultBranch": "main",
+      "headSha": "4d9923d077061e1696c32e4033edc43d9747be12",
+      "fork": false,
+      "language": "CSS",
+      "sizeKb": 2278,
+      "headTreeKb": 320,
+      "pushedAt": "2026-07-13T12:33:03Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language CSS, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "houston.astro.build",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "Astro",
+      "sizeKb": 5614,
+      "pushedAt": "2023-05-02T16:43:22Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "isastroenvironmentready",
+      "defaultBranch": "main",
+      "headSha": "ad28a8de192e29bbe09230b1dfbf871f1c15f14c",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 44,
+      "headTreeKb": 126,
+      "pushedAt": "2025-11-14T21:45:09Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "language-tools",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": "TypeScript",
+      "sizeKb": 3444,
+      "pushedAt": "2025-11-17T16:26:45Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "marlo",
+      "defaultBranch": "main",
+      "headSha": "0943af330198b17898924862217eed8e8e203e00",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1615,
+      "headTreeKb": 4866,
+      "pushedAt": "2025-12-18T09:14:36Z",
+      "probe": "tree",
+      "manifests": [
+        "apps/client/package.json",
+        "apps/desktop/package.json",
+        "apps/mail-ingester/package.json",
+        "apps/sync/package.json",
+        "apps/web/package.json",
+        "package.json",
+        "packages/ai/package.json",
+        "packages/backend/package.json",
+        "packages/categories/package.json",
+        "packages/core/package.json",
+        "packages/google/package.json",
+        "packages/local/package.json",
+        "packages/mcp/package.json",
+        "packages/sync-data/package.json",
+        "packages/test-utils/package.json",
+        "packages/ui/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "micromark-extension-mdx-jsx",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": "JavaScript",
+      "sizeKb": 156,
+      "pushedAt": "2022-06-07T21:34:28Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "netlify-adapter",
+      "defaultBranch": "main",
+      "fork": false,
+      "archived": true,
+      "language": null,
+      "sizeKb": 9621,
+      "pushedAt": "2023-09-27T19:02:28Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "nightly-bot",
+      "defaultBranch": "main",
+      "headSha": "fe26966cd7f5a6f37b54d2444572fda05071a681",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 15,
+      "headTreeKb": 8,
+      "pushedAt": "2026-07-01T15:08:52Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "oxc",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": "Rust",
+      "sizeKb": 122016,
+      "pushedAt": "2026-09-22T15:32:52Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "prettier-plugin-astro",
+      "defaultBranch": "main",
+      "headSha": "12c5a89d63227c7992f63a1d4e5ad08baecbf705",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 1138,
+      "headTreeKb": 330,
+      "pushedAt": "2026-09-24T20:33:31Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "preview.astro.new",
+      "defaultBranch": "main",
+      "headSha": "f3b4db1fabf67128cc5830dc3ed74b5b93a93609",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 228,
+      "headTreeKb": 21,
+      "pushedAt": "2026-04-28T12:56:49Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "packages/base-integration/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "recall",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "HTML",
+      "sizeKb": 20,
+      "headTreeKb": 27,
+      "pushedAt": "2026-06-09T15:30:30Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "roadmap",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 854,
+      "headTreeKb": 792,
+      "pushedAt": "2026-09-25T12:34:13Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "server-islands",
+      "defaultBranch": "main",
+      "headSha": "eec24d045d9a9483db1188afd4c3441bcd7ca163",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 1233,
+      "headTreeKb": 1340,
+      "pushedAt": "2026-05-13T15:08:12Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "server-islands-api",
+      "defaultBranch": "main",
+      "headSha": "fa3a57c05b01cc97668176164df83f06994ec1b2",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 103,
+      "headTreeKb": 270,
+      "pushedAt": "2024-07-22T16:13:14Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "site-kit",
+      "defaultBranch": "main",
+      "headSha": "c53071893428a3069310ae7c79c4485342c364ed",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 5599,
+      "headTreeKb": 301,
+      "pushedAt": "2026-07-13T12:32:53Z",
+      "probe": "tree",
+      "manifests": [
+        "demo/package.json",
+        "package.json",
+        "tests/fixture/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "skew-protection-test",
+      "defaultBranch": "main",
+      "headSha": "f1d04ce4ef31e405d2d53331d2bc7861d28585ff",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 53,
+      "headTreeKb": 140,
+      "pushedAt": "2024-04-26T14:34:51Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "skills",
+      "defaultBranch": "main",
+      "fork": false,
+      "empty": true,
+      "language": null,
+      "sizeKb": 0,
+      "pushedAt": "2026-02-18T16:14:21Z",
+      "selected": false,
+      "reasons": [
+        "empty repository (no commit on the default branch)"
+      ]
+    },
+    {
+      "name": "starlight",
+      "defaultBranch": "main",
+      "headSha": "3ec633b8c50d3e1a6d67cae7dc4c50f80101ea41",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 35568,
+      "headTreeKb": 22426,
+      "pushedAt": "2026-09-25T17:43:50Z",
+      "probe": "tree",
+      "manifests": [
+        "docs/package.json",
+        "examples/basics/package.json",
+        "examples/markdoc/package.json",
+        "examples/tailwind/package.json",
+        "package.json",
+        "packages/docsearch/package.json",
+        "packages/file-icons-generator/package.json",
+        "packages/markdoc/package.json",
+        "packages/starlight/__e2e__/fixtures/basics/package.json",
+        "packages/starlight/__e2e__/fixtures/custom src-dir/package.json",
+        "packages/starlight/__e2e__/fixtures/git/package.json",
+        "packages/starlight/__e2e__/fixtures/legacy-collections-backwards-compat/package.json",
+        "packages/starlight/__e2e__/fixtures/no-mdx-optimization/package.json",
+        "packages/starlight/__e2e__/fixtures/ssr/package.json",
+        "packages/starlight/package.json",
+        "packages/tailwind/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "starlight-gh-pages-test",
+      "defaultBranch": "main",
+      "headSha": "8e914ae2d5e4809fcceadb2aa194e5134ac16ae6",
+      "fork": false,
+      "language": "MDX",
+      "sizeKb": 163,
+      "headTreeKb": 357,
+      "pushedAt": "2024-08-05T08:45:26Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language MDX, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "storefront",
+      "defaultBranch": "main",
+      "headSha": "ae5d3c383ef79c0e134b88a3d928746a29889045",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 8545,
+      "headTreeKb": 8914,
+      "pushedAt": "2024-10-21T23:27:14Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "studio-templates",
+      "defaultBranch": "main",
+      "headSha": "1afef89405e244011eb10c236cf276ec3ce2912a",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 751,
+      "headTreeKb": 573,
+      "pushedAt": "2025-06-09T00:11:09Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json",
+        "templates/studio-template-blog/package.json",
+        "templates/studio-template-empty/package.json",
+        "templates/studio-template-jobboard/package.json",
+        "templates/studio-template-waitlist/package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but 5 manifests (package.json, templates/studio-template-blog/package.json, templates/studio-template-empty/package.json, …)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "support-docs",
+      "defaultBranch": "main",
+      "headSha": "12ec823a7ab6bd5604d174be15b531db02e11b4f",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 568,
+      "headTreeKb": 247,
+      "pushedAt": "2026-09-14T20:41:05Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "triagebot-action",
+      "defaultBranch": "main",
+      "headSha": "51d30da13c0bd571a3822fc56882de40fead0086",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 7851,
+      "headTreeKb": 28829,
+      "pushedAt": "2026-08-28T12:56:56Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "view-transitions-demo",
+      "defaultBranch": "main",
+      "headSha": "16cfe2de5e115191c16a49a915338f994dcc93fe",
+      "fork": false,
+      "language": "Astro",
+      "sizeKb": 275,
+      "headTreeKb": 359,
+      "pushedAt": "2026-07-13T12:34:08Z",
+      "probe": "tree",
+      "manifests": [
+        "package.json"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Astro, but package.json"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "vite",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": "TypeScript",
+      "sizeKb": 18986,
+      "pushedAt": "2022-06-01T12:25:46Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "vite-ecosystem-ci",
+      "defaultBranch": "main",
+      "fork": true,
+      "language": null,
+      "sizeKb": 117,
+      "pushedAt": "2022-02-07T22:01:41Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "withastro.github.io",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": "HTML",
+      "sizeKb": 270,
+      "headTreeKb": 5,
+      "pushedAt": "2024-09-20T15:26:09Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "workers-builds-log-action",
+      "defaultBranch": "main",
+      "fork": false,
+      "language": null,
+      "sizeKb": 5,
+      "headTreeKb": 12,
+      "pushedAt": "2026-05-07T13:59:21Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "wormhole",
+      "defaultBranch": "main",
+      "headSha": "eb69e00ffd88dccde90d5cf00d10be7985ade459",
+      "fork": false,
+      "language": "TypeScript",
+      "sizeKb": 10,
+      "headTreeKb": 4,
+      "pushedAt": "2024-04-11T16:15:15Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": true,
+      "reasons": [
+        "language TypeScript"
+      ],
+      "clone": "shallow"
+    }
+  ],
+  "excluded": [
+    {
+      "repo": ".github",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "action",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "adapters",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "astro-test",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "astro.build",
+      "reason": "HEAD size 558 MB over repos.maxSizeMb 500",
+      "manifests": [
+        "package.json"
+      ]
+    },
+    {
+      "repo": "automation",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "codesandbox-client",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "community-support",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "discord-auto-threader",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "expressive-code",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "github-pages",
+      "reason": "template repository",
+      "manifests": null
+    },
+    {
+      "repo": "houston.astro.build",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "language-tools",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "micromark-extension-mdx-jsx",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "netlify-adapter",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "oxc",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "recall",
+      "reason": "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "roadmap",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "skills",
+      "reason": "empty repository (no commit on the default branch)",
+      "manifests": null
+    },
+    {
+      "repo": "vite",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "vite-ecosystem-ci",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "withastro.github.io",
+      "reason": "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "workers-builds-log-action",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    }
+  ]
+}

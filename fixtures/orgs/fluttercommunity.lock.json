@@ -1,0 +1,1065 @@
+{
+  "version": 3,
+  "org": "fluttercommunity",
+  "generatedAt": "2026-09-28T02:44:32.427Z",
+  "selection": {
+    "include": [],
+    "exclude": [],
+    "cliInclude": [],
+    "cliExclude": [],
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Dart"
+    ],
+    "maxSizeMb": 500,
+    "minPushed": null,
+    "includeForks": false,
+    "includeArchived": false,
+    "probe": true
+  },
+  "repos": [
+    {
+      "name": "admin_dashboard",
+      "defaultBranch": "main",
+      "headSha": "3c89951dd97b1fd648b8bde754cb252dd2f604bb",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 173,
+      "headTreeKb": 159,
+      "pushedAt": "2023-06-04T18:40:34Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "android_id",
+      "defaultBranch": "main",
+      "headSha": "6a484e2d6f0f0f59aff60410780059f2733fa053",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 456,
+      "headTreeKb": 53,
+      "pushedAt": "2026-09-27T21:32:28Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "app_review",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "C++",
+      "sizeKb": 11421,
+      "pushedAt": "2026-01-15T08:38:53Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "apple_maps_flutter",
+      "defaultBranch": "master",
+      "headSha": "2848c569b9b45ecb1268b845a188deebee7f79ae",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1451,
+      "headTreeKb": 733,
+      "pushedAt": "2025-01-23T10:53:40Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "arcgis_map_sdk",
+      "defaultBranch": "main",
+      "headSha": "03aacd27aa5f00de7794543aad6db5e26ece7005",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 69940,
+      "headTreeKb": 83770,
+      "pushedAt": "2026-03-25T10:02:30Z",
+      "probe": "tree",
+      "manifests": [
+        "am_sidekick/pubspec.yaml",
+        "arcgis_map_sdk/pubspec.yaml",
+        "arcgis_map_sdk_android/pubspec.yaml",
+        "arcgis_map_sdk_ios/pubspec.yaml",
+        "arcgis_map_sdk_method_channel/pubspec.yaml",
+        "arcgis_map_sdk_platform_interface/pubspec.yaml",
+        "arcgis_map_sdk_web/pubspec.yaml",
+        "arcgis_webpack/package.json",
+        "example/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "backdrop",
+      "defaultBranch": "master",
+      "headSha": "2c7ea169269e6232bdb10787a0ecfcdeb33901f8",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 26056,
+      "headTreeKb": 818,
+      "pushedAt": "2026-08-19T10:11:01Z",
+      "probe": "tree",
+      "manifests": [
+        "demo/pubspec.yaml",
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "breakpoint",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 13579,
+      "pushedAt": "2026-01-14T09:01:45Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "chewie",
+      "defaultBranch": "master",
+      "headSha": "1b620d4809993a32e5ba40c82ced79eba753490e",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 38670,
+      "headTreeKb": 2566,
+      "pushedAt": "2026-09-16T22:34:27Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "community",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 168,
+      "headTreeKb": 15,
+      "pushedAt": "2022-08-12T11:19:17Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "dart_sealed_unions",
+      "defaultBranch": "master",
+      "headSha": "c867c68b4422372d69c0d2f1252c69cff4fb081a",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 140,
+      "headTreeKb": 128,
+      "pushedAt": "2021-03-18T08:52:19Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml",
+        "tennis/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "fc_ai_circle",
+      "defaultBranch": "main",
+      "headSha": "078aeffb176164fe52c755c59f29378c7c15f642",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 388,
+      "headTreeKb": 724,
+      "pushedAt": "2026-01-13T20:41:18Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "firestore_helpers",
+      "defaultBranch": "master",
+      "headSha": "de956e590b52332ec37d0da68e0197569daf6c18",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 420,
+      "headTreeKb": 1314,
+      "pushedAt": "2021-03-20T08:47:28Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-draggable-scrollbar",
+      "defaultBranch": "master",
+      "headSha": "581b8bc8388cc47b2d4af545fd42261a1bb60357",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 3361,
+      "headTreeKb": 188,
+      "pushedAt": "2022-05-21T10:07:47Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter-styleguide",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 21,
+      "headTreeKb": 23,
+      "pushedAt": "2020-02-10T17:50:52Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "flutter_after_layout",
+      "defaultBranch": "master",
+      "headSha": "167c24159ccab8384192be68624b3559bc83c3dc",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 29,
+      "headTreeKb": 10,
+      "pushedAt": "2022-05-16T00:59:36Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_blurhash",
+      "defaultBranch": "master",
+      "headSha": "c5cdec4986432e835bb91f5ce00564534450cdc7",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 458,
+      "headTreeKb": 409,
+      "pushedAt": "2025-04-22T21:15:24Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_community_website",
+      "defaultBranch": "main",
+      "headSha": "a1796de850847739de6463819ee661d44ce4a82a",
+      "fork": false,
+      "language": "JavaScript",
+      "sizeKb": 8231,
+      "headTreeKb": 22482,
+      "pushedAt": "2024-11-27T14:24:20Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": true,
+      "reasons": [
+        "language JavaScript"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_contacts",
+      "defaultBranch": "master",
+      "headSha": "d1e9d676f04a9b5ad972e3c26a249a694071c5b3",
+      "fork": false,
+      "language": "Java",
+      "sizeKb": 2157,
+      "headTreeKb": 2845,
+      "pushedAt": "2020-04-22T04:57:25Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Java, but 2 manifests (example/pubspec.yaml, pubspec.yaml)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_downloader",
+      "defaultBranch": "master",
+      "headSha": "67afa544336544958322c4c3d42be5615e451626",
+      "fork": false,
+      "language": "Kotlin",
+      "sizeKb": 2303,
+      "headTreeKb": 1021,
+      "pushedAt": "2026-08-22T08:26:43Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Kotlin, but 2 manifests (example/pubspec.yaml, pubspec.yaml)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_google_places",
+      "defaultBranch": "master",
+      "headSha": "6bb88c0dab5012dc2a2df5de4a6e2b24beea6637",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 14262,
+      "headTreeKb": 20314,
+      "pushedAt": "2024-08-05T01:07:38Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_infinite_listview",
+      "defaultBranch": "master",
+      "headSha": "403d6db0707e26c7190e25d485a2783b25b79271",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 621,
+      "headTreeKb": 114,
+      "pushedAt": "2021-08-07T14:23:13Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_launcher_icons",
+      "defaultBranch": "master",
+      "headSha": "10b86b10a5adef1368860aa22c8473d1881c47da",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 75292,
+      "headTreeKb": 1460,
+      "pushedAt": "2025-06-10T17:44:14Z",
+      "probe": "tree",
+      "manifests": [
+        "example/default_example/pubspec.yaml",
+        "example/flavors/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_sms",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 42851,
+      "pushedAt": "2026-01-14T08:24:18Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "flutter_sticky_headers",
+      "defaultBranch": "master",
+      "headSha": "0a3239f64139164115a49beb3a25ceeb85e2daf6",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 24815,
+      "headTreeKb": 139,
+      "pushedAt": "2024-03-15T01:58:50Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_uploader",
+      "defaultBranch": "main",
+      "headSha": "d418e275ec4496fb34d18f8cd4d33cb902644537",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 7169,
+      "headTreeKb": 386,
+      "pushedAt": "2024-07-29T11:34:29Z",
+      "probe": "tree",
+      "manifests": [
+        "example/backend/functions/package.json",
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_wear_plugin",
+      "defaultBranch": "master",
+      "headSha": "2d087627a6f5c32245a7f19eed999dee6b3c5085",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 143,
+      "headTreeKb": 44,
+      "pushedAt": "2024-03-10T12:32:46Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_webview_plugin",
+      "defaultBranch": "master",
+      "headSha": "6ab3a30353caf69eb7bd9cfc4bbe8d1e51b04e31",
+      "fork": false,
+      "language": "Java",
+      "sizeKb": 7510,
+      "headTreeKb": 995,
+      "pushedAt": "2024-03-19T07:40:21Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Java, but 2 manifests (example/pubspec.yaml, pubspec.yaml)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "flutter_whatsnew",
+      "defaultBranch": "master",
+      "fork": true,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 2429,
+      "pushedAt": "2026-01-14T09:19:10Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "flutter_workmanager",
+      "defaultBranch": "main",
+      "headSha": "896c4c1122f5e267ed472b044219c884305246d3",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 70504,
+      "headTreeKb": 4866,
+      "pushedAt": "2026-09-07T10:28:40Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml",
+        "workmanager/pubspec.yaml",
+        "workmanager_android/pubspec.yaml",
+        "workmanager_apple/pubspec.yaml",
+        "workmanager_linux/pubspec.yaml",
+        "workmanager_platform_interface/pubspec.yaml",
+        "workmanager_web/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "fluttercommunity.github.io",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": "HTML",
+      "sizeKb": 2,
+      "headTreeKb": 1,
+      "pushedAt": "2019-02-03T11:38:10Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "font_awesome_flutter",
+      "defaultBranch": "master",
+      "headSha": "ace115c0ad386a5e5333421685c2f8f96f7d73af",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 3529,
+      "headTreeKb": 2205,
+      "pushedAt": "2026-03-09T11:55:23Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "get_version",
+      "defaultBranch": "master",
+      "headSha": "dd83237cb2492877f8758f3b04ac7d3809268c1f",
+      "fork": false,
+      "language": "Ruby",
+      "sizeKb": 2766,
+      "headTreeKb": 3297,
+      "pushedAt": "2023-10-04T01:15:31Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Ruby, but 2 manifests (example/pubspec.yaml, pubspec.yaml)"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "import_sorter",
+      "defaultBranch": "master",
+      "headSha": "641f363d40a4ffb42ab577a43433fc48c5059b19",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 399,
+      "headTreeKb": 248,
+      "pushedAt": "2024-03-16T20:19:53Z",
+      "probe": "tree",
+      "manifests": [
+        "example/example_app/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "interval_tree",
+      "defaultBranch": "main",
+      "headSha": "197ac8324838c3d21fe4f9914fd03570943fc3a1",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 31,
+      "headTreeKb": 43,
+      "pushedAt": "2023-11-20T16:17:43Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "mvi_sealed_unions",
+      "defaultBranch": "master",
+      "fork": true,
+      "language": "Dart",
+      "sizeKb": 6902,
+      "pushedAt": "2019-07-11T22:25:52Z",
+      "selected": false,
+      "reasons": [
+        "fork (--include-forks to keep)"
+      ]
+    },
+    {
+      "name": "native_widgets",
+      "defaultBranch": "master",
+      "headSha": "1b3fc96ea1fce6ed216ec43fc07ae9b704781dea",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 2539,
+      "headTreeKb": 4681,
+      "pushedAt": "2021-09-27T18:15:51Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "page_turn",
+      "defaultBranch": "master",
+      "headSha": "76d0f1010284cdfb2d8014d0fda602b8cb2ed914",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 37461,
+      "headTreeKb": 38221,
+      "pushedAt": "2021-05-02T13:06:03Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "persist_theme",
+      "defaultBranch": "master",
+      "headSha": "ef2731a2db955e60f4ec75440bd8e323544fa9bf",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 5048,
+      "headTreeKb": 4308,
+      "pushedAt": "2021-09-27T18:18:32Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "platform_maps_flutter",
+      "defaultBranch": "master",
+      "headSha": "070934913ac77f8e583ae2110affa39d810c493a",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 16103,
+      "headTreeKb": 260,
+      "pushedAt": "2025-04-14T09:36:52Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/platform_maps_flutter/example/pubspec.yaml",
+        "packages/platform_maps_flutter/pubspec.yaml",
+        "packages/platform_maps_flutter_apple/pubspec.yaml",
+        "packages/platform_maps_flutter_google_android/pubspec.yaml",
+        "packages/platform_maps_flutter_platform_interface/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "plus_plugins",
+      "defaultBranch": "main",
+      "headSha": "60dcd8bd1af66c02f613d0b7cc298c93574b2806",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 36858,
+      "headTreeKb": 4023,
+      "pushedAt": "2026-09-27T19:20:11Z",
+      "probe": "tree",
+      "manifests": [
+        "packages/android_alarm_manager_plus/example/pubspec.yaml",
+        "packages/android_alarm_manager_plus/pubspec.yaml",
+        "packages/android_intent_plus/example/pubspec.yaml",
+        "packages/android_intent_plus/pubspec.yaml",
+        "packages/battery_plus/battery_plus/example/pubspec.yaml",
+        "packages/battery_plus/battery_plus/pubspec.yaml",
+        "packages/battery_plus/battery_plus_platform_interface/pubspec.yaml",
+        "packages/connectivity_plus/connectivity_plus/example/pubspec.yaml",
+        "packages/connectivity_plus/connectivity_plus/pubspec.yaml",
+        "packages/connectivity_plus/connectivity_plus_platform_interface/pubspec.yaml",
+        "packages/device_info_plus/device_info_plus/example/pubspec.yaml",
+        "packages/device_info_plus/device_info_plus/pubspec.yaml",
+        "packages/device_info_plus/device_info_plus_platform_interface/pubspec.yaml",
+        "packages/network_info_plus/network_info_plus/example/pubspec.yaml",
+        "packages/network_info_plus/network_info_plus/pubspec.yaml",
+        "packages/network_info_plus/network_info_plus_platform_interface/pubspec.yaml",
+        "packages/package_info_plus/package_info_plus/example/pubspec.yaml",
+        "packages/package_info_plus/package_info_plus/pubspec.yaml",
+        "packages/package_info_plus/package_info_plus_platform_interface/pubspec.yaml",
+        "packages/sensors_plus/sensors_plus/example/pubspec.yaml",
+        "packages/sensors_plus/sensors_plus/pubspec.yaml",
+        "packages/sensors_plus/sensors_plus_platform_interface/pubspec.yaml",
+        "packages/share_plus/share_plus/example/pubspec.yaml",
+        "packages/share_plus/share_plus/pubspec.yaml",
+        "packages/share_plus/share_plus_platform_interface/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "pubbie",
+      "defaultBranch": "main",
+      "headSha": "7a7b360839021f1d2057bda6ca6807af9bf060f0",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 664,
+      "headTreeKb": 24,
+      "pushedAt": "2023-05-13T00:23:41Z",
+      "probe": "tree",
+      "manifests": [
+        "pubbie_cli/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "readme_generator",
+      "defaultBranch": "master",
+      "headSha": "45fe218d1721305290390b7bd4095413574ec565",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 32,
+      "headTreeKb": 26,
+      "pushedAt": "2020-04-28T15:04:11Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "redux.dart",
+      "defaultBranch": "master",
+      "headSha": "a45eb2a93b1460d01adeb13ba4b3e0f379e330e3",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 117,
+      "headTreeKb": 71,
+      "pushedAt": "2023-03-09T19:10:02Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "redux_undo",
+      "defaultBranch": "master",
+      "headSha": "aab08bb043e47b6e327ec16783328a0e2dfabec4",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 158,
+      "headTreeKb": 144,
+      "pushedAt": "2020-04-23T14:29:29Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "responsive_scaffold",
+      "defaultBranch": "master",
+      "fork": false,
+      "archived": true,
+      "language": "Dart",
+      "sizeKb": 18730,
+      "pushedAt": "2021-09-27T18:16:56Z",
+      "selected": false,
+      "reasons": [
+        "archived (--include-archived to keep)"
+      ]
+    },
+    {
+      "name": "rocket_guide",
+      "defaultBranch": "main",
+      "headSha": "84cf05c5b22b4aade47030cf58744b822f904b10",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 75,
+      "headTreeKb": 104,
+      "pushedAt": "2021-02-17T15:08:12Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "rx_command",
+      "defaultBranch": "master",
+      "headSha": "ea5bfe40cc5095c0dd07d5dd1f115d7ee52c5201",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 1326,
+      "headTreeKb": 4354,
+      "pushedAt": "2024-08-08T04:56:41Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "site",
+      "defaultBranch": "main",
+      "headSha": "b6a1da1ced505e4b4a1954b5022cda42c88a929c",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 6,
+      "headTreeKb": 11,
+      "pushedAt": "2023-08-26T15:50:41Z",
+      "probe": "tree",
+      "manifests": [
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "state_persistence",
+      "defaultBranch": "master",
+      "headSha": "6f0211228ecc985b3302c2579adcf5f6edee19f2",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 83,
+      "headTreeKb": 114,
+      "pushedAt": "2021-08-26T07:42:03Z",
+      "probe": "tree",
+      "manifests": [
+        "example/pubspec.yaml",
+        "pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    },
+    {
+      "name": "transfer-guide",
+      "defaultBranch": "master",
+      "fork": false,
+      "language": null,
+      "sizeKb": 14,
+      "headTreeKb": 6,
+      "pushedAt": "2023-06-14T17:01:45Z",
+      "probe": "tree",
+      "manifests": [],
+      "selected": false,
+      "reasons": [
+        "no language detected; no package.json or pubspec.yaml in the HEAD tree"
+      ]
+    },
+    {
+      "name": "wakelock_plus",
+      "defaultBranch": "main",
+      "headSha": "4067d0bd741cc5e6e6fe27202b64db6392f348cf",
+      "fork": false,
+      "language": "Dart",
+      "sizeKb": 590,
+      "headTreeKb": 605,
+      "pushedAt": "2026-09-01T00:55:59Z",
+      "probe": "tree",
+      "manifests": [
+        "wakelock_plus/example/pubspec.yaml",
+        "wakelock_plus/pubspec.yaml",
+        "wakelock_plus_platform_interface/pubspec.yaml"
+      ],
+      "selected": true,
+      "reasons": [
+        "language Dart"
+      ],
+      "clone": "shallow"
+    }
+  ],
+  "excluded": [
+    {
+      "repo": "app_review",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "breakpoint",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "community",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "flutter-styleguide",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "flutter_sms",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "flutter_whatsnew",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "fluttercommunity.github.io",
+      "reason": "language HTML not in repos.languages; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    },
+    {
+      "repo": "mvi_sealed_unions",
+      "reason": "fork (--include-forks to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "responsive_scaffold",
+      "reason": "archived (--include-archived to keep)",
+      "manifests": null
+    },
+    {
+      "repo": "transfer-guide",
+      "reason": "no language detected; no package.json or pubspec.yaml in the HEAD tree",
+      "manifests": []
+    }
+  ]
+}
