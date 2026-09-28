@@ -7,7 +7,7 @@ import { openDb } from '../src/db.ts';
 import { writeDiscoverToDb } from '../src/discover.ts';
 import {
   blockerHint, buildReport, capCell, capList, CLOSED_ORG_ASSERTION, CLOSED_ORG_DELETE_DESCRIPTION, formatSummary, formatTable, MAX_CELL,
-  ORG_DEAD_ASSERTION, parseViews, skewSymbolName, VIEW_DESCRIPTIONS,
+  ORG_DEAD_ASSERTION, parseViews, reportFile, skewSymbolName, VIEW_DESCRIPTIONS,
 } from '../src/report.ts';
 import { buildSarif } from '../src/sarif.ts';
 
@@ -354,6 +354,27 @@ describe('buildReport', () => {
     expect(generatedAt).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
     expect(generatedAtIso).toBe(new Date(generatedAt * 1000).toISOString());
     expect(buildReport({ db, now: 1_700_000_000 }).generatedAtIso).toBe('2023-11-14T22:13:20.000Z');
+  });
+});
+
+describe('reportFile (what report.json holds)', () => {
+  it('drops the legacy org_dead view and its per-package counts unless --view names it', () => {
+    const r = buildReport({ db, now: NOW });
+    expect(r.views.org_dead.rows.length).toBeGreaterThan(0); // the in-memory report keeps it
+    const file = reportFile(r);
+    expect(file.views.org_dead).toBeUndefined();
+    expect(Object.keys(file.views)).toEqual(['delete', 'deprecate', 'unexport', 'private_dead', 'needs_review', 'blocked', 'version_skew']);
+    expect(file.packages.every((p) => !('org_dead' in p.counts))).toBe(true);
+    expect(file.findings).toEqual(r.findings);
+    // Other --view selections do not bring it back.
+    expect(reportFile(r, ['delete', 'deprecate']).views.org_dead).toBeUndefined();
+    // An explicit --view org_dead writes it, with its counts.
+    const legacy = reportFile(r, ['org_dead']);
+    expect(legacy.views.org_dead).toEqual(r.views.org_dead);
+    expect(legacy.packages).toEqual(r.packages);
+    // The input is not modified.
+    expect(r.views.org_dead).toBeDefined();
+    expect(r.packages.some((p) => 'org_dead' in p.counts)).toBe(true);
   });
 });
 

@@ -709,13 +709,14 @@ SARIF `sentei/delete` result state. The evidence is the same either way, the tex
 witness included.
 
 `report.json` holds the base `findings`, `assertions` (empty unless `closedOrg`)
-and every view under `views`, each `{ description, assertion?, rows }`:
+and every view but the legacy `org_dead` under `views`, each `{ description,
+assertion?, rows }`:
 
 | View | Rows | Summary column | SARIF rule (level) |
 |---|---|---|---|
 | `delete` | `deletion_candidate` (with `closedOrg`, published packages too; the view then carries the assertion) | DELETE | `sentei/delete` (warning) |
 | `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `only_docs_refs` / `dead_island` (empty with `closedOrg`) | DEPRECATE | `sentei/deprecate` (note) |
-| `org_dead` | **legacy, prefer `closedOrg`**: the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion**; empty with `closedOrg` | ORG-DEAD, only with `--view org_dead` | `sentei/org-dead` (warning), only with `--view org_dead` |
+| `org_dead` | **legacy, prefer `closedOrg`**: the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion**; empty with `closedOrg`; in `report.json` only with `--view org_dead` | ORG-DEAD, only with `--view org_dead` | `sentei/org-dead` (warning), only with `--view org_dead` |
 | `unexport` | `unexport_candidate`, plus (`published`) `deprecation_candidate` with only `internal_refs_only`; never for a private app nothing in the org depends on, nor for a type in a public signature | UNEXPORT | `sentei/unexport` (note) |
 | `private_dead` | `private_dead`, minus the helpers of a published package that only its `deprecate` rows unlock (those are in `org_dead`; none with `closedOrg`); packages without a credible entry set have none (`packages[].private_dead_skipped`, a note under the view totals) | PRIV-DEAD | `sentei/private-dead` (note) |
 | `needs_review` | `needs_review` | REVIEW | `sentei/needs-review` (note) |
@@ -725,16 +726,18 @@ and every view under `views`, each `{ description, assertion?, rows }`:
 `org_dead` (legacy) was the Phase 2 way to read the `deprecate` rows as
 deletions, as a view that asserted "the org is the only consumer of these
 packages" on its own. It is no longer in the default summary (no column, total
-line or footnote) or SARIF; `--view org_dead` still prints it, with its assertion
-in the footnote, the SARIF run (`run.properties.assertions`) and every
-`sentei/org-dead` result message, and `report.json` keeps `views.org_dead` for
-compatibility. Prefer `closedOrg`: the org makes the assertion once, the rows
+line or footnote), SARIF or `report.json`; `--view org_dead` still prints it,
+with its assertion in the footnote, the SARIF run (`run.properties.assertions`)
+and every `sentei/org-dead` result message, and writes it to `report.json`
+(`views.org_dead` and the per-package `counts.org_dead`, absent from a report
+written without it). Prefer `closedOrg`: the org makes the assertion once, the rows
 become real `deletion_candidate`s (so the private helpers they unlock are plain
 `private_dead`), and `org_dead` is empty by construction.
 
 `sentei report --view <name>[,<name>]` (repeatable; `org-dead` works too) limits
 the stdout summary and the SARIF logs to those views; `report.json` always has
-all of them. Default: every view except `org_dead`, on stdout and in SARIF.
+all the others, and `org_dead` too when `--view` names it. Default: every view
+except `org_dead`, on stdout, in SARIF and in `report.json`.
 The SARIF of a `--view` run goes to its own directory next to the default set,
 `work/sarif-<view>[,<view>]/` (views in the order of the table above, e.g.
 `work/sarif-delete,org_dead/`); `work/sarif/` is only written by a run without

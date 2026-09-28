@@ -134,7 +134,7 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
         },
       ]);
       expect(r.views.deprecate.rows.some((f) => f.symbol === 'deepThing')).toBe(false);
-      expect(r.views.org_dead.rows.some((f) => f.symbol === 'deepThing')).toBe(false);
+      expect(r.views.org_dead).toBeUndefined(); // legacy view: only with --view org_dead
       // Control: widgets' genuinely unused export still passes, as a deprecation.
       expect(r.findings.filter((f) => f.package_id === 'npm:acme/lib-widgets:@acme/widgets' && f.symbol === 'namespaceUnused')
         .map((f) => f.verdict)).toEqual(['deprecation_candidate']);

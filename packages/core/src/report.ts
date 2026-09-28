@@ -270,6 +270,38 @@ export interface Report {
   repos: ReportRepo[];
 }
 
+/**
+ * report.json: the Report minus the asserting views (legacy org_dead: `views.org_dead`
+ * and `packages[].counts.org_dead`) the run did not select explicitly (reportFile).
+ */
+export type ReportFile = Omit<Report, 'views' | 'packages'> & {
+  views: Omit<ReportViews, 'org_dead'> & Partial<Pick<ReportViews, 'org_dead'>>;
+  packages: ReportPackage[];
+};
+
+/**
+ * What report.json holds: the base findings and every view, except an asserting view
+ * (ASSERTING_VIEWS: the legacy org_dead) unless `views` (the run's `--view`) names it.
+ * org_dead asserts something sentei cannot check, so a full report that carries it
+ * invites reading the published deprecations as deletions (README, "Views"); `--view
+ * org_dead` still writes it (with its per-package counts), as well as its summary and
+ * SARIF. The in-memory Report (buildReport) keeps every view.
+ */
+export function reportFile(r: Report, views?: readonly ReportViewName[]): ReportFile {
+  const drop = ASSERTING_VIEWS.filter((v) => !(views ?? []).includes(v));
+  if (drop.length === 0) return r;
+  const keptViews: Partial<ReportViews> = { ...r.views };
+  for (const v of drop) delete keptViews[v];
+  return {
+    ...r,
+    views: keptViews as ReportFile['views'],
+    packages: r.packages.map((p) => ({
+      ...p,
+      counts: Object.fromEntries(Object.entries(p.counts).filter(([k]) => !(drop as readonly string[]).includes(k))),
+    })),
+  };
+}
+
 export interface BuildReportOptions {
   db: DatabaseSync;
   /** The work dir, for index log paths in blocker hints (`<work>/index/…`); default `<work>`. */

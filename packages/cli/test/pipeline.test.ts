@@ -269,11 +269,10 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(names(r.views.deprecate.rows)).toEqual([
       `${widgets}#default`, `${widgets}#internalUnused`, `${widgets}#namespaceUnused`, `${widgets}#testOnlyFn`,
     ]);
-    expect(r.views.org_dead.rows).toEqual(r.views.deprecate.rows);
-    expect(r.views.org_dead.assertion).toBe(ORG_DEAD_ASSERTION);
+    // Fix round 9a: the legacy org_dead is not in the default report.json (view nor counts).
+    expect(r.views.org_dead).toBeUndefined();
+    expect(r.packages.every((p) => !('org_dead' in p.counts))).toBe(true);
     expect(r.views.deprecate.assertion).toBeUndefined();
-    // widgets' unusedHelper is dead only once internalUnused is deleted: org_dead only.
-    expect(names(r.views.org_dead.private_dead)).toEqual([`${widgets}#unusedHelper`]);
     expect(names(r.views.private_dead.rows)).not.toContain(`${widgets}#unusedHelper`);
     expect(names(r.views.unexport.rows)).toContain('npm:acme/lib-core:@acme/core#internalOnlyFn');
     expect(r.packages.find((p) => p.package_id === widgets)).toMatchObject({ private: false, counts: { delete: 0, deprecate: 4 } });
@@ -300,7 +299,8 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
       .toEqual(['default', 'internalUnused', 'namespaceUnused', 'testOnlyFn']);
 
     // report --view org_dead: the same DB, no re-analysis; only org-dead results, in
-    // <work>/sarif-org_dead/. The default set and report.json keep their content.
+    // <work>/sarif-org_dead/. The default set keeps its content; report.json gains the
+    // org_dead view (and its counts), nothing else changes.
     const readDir = (dir: string): Record<string, string> =>
       Object.fromEntries(readdirSync(dir).map((f) => [f, readFileSync(path.join(dir, f), 'utf8')]));
     const defaultFiles = readDir(path.join(work, 'sarif'));
@@ -313,8 +313,17 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(sarifDirFor(work, ['delete', 'org_dead'])).toBe(path.join(work, 'sarif-delete,org_dead'));
     expect(readDir(path.join(work, 'sarif'))).toEqual(defaultFiles);
     const after = JSON.parse(readFileSync(path.join(work, 'report.json'), 'utf8')) as Report;
-    const undated = (x: Report): Report => ({ ...x, generatedAt: 0, generatedAtIso: '' });
-    expect(undated(after)).toEqual(undated(fullReport));
+    expect(after.views.org_dead.rows).toEqual(r.views.deprecate.rows);
+    expect(after.views.org_dead.assertion).toBe(ORG_DEAD_ASSERTION);
+    // widgets' unusedHelper is dead only once internalUnused is deleted: org_dead only.
+    expect(names(after.views.org_dead.private_dead)).toEqual([`${widgets}#unusedHelper`]);
+    expect(after.packages.find((p) => p.package_id === widgets)!.counts['org_dead']).toBe(5);
+    const withoutOrgDead = (x: Report): unknown => ({
+      ...x, generatedAt: 0, generatedAtIso: '', views: { ...x.views, org_dead: undefined },
+      packages: x.packages.map((p) => ({ ...p, counts: { ...p.counts, org_dead: undefined } })),
+    });
+    expect(withoutOrgDead(after)).toEqual(withoutOrgDead(fullReport));
+    expect(filtered).toContain(`[report] wrote ${path.join(work, 'report.json')} (full report: every view, the legacy org_dead included)`);
     expect(filtered).toContain(`[report] wrote ${r.repos.length} SARIF log(s) (5 result(s), views: org_dead) to ${path.join(work, 'sarif-org_dead')}`);
     expect(filtered).toContain(`[report] --view: the default SARIF set in ${path.join(work, 'sarif')} was left as it was`);
     const orgDead = allSarifResults(work, 'sarif-org_dead');
@@ -359,8 +368,7 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     }));
     expect(closed.r.findings).toEqual(flipped);
     expect(closed.r.views.deprecate.rows).toEqual([]);
-    expect(closed.r.views.org_dead.rows).toEqual([]);
-    expect(closed.r.views.org_dead.private_dead).toEqual([]);
+    expect(closed.r.views.org_dead).toBeUndefined();
     expect(closed.r.views.delete.assertion).toBe(CLOSED_ORG_ASSERTION);
     expect(names(closed.r.views.delete.rows)).toEqual(expect.arrayContaining([
       `${widgets}#default`, `${widgets}#internalUnused`, `${widgets}#namespaceUnused`, `${widgets}#testOnlyFn`,
@@ -443,9 +451,10 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
       ...(HAS_FLUTTER ? Object.keys(DART_FLUTTER).sort().map((n) => [`acme/${n}`, 'ok']) : []),
     ]);
     expect(rows).toEqual(expectedDart('expected-findings.json'));
-    // acme_pub is published-public: its unused export is a deprecation, and org_dead reads it as a deletion.
+    // acme_pub is published-public: its unused export is a deprecation (the legacy
+    // org_dead, which would read it as a deletion, is not in the default report.json).
     expect(r.views.deprecate.rows.map((f) => `${f.package_id}#${f.symbol}`)).toContain('pub:acme/dart-lib-pub:acme_pub#pubUnused');
-    expect(r.views.org_dead.rows).toEqual(r.views.deprecate.rows);
+    expect(r.views.org_dead).toBeUndefined();
     // acme_core's conditional import: the index resolves `storageName` to the default
     // storage_stub.dart only; the sidecar's conditionalImports keeps the io/web variants alive.
     expect(rows.filter((x) => x.symbol === 'storageName')).toEqual([]);

@@ -7,9 +7,9 @@ export { runWitness } from './witness.ts';
 export type { WitnessDiscoverInput } from './witness.ts';
 export {
   blockerHint, buildReport, CLOSED_ORG_ASSERTION, defaultSarifViews, defaultViews, formatSummary, ignoreManifestEntry, indexLogPath,
-  ORG_DEAD_ASSERTION, parseViews, REPORT_VIEWS,
+  ORG_DEAD_ASSERTION, parseViews, REPORT_VIEWS, reportFile,
 } from './report.ts';
-export type { Report, ReportViewName, ReportViews } from './report.ts';
+export type { Report, ReportFile, ReportViewName, ReportViews } from './report.ts';
 export * from './sarif.ts';
 export { analyzeOrg } from './analyze.ts';
 export { discoverGithub, selectGithubRepos } from './github.ts';
