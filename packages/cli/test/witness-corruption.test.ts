@@ -56,6 +56,16 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
       // The module reference ('@acme/core') survives, so the index is otherwise intact.
       expect(doc!.occurrences.some((o) => o.symbol.includes('@acme/core'))).toBe(true);
       writeFileSync(scipPath, toBinary(IndexSchema, idx));
+      // The same in the samples repo's example app (a consumer promoted from examples/,
+      // Phase 3 decision 3): the witness scans it like any consumer, its files relative
+      // to its own dir, so they are not skipped as docs.
+      const sampleScip = path.join(work, 'index', 'acme__samples', 'npm__samples__acme__sample-app.scip');
+      const sidx = readScipIndex(sampleScip);
+      const sdoc = sidx.documents.find((d) => d.relativePath === 'src/main.ts')!; // package-relative in the .scip
+      const sbefore = sdoc.occurrences.length;
+      sdoc.occurrences = sdoc.occurrences.filter((o) => !o.symbol.endsWith('usedFn().'));
+      expect(sbefore - sdoc.occurrences.length).toBeGreaterThan(0);
+      writeFileSync(sampleScip, toBinary(IndexSchema, sidx));
 
       // Same corruption for a PUBLISHED package (@acme/widgets): drop the consumer's
       // deepThing references. The witness runs for would-be deprecations too, so the
@@ -83,6 +93,8 @@ describe('witness check (PLAN.md §8): a reference dropped from the SCIP index i
             'no_refs',
             'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:2',
             'witness_mismatch:npm:acme/app:@acme/app:src/main.ts:6',
+            'witness_mismatch:npm:acme/samples:@acme/sample-app:examples/app/src/main.ts:6',
+            'witness_mismatch:npm:acme/samples:@acme/sample-app:examples/app/src/main.ts:10',
           ],
         },
       ]);

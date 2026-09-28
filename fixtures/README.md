@@ -50,6 +50,7 @@ Findings rows: `package_id` (`<manager>:<repo>:<name>`, e.g.
 | `lib-lazy` | `@acme/lazy` | private | lib whose only consumer (`app-lazy`) destructures it from dynamic `import()` namespaces |
 | `lib-lazy-opaque` | `@acme/lazy-opaque` | private | lib whose only consumer takes a rest element of its namespace and passes the namespace to a function |
 | `app-lazy` | `@acme/app-lazy` | private | consumer of lazy + lazy-opaque through `import()` only; flagged `namespace_dynamic` at lazy-opaque |
+| `samples` | `@acme/sample-app` (`examples/app/`) | private | Phase 3 decision 3: an example app in a samples repo. Its manifest is under `examples/` (an ignored dir) but depends on `@acme/core` of ANOTHER repo, so discover promotes it to a consumer package (no export surface, `promoted_packages`); its files are not docs files (docs globs relative to its own dir), so its `usedFn` uses are counted external refs (`witness-corruption.test.ts` also drops them from its index and expects the witness to catch them) |
 | `app-worker` | `@acme/worker` | private | Cloudflare Worker app, no `main`/`exports`: runtime entries by convention (wrangler `main`, Pages `functions/`), a `bin` outside the program, TS namespaces, and a consumer of `@acme/widgets/lazy` naming a widgets candidate (see below) |
 
 Note: `lib-widgets` imports `@acme/y`, so it typechecks only with

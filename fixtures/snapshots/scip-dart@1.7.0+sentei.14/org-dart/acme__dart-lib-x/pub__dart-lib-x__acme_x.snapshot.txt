@@ -131,6 +131,13 @@
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/inExample(). enclosing [60:0-60:21]
 
+  // Expected: alive, no finding. Used only by dart-samples/example/app/bin/main.dart, an example
+  // app of ANOTHER repo: discover indexes that ignored-dir manifest as a consumer package
+  // (Phase 3 decision 3), so its use is a counted external reference.
+  int usedBySample() => 42;
+//^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//    ^^^^^^^^^^^^ definition scip-dart pub acme_x . lib/`acme_x.dart`/usedBySample(). enclosing [65:0-65:25]
+
 ## lib/bindings.dart
   // Entry that re-exports generated bindings the analyzer excludes
 //^ definition scip-dart pub acme_x . lib/`bindings.dart`/

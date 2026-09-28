@@ -151,6 +151,15 @@
     {
       "col": 4,
       "entry": "lib/acme_x.dart",
+      "exportedAs": "usedBySample",
+      "file": "lib/acme_x.dart",
+      "line": 65,
+      "name": "usedBySample",
+      "sites": []
+    },
+    {
+      "col": 4,
+      "entry": "lib/acme_x.dart",
       "exportedAs": "usedFn",
       "file": "lib/acme_x.dart",
       "line": 14,

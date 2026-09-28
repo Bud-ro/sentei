@@ -1,0 +1,24 @@
+{
+  "conditionalImports": [],
+  "entryPoints": [],
+  "entrySymbols": [
+    {
+      "col": 5,
+      "file": "example/app/bin/main.dart",
+      "kind": "runtime",
+      "line": 5,
+      "name": "main"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "pub:acme/dart-samples:acme_sample_app",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

@@ -17,6 +17,7 @@
     { "name": "lib-widgets", "default_branch": "main" },
     { "name": "lib-y", "default_branch": "main" },
     { "name": "repo-broken", "default_branch": "main" },
+    { "name": "samples", "default_branch": "main" },
     { "name": "tool-py", "default_branch": "main" }
   ]
 }

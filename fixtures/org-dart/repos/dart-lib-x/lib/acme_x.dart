@@ -59,3 +59,8 @@ extension AcmeTiny on int {
 // Used inside acme_x only (by _privateFn), so an unexport by the index; acme_x's own example
 // app names it, which the witness notes without changing the verdict (Phase 3 decision 3).
 int inExample() => 1;
+
+// Expected: alive, no finding. Used only by dart-samples/example/app/bin/main.dart, an example
+// app of ANOTHER repo: discover indexes that ignored-dir manifest as a consumer package
+// (Phase 3 decision 3), so its use is a counted external reference.
+int usedBySample() => 42;

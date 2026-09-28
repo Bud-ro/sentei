@@ -1,0 +1,16 @@
+# sentei scip snapshot: scip-dart 1.7.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## bin/main.dart
+  // An example app of ANOTHER repo than acme_x: a promoted consumer package
+//^ definition scip-dart pub acme_sample_app . bin/`main.dart`/
+  // (pub:acme/dart-samples:acme_sample_app), indexed; its use of usedBySample counts.
+  import 'package:acme_x/acme_x.dart';
+
+  // Expected: no finding (the runtime calls main; the package has no export surface).
+  void main() {
+//     ^^^^ definition scip-dart pub acme_sample_app . bin/`main.dart`/main(). enclosing [5:0-7:1]
+    print(usedBySample());
+//  ^^^^^ reference scip-dart pub dart:core . dart:core/`print.dart`/print().
+//        ^^^^^^^^^^^^ reference scip-dart pub acme_x . lib/`acme_x.dart`/usedBySample().
+  }

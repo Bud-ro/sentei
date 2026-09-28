@@ -1,0 +1,9 @@
+name: acme_sample_app
+description: "An example app in a samples repo (like flutter/samples): its manifest is under example/ (an ignored dir) but it depends on acme_x from ANOTHER repo, so discover indexes it as a consumer package (Phase 3 decision 3)."
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  acme_x: ^1.0.0

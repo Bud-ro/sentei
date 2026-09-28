@@ -1,0 +1,25 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.ts
+  // An example app in a samples repo: its manifest is under examples/ (an ignored dir),
+//^ definition scip-typescript npm @acme/sample-app . src/`main.ts`/ enclosing [5:0-13:0]
+  // but it depends on @acme/core from ANOTHER repo, so discover indexes it as the consumer
+  // package npm:acme/samples:@acme/sample-app (Phase 3 decision 3). Its files are not docs
+  // files (the docs globs apply below its own root), so this use of usedFn is a counted
+  // external reference.
+  import { usedFn } from '@acme/core';
+//         ^^^^^^ reference scip-typescript npm @acme/core . src/`fns.ts`/usedFn().
+//                       ^^^^^^^^^^^^ reference scip-typescript npm @acme/core . src/`index.ts`/
+
+  // Expected: alive, no finding (the package has no export surface; called below).
+  function main(): void {
+//         ^^^^ definition scip-typescript npm @acme/sample-app . src/`main.ts`/main(). enclosing [8:0-10:1]
+    console.log(usedFn(1));
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//              ^^^^^^ reference scip-typescript npm @acme/core . src/`fns.ts`/usedFn().
+  }
+
+  main();
+//^^^^ reference scip-typescript npm @acme/sample-app . src/`main.ts`/main().

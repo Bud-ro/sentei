@@ -134,6 +134,17 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     // unnamed-demo manifest is a consumer-only package (a bare nameless marker is
     // not: manifests.test.ts).
     await withCtx(org, async (ctx) => {
+      // Phase 3 decision 3: samples' examples/app (another repo than @acme/core) is a
+      // promoted consumer package, indexed; its files under examples/ are not docs files,
+      // so its use of usedFn is a counted external reference.
+      expect(ctx.db.prepare("SELECT package_id, reason FROM promoted_packages").all()).toEqual([
+        { package_id: 'npm:acme/samples:@acme/sample-app', reason: 'example app depends on npm:acme/lib-core:@acme/core (repo acme/lib-core)' },
+      ]);
+      expect(r.repos.find((x) => x.repo === 'acme/samples')?.index_status).toBe('ok');
+      expect(ctx.db.prepare("SELECT file FROM doc_files WHERE package_id = 'npm:acme/samples:@acme/sample-app'").all()).toEqual([]);
+      expect(ctx.db.prepare(`SELECT s.name, e.n FROM external_refs e JOIN symbols s USING (symbol_id)
+        WHERE e.consumer_package_id = 'npm:acme/samples:@acme/sample-app' AND s.name = 'usedFn'`).all())
+        .toEqual([{ name: 'usedFn', n: 2 }]);
       const flags = ctx.db.prepare(`SELECT flag, reason FROM package_flags WHERE package_id = 'npm:acme/lib-dual:@acme/dual-script'`).all();
       expect(flags).toEqual([]);
       const docs = ctx.db.prepare(`SELECT file, is_entry FROM documents WHERE package_id = 'npm:acme/lib-dual:@acme/dual-script' ORDER BY file`).all();
@@ -338,7 +349,7 @@ function expectedDart(file: string): ExpectedRow[] {
 describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
   it.skipIf(!HAS_DART)('matches expected-findings.json exactly', async () => {
     const org = copyDartFixture();
-    const { rows, report: r } = await runPipeline(org);
+    const { rows, report: r, lines, work } = await runPipeline(org);
     expect(r.policy).not.toHaveProperty('assumeClosedWorld');
     expect(r.repos.map((x) => [x.repo, x.index_status]).sort()).toEqual([
       ['acme/dart-app', 'ok'],
@@ -346,6 +357,7 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
       ['acme/dart-js', 'ok'],
       ['acme/dart-lib-pub', 'ok'],
       ['acme/dart-lib-x', 'ok'],
+      ['acme/dart-samples', 'ok'],
       ['acme/dart-testkit', 'ok'],
       ['acme/dart-workspace', 'ok'],
       ...(HAS_FLUTTER ? Object.keys(DART_FLUTTER).sort().map((n) => [`acme/${n}`, 'ok']) : []),
@@ -361,5 +373,14 @@ describe('M3 acceptance: full pipeline on fixtures/org-dart', () => {
     // platformName take the stub's export surface, so they and _ioDetail are alive (they
     // were private_dead already_unreachable).
     expect(rows.filter((x) => x.symbol === 'platformName' || x.symbol === '_ioDetail')).toEqual([]);
+    // Phase 3 decision 3: dart-samples' example/app (another repo than acme_x) is promoted
+    // to a consumer package and indexed; the export only it uses has no finding.
+    expect(lines).toContain('[discover] acme/dart-samples: promoted ignored-dir manifest example/app/pubspec.yaml to the consumer package '
+      + 'pub:acme/dart-samples:acme_sample_app: example app depends on pub:acme/dart-lib-x:acme_x (repo acme/dart-lib-x)');
+    expect(rows.filter((x) => x.symbol === 'usedBySample' || x.package_id === 'pub:acme/dart-samples:acme_sample_app')).toEqual([]);
+    // dart-lib-x's own example/ stays ignored: its use of inExample is a note in report.json and SARIF.
+    const inExample = allSarifResults(work).find((x) => x.symbol === 'inExample')!;
+    expect(inExample.ruleId).toBe('sentei/unexport');
+    expect(inExample.message).toContain('note:used by example/pubspec.yaml (example/bin/demo.dart:9)');
   }, 600_000);
 });
