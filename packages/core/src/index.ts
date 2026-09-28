@@ -17,6 +17,8 @@ export type { RepoSelection, SelectedRepo } from './github.ts';
 export type { RepoSelectCli } from './repo-select.ts';
 export { ageCoverage, minAgeWarning, policyMinAgeDays, runBlame } from './blame.ts';
 export type { AgeCoverage, BlameDiscoverInput } from './blame.ts';
-export { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS, VENDORED_GLOBS } from './globs.ts';
+export {
+  BUILD_CACHE_DIRS, DOCS_GLOBS, GENERATED_GLOBS, inBuildCacheDir, inSurfaceDir, inVendoredDir, SCRIPT_GLOBS, SURFACE_DIRS, TEST_GLOBS, VENDORED_GLOBS,
+} from './globs.ts';
 export { matchGlob } from './glob.ts';
 export { listFiles, sourceForBuildOutput } from './manifests.ts';
