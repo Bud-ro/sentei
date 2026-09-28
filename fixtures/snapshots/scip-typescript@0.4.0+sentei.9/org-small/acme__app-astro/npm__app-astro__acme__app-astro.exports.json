@@ -1,8 +1,31 @@
 {
   "deepImportExports": [],
-  "entryPoints": [],
+  "entryPoints": [
+    "astro.config.mjs",
+    "src/pages/rss.ts"
+  ],
   "entrySymbols": [],
-  "exports": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "src/pages/rss.ts",
+      "exportedAs": "GET",
+      "file": "src/pages/rss.ts",
+      "line": 3,
+      "name": "GET",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "astro.config.mjs",
+      "exportedAs": "default",
+      "file": "astro.config.mjs",
+      "line": 2,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    }
+  ],
   "flags": [],
   "generatedFiles": [],
   "missingEntryPoints": [],

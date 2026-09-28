@@ -1117,7 +1117,8 @@ export function electronHtmlRefs(text: string): string[] {
 /**
  * Runtime entry conventions: files a platform or framework loads BY PATH, with no import
  * from code and no manifest field naming them. One row per convention: `files` = the
- * condition "one of these package-relative files exists" (omitted: unconditional),
+ * condition "one of these package-relative files exists" (a `*` is a glob.ts pattern:
+ * `astro.config.*`; omitted: unconditional),
  * `deps` = "one of these is a declared dependency" (any block, dev included),
  * `scripts` = "some package.json `scripts` value matches", all required when several are
  * given, unless `any` (then one suffices); `globs` = the package-relative files it loads
@@ -1151,7 +1152,44 @@ const RUNTIME_ENTRY_CONVENTIONS: ReadonlyArray<{
   { what: 'SvelteKit / SolidStart', deps: ['@sveltejs/kit', '@solidjs/start'], globs: ['src/routes/**'] },
   // Nuxt: pages/ (file router) and server/ (Nitro api/routes/middleware/plugins).
   { what: 'Nuxt', deps: ['nuxt'], globs: ['pages/**', 'server/**'] },
+  // A Nuxt app or layer (its nuxt.config.*): the config, and every dir Nuxt scans and
+  // auto-registers or auto-imports (layouts, route middleware, plugins, composables,
+  // utils, stores, components, local modules, shared/), at the root (Nuxt 3) or under
+  // the `app/` srcDir (Nuxt 4, which the `app/**` glob covers).
+  {
+    what: 'Nuxt app', files: ['nuxt.config.*'],
+    globs: [
+      'nuxt.config.*', 'app.config.*', 'app/**', 'pages/**', 'layouts/**', 'middleware/**', 'plugins/**', 'server/**',
+      'composables/**', 'utils/**', 'stores/**', 'components/**', 'modules/**', 'shared/**',
+    ],
+  },
+  // Docusaurus: the config (and the files it names, FRAMEWORK_CONFIGS), swizzled theme
+  // components, pages, local plugins, sidebars.
+  {
+    what: 'Docusaurus', files: ['docusaurus.config.*'],
+    globs: ['docusaurus.config.*', 'sidebars.*', 'src/theme/**', 'src/pages/**', 'src/plugins/**'],
+  },
+  // VitePress: `.vitepress/config.*` and the theme under the site root (the package root
+  // or a docs dir), and `*.data.{ts,js}` data loaders, loaded by path from Markdown.
+  { what: 'VitePress', deps: ['vitepress'], globs: ['**/.vitepress/config.*', '**/.vitepress/theme/**', '**/*.data.*'] },
+  // Astro (a site: its astro.config.*): the config, file routes and endpoints,
+  // middleware, actions, content collections config.
+  {
+    what: 'Astro', files: ['astro.config.*'],
+    globs: [
+      'astro.config.*', 'src/pages/**', 'src/middleware.*', 'src/middleware/**', 'src/actions/**',
+      'src/content.config.*', 'src/content/config.*', 'src/live.config.*',
+    ],
+  },
 ];
+
+/**
+ * Framework config files (package-relative globs) whose relative string literals name files
+ * the framework loads: Docusaurus `require.resolve('./sidebars.js')`, local plugin paths
+ * `'./src/plugins/x'`, Starlight's `routeMiddleware: './src/routeData.ts'`, Nuxt
+ * `plugins: ['./x']` (conventionEntryPoints).
+ */
+const FRAMEWORK_CONFIGS = ['docusaurus.config.*', 'astro.config.*', 'nuxt.config.*', '**/.vitepress/config.*'];
 
 /** Wrangler config files whose `main` is the Worker's entry module. */
 const WRANGLER_CONFIGS = ['wrangler.toml', 'wrangler.json', 'wrangler.jsonc'];
@@ -1225,7 +1263,8 @@ export function wranglerRuntimeClasses(repoRoot: string, dir: string, repoFiles:
  * Runtime entry points by convention (RUNTIME_ENTRY_CONVENTIONS, wrangler `main`, else a
  * `wrangler dev|deploy <file>` script; the file of a `node|tsx|bun|… <file>` script
  * (runnerTargets) or Dockerfile CMD/ENTRYPOINT (dockerfileTargets), build output mapped
- * to source; Next.js files loaded by name (nextConventionFiles)) of the npm package at
+ * to source; Next.js files loaded by name (nextConventionFiles); own files a framework
+ * config names with a relative literal (FRAMEWORK_CONFIGS)) of the npm package at
  * `dir`, repo-relative, sorted.
  * `scripts` = the package.json `scripts` values.
  */
@@ -1237,14 +1276,18 @@ export function conventionEntryPoints(
   const nested = pkgFiles
     .filter((f) => f.includes('/') && MANIFEST_NAMES.includes(posix.basename(f)))
     .map((f) => `${posix.dirname(f)}/`);
+  // `.vitepress` is the one dot dir a framework loads code from (its cache and build
+  // output aside).
   const ok = (f: string): boolean => CODE_EXT.test(f) && !/\.d\.[cm]?ts$/.test(f)
-    && !f.split('/').some((s) => s.startsWith('.') || s === 'node_modules')
+    && !f.split('/').some((s) => (s.startsWith('.') && s !== '.vitepress') || s === 'node_modules')
+    && !/(?:^|\/)\.vitepress\/(?:cache|dist)\//.test(f)
     && !TEST_GLOBS.some((g) => matchGlob(g, f))
     && !nested.some((n) => f.startsWith(n));
+  const has = (glob: string): boolean => (glob.includes('*') ? pkgFiles.some((f) => matchGlob(glob, f)) : fileSet.has(glob));
   const out = new Set<string>();
   for (const c of RUNTIME_ENTRY_CONVENTIONS) {
     const conds: boolean[] = [];
-    if (c.files) conds.push(c.files.some((f) => fileSet.has(f)));
+    if (c.files) conds.push(c.files.some(has));
     if (c.deps) conds.push(c.deps.some((d) => deps.has(d)));
     if (c.scripts) conds.push(scripts.some((s) => c.scripts!.test(s)));
     if (c.any ? conds.length > 0 && !conds.includes(true) : conds.includes(false)) continue;
@@ -1274,17 +1317,33 @@ export function conventionEntryPoints(
     if (r !== null && ok(r)) out.add(r);
   }
   if (deps.has('next')) for (const f of nextConventionFiles(fileSet)) if (ok(f)) out.add(f);
+  /** A path relative to package file `from` (or a package-relative one, from = ''), resolved like an entry. */
+  const resolveFrom = (from: string, rel: string): string | null => {
+    const n = normalizeRel(from === '' ? rel : posix.join(posix.dirname(from), rel));
+    return n === null || n === '' ? null : resolveEntry(n, layout);
+  };
+  // Files a framework config names with a relative literal (FRAMEWORK_CONFIGS).
+  for (const cfg of pkgFiles.filter((f) => FRAMEWORK_CONFIGS.some((g) => matchGlob(g, f)))) {
+    for (const rel of relativeLiterals(read(cfg))) {
+      const r = resolveFrom(cfg, rel);
+      if (r !== null && r !== cfg && ok(r)) out.add(r);
+    }
+  }
   // Files the package's own code names by a path relative to itself, to hand to a
   // bundler, a worker or a subprocess (urlReferencedFiles).
   for (const f of pkgFiles) {
     if (!ok(f)) continue;
     for (const rel of urlReferencedFiles(read(f))) {
-      const n = normalizeRel(posix.join(posix.dirname(f), rel));
-      const r = n === null || n === '' ? null : resolveEntry(n, layout);
+      const r = resolveFrom(f, rel);
       if (r !== null && r !== f && ok(r)) out.add(r);
     }
   }
   return [...out].map((f) => joinRel(dir, f)).sort(cmp);
+}
+
+/** Every relative string literal (`'./x'`, `"../y/z.js"`) of a source text, as written. */
+function relativeLiterals(text: string): string[] {
+  return [...text.matchAll(/(['"`])(\.{1,2}\/[^'"`$\n]*)\1/g)].map((m) => m[2]!);
 }
 
 /** Quick filter before the regexes of urlReferencedFiles. */

@@ -1,6 +1,12 @@
 # sentei scip snapshot: scip-typescript 0.4.0
 # positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
 
+## astro.config.mjs
+  // An Astro site: with astro.config.* its file routes (src/pages/**), middleware, actions and
+//^ definition scip-typescript npm @acme/app-astro . `astro.config.mjs`/ enclosing [2:0-3:0]
+  // content config are runtime entries by convention (fix round 8e), so its entry set is credible.
+  export default {};
+
 ## src/content/first.ts
   export const title = 'First post';
 //^ definition scip-typescript npm @acme/app-astro . src/content/`first.ts`/ enclosing [0:0-1:0]
@@ -21,9 +27,9 @@
   }
 
 ## src/lib/orphan.ts
-  // Nothing loads this module. It would be private_dead, but the site's entry set is not
+  // Nothing loads this module: private_dead. (Before fix round 8e the site had no entry point
 //^ definition scip-typescript npm @acme/app-astro . src/lib/`orphan.ts`/ enclosing [2:0-5:0]
-  // credible (its roots are file-routed pages): not reported, a skipped note instead.
+  // sentei knew, and this was a private_dead_skipped note instead.)
   export function orphanHelper(): number {
 //                ^^^^^^^^^^^^ definition scip-typescript npm @acme/app-astro . src/lib/`orphan.ts`/orphanHelper(). enclosing [2:0-4:1]
     return 1;

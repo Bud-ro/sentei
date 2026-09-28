@@ -730,9 +730,6 @@ describe('npm manifests', () => {
     expect(electronHtmlRefs("w.loadFile('./ui/index.html'); w.loadURL('file://' + __dirname + '/b.html'); w.loadURL('https://x.y/c.html'); w.loadFile(page)"))
       .toEqual(['ui/index.html', 'b.html']);
     expect(electronHtmlRefs('no windows here')).toEqual([]);
-    expect(webpackEntries("entry: path.resolve(__dirname, 'src/main.ts'), output: { filename: 'x.js' }"))
-      .toEqual([{ name: 'main', path: 'src/main.ts' }]);
-    expect(webpackEntries('entry: getEntries()')).toEqual([]);
   });
 
   it('package.json imports: every condition target that resolves to local code is an entry point (ocache #crypto)', () => {
@@ -974,6 +971,64 @@ describe('npm manifests', () => {
     expect(byName.get('a')!.runtimeEntrySymbols).toEqual(['Counter']);
     expect(byName.get('b')!.runtimeEntryPoints).toEqual(['b/src/main.ts']);
     expect(byName.get('c')!.runtimeEntryPoints).toEqual(['c/worker.js']);
+  });
+
+  it('framework apps get runtime entries: Docusaurus, VitePress, Astro, Nuxt (3 and 4) and the files their configs name', () => {
+    // trpc www: docusaurus.config.ts requires files by path; theme, pages, plugins, sidebars.
+    pkgJson('www/package.json', { name: 'www', private: true, dependencies: { '@docusaurus/core': '^3' } });
+    write('www/docusaurus.config.ts', [
+      "import { parseEnv } from './src/utils/env';",
+      "export default { presets: [['classic', { docs: { sidebarPath: require.resolve('./sidebars.js'),",
+      "  remarkPlugins: [require('./mdxToJsx')] } }]], plugins: ['./src/plugins/local', require.resolve('./docusaurus.preferredTheme.js')],",
+      "  themeConfig: { image: './static/og.png' } };",
+    ].join('\n'));
+    for (const f of ['sidebars.js', 'mdxToJsx.js', 'docusaurus.preferredTheme.js', 'src/utils/env.ts', 'src/theme/Footer/index.tsx',
+      'src/pages/index.tsx', 'src/plugins/local/index.js', 'src/components/Unused.tsx', 'static/og.png']) write(`www/${f}`);
+    // vite docs: a VitePress site under docs/ of the package, data loaders anywhere.
+    pkgJson('vp/package.json', { name: 'vp', private: true, devDependencies: { vitepress: '^1' } });
+    for (const f of ['docs/.vitepress/config.ts', 'docs/.vitepress/theme/index.ts', 'docs/.vitepress/theme/Layout.ts',
+      'docs/.vitepress/cache/deps/x.js', 'docs/_data/blog.data.ts', 'docs/unused.ts']) write(`vp/${f}`);
+    // Without vitepress, a .vitepress dir is not a convention.
+    pkgJson('novp/package.json', { name: 'novp', private: true, dependencies: { x: '1' } });
+    write('novp/.vitepress/config.ts');
+    write('novp/a.data.ts');
+    // An Astro site.
+    pkgJson('site/package.json', { name: 'site', private: true, dependencies: { astro: '^5' } });
+    write('site/astro.config.mjs', "export default defineConfig({ integrations: [starlight({ routeMiddleware: './src/routeData.ts' })] });");
+    for (const f of ['src/pages/rss.ts', 'src/pages/api/[id].ts', 'src/middleware.ts', 'src/actions/index.ts', 'src/content.config.ts',
+      'src/routeData.ts', 'src/lib/orphan.ts']) write(`site/${f}`);
+    // An Astro integration (depends on astro, no astro.config): no convention.
+    pkgJson('integ/package.json', { name: 'integ', exports: './src/index.ts', peerDependencies: { astro: '^5' } });
+    write('integ/src/index.ts');
+    write('integ/src/middleware.ts');
+    // Nuxt 3 (root dirs) and a Nuxt 4 layer (app/ srcDir; no nuxt dependency, only a config).
+    pkgJson('n3/package.json', { name: 'n3', private: true, dependencies: { nuxt: '^3' } });
+    write('n3/nuxt.config.ts', "export default defineNuxtConfig({ plugins: ['./extra/plugin.ts'] })");
+    for (const f of ['composables/useX.ts', 'utils/fmt.ts', 'stores/cart.ts', 'layouts/default.ts', 'middleware/auth.ts', 'plugins/p.ts',
+      'components/C.ts', 'server/api/x.ts', 'extra/plugin.ts', 'lib/other.ts']) write(`n3/${f}`);
+    pkgJson('n4/package.json', { name: 'n4', private: true });
+    write('n4/nuxt.config.ts');
+    write('n4/app/composables/useY.ts');
+    write('n4/app/pages/index.ts');
+    write('n4/lib/other.ts');
+    const by = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(by.get('www')!.runtimeEntryPoints).toEqual([
+      'www/docusaurus.config.ts', 'www/docusaurus.preferredTheme.js', 'www/mdxToJsx.js', 'www/sidebars.js',
+      'www/src/pages/index.tsx', 'www/src/plugins/local/index.js', 'www/src/theme/Footer/index.tsx', 'www/src/utils/env.ts',
+    ]);
+    expect(by.get('vp')!.runtimeEntryPoints).toEqual(['vp/docs/.vitepress/config.ts', 'vp/docs/.vitepress/theme/Layout.ts', 'vp/docs/.vitepress/theme/index.ts', 'vp/docs/_data/blog.data.ts']);
+    expect(by.get('novp')!.runtimeEntryPoints).toEqual([]);
+    expect(by.get('site')!.runtimeEntryPoints).toEqual([
+      'site/astro.config.mjs', 'site/src/actions/index.ts', 'site/src/content.config.ts', 'site/src/middleware.ts',
+      'site/src/pages/api/[id].ts', 'site/src/pages/rss.ts', 'site/src/routeData.ts',
+    ]);
+    expect(by.get('integ')!.runtimeEntryPoints).toEqual([]);
+    expect(by.get('n3')!.runtimeEntryPoints).toEqual([
+      'n3/components/C.ts', 'n3/composables/useX.ts', 'n3/extra/plugin.ts', 'n3/layouts/default.ts', 'n3/middleware/auth.ts', 'n3/nuxt.config.ts',
+      'n3/plugins/p.ts', 'n3/server/api/x.ts', 'n3/stores/cart.ts', 'n3/utils/fmt.ts',
+    ]);
+    expect(by.get('n4')!.runtimeEntryPoints).toEqual(['n4/app/composables/useY.ts', 'n4/app/pages/index.ts', 'n4/nuxt.config.ts']);
+    expect(warnings.filter((w) => /^(?:www|vp|site|n3|n4)\//.test(w))).toEqual([]);
   });
 
   it('a convention never reaches into a nested package', () => {

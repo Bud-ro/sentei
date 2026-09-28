@@ -1,4 +1,5 @@
 [
+  {"package_id": "npm:acme/app-astro:@acme/app-astro", "symbol": "orphanHelper", "file": "src/lib/orphan.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/app-skew:@acme/app-skew", "symbol": "removedFn", "file": "src/main.ts", "verdict": "version_skew", "reasons": ["target:npm:acme/lib-widgets:@acme/widgets"]},
   {"package_id": "npm:acme/app-vite:@acme/app-vite", "symbol": "authDead", "file": "src/auth.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/app-vite:@acme/app-vite", "symbol": "viteDead", "file": "src/unused.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},

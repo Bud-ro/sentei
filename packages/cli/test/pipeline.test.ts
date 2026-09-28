@@ -130,21 +130,22 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     // Fix round 8c. app-vite: an `@/` alias from a .vue file (fetchUser), a <script src>
     // (legacyInit), an import.meta.glob match (homePage, pageTitle) and a module-level
     // statement of a loaded module (refreshToken) keep their code alive; authDead and
-    // viteDead stay private_dead (expected-findings). app-astro has no entry point sentei
-    // knows (its roots are file-routed pages): no private_dead at all (src/lib/orphan.ts,
-    // which nothing loads, is not reported), a skipped note instead.
+    // viteDead stay private_dead (expected-findings). app-astro: since fix round 8e its
+    // astro.config.mjs makes src/pages/rss.ts (and the config) runtime entries, so its entry
+    // set is credible: src/lib/orphan.ts, which nothing loads, is private_dead (before, a
+    // skipped note); what its pages load stays alive.
     expect(rows.filter((x) => ['fetchUser', 'legacyInit', 'homePage', 'pageTitle', 'refreshToken', 'mountApp'].includes(x.symbol))).toEqual([]);
-    expect(rows.filter((x) => x.package_id === 'npm:acme/app-astro:@acme/app-astro')).toEqual([]);
-    expect(r.packages.find((p) => p.package_id === 'npm:acme/app-astro:@acme/app-astro')?.private_dead_skipped)
-      .toEqual({ reason: 'no known entry points', symbols: 1 });
+    expect(rows.filter((x) => x.package_id === 'npm:acme/app-astro:@acme/app-astro').map((x) => [x.symbol, x.verdict]))
+      .toEqual([['orphanHelper', 'private_dead']]);
+    expect(r.packages.find((p) => p.package_id === 'npm:acme/app-astro:@acme/app-astro')?.private_dead_skipped).toBeUndefined();
     expect(r.packages.find((p) => p.package_id === 'npm:acme/app-vite:@acme/app-vite')?.private_dead_skipped).toBeUndefined();
     // Consumer-only packages without entry points (the nameless demos, the promoted example
     // app) never had private_dead rows either; the note now says so.
     expect(r.packages.filter((p) => p.private_dead_skipped !== undefined).map((p) => p.name)).toEqual([
-      '@acme/app-astro', '_unnamed/unnamed-demo', '_unnamed/unnamed-demo-2', '@acme/sample-app',
+      '_unnamed/unnamed-demo', '_unnamed/unnamed-demo-2', '@acme/sample-app',
     ]);
     expect(lines.find((l) => l.includes('private_dead skipped'))).toMatch(
-      /^ {2}\(private_dead skipped for 4 package\(s\) whose entry points sentei cannot see; \d+ unreachable private symbol\(s\) not reported: @acme\/app-astro \(no known entry points\), /);
+      /^ {2}\(private_dead skipped for 3 package\(s\) whose entry points sentei cannot see; \d+ unreachable private symbol\(s\) not reported: _unnamed\/unnamed-demo \(no known entry points\), /);
     await withCtx(org, async (ctx) => {
       expect(ctx.db.prepare(`SELECT package_id, file, module, resolved FROM unindexed_loads
         WHERE package_id LIKE 'npm:acme/app-%' ORDER BY package_id, file, module`).all()).toEqual([

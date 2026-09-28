@@ -1,5 +1,5 @@
-// Nothing loads this module. It would be private_dead, but the site's entry set is not
-// credible (its roots are file-routed pages): not reported, a skipped note instead.
+// Nothing loads this module: private_dead. (Before fix round 8e the site had no entry point
+// sentei knew, and this was a private_dead_skipped note instead.)
 export function orphanHelper(): number {
   return 1;
 }
