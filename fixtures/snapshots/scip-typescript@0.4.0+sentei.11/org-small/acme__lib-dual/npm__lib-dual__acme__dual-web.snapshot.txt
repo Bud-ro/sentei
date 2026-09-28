@@ -18,6 +18,21 @@
   export default { reactStrictMode: true };
 //                 ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-web . `next.config.ts`/reactStrictMode0:
 
+## src/app/.well-known/jwks.json/route.ts
+  // A Next.js route handler under a dot directory (docs.page's `.well-known/jwks.json`):
+//^ definition scip-typescript npm @acme/dual-web . src/app/`.well-known`/`jwks.json`/`route.ts`/ enclosing [2:0-8:0]
+  // Next serves it, but TypeScript's `**/*` include skips dot directories.
+  import { publicKeys } from '../../../lib/keys';
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/dual-web . src/lib/`keys.ts`/publicKeys().
+//                           ^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-web . src/lib/`keys.ts`/
+
+  // Expected: alive, no finding (Next calls the route handler).
+  export function GET(): string[] {
+//                ^^^ definition scip-typescript npm @acme/dual-web . src/app/`.well-known`/`jwks.json`/`route.ts`/GET(). enclosing [5:0-7:1]
+    return publicKeys();
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/dual-web . src/lib/`keys.ts`/publicKeys().
+  }
+
 ## src/app/page.tsx
   // A Next.js app-router page under src/app (a runtime entry by the existing router convention).
 //^ definition scip-typescript npm @acme/dual-web . src/app/`page.tsx`/ enclosing [1:0-11:0]
@@ -68,6 +83,22 @@
   // Expected: alive, no finding (Next calls it at startup).
   export function register(): void {}
 //                ^^^^^^^^ definition scip-typescript npm @acme/dual-web . src/`instrumentation.ts`/register(). enclosing [3:0-3:35]
+
+## src/lib/keys.ts
+  // Used only by the route handler under `src/app/.well-known/`.
+//^ definition scip-typescript npm @acme/dual-web . src/lib/`keys.ts`/ enclosing [3:0-11:0]
+
+  // Expected: alive, no finding (the dot-directory route calls it).
+  export function publicKeys(): string[] {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/dual-web . src/lib/`keys.ts`/publicKeys(). enclosing [3:0-5:1]
+    return ['key'];
+  }
+
+  // Expected: private_dead (nothing calls it).
+  export function keysDead(): string[] {
+//                ^^^^^^^^ definition scip-typescript npm @acme/dual-web . src/lib/`keys.ts`/keysDead(). enclosing [8:0-10:1]
+    return [];
+  }
 
 ## src/middleware.ts
   // Next.js middleware beside the src/app router: loaded by Next by name.

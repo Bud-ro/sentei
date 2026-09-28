@@ -4,7 +4,7 @@
 // global symbols too), so this reads the package's export surface with the
 // TypeScript compiler API: the same typescript major/minor scip-typescript
 // bundles (5.9.3), so symbol resolution agrees with the `.scip` file.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import ts from 'typescript';
@@ -303,6 +303,15 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   const pendingLoads = new Map<string, OwnModuleLoad[]>();
   for (const l of ownLoads.loads) {
     for (const t of l.targets) pendingLoads.set(t, [...(pendingLoads.get(t) ?? []), l]);
+  }
+  // Next.js app-router files under a dot directory (round 9b; nextDotDirEntries): Next
+  // serves them, so every export is a runtime entry symbol, as for the router files
+  // discover lists (those need nothing here).
+  for (const abs of nextDotDirEntries(input.pkgDir, input.nestedPackageDirs)) {
+    const file = toRepoRel(abs);
+    if (runtimeEntries.has(file)) continue;
+    const t = path.resolve(abs);
+    pendingLoads.set(t, [...(pendingLoads.get(t) ?? []), { file, line: 0, col: 0, spec: 'Next.js app router', targets: [t], kind: 'string' }]);
   }
   /** Runtime entry symbols and references from own-module loads (merged into the sidecar). */
   const loadEntrySymbols: Array<SourcePosition & { name: string }> = [];
@@ -749,6 +758,52 @@ function aliasConfigOf(options: ts.CompilerOptions, configFile: string): AliasCo
       targets: targets.map((t) => path.resolve(base, t)),
     })),
   };
+}
+
+/** Next.js app-router files served from any segment directory (route handlers, pages, layouts). */
+const NEXT_ROUTER_FILE = /^(?:route|page|layout)\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+/**
+ * Next.js app-router files under a dot directory of the package's `app/` or `src/app/`
+ * (`app/.well-known/jwks.json/route.ts`): Next serves them like any other segment, but
+ * TypeScript's `**\/*` include skips dot directories, so they are outside the program,
+ * and discover's convention globs skip dot directories as well. Only for a package that
+ * depends on `next`; nested packages and node_modules are not walked. Absolute, sorted.
+ * The adapter lists them in the runtime tsconfig's `files`, and the export surface makes
+ * their exports runtime entry symbols (computeExportSurface), like the router files
+ * discover already knows.
+ */
+export function nextDotDirEntries(pkgDir: string, nestedPackageDirs: readonly string[] = []): string[] {
+  let manifest: Record<string, unknown>;
+  try {
+    manifest = JSON.parse(readFileSync(path.join(pkgDir, 'package.json'), 'utf8')) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const deps = ['dependencies', 'devDependencies', 'peerDependencies']
+    .some((k) => typeof manifest[k] === 'object' && manifest[k] !== null && 'next' in (manifest[k] as object));
+  if (!deps) return [];
+  const nested = nestedPackageDirs.map((d) => path.resolve(d));
+  const out: string[] = [];
+  const walk = (dir: string, underDot: boolean): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'node_modules' || nested.includes(abs)) continue;
+        walk(abs, underDot || e.name.startsWith('.'));
+      } else if (underDot && e.isFile() && NEXT_ROUTER_FILE.test(e.name)) {
+        out.push(abs);
+      }
+    }
+  };
+  for (const app of ['app', 'src/app']) walk(path.join(path.resolve(pkgDir), ...app.split('/')), false);
+  return out.sort(cmp);
 }
 
 /** A file extension TypeScript can take as a program root with allowJs (no declaration files). */

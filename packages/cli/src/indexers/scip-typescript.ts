@@ -516,7 +516,8 @@ function runtimeEntryPointsOf(pkg: DiscoveredPackage): string[] {
  * `runtimeEntryPoints`: `node|tsx <file>` scripts, Dockerfile CMD, Next.js
  * `next.config.*` / middleware, `bin`, `imports` arms, client entries) is a file
  * TypeScript can load that no program of the package's tsconfig has (a
- * `scripts/serve.mjs` beside `include: ["src"]`). It `extends` the package tsconfig
+ * `scripts/serve.mjs` beside `include: ["src"]`), and so is a Next.js app-router file
+ * under a dot directory of `app/` (nextDotDirEntries). It `extends` the package tsconfig
  * (same paths, module resolution, typings), sets `allowJs`, and lists exactly those
  * files (`include: []`), so scip-typescript indexes them as one more project and their
  * references to the package's own code count. Returns its absolute path, or undefined
@@ -530,12 +531,15 @@ async function writeRuntimeTsconfig(
   rmSync(file, { force: true }); // never a previous run's leftover
   if (!existsSync(tsconfig)) return undefined;
   const inside = (abs: string, d: string): boolean => abs.startsWith(d + path.sep);
-  const candidates = runtimeEntryPointsOf(pkg)
-    .map((f) => path.resolve(repoRoot, ...f.split('/')))
-    .filter((abs) => inside(abs, dir) && !nested.some((d) => inside(abs, d)) && !abs.split(path.sep).includes('node_modules'));
-  if (candidates.length === 0) return undefined;
   // Loaded only here: the orchestrator otherwise never holds the compiler.
-  const { filesOutsidePrograms } = await import('./export-surface.ts');
+  const { filesOutsidePrograms, nextDotDirEntries } = await import('./export-surface.ts');
+  const candidates = [
+    ...runtimeEntryPointsOf(pkg).map((f) => path.resolve(repoRoot, ...f.split('/'))),
+    // Next.js app-router files under a dot directory (`app/.well-known/jwks.json/route.ts`):
+    // Next serves them, TypeScript's `**/*` skips them (round 9b).
+    ...nextDotDirEntries(dir, nested),
+  ].filter((abs) => inside(abs, dir) && !nested.some((d) => inside(abs, d)) && !abs.split(path.sep).includes('node_modules'));
+  if (candidates.length === 0) return undefined;
   const outside = filesOutsidePrograms(tsconfig, dir, candidates);
   if (outside.length === 0) return undefined;
   const rel = (abs: string): string => `./${path.relative(dir, abs).split(path.sep).join('/')}`;

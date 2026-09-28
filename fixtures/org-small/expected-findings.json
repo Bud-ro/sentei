@@ -40,6 +40,7 @@
   {"package_id": "npm:acme/lib-dual:@acme/dual-server", "symbol": "neverCalled", "file": "packages/dual-server/src/server.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-server", "symbol": "unusedRoute", "file": "packages/dual-server/src/routes.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-web", "symbol": "dialogDead", "file": "packages/dual-web/src/components/dialog.tsx", "verdict": "private_dead", "reasons": ["already_unreachable"]},
+  {"package_id": "npm:acme/lib-dual:@acme/dual-web", "symbol": "keysDead", "file": "packages/dual-web/src/lib/keys.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-web", "symbol": "middleware", "file": "packages/dual-web/middleware.ts", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dual:@acme/dual-webpack", "symbol": "webpackUnused", "file": "packages/dual-webpack/src/render.js", "verdict": "private_dead", "reasons": ["already_unreachable"]},
   {"package_id": "npm:acme/lib-dyn:@acme/dyn", "symbol": "dynA", "file": "src/index.ts", "verdict": "blocked", "reasons": ["no_refs"], "blocked_by": ["npm:acme/app-dynamic:@acme/app-dynamic:dynamic_access", "npm:acme/app-dynamic:@acme/app-dynamic:namespace_dynamic"]},

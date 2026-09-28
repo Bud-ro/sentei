@@ -6,7 +6,15 @@
     "packages/dual-web/src/instrumentation.ts",
     "packages/dual-web/src/middleware.ts"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 16,
+      "file": "packages/dual-web/src/app/.well-known/jwks.json/route.ts",
+      "kind": "runtime",
+      "line": 5,
+      "name": "GET"
+    }
+  ],
   "exports": [
     {
       "col": 13,

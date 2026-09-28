@@ -9,7 +9,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { importedNames } from '../src/indexers/consumer-checks.ts';
-import { computeExportSurface } from '../src/indexers/export-surface.ts';
+import { computeExportSurface, nextDotDirEntries } from '../src/indexers/export-surface.ts';
 
 let root: string;
 
@@ -96,5 +96,33 @@ describe('dynamic imports: lazy component loaders take the default export, named
     expect(r.sidecar.entrySymbols).toEqual([]);
     // A nameless package cannot be targeted by a sidecar reference: nothing (module-level only).
     expect(refs(surface('next-app', null))).toEqual([]);
+  });
+});
+
+describe('Next.js app-router files under a dot directory (docs.page app/.well-known/jwks.json/route.ts)', () => {
+  it('are listed for a Next package only, router file names only; their exports are runtime entry symbols', () => {
+    write('next-dot', {
+      'package.json': { name: 'web', version: '1.0.0', private: true, dependencies: { next: '15.0.0' } },
+      'tsconfig.json': { ...TSCONFIG, include: ['**/*'] },
+      'src/app/page.tsx': `export default function Page() { return null; }\n`,
+      'src/app/.well-known/jwks.json/route.ts': `import { keys } from '../../../lib/keys';\nexport function GET() { return keys(); }\n`,
+      'src/app/.well-known/helper.ts': `export const notARoute = 1;\n`,
+      'app/(group)/.hidden/page.tsx': `export default function Hidden() { return null; }\n`,
+      'src/lib/keys.ts': `export function keys() { return []; }\n`,
+      // The runtime tsconfig the adapter writes for them (writeRuntimeTsconfig).
+      'tsconfig.sentei-runtime.json': { extends: './tsconfig.json', compilerOptions: { allowJs: true }, include: [], files: ['./src/app/.well-known/jwks.json/route.ts'] },
+    });
+    const pkgDir = path.join(root, 'repos/next-dot');
+    expect(nextDotDirEntries(pkgDir).map((f) => path.relative(pkgDir, f))).toEqual(['app/(group)/.hidden/page.tsx', 'src/app/.well-known/jwks.json/route.ts']);
+    const r = surface('next-dot', 'web', { runtimeTsconfig: path.join(pkgDir, 'tsconfig.sentei-runtime.json') });
+    expect(r.partial).toBe(false);
+    expect(r.sidecar.entrySymbols.filter((e) => e.kind === 'runtime').map((e) => `${e.file}#${e.name}`)).toEqual(['src/app/.well-known/jwks.json/route.ts#GET']);
+    // Without the runtime tsconfig the file is in no program: nothing is seeded (a diagnostic).
+    const bare = surface('next-dot', 'web');
+    expect(bare.sidecar.entrySymbols).toEqual([]);
+    expect(bare.diagnostics.some((d) => d.includes('load src/app/.well-known/jwks.json/route.ts, which is in no TypeScript program'))).toBe(true);
+    // Negative: not a Next package.
+    write('not-next', { 'package.json': { name: 'x', version: '1.0.0' }, 'app/.well-known/route.ts': `export function GET() {}\n` });
+    expect(nextDotDirEntries(path.join(root, 'repos/not-next'))).toEqual([]);
   });
 });
