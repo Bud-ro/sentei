@@ -1436,6 +1436,12 @@ export function conventionEntryPoints(
       if (CODEMOD_GLOBS.some((g) => matchGlob(g, f)) || JSCODESHIFT_TRANSFORM.test(read(f))) out.add(f);
     }
   }
+  // React Native platform modules: Metro resolves `./x` to `x.ios.js`, `x.android.js`, …,
+  // which TypeScript never picks (it takes `x.js`, or nothing). Each variant of an
+  // imported base (and the root `index.<platform>.*` app entries) is a runtime entry.
+  if (isReactNativePackage(repoRoot, dir, deps, fileSet)) {
+    for (const f of rnPlatformVariants(pkgFiles.filter(ok), read)) out.add(f);
+  }
   // Files the package's own code names by a path relative to itself, to hand to a
   // bundler, a worker or a subprocess (urlReferencedFiles).
   for (const f of pkgFiles) {
@@ -1472,6 +1478,55 @@ const JSCODESHIFT_TRANSFORM = new RegExp([
  */
 function isCodemodPackage(dir: string, deps: ReadonlySet<string>): boolean {
   return deps.has('jscodeshift') || deps.has('@types/jscodeshift') || /(?:^|-)codemods?$/.test(posix.basename(dir));
+}
+
+/** Platform extensions React Native's Metro resolves before the plain module. */
+const RN_PLATFORMS = ['ios', 'android', 'native', 'web', 'windows', 'macos', 'visionos'];
+const RN_VARIANT = new RegExp(`^(.*)\\.(?:${RN_PLATFORMS.join('|')})\\.[cm]?[jt]sx?$`);
+
+/**
+ * A React Native (or Expo) package: `react-native` / `expo` among its dependencies (any
+ * block), a package-root `react-native.config.js`, or an `app.json` with an `expo` key.
+ * Its platform dirs (android/, ios/, …) hold native code, and Metro resolves
+ * platform-extension modules.
+ */
+export function isReactNativePackage(
+  repoRoot: string, dir: string, deps: ReadonlySet<string>, pkgFiles: ReadonlySet<string>,
+): boolean {
+  if (deps.has('react-native') || deps.has('expo')) return true;
+  if (pkgFiles.has('react-native.config.js') || pkgFiles.has('react-native.config.cjs')) return true;
+  if (!pkgFiles.has('app.json')) return false;
+  try {
+    const json: unknown = JSON.parse(readFileSync(join(repoRoot, joinRel(dir, 'app.json')), 'utf8'));
+    return isObject(json) && json['expo'] !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The platform-extension modules (`x.ios.js`, `x.android.tsx`, …) among `files`
+ * (package-relative code files) whose base (`x`) some file of the package imports by a
+ * relative specifier (`'./x'`, `'../lib/x'`), plus `index.<platform>.*` at the package
+ * root (the React Native CLI's app entry). Text scanning: it only adds runtime entries.
+ */
+export function rnPlatformVariants(files: readonly string[], read: (rel: string) => string): string[] {
+  const variants = new Map<string, string[]>(); // base (no extension) -> variant files
+  for (const f of files) {
+    const m = RN_VARIANT.exec(f);
+    if (m) variants.set(m[1]!, [...(variants.get(m[1]!) ?? []), f]);
+  }
+  if (variants.size === 0) return [];
+  const out = new Set<string>();
+  for (const [base, fs] of variants) if (base === 'index') fs.forEach((f) => out.add(f));
+  for (const f of files) {
+    const text = read(f);
+    for (const rel of relativeLiterals(text)) {
+      const target = posix.normalize(posix.join(posix.dirname(f), rel)).replace(/\.[cm]?[jt]sx?$/, '');
+      for (const v of variants.get(target) ?? []) if (v !== f) out.add(v);
+    }
+  }
+  return [...out].sort(cmp);
 }
 
 /** Quick filter before the regexes of urlReferencedFiles. */

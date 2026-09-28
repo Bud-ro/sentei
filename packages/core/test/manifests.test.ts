@@ -1090,6 +1090,27 @@ describe('npm manifests', () => {
     expect(by.get('translate')!.runtimeEntrySymbols).toEqual(['translateText']);
   });
 
+  it('React Native platform modules: each variant of an imported base is a runtime entry', () => {
+    // invertase react-native-apple-authentication: lib/index.js re-exports './AppleButton',
+    // which exists only as AppleButton.ios.js / .android.js / .macos.js.
+    pkgJson('package.json', { name: 'rn', main: 'lib/index.js', devDependencies: { 'react-native': '0.82' } });
+    write('lib/index.js', "export { default as AppleButton } from './AppleButton';");
+    for (const f of ['lib/AppleButton.ios.js', 'lib/AppleButton.android.js', 'lib/AppleButton.macos.js', 'lib/Orphan.ios.js']) write(f);
+    // An Expo app (app.json `expo`): root index.<platform> entries.
+    write('app/app.json', '{ "expo": { "name": "x" } }');
+    pkgJson('app/package.json', { name: 'expo-app', private: true, main: 'index.js' });
+    write('app/index.js');
+    write('app/index.web.js');
+    // Not React Native: `.web.js` is just a name.
+    pkgJson('web/package.json', { name: 'web', main: 'index.js' });
+    write('web/index.js', "import './x';");
+    write('web/x.web.js');
+    const by = new Map(readRepoManifests(root, warn).map((p) => [p.name, p]));
+    expect(by.get('rn')!.runtimeEntryPoints).toEqual(['lib/AppleButton.android.js', 'lib/AppleButton.ios.js', 'lib/AppleButton.macos.js']);
+    expect(by.get('expo-app')!.runtimeEntryPoints).toEqual(['app/index.web.js']);
+    expect(by.get('web')!.runtimeEntryPoints).toEqual([]);
+  });
+
   it('a convention never reaches into a nested package', () => {
     pkgJson('package.json', { name: 'root', dependencies: { nuxt: '3' } });
     write('pages/a.ts');
