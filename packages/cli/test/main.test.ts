@@ -5,6 +5,7 @@ import path from 'node:path';
 import { openDb } from '@sentei/core/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { formatError, main, parsePolicyOverrides, redactSecrets } from '../src/main.ts';
+import { analyze } from '../src/stages/analyze.ts';
 import { makeBareRepo } from '../../core/test/helpers/gitRepo.ts';
 
 const FIXTURES = path.resolve(import.meta.dirname, '../../../fixtures');
@@ -436,4 +437,32 @@ describe('index summary, --strict and --json', () => {
     expect(readFileSync(path.join(work, 'report.json'), 'utf8')).toContain('index_failed');
     expect(r.err).toBe('sentei run: --strict: 1 package(s) failed to index: npm:acme/repo-broken:@acme/broken\n');
   }, 180_000);
+});
+
+describe('analyze stage: minAgeDays warning', () => {
+  it('prints a warn: line when minAgeDays > 0 and some exporting repo is a shallow clone, none when all are dated', async () => {
+    const db = openDb(':memory:');
+    try {
+      for (const repo of ['acme/a', 'acme/b']) {
+        db.prepare("INSERT INTO repos (repo, index_status) VALUES (?, 'ok')").run(repo);
+        db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, ?, '.', 'npm', ?, 'private')")
+          .run(`npm:${repo}:${repo}`, repo, repo);
+        db.prepare("INSERT INTO symbols (symbol_str, package_id, file, line, name, is_exported) VALUES (?, ?, 'src/index.ts', 0, 'x', 1)")
+          .run(`sym ${repo}`, `npm:${repo}:${repo}`);
+      }
+      db.prepare("INSERT INTO repo_history (repo, history) VALUES ('acme/a', 'full'), ('acme/b', 'shallow')").run();
+      db.prepare("UPDATE symbols SET first_seen_at = 1 WHERE package_id = 'npm:acme/a:acme/a'").run();
+      const lines: string[] = [];
+      await analyze({ work: freshWork(), dbPath: ':memory:', db, log: (l) => lines.push(l) });
+      expect(lines.at(-1)).toBe('[analyze] warn: minAgeDays=180 has no effect on 1 of 2 repos (shallow clones: symbol ages unknown, '
+        + 'treated as old enough); pass --full-clone (repos.clone: "full") to date symbols');
+      db.prepare("UPDATE repo_history SET history = 'full'").run();
+      db.prepare('UPDATE symbols SET first_seen_at = 1').run();
+      const quiet: string[] = [];
+      await analyze({ work: freshWork(), dbPath: ':memory:', db, log: (l) => quiet.push(l) });
+      expect(quiet.some((l) => l.includes('warn:'))).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
 });

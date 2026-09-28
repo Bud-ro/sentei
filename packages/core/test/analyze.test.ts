@@ -623,8 +623,8 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(db.prepare("SELECT count(*) AS n FROM run_params WHERE key = 'analyzed_at'").get()).toEqual({ n: 1 });
   });
 
-  it('applies minAgeDays to every verdict, failing closed on unknown age', () => {
-    sym(lib, 'src/fns.ts', 'unknownAge', { exported: true, firstSeenAt: null });
+  it('applies minAgeDays to every verdict; an unknown age (NULL: shallow clone, no blame) counts as old enough', () => {
+    const unknownAge = sym(lib, 'src/fns.ts', 'unknownAge', { exported: true, firstSeenAt: null });
     sym(lib, 'src/fns.ts', 'old', { exported: true, firstSeenAt: NOW - 181 * DAY });
     sym(lib, 'src/fns.ts', 'young', { exported: true, firstSeenAt: NOW - 10 * DAY });
     const oldInternal = sym(lib, 'src/fns.ts', 'oldInternal', { exported: true, firstSeenAt: NOW - 180 * DAY });
@@ -647,10 +647,12 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([
       f('old', 'needs_review', DELETE),
       f('oldInternal', 'unexport_candidate', ['internal_refs_only']),
+      f('unknownAge', 'needs_review', DELETE),
     ]);
+    expect(db.prepare('SELECT symbol_id FROM symbol_age_ok WHERE symbol_id = ?').get(unknownAge)).toEqual({ symbol_id: unknownAge });
     // `now` is a run parameter: a year later everything with a known age qualifies.
     analyze(NOW + 365 * DAY);
-    expect(findings().map((r) => r.name)).toEqual(['old', 'oldInternal', 'young', 'youngInternal']);
+    expect(findings().map((r) => r.name)).toEqual(['old', 'oldInternal', 'unknownAge', 'young', 'youngInternal']);
   });
 
   it('fails closed when minAgeDays is missing from policy', () => {

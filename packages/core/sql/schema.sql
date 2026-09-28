@@ -34,6 +34,17 @@ CREATE TABLE IF NOT EXISTS excluded_repos (
   manifests TEXT CHECK (manifests IS NULL OR (json_valid(manifests) AND json_type(manifests) = 'array'))
 ) STRICT;
 
+-- Per analysed repo: the history `blame` found (DESIGN.md Phase 3: blame only on full
+-- clones), written by blame for every repo. 'full': blamed; 'shallow': a shallow clone,
+-- never blamed (its symbol ages are unknown, which symbol_age_ok treats as old
+-- enough); 'none': no git history, not in discover.json, or git failed. No row: blame
+-- has not run since discover. Read by the report's minAgeDays coverage and warning.
+-- Additive like excluded_repos (SCHEMA_VERSION unchanged).
+CREATE TABLE IF NOT EXISTS repo_history (
+  repo    TEXT PRIMARY KEY REFERENCES repos (repo) ON DELETE CASCADE,
+  history TEXT NOT NULL CHECK (history IN ('full', 'shallow', 'none'))
+) STRICT;
+
 -- Manifests of analysed repos that the org sentei.json `ignoreManifests` excluded
 -- (glob: the entry that matched), written by discover. Not org packages: never
 -- indexed, never a consumer in package_deps; only the text witness still reads their

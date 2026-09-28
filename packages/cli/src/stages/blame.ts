@@ -9,10 +9,12 @@ export const DEFAULT_BLAME_REPO_CONCURRENCY = 8;
 /**
  * `blame` stage (PLAN.md §6.4). Reads <work>/discover.json for repo checkouts and sets
  * first_seen_sha / first_seen_at on exported symbols from `git blame` of the definition
- * line (cached in <work>/blame/). Repos without git history keep NULL ages (fail closed).
- * Repos are unshallowed and blamed `--clone-concurrency` at a time (default 8), with the
- * clone token (the injected one, else core's GITHUB_TOKEN / GH_TOKEN / `gh auth token`)
- * for fetches from an https origin.
+ * line (cached in <work>/blame/). Only full clones are blamed (`discover --full-clone`);
+ * shallow repos are skipped, never unshallowed, and their symbols keep NULL ages, which
+ * the age rule treats as old enough (a `warn:` line says so when minAgeDays > 0).
+ * Full repos are blamed `--clone-concurrency` at a time (default 8), with the clone
+ * token (the injected one, else core's GITHUB_TOKEN / GH_TOKEN / `gh auth token`) for
+ * a partial clone's blob fetches from an https origin.
  */
 export async function blame(ctx: StageContext): Promise<void> {
   const file = join(ctx.work, 'discover.json');

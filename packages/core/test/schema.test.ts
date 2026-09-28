@@ -222,6 +222,19 @@ describe('ignored_manifests', () => {
   });
 });
 
+describe('repo_history', () => {
+  it('is a cascade child of repos holding full / shallow / none, nothing else', () => {
+    run("INSERT INTO repos (repo) VALUES ('acme/h')");
+    run("INSERT INTO repo_history (repo, history) VALUES ('acme/h', 'shallow')");
+    expect(() => run("INSERT INTO repo_history (repo, history) VALUES ('acme/h', 'full')")).toThrow(REJECTED);
+    expect(() => run("UPDATE repo_history SET history = 'deep' WHERE repo = 'acme/h'")).toThrow(REJECTED);
+    expect(() => run("UPDATE repo_history SET history = NULL WHERE repo = 'acme/h'")).toThrow(REJECTED);
+    expect(() => run("INSERT INTO repo_history (repo, history) VALUES ('acme/nope', 'full')")).toThrow(REJECTED);
+    run("DELETE FROM repos WHERE repo = 'acme/h'");
+    expect(count('SELECT count(*) AS n FROM repo_history')).toBe(0);
+  });
+});
+
 describe('excluded_repos', () => {
   it('takes a JSON array of manifests or NULL, nothing else', () => {
     run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/a', 'archived', NULL), ('acme/b', 'size', '[\"package.json\"]')");

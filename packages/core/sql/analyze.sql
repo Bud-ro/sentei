@@ -97,7 +97,7 @@ DROP VIEW IF EXISTS analysis_params;
 -- ---------------------------------------------------------------------------
 
 -- One row: policy knobs + run parameters. A missing boolean key reads as false and a
--- missing minAgeDays / now as NULL, which makes symbol_age_ok empty (fail closed).
+-- missing minAgeDays / now as NULL: no minAgeDays makes symbol_age_ok empty (fail closed), no now fails every dated symbol.
 CREATE VIEW analysis_params (count_tests, count_docs, min_age_days, now) AS
 SELECT
   coalesce((SELECT json_extract(value, '$') FROM policy WHERE key = 'countTestsAsConsumers'), 0) = 1,
@@ -524,11 +524,16 @@ SELECT symbol_id FROM external_refs;
 -- Policy filters
 -- ---------------------------------------------------------------------------
 
--- Old enough to act on. Unknown age with a positive minAgeDays is NOT ok (fail closed).
+-- Old enough to act on. An unknown age (first_seen_at NULL: a shallow clone, which
+-- blame never dates, no git history, or a line blame could not date) counts as old
+-- enough: Budro's decision of 2026-09-27 (DESIGN.md Phase 3), stated by a report
+-- warning whenever minAgeDays > 0 and some repo is undated. A missing minAgeDays still
+-- passes nothing (fail closed); a known age also needs `now`.
 CREATE VIEW symbol_age_ok (symbol_id) AS
 SELECT s.symbol_id
 FROM symbols s, analysis_params p
 WHERE p.min_age_days = 0
+   OR (p.min_age_days IS NOT NULL AND s.first_seen_at IS NULL)
    OR (s.first_seen_at IS NOT NULL AND p.now IS NOT NULL
        AND s.first_seen_at <= p.now - p.min_age_days * 86400);
 

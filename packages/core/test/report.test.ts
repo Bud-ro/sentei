@@ -217,6 +217,11 @@ describe('buildReport', () => {
       generatedAtIso: new Date(NOW * 1000).toISOString(),
       policy: { minAgeDays: 0, trustPrivateRegistry: true, countTestsAsConsumers: false, countDocsAsConsumers: false, closedOrg: false },
       assertions: [],
+      // Not blamed (no repo_history rows); with minAgeDays 0 that is no warning.
+      ageCoverage: {
+        repos: 2, full: 0, shallow: 0, noHistory: 0, notBlamed: 2,
+        symbols: { exported: 12, dated: 0, undatedShallow: 0, undatedOther: 12 },
+      },
       warnings: [
         'minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates',
         'repo acme/app-dyn: index partial; its packages are opaque and block verdicts for every org package they depend on',
@@ -281,10 +286,37 @@ describe('buildReport', () => {
     });
   });
 
-  it('omits the age warning when the policy is on, reports trustPrivateRegistry in `private`, and survives JSON round-trip', () => {
+  it('minAgeDays > 0: a warning, the policy line and the blame line say how many repos were dated (shallow clones are not)', () => {
     setPolicy('minAgeDays', 180);
+    // acme/lib-core and acme/lib-pub export symbols; lib-pub is a shallow clone.
+    run("INSERT INTO repo_history (repo, history) VALUES ('acme/lib-core', 'full'), ('acme/lib-pub', 'shallow'), ('acme/app', 'full')");
+    run("UPDATE symbols SET first_seen_at = 1 WHERE package_id IN (SELECT package_id FROM packages WHERE repo = 'acme/lib-core')");
+    const report = buildReport({ db, now: NOW });
+    const warning = 'minAgeDays=180 has no effect on 1 of 2 repos (shallow clones: symbol ages unknown, treated as old enough); '
+      + 'pass --full-clone (repos.clone: "full") to date symbols';
+    expect(report.warnings.filter((w) => w.includes('minAgeDays'))).toEqual([warning]);
+    expect(report.ageCoverage).toMatchObject({ repos: 2, full: 1, shallow: 1, notBlamed: 0 });
+    const s = report.ageCoverage!.symbols;
+    expect(s.undatedShallow).toBeGreaterThan(0);
+    const text = formatSummary(report);
+    expect(text).toContain('\npolicy: minAgeDays=180 (applied to 1 of 2 repos) trustPrivateRegistry=true');
+    expect(text).toContain(`\nblame: ${s.dated} of ${s.exported} exported symbol(s) dated; ${s.undatedShallow} undated in shallow clones, `
+      + '0 undated otherwise (unknown ages count as old enough)\n');
+    expect(text).toContain(`!! WARNING: ${warning}\n`);
+    // minAgeDays 0: neither the warning nor the "applied to" / blame lines.
+    setPolicy('minAgeDays', 0);
+    const off = buildReport({ db, now: NOW });
+    expect(off.warnings.some((w) => w.includes('has no effect'))).toBe(false);
+    expect(formatSummary(off)).not.toMatch(/applied to|\nblame: /);
+  });
+
+  it('omits the age warning when the policy is on and every repo is dated, reports trustPrivateRegistry in `private`, and survives JSON round-trip', () => {
+    setPolicy('minAgeDays', 180);
+    run("INSERT INTO repo_history (repo, history) SELECT repo, 'full' FROM repos");
+    run('UPDATE symbols SET first_seen_at = 1 WHERE is_exported = 1');
     let report = buildReport({ db, now: NOW });
     expect(report.warnings.some((w) => w.includes('minAgeDays'))).toBe(false);
+    expect(formatSummary(report)).toContain('\npolicy: minAgeDays=180 (applied to 2 of 2 repos) ');
     expect(report.policy).toMatchObject({ minAgeDays: 180 });
     expect(report.policy).not.toHaveProperty('assumeClosedWorld');
     expect(JSON.parse(JSON.stringify(report))).toEqual(report);

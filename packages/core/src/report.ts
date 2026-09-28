@@ -4,14 +4,15 @@
 // Conventions:
 //   * Lines/cols in the report are 1-based (the DB stores SCIP's 0-based positions).
 //   * Every list is sorted deterministically (plain code-unit order, not locale).
-//   * Anything that weakens a verdict's meaning (minAgeDays = 0, a repo that did not
-//     index cleanly) is a `warnings` line, printed first.
+//   * Anything that weakens a verdict's meaning (minAgeDays = 0 or without effect on
+//     shallow / undated repos, a repo that did not index cleanly) is a `warnings` line, printed first.
 //   * `findings` are the base verdicts (one per symbol, independent of any view);
 //     `views` are filters over them (REPORT_VIEWS). Choosing views never needs
 //     re-analysis: the stdout summary and SARIF take a view list (`--view`).
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { requireAnalyzed } from './analyze.ts';
+import { ageCoverage as computeAgeCoverage, minAgeWarning, type AgeCoverage } from './blame.ts';
 import { excludedReposWarning, ignoredManifestsWarning, shortenExcludedWarning } from './repo-select.ts';
 import { parseDescriptors, parseScipSymbol } from './scip/read.ts';
 
@@ -243,6 +244,12 @@ export interface Report {
    * published packages (packages[].private_by_assertion) are right only if it holds.
    */
   assertions: Array<{ policy: string; text: string }>;
+  /**
+   * Which repos `blame` could date (full clones), and how many exported symbols have an
+   * age: minAgeDays only applies to those (DESIGN.md Phase 3). Optional for reports
+   * built by hand (tests).
+   */
+  ageCoverage?: AgeCoverage;
   warnings: string[];
   /** Base verdicts, one per symbol (and verdict), independent of any view. */
   findings: ReportFinding[];
@@ -551,6 +558,11 @@ export function buildReport(opts: BuildReportOptions): Report {
   if (policy.minAgeDays === 0) {
     warnings.push('minAgeDays is 0: age policy disabled; symbols of any age (including ones added yesterday) can be candidates');
   }
+  // minAgeDays > 0 but some repos are undated (shallow clones: blame never runs there):
+  // unknown ages count as old enough, so the age rule silently does nothing for them.
+  const ageCoverage = computeAgeCoverage(db);
+  const ageWarning = minAgeWarning(ageCoverage, typeof policy.minAgeDays === 'number' ? policy.minAgeDays : null);
+  if (ageWarning !== null) warnings.push(ageWarning);
   // Name the packages behind a failed / partial repo (untargeted index_failed /
   // opaque_consumer flags of the repo's packages): usually one tooling package, not the
   // whole repo. Each is named for what happened to IT (a repo is `failed` when any
@@ -801,6 +813,7 @@ export function buildReport(opts: BuildReportOptions): Report {
     generatedAtIso: new Date(now * 1000).toISOString(),
     policy,
     assertions: closedOrg ? [{ policy: 'closedOrg', text: CLOSED_ORG_ASSERTION }] : [],
+    ageCoverage,
     warnings,
     findings,
     versionSkew,
@@ -912,7 +925,16 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
   const when = new Date(report.generatedAt * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
   out.push(`sentei ${report.tool.version} report, generated ${when}`);
   const asserted = report.policy.closedOrg === true ? ` (asserted: ${CLOSED_ORG_ASSERTION})` : '';
-  out.push(`policy: ${POLICY_KEYS.map((k) => `${k}=${JSON.stringify(report.policy[k])}`).join(' ')}${asserted}`);
+  const cov = report.ageCoverage;
+  const minAge = report.policy.minAgeDays;
+  const ageApplies = cov !== undefined && typeof minAge === 'number' && minAge > 0;
+  out.push(`policy: ${POLICY_KEYS.map((k) => `${k}=${JSON.stringify(report.policy[k])}${
+    k === 'minAgeDays' && ageApplies ? ` (applied to ${cov.full} of ${cov.repos} repos)` : ''}`).join(' ')}${asserted}`);
+  if (ageApplies) {
+    const s = cov.symbols;
+    out.push(`blame: ${s.dated} of ${s.exported} exported symbol(s) dated; ${s.undatedShallow} undated in shallow clones, `
+      + `${s.undatedOther} undated otherwise (unknown ages count as old enough)`);
+  }
   if (opts.views !== undefined) out.push(`views: ${REPORT_VIEWS.filter((v) => selected.has(v)).join(', ')}`);
 
   if (report.warnings.length > 0) {
