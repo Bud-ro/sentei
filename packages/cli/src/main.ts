@@ -135,15 +135,29 @@ export function redactSecrets(text: string, env: NodeJS.ProcessEnv = process.env
 }
 
 /**
- * `sentei <stage>: <first line of the message>`, plus the stack with `verbose`.
- * A leading `sentei:` / `sentei <stage>:` in the message is dropped (core errors
- * carry one already). Secrets are redacted in both.
+ * `sentei <stage>: <message>`, plus the stack with `verbose`. A leading
+ * `sentei:` / `sentei <stage>:` in the message is dropped (core errors carry one
+ * already). Secrets are redacted in all of it.
+ *
+ * A sentei error (its message starts with `sentei:` / `sentei <stage>:`) is
+ * printed whole, continuation lines indented two spaces: the duplicate-package-name
+ * error lists the manifests and the `ignoreManifests` entries to add on its later
+ * lines, which the one-line form hid unless `--verbose` printed the stack. Any
+ * other error (an unexpected exception) keeps the one-line form; its full text is
+ * in the stack under `--verbose`. With `--verbose`, a sentei error adds only the
+ * stack frames (the message is already printed), any other error the whole stack.
  */
 export function formatError(stage: string, err: unknown, verbose: boolean, env: NodeJS.ProcessEnv = process.env): string {
   const message = err instanceof Error ? err.message : String(err);
-  const first = (message.split('\n')[0] ?? '').replace(/^sentei(?: [\w-]+)?: /, '');
-  let out = `sentei ${stage}: ${first}\n`;
-  if (verbose && err instanceof Error && err.stack !== undefined) out += `${err.stack}\n`;
+  const own = /^sentei(?: [\w-]+)?: /.test(message);
+  const lines = message.replace(/^sentei(?: [\w-]+)?: /, '').split('\n');
+  while (lines.length > 1 && lines.at(-1)!.trim() === '') lines.pop();
+  const shown = own ? lines : lines.slice(0, 1);
+  let out = `sentei ${stage}: ${shown.map((l, i) => (i === 0 || l === '' ? l : `  ${l}`)).join('\n')}\n`;
+  if (verbose && err instanceof Error && err.stack !== undefined) {
+    const frames = err.stack.split('\n').filter((l) => /^\s+at /.test(l));
+    out += own && frames.length > 0 ? `${frames.join('\n')}\n` : `${err.stack}\n`;
+  }
   return redactSecrets(out, env);
 }
 

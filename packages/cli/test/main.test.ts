@@ -158,9 +158,36 @@ describe('stage errors', () => {
     expect(r.err).toMatch(/^sentei analyze: /);
   });
 
-  it('formatError keeps the first line and strips a duplicate prefix', () => {
-    expect(formatError('ingest', new Error('sentei: bad thing\nmore detail'), false, {})).toBe('sentei ingest: bad thing\n');
+  it('formatError prints every line of a sentei error, indented, and strips a duplicate prefix', () => {
+    expect(formatError('ingest', new Error('sentei: bad thing\nmore detail\n'), false, {})).toBe('sentei ingest: bad thing\n  more detail\n');
     expect(formatError('index', 'plain string', false, {})).toBe('sentei index: plain string\n');
+    // The duplicate-name error (discover.ts duplicateNamesMessage): manifests and
+    // ignoreManifests candidates are on the continuation lines.
+    const dup = new Error(
+      'sentei: duplicate package names within one repo (...):\n' +
+        '  pub:acme/meetup:counter: acme/meetup:counter/finished/pubspec.yaml, acme/meetup:counter/start/pubspec.yaml\n' +
+        'Exactly one manifest per name may remain in a repo.\n' +
+        '  "ignoreManifests": ["meetup/counter/finished/pubspec.yaml", "meetup/counter/start/pubspec.yaml"]',
+    );
+    const text = formatError('discover', dup, false, {});
+    expect(text).toBe(
+      'sentei discover: duplicate package names within one repo (...):\n' +
+        '    pub:acme/meetup:counter: acme/meetup:counter/finished/pubspec.yaml, acme/meetup:counter/start/pubspec.yaml\n' +
+        '  Exactly one manifest per name may remain in a repo.\n' +
+        '    "ignoreManifests": ["meetup/counter/finished/pubspec.yaml", "meetup/counter/start/pubspec.yaml"]\n',
+    );
+    // --verbose adds the stack frames once, not the message a second time.
+    const verbose = formatError('discover', dup, true, {});
+    expect(verbose.startsWith(text)).toBe(true);
+    expect(verbose.split('ignoreManifests').length).toBe(2);
+    expect(verbose).toMatch(/\n\s+at /);
+  });
+
+  it('formatError keeps one line for an unexpected exception; --verbose prints its stack', () => {
+    const err = new TypeError('cannot read x\nsecond line');
+    expect(formatError('analyze', err, false, {})).toBe('sentei analyze: cannot read x\n');
+    const verbose = formatError('analyze', err, true, {});
+    expect(verbose.startsWith('sentei analyze: cannot read x\nTypeError: cannot read x\nsecond line\n')).toBe(true);
   });
 
   it('never prints a token', () => {
