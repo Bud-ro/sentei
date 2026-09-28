@@ -653,12 +653,13 @@ export function readNpmPackage(
   const entryPoints = [...new Set([...resolved.entryPoints, ...client, ...convention])].sort(cmp);
   if (resolved.noneResolved && entryPoints.length === 0) warn(`${manifest}: no entry points resolved`);
   // Runtime-loaded files that are not also declared surface (main/exports/…). The index
-  // fallback is a guess, not a declaration: a convention naming it (a wrangler main at
-  // src/index.ts, with no package.json entry) makes it a runtime entry.
+  // fallback is a guess, not a declaration (and so is a dist-layout mapping, layoutOnly):
+  // a convention naming it (a wrangler main at src/index.ts, with no package.json entry)
+  // makes it a runtime entry.
   // A Firebase Functions main is both: surface as declared, and loaded by the runtime,
   // which uses every export (ingest: entry symbols, never a verdict).
   const runtimeEntryPoints = [...new Set([...resolved.runtime, ...clientAll, ...conventionAll])]
-    .filter((f) => f === resolved.fallback || !resolved.surface.includes(f) || firebase.includes(f)).sort(cmp);
+    .filter((f) => f === resolved.fallback || resolved.layoutOnly.includes(f) || !resolved.surface.includes(f) || firebase.includes(f)).sort(cmp);
   return {
     manager: 'npm',
     name,
@@ -869,11 +870,20 @@ export function npmEntryPoints(
  * A top-level main / module / types / typings miss is dropped when a top-level `source` /
  * `react-native` leaf, or a `source` / `react-native` condition of a resolving `.` export,
  * names the source (react-native-builder-bob: the missing leaf is a build of it).
+ * A leaf outside every build dir that is missing resolves under the source root when the
+ * file exists there (the dist-layout rule, distLayoutGroups: drizzle-orm's
+ * `main: ./index.cjs` → `src/index.ts`); when a top-level leaf needed that rule and there
+ * is no `exports`, every directory index under that root is surface too (subpath
+ * imports like `drizzle-orm/pg-core`).
  */
 export function resolveNpmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
   outDirs: readonly TsOutDir[] = [], namedInputs: ReadonlyArray<readonly [string, string]> = [],
-):{ entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; fallback: string | null; noneResolved: boolean } {
+):{
+  entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; fallback: string | null; noneResolved: boolean;
+  /** Surface files only the dist-layout rule reached (distLayoutGroups, directory indices). */
+  layoutOnly: string[];
+} {
   // `entry`: the exports entry (subpath key) a leaf belongs to; undefined outside exports.
   // `top`: a top-level main / module / types / typings leaf; `source`: a top-level
   // `source` / `react-native` leaf (react-native-builder-bob, microbundle: the source the
@@ -925,6 +935,14 @@ export function resolveNpmEntryPoints(
     found.add(joinRel(dir, rel));
   };
   const topMisses: string[] = [];
+  // Source roots a top-level main / module / types / typings leaf reached only by the
+  // dist-layout rule (distLayoutGroups): the manifest is published from the build dir.
+  const distLayoutRoots = new Set<string>();
+  // Files only the dist-layout rule reached (a leaf mapping or a directory index): a
+  // mapping, not a declaration, so (like the index fallback) a convention that runs one
+  // keeps it a runtime entry.
+  const layoutOnly = new Set<string>();
+  const declaredFiles = new Set<string>();
   let sourceOk = false;
   for (const { path: p, surface, entry, top, source } of declared) {
     const n = normalizeRel(p);
@@ -932,7 +950,10 @@ export function resolveNpmEntryPoints(
       warn(`${joinRel(dir, 'package.json')}: entry ${JSON.stringify(p)} escapes the package, ignored`);
       continue;
     }
-    const r = resolveEntry(n, layout);
+    const via: { distLayoutRoot?: string } = {};
+    const r = resolveEntry(n, layout, via);
+    if (top === true && via.distLayoutRoot !== undefined) distLayoutRoots.add(via.distLayoutRoot);
+    if (r !== null) (via.distLayoutRoot !== undefined ? layoutOnly : declaredFiles).add(joinRel(dir, r));
     if (source === true) {
       if (r !== null) sourceOk = true;
     } else if (!noteEntry(entry, p, r !== null, CODE_EXT.test(n)) && r === null && surface && CODE_EXT.test(n)) {
@@ -963,6 +984,20 @@ export function resolveNpmEntryPoints(
       }
     }
     noteEntry(entry, p, matched, CODE_EXT.test(n));
+  }
+  // A dist-layout manifest without `exports` publishes every module of the build dir, and
+  // consumers import its directories as subpaths (`drizzle-orm/pg-core` →
+  // `dist/pg-core/index.js` → `src/pg-core/index.ts`): every directory index under the
+  // source root (not the root's own index, the main) is surface.
+  if (json['exports'] === undefined) {
+    for (const root of distLayoutRoots) {
+      for (const f of pkgFiles) {
+        if (f.startsWith(`${root}/`) && f.slice(root.length + 1).includes('/') && DIR_INDEX.test(f)) {
+          add(f);
+          layoutOnly.add(joinRel(dir, f));
+        }
+      }
+    }
   }
   for (const [entry, misses] of entryMisses) if (!entryOk.has(entry)) misses.forEach((m) => unresolved.add(m));
   // The `.` export's `source` / `react-native` condition (bob) names the source like the
@@ -1017,6 +1052,7 @@ export function resolveNpmEntryPoints(
   const runtime = [...new Set([...[...found].filter((f) => !before.has(f)), ...binFiles.filter((f) => !found.has(f))])];
   return {
     entryPoints: [...found].sort(cmp), unresolved: [...unresolved].sort(cmp), runtime: runtime.sort(cmp), surface: surface.sort(cmp), fallback, noneResolved,
+    layoutOnly: [...layoutOnly].filter((f) => !declaredFiles.has(f)).sort(cmp),
   };
 }
 
@@ -1828,8 +1864,12 @@ export function bundlerNamedInputs(repoRoot: string, dir: string, pkgFiles: read
   return out;
 }
 
-/** Resolve one declared entry (package-relative, normalized) against the package's files. */
-function resolveEntry(p: string, layout: SourceLayout): string | null {
+/**
+ * Resolve one declared entry (package-relative, normalized) against the package's files.
+ * `via.distLayoutRoot` is set to the source root when only the dist-layout rule
+ * (distLayoutGroups) resolved it.
+ */
+function resolveEntry(p: string, layout: SourceLayout, via?: { distLayoutRoot?: string }): string | null {
   const { files } = layout;
   if (files.has(p)) return p;
   for (const ext of ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.jsx']) if (files.has(p + ext)) return p + ext;
@@ -1843,8 +1883,48 @@ function resolveEntry(p: string, layout: SourceLayout): string | null {
     for (const ext of ['.ts', '.tsx', '.mts', '.cts']) if (files.has(stem + ext)) return stem + ext;
   }
   for (const alt of distToSrcGroups(p, layout).flat()) if (files.has(alt)) return alt;
+  for (const [root, groups] of distLayoutGroups(p, layout)) {
+    for (const alt of groups.flat()) {
+      if (files.has(alt)) {
+        if (via !== undefined) via.distLayoutRoot = root;
+        return alt;
+      }
+    }
+  }
   return null;
 }
+
+/**
+ * The dist-layout rule (round 8f): a manifest copied into the build output and published
+ * from there (drizzle-orm: `main: ./index.cjs`, `types: ./index.d.ts`, sources under
+ * `src/`) names paths relative to the build dir, so a missing leaf that is NOT under a
+ * build dir (BUILD_DIR, a tsconfig outDir) stands for the same path under the source
+ * root: each tsconfig `rootDir` (package-relative, not the package itself), then `src`.
+ * A built extension maps to `.ts` / `.tsx` / `.mts` / `.cts` / `.js` / `.jsx` (plus
+ * `.d.ts` for a declaration leaf), an extension-less path to `<p>.*` or `<p>/index.*`
+ * (stemGroups). [root, candidate groups] per root; existence is the caller's check.
+ */
+function distLayoutGroups(p: string, layout: SourceLayout): Array<[string, string[][]]> {
+  if (p === '' || p.includes('*') || BUILD_DIR.test(p)) return [];
+  if (layout.outDirs.some(({ outDir }) => p.startsWith(`${outDir}/`))) return [];
+  const ext = posix.extname(p);
+  if (ext !== '' && !BUILT_EXT.test(p)) return [];
+  const decl = /\.d\.[cm]?ts$/.test(p);
+  const roots = [...new Set([...layout.outDirs.map((o) => o.rootDir).filter((r) => r !== ''), 'src'])];
+  const out: Array<[string, string[][]]> = [];
+  for (const root of roots) {
+    if (p.startsWith(`${root}/`)) continue;
+    const stem = `${root}/${ext === '' ? p : p.replace(BUILT_EXT, '')}`;
+    out.push([root, stemGroups(stem, root, decl, DIST_LAYOUT_EXT)]);
+  }
+  return out;
+}
+
+/** A directory index source file (`x/index.ts`, not a declaration file). */
+const DIR_INDEX = /\/index\.(?:[cm]?ts|tsx|jsx?)$/;
+
+/** Source extensions the dist-layout rule maps a built leaf to (JS sources included). */
+const DIST_LAYOUT_EXT = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx'];
 
 const BUILD_DIR = /^(?:dist|lib|build|out)\//;
 const BUILT_EXT = /(?:\.d\.[cm]?ts|\.[cm]?js|\.jsx)$/;
@@ -1959,10 +2039,12 @@ function stemGroups(stem: string, root: string, decl: boolean, exts: readonly st
 /**
  * The source file a build-output path of the npm package at `dir` stands for, by the
  * entry-point rules (resolveEntry: the file itself, Node probing, tsconfig outDir →
- * rootDir, the dist→src convention, the one-segment strip), package-relative; null
- * when nothing exists. `rel` is package-relative and may omit the extension, as a deep
- * import does (`@supabase/supabase-js/dist/module/lib/types` → `dist/module/lib/types`
- * → `src/lib/types.ts`). For the TypeScript adapter's deep-dist-import handling
+ * rootDir, the dist→src convention, the one-segment strip, bundler named inputs, the
+ * dist-layout rule), package-relative; null when nothing exists. `rel` is
+ * package-relative and may omit the extension, as a deep import does
+ * (`@supabase/supabase-js/dist/module/lib/types` → `dist/module/lib/types` →
+ * `src/lib/types.ts`; a dist-layout package's `drizzle-orm/pg-core` → `pg-core` →
+ * `src/pg-core/index.ts`). For the TypeScript adapter's deep-dist-import handling
  * (export-surface / the shadow package), which today records such imports as the
  * unresolved module `*`. `repoFiles` defaults to listFiles(repoRoot).
  */

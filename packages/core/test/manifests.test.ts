@@ -662,6 +662,61 @@ describe('npm manifests', () => {
     expect(utils.unresolvedEntryPoints).toEqual([]);
   });
 
+  it('dist-layout manifest: leaves outside a build dir map to the source root; without exports, directory indices are surface (drizzle-orm)', () => {
+    pkgJson('drz/package.json', { name: 'drz', main: './index.cjs', module: './index.js', types: './index.d.ts' });
+    write('drz/tsconfig.json', '{ "compilerOptions": { "outDir": "dist" }, "include": ["src", "scripts"] }');
+    for (const f of ['src/index.ts', 'src/pg-core/index.ts', 'src/pg-core/table.ts', 'src/pg-core/columns/index.ts', 'src/types/index.d.ts', 'scripts/build.ts']) write(`drz/${f}`);
+    // With `exports`, the subpaths are declared: only the named leaves, no directory indices.
+    pkgJson('exp/package.json', { name: 'exp', exports: { '.': { types: './index.d.ts', default: './index.js' }, './sub': './sub.mjs' } });
+    for (const f of ['src/index.ts', 'src/sub.ts', 'src/other/index.ts']) write(`exp/${f}`);
+    // A tsconfig rootDir other than src, JS sources, an extension-less main.
+    pkgJson('js/package.json', { name: 'js', main: './index', types: './types.d.ts' });
+    write('js/tsconfig.json', '{ "compilerOptions": { "outDir": "out", "rootDir": "lib", "allowJs": true } }');
+    for (const f of ['lib/index.js', 'lib/types.ts', 'lib/util/index.jsx']) write(`js/${f}`);
+    const pkgs = readRepoManifests(root, warn);
+    const by = (n: string) => pkgs.find((p) => p.name === n)!;
+    expect(by('drz').entryPoints).toEqual(['drz/src/index.ts', 'drz/src/pg-core/columns/index.ts', 'drz/src/pg-core/index.ts']);
+    expect(by('drz').unresolvedEntryPoints).toEqual([]);
+    expect(by('drz').runtimeEntryPoints).toEqual([]);
+    expect(by('exp').entryPoints).toEqual(['exp/src/index.ts', 'exp/src/sub.ts']);
+    expect(by('exp').unresolvedEntryPoints).toEqual([]);
+    expect(by('js').entryPoints).toEqual(['js/lib/index.js', 'js/lib/types.ts', 'js/lib/util/index.jsx']);
+    expect(by('js').unresolvedEntryPoints).toEqual([]);
+    // The adapter's deep-import mapping follows the same rule (`drz/pg-core`).
+    expect(sourceForBuildOutput(root, 'drz', 'pg-core')).toBe('src/pg-core/index.ts');
+    expect(sourceForBuildOutput(root, 'drz', 'pg-core/table.js')).toBe('src/pg-core/table.ts');
+    expect(sourceForBuildOutput(root, 'drz', 'pg-core/gone')).toBeNull();
+  });
+
+  it('dist-layout rule: a source that does not exist stays unresolved; a directly resolving main adds no directory indices', () => {
+    // The file really is missing: unresolved, as before (fail closed: the package stays opaque).
+    pkgJson('gone/package.json', { name: 'gone', main: './gone.cjs', types: './gone.d.ts' });
+    write('gone/src/index.ts');
+    write('gone/src/sub/index.ts');
+    // main resolves to a root file: not a dist layout, src/ dirs are not subpaths.
+    pkgJson('plain/package.json', { name: 'plain', main: './index.js' });
+    write('plain/index.js');
+    write('plain/src/sub/index.ts');
+    // A leaf under a build dir keeps the build-dir rules (dist/x.js is not src/dist/x.ts).
+    pkgJson('built/package.json', { name: 'built', main: './dist/x.js' });
+    write('built/src/dist/x.ts');
+    const pkgs = readRepoManifests(root, warn);
+    const by = (n: string) => pkgs.find((p) => p.name === n)!;
+    expect(by('gone').unresolvedEntryPoints).toEqual(['./gone.cjs', './gone.d.ts']);
+    expect(by('gone').entryPoints).toEqual(['gone/src/index.ts']); // the index fallback only
+    expect(by('plain').entryPoints).toEqual(['plain/index.js']);
+    expect(by('built').unresolvedEntryPoints).toEqual(['./dist/x.js']);
+  });
+
+  it('dist-layout rule: a mapped main that a script runs stays a runtime entry, like the index fallback (drizzle-seed)', () => {
+    pkgJson('package.json', { name: 'app', main: './index.js', scripts: { start: 'tsx src/index.ts' } });
+    write('src/index.ts');
+    const [p] = readRepoManifests(root, warn);
+    expect(p!.entryPoints).toEqual(['src/index.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+    expect(p!.runtimeEntryPoints).toEqual(['src/index.ts']);
+  });
+
   it('the segment strip needs the source to exist and never maps to the src dir itself', () => {
     pkgJson('package.json', { name: 'x', main: 'dist/cjs/gone.js', types: 'dist/cjs.d.ts' });
     write('src/other.ts');
