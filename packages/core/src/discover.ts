@@ -18,7 +18,7 @@ import {
 import { matchGlob } from './glob.ts';
 import { npmSatisfies, pubSatisfies } from './semver.ts';
 import {
-  DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readRepoManifestsWithIgnored,
+  DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readNpmPackage, readPubPackage, readRepoManifestsWithIgnored,
   type IgnoredManifest, type Manager, type ManifestPackage, type Visibility,
 } from './manifests.ts';
 import type { ExcludedRepoInfo } from './repo-select.ts';
@@ -112,6 +112,16 @@ export interface DiscoverPackage {
   deps: DiscoverDep[];
   /** package_flags discover owns (`unindexed_consumer`, `opaque_consumer`, `ambiguous_dep`); [] when none. */
   flags: DiscoverFlag[];
+  /**
+   * Present when this package is an ignored-dir manifest (an example app, benchmark,
+   * sample… under ignoreManifestDirs, isConsumerManifestPath) promoted to a consumer
+   * package because it depends on an org package of ANOTHER repo (Phase 3 decision 3):
+   * why, e.g. `example app depends on pub:acme/dart-lib-x:acme_x (repo acme/dart-lib-x)`.
+   * Always private, no library, no export surface (entryPoints []). Written to the DB
+   * table promoted_packages: analyze applies the docs globs to its package-relative
+   * paths and counts its uses of its OWN repo's packages as docs uses.
+   */
+  promoted?: string;
 }
 
 /**
@@ -194,8 +204,18 @@ export interface DiscoverIgnoredManifest {
    * The org sentei.json `ignoreManifests` glob that excluded it; absent when an ignored
    * dir, a VS Code extension or a private duplicate did (those are routine, not
    * reported). Written to the DB table ignored_manifests for the report's warning.
+   * Also set for a consumer-dir manifest (IgnoredManifest.consumerDir) that the glob
+   * kept from being promoted to a consumer package.
    */
   ignoredBy?: string;
+  /**
+   * Present (true) when the ignoreManifestDirs rule skipped it (IgnoredManifest.byDir).
+   * The witness then treats its uses of packages of its OWN repo as notes only (a
+   * repo's own examples / benchmarks never count as consumers of its packages), while
+   * uses of another repo's packages still downgrade (it was not promoted: a test /
+   * fixture / template dir, only dev or ambiguous deps there, or a name clash).
+   */
+  byDir?: true;
 }
 
 export interface DiscoverRepo {
@@ -450,9 +470,6 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       ignoredBy,
     });
   }
-  for (const g of orgConfig.ignoreManifests) {
-    if (!usedIgnoreGlobs.has(g)) log(`warning: org sentei.json ignoreManifests ${JSON.stringify(g)} matched no manifest`);
-  }
 
   // Package identity is (repo, manager, name): the same name in two repos is two
   // packages (resolveDep below picks one per consumer, or flags the ambiguity). Within
@@ -507,6 +524,9 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     if (list.length > 1) log(`note: ${list.length} org packages are named ${key}: ${list.map((c) => c.id).join(', ')}`);
   }
 
+  /** Repo of an org package id (`<manager>:<org>/<repo>:<name>`). */
+  const repoOfId = (id: string): string => id.split(':')[1]!;
+
   // Resolve deps by (manager, name) (DepResolution). Path/workspace/file/link deps carry
   // the target's package name as the dep key, so name matching covers them too.
   const resolveDep = (
@@ -553,6 +573,84 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       log(`${repo}: ${who} dep ${d.name} matches ${cands.length} org packages; resolved to ${d.resolvedPackageId} (${d.resolution})${why}`);
     }
   };
+  // Phase 3 decision 3: an ignored-dir manifest in a consumer dir (example, benchmark,
+  // sample, demo, playground: isConsumerManifestPath) that declares a regular (non-dev)
+  // dependency resolving to an org package of ANOTHER repo is a real consumer (a
+  // flutter-samples-style repo of example apps, a benchmark repo): it is indexed as a
+  // private consumer package (no library, no export surface). One that only uses its own
+  // repo's packages stays ignored: a repo's own examples never count as consumers (the
+  // witness notes their uses). Test / fixture / template dirs, dev-only or ambiguous
+  // deps, an `ignoreManifests` glob and a name clash keep a manifest ignored (it is then
+  // witness-scanned as before, fail closed).
+  const promotedIds = new Map<string, string>(); // package id -> reason
+  for (const r of repos) {
+    const repoName = r.repo.slice(opts.org.length + 1);
+    const keep: IgnoredManifest[] = [];
+    for (const m of r.ignored) {
+      if (m.consumerDir !== true || m.depsUnknown) {
+        keep.push(m);
+        continue;
+      }
+      const cross = m.deps
+        .filter((d) => d.dev !== true)
+        .map((d) => resolveDep(d, r.repo).resolvedPackageId)
+        .filter((id): id is string => id !== null && repoOfId(id) !== r.repo)
+        .sort(cmp);
+      if (cross.length === 0) {
+        keep.push(m);
+        continue;
+      }
+      const glob = orgConfig.ignoreManifests.find((g) => matchGlob(g, `${repoName}/${m.manifest}`));
+      if (glob !== undefined) {
+        usedIgnoreGlobs.add(glob);
+        r.ignoredBy.set(m.manifest, glob);
+        log(`${r.repo}: ${m.manifest} depends on ${cross.join(', ')} (another repo) but ignoreManifests ${JSON.stringify(glob)} excludes it: not indexed, witness-scanned`);
+        keep.push(m);
+        continue;
+      }
+      let pkg: ManifestPackage | null = null;
+      try {
+        pkg = m.manager === 'npm'
+          ? readNpmPackage(r.localPath, m.path, r.files, (w) => log(`warning: ${r.repo}: ${w}`), (l) => log(`${r.repo}: ${l}`))
+          : readPubPackage(r.localPath, m.path, r.files, () => {});
+      } catch (err) {
+        log(`warning: ${r.repo}: ${m.manifest}: cannot read it as a consumer package (${(err as Error).message}); kept as an ignored manifest`);
+      }
+      if (pkg === null) {
+        keep.push(m);
+        continue;
+      }
+      const id = packageIdOf(pkg.manager, r.repo, pkg.name);
+      const clash = byName.get(`${pkg.manager}:${pkg.name}`) ?? [];
+      if (clash.length > 0 || promotedIds.has(id)) {
+        log(`warning: ${r.repo}: ${m.manifest} depends on ${cross.join(', ')} (another repo) but its name ${pkg.name} is already an org package `
+          + `(${clash.length > 0 ? clash.map((c) => c.id).join(', ') : id}): kept as an ignored manifest, witness-scanned`);
+        keep.push(m);
+        continue;
+      }
+      const reason = `${consumerKind(m.manifest)} depends on ${cross.map((c) => `${c} (repo ${repoOfId(c)})`).join(', ')}`;
+      // A consumer only: private, no library, no export surface (like an unnamed npm
+      // consumer). Runtime entries (bins, conventions) stay reachability seeds.
+      pkg.visibility = 'private';
+      pkg.isLibrary = false;
+      pkg.entryPoints = [];
+      pkg.unresolvedEntryPoints = [];
+      delete pkg.runtimeEntrySymbols;
+      r.manifests.push(pkg);
+      promotedIds.set(id, reason);
+      log(`${r.repo}: promoted ignored-dir manifest ${m.manifest} to the consumer package ${id}: ${reason}`);
+    }
+    r.ignored = keep;
+    r.manifests.sort((a, b) => cmp(a.path, b.path) || cmp(a.manager, b.manager));
+  }
+  if (promotedIds.size > 0) {
+    log(`${promotedIds.size} ignored-dir manifest(s) promoted to consumer packages (they depend on another repo's org package)`);
+  }
+  // (after the promotion pass: a glob that keeps a consumer-dir manifest from promotion is used)
+  for (const g of orgConfig.ignoreManifests) {
+    if (!usedIgnoreGlobs.has(g)) log(`warning: org sentei.json ignoreManifests ${JSON.stringify(g)} matched no manifest`);
+  }
+
   // Pub package id -> the first of its lib/ Dart files that exports Dart to JS, or null
   // (the gate on JS-family unindexed consumers of pub packages, PUB_CONSUMER_EXTS).
   const homes = new Map<string, { r: (typeof repos)[number]; m: ManifestPackage }>();
@@ -589,8 +687,10 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       name: m.name,
       deps: m.deps.map((d) => resolveDep(d, r.repo)),
       depsUnknown: m.depsUnknown,
-      // (an ignored dir wins: readRepoManifestsWithIgnored does not ask the glob then)
+      // (an ignored dir wins: readRepoManifestsWithIgnored does not ask the glob then,
+      // except for a consumer-dir manifest the glob kept from promotion, above)
       ...(r.ignoredBy.has(m.manifest) ? { ignoredBy: r.ignoredBy.get(m.manifest)! } : {}),
+      ...(m.byDir === true ? { byDir: true as const } : {}),
     }));
     r.packages = r.manifests.map((m): DiscoverPackage => ({
       packageId: packageIdOf(m.manager, r.repo, m.name),
@@ -613,6 +713,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
         reason: `${DISCOVER_REASON_PREFIX}unresolved entry point ${leaf}`,
         file: m.manifest,
       })),
+      ...(promotedIds.has(packageIdOf(m.manager, r.repo, m.name)) ? { promoted: promotedIds.get(packageIdOf(m.manager, r.repo, m.name))! } : {}),
     }));
     for (const p of r.packages) {
       for (const f of p.flags) log(`warning: ${r.repo}: ${p.packageId} flagged opaque_consumer (${f.reason.slice(DISCOVER_REASON_PREFIX.length)})`);
@@ -671,6 +772,21 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     keep: orgConfig.keep,
     repos: repos.map(({ manifests: _m, ignored: _i, files: _f, ignoredBy: _b, ...r }) => r),
   };
+}
+
+/**
+ * What a promoted consumer-dir manifest is, from the innermost consumer dir of its path
+ * (CONSUMER_MANIFEST_DIRS): `example app`, `benchmark`, `sample`, `demo`, `playground`.
+ */
+function consumerKind(manifest: string): string {
+  for (const s of manifest.split('/').slice(0, -1).reverse()) {
+    if (s === 'example' || s === 'examples') return 'example app';
+    if (s === 'benchmark' || s === 'benchmarks' || s === 'bench') return 'benchmark';
+    if (s === 'sample' || s === 'samples') return 'sample';
+    if (s === 'demo' || s === 'demos') return 'demo';
+    if (s === 'playground' || s === 'playgrounds' || s === 'sandbox') return 'playground';
+  }
+  return 'consumer';
 }
 
 /** The same-repo duplicate-name error: every location, plus copy-pasteable `ignoreManifests` entries. */
@@ -765,11 +881,13 @@ export function writeDiscoverToDb(db: DatabaseSync, model: DiscoverModel, warn: 
     const insFlag = db.prepare('INSERT INTO package_flags (package_id, flag, reason, file, target_package_id) VALUES (?, ?, ?, ?, ?)');
 
     const insIgnored = db.prepare('INSERT INTO ignored_manifests (repo, manifest, glob) VALUES (?, ?, ?)');
+    const insPromoted = db.prepare('INSERT INTO promoted_packages (package_id, reason) VALUES (?, ?)');
     for (const r of model.repos) {
       insRepo.run(r.repo, r.defaultBranch, r.headSha);
       for (const m of r.ignoredManifests ?? []) if (m.ignoredBy !== undefined) insIgnored.run(r.repo, m.manifest, m.ignoredBy);
       for (const p of r.packages) {
         insPkg.run(p.packageId, r.repo, p.path, p.manager, p.name, p.version, p.visibility, p.isLibrary === true ? 1 : 0, JSON.stringify(p.entryPoints));
+        if (p.promoted !== undefined) insPromoted.run(p.packageId, p.promoted);
       }
     }
     // Flags and deps after all packages so target / resolved_package_id FKs point at existing rows.

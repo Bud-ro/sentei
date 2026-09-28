@@ -492,12 +492,13 @@ describe('discoverLocal on a synthetic org', () => {
         { name: 'react', manager: 'npm', constraint: '^18', resolvedPackageId: null },
       ],
       depsUnknown: false,
+      byDir: true,
     }]);
     expect(app!.ignoredManifests).toEqual([
-      { path: 'fixtures/broken', manifest: 'fixtures/broken/package.json', manager: 'npm', name: null, deps: [], depsUnknown: true },
+      { path: 'fixtures/broken', manifest: 'fixtures/broken/package.json', manager: 'npm', name: null, deps: [], depsUnknown: true, byDir: true },
       {
         path: 'templates/dart', manifest: 'templates/dart/pubspec.yaml', manager: 'pub', name: null,
-        deps: [{ name: 'lib_pub', manager: 'pub', constraint: '^1.0.0', resolvedPackageId: null }], depsUnknown: false,
+        deps: [{ name: 'lib_pub', manager: 'pub', constraint: '^1.0.0', resolvedPackageId: null }], depsUnknown: false, byDir: true,
       },
     ]);
     expect(logs.some((l) => /^warning: acme\/app: fixtures\/broken\/package\.json \(ignored manifest\): cannot parse/.test(l))).toBe(true);
@@ -505,6 +506,92 @@ describe('discoverLocal on a synthetic org', () => {
     writeDiscoverToDb(db, m);
     expect(all('SELECT package_id FROM packages ORDER BY package_id')).toEqual([{ package_id: 'npm:acme/app:@acme/app' }, { package_id: 'npm:acme/lib:@acme/lib' }]);
     expect(all('SELECT count(*) AS n FROM package_deps')).toEqual([{ n: 0 }]);
+  });
+
+  describe('ignored-dir manifests depending on another repo (Phase 3 decision 3)', () => {
+    it('an example app / benchmark using another repo\'s package is promoted to a private consumer package; same-repo ones stay ignored', () => {
+      org(['lib', 'samples']);
+      write('org/repos/lib/pubspec.yaml', 'name: lib_pub\nversion: 1.0.0\n');
+      write('org/repos/lib/lib/lib_pub.dart', '');
+      // Same repo only: stays ignored (a repo's own example never counts).
+      write('org/repos/lib/example/pubspec.yaml', 'name: lib_pub_example\ndependencies:\n  lib_pub:\n    path: ..\n');
+      write('org/repos/lib/example/bin/main.dart', '');
+      // Another repo: an example app and a benchmark, both promoted.
+      write('org/repos/samples/example/app/pubspec.yaml', 'name: sample_app\nversion: 0.1.0\ndependencies:\n  lib_pub: ^1.0.0\n');
+      write('org/repos/samples/example/app/lib/main.dart', '');
+      write('org/repos/samples/example/app/bin/run.dart', '');
+      write('org/repos/samples/benchmarks/speed/package.json', { name: 'speed-bench', main: 'index.js', dependencies: { '@acme/lib': '^1' } });
+      write('org/repos/samples/benchmarks/speed/index.js', '');
+      write('org/repos/lib/js/package.json', { name: '@acme/lib', version: '1.0.0', main: 'index.js' });
+      write('org/repos/lib/js/index.js', '');
+      const logs: string[] = [];
+      const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+      const [lib, samples] = m.repos;
+      expect(lib!.ignoredManifests.map((x) => [x.manifest, x.byDir])).toEqual([['example/pubspec.yaml', true]]);
+      expect(samples!.ignoredManifests).toEqual([]);
+      expect(samples!.packages.map((p) => ({
+        id: p.packageId, path: p.path, visibility: p.visibility, isLibrary: p.isLibrary, entryPoints: p.entryPoints, promoted: p.promoted,
+        deps: p.deps.map((d) => d.resolvedPackageId),
+      }))).toEqual([
+        {
+          id: 'npm:acme/samples:speed-bench', path: 'benchmarks/speed', visibility: 'private', isLibrary: false, entryPoints: [],
+          promoted: 'benchmark depends on npm:acme/lib:@acme/lib (repo acme/lib)', deps: ['npm:acme/lib:@acme/lib'],
+        },
+        {
+          id: 'pub:acme/samples:sample_app', path: 'example/app', visibility: 'private', isLibrary: false, entryPoints: [],
+          promoted: 'example app depends on pub:acme/lib:lib_pub (repo acme/lib)', deps: ['pub:acme/lib:lib_pub'],
+        },
+      ]);
+      expect(logs).toContain('acme/samples: promoted ignored-dir manifest example/app/pubspec.yaml to the consumer package pub:acme/samples:sample_app: example app depends on pub:acme/lib:lib_pub (repo acme/lib)');
+      expect(logs).toContain("2 ignored-dir manifest(s) promoted to consumer packages (they depend on another repo's org package)");
+      writeDiscoverToDb(db, m);
+      expect(all('SELECT package_id, reason FROM promoted_packages ORDER BY package_id')).toEqual([
+        { package_id: 'npm:acme/samples:speed-bench', reason: 'benchmark depends on npm:acme/lib:@acme/lib (repo acme/lib)' },
+        { package_id: 'pub:acme/samples:sample_app', reason: 'example app depends on pub:acme/lib:lib_pub (repo acme/lib)' },
+      ]);
+      expect(all("SELECT package_id, visibility, is_library, entry_points FROM packages WHERE repo = 'acme/samples' ORDER BY package_id")).toEqual([
+        { package_id: 'npm:acme/samples:speed-bench', visibility: 'private', is_library: 0, entry_points: '[]' },
+        { package_id: 'pub:acme/samples:sample_app', visibility: 'private', is_library: 0, entry_points: '[]' },
+      ]);
+      expect(all("SELECT consumer_package_id, resolved_package_id FROM package_deps WHERE consumer_package_id LIKE '%samples%' ORDER BY 1")).toEqual([
+        { consumer_package_id: 'npm:acme/samples:speed-bench', resolved_package_id: 'npm:acme/lib:@acme/lib' },
+        { consumer_package_id: 'pub:acme/samples:sample_app', resolved_package_id: 'pub:acme/lib:lib_pub' },
+      ]);
+    });
+
+    it('not promoted (negative): test / fixture / template dirs, dev-only deps, an ignoreManifests glob, a name clash', () => {
+      org(['lib', 'other'], { ignoreManifests: ['other/example/globbed/**'] });
+      write('org/repos/lib/pubspec.yaml', 'name: lib_pub\nversion: 1.0.0\n');
+      write('org/repos/lib/lib/lib_pub.dart', '');
+      const dep = 'dependencies:\n  lib_pub: ^1.0.0\n';
+      write('org/repos/other/test/fixtures/app/pubspec.yaml', `name: fixture_app\n${dep}`);
+      write('org/repos/other/example/test_data/x/pubspec.yaml', `name: nested_fixture\n${dep}`);
+      write('org/repos/other/templates/app/pubspec.yaml', `name: template_app\n${dep}`);
+      write('org/repos/other/example/devonly/pubspec.yaml', 'name: devonly\ndev_dependencies:\n  lib_pub: ^1.0.0\n');
+      write('org/repos/other/example/globbed/pubspec.yaml', `name: globbed\n${dep}`);
+      write('org/repos/other/example/clash/pubspec.yaml', `name: lib_pub\n${dep}`);
+      const logs: string[] = [];
+      const m = discoverLocal({ orgDir: join(tmp, 'org'), log: (l) => logs.push(l) });
+      const other = m.repos[1]!;
+      expect(other.packages).toEqual([]);
+      expect(other.ignoredManifests.map((x) => [x.manifest, x.byDir, x.ignoredBy])).toEqual([
+        ['example/clash/pubspec.yaml', true, undefined],
+        ['example/devonly/pubspec.yaml', true, undefined],
+        ['example/globbed/pubspec.yaml', true, 'other/example/globbed/**'],
+        ['example/test_data/x/pubspec.yaml', true, undefined],
+        ['templates/app/pubspec.yaml', true, undefined],
+        ['test/fixtures/app/pubspec.yaml', true, undefined],
+      ]);
+      expect(logs).toContain('acme/other: example/globbed/pubspec.yaml depends on pub:acme/lib:lib_pub (another repo) but ignoreManifests "other/example/globbed/**" excludes it: not indexed, witness-scanned');
+      expect(logs).toContain('warning: acme/other: example/clash/pubspec.yaml depends on pub:acme/lib:lib_pub (another repo) but its name lib_pub is already an org package (pub:acme/lib:lib_pub): kept as an ignored manifest, witness-scanned');
+      // The glob was used (no "matched no manifest" warning) and the report lists it.
+      expect(logs.some((l) => l.includes('matched no manifest'))).toBe(false);
+      writeDiscoverToDb(db, m);
+      expect(all('SELECT repo, manifest, glob FROM ignored_manifests')).toEqual([
+        { repo: 'acme/other', manifest: 'example/globbed/pubspec.yaml', glob: 'other/example/globbed/**' },
+      ]);
+      expect(all('SELECT count(*) AS n FROM promoted_packages')).toEqual([{ n: 0 }]);
+    });
   });
 
   describe('unindexed_consumer', () => {

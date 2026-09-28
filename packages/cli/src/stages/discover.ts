@@ -72,8 +72,11 @@ export async function discover(ctx: StageContext): Promise<void> {
     const deps = r.packages.flatMap((p) => p.deps);
     const ambiguous = deps.filter((d) => d.ambiguous === true).length;
     const external = deps.filter((d) => d.resolvedPackageId === null).length - ambiguous;
+    // Ignored-dir manifests indexed as consumers (Phase 3 decision 3), with why.
+    const promoted = r.packages.filter((p) => p.promoted !== undefined).map((p) => `${p.path} (${p.promoted})`);
     log(`${r.repo}: ${r.packages.length} package(s), ${deps.length} dep(s), ${deps.length - external - ambiguous} org-resolved, `
-      + `${external} external${ambiguous > 0 ? `, ${ambiguous} ambiguous` : ''}`);
+      + `${external} external${ambiguous > 0 ? `, ${ambiguous} ambiguous` : ''}`
+      + `${promoted.length > 0 ? `; ${promoted.length} promoted from ignored dirs: ${promoted.join(', ')}` : ''}`);
   }
   log(`wrote ${out}`);
 }

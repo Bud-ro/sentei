@@ -106,6 +106,32 @@ export const DEFAULT_IGNORE_MANIFEST_DIRS: readonly string[] = Object.freeze([
   'test_cases',
 ]);
 
+/**
+ * Ignored dir names whose manifests are example apps, benchmarks, samples, demos or
+ * playgrounds: runnable code that USES packages (Phase 3 decision 3). Such a manifest
+ * is not an org package when it only uses packages of its own repo (a package's own
+ * `example/`: never a consumer, the witness only notes it), but it is indexed as a
+ * consumer package when it depends on an org package of ANOTHER repo (discover.ts
+ * promotion). Test, fixture, golden and template dirs are not listed: their manifests
+ * stay ignored whatever they depend on (a broken fixture must not block anything).
+ * Only names that are also in the effective ignoreManifestDirs matter.
+ */
+export const CONSUMER_MANIFEST_DIRS: ReadonlySet<string> = new Set([
+  'examples', 'example', 'benchmarks', 'benchmark', 'bench', 'playground', 'playgrounds', 'sandbox',
+  'samples', 'sample', 'demo', 'demos',
+]);
+
+/**
+ * Is the (ignored) repo-relative `manifest` in a consumer dir only: every dir segment
+ * of its path that is in `dirs` is a CONSUMER_MANIFEST_DIRS name (`example/app`,
+ * `packages/x/benchmark`), none a test / fixture / template name
+ * (`example/test_fixtures/y` is not)? False when no segment is in `dirs`.
+ */
+export function isConsumerManifestPath(manifest: string, dirs: ReadonlySet<string>): boolean {
+  const hits = manifest.split('/').slice(0, -1).filter((s) => dirs.has(s));
+  return hits.length > 0 && hits.every((s) => CONSUMER_MANIFEST_DIRS.has(s));
+}
+
 /** True if any directory segment of repo-relative `file` is in `dirs` (the basename is not checked). */
 export function inIgnoredDir(file: string, dirs: ReadonlySet<string>): boolean {
   const segs = file.split('/');
@@ -332,6 +358,18 @@ export interface IgnoredManifest {
    * the witness treats it as a consumer of every package (fail closed).
    */
   depsUnknown: boolean;
+  /**
+   * Present (true) when the ignoreManifestDirs rule skipped it (isIgnoredManifestPath),
+   * not an `ignoreManifest` glob, a VS Code extension or a private duplicate: code of
+   * the repo's own examples / fixtures, which never counts for its own repo's packages.
+   */
+  byDir?: true;
+  /**
+   * Present (true) with byDir when its ignored dirs are all consumer dirs
+   * (isConsumerManifestPath: example, benchmark, sample, demo, playground…): discover
+   * indexes it as a consumer package when it depends on another repo's org package.
+   */
+  consumerDir?: true;
 }
 
 export interface RepoManifests {
@@ -373,9 +411,15 @@ export function readRepoManifestsWithIgnored(
     const base = posix.basename(file);
     if (base !== 'package.json' && base !== 'pubspec.yaml') continue;
     const dir = posix.dirname(file); // '.' for the root
-    if (isIgnoredManifestPath(file, ignoreDirs, isMember, (d) => manifestDirs.has(d)) || opts.ignoreManifest?.(file)) {
+    const byDir = isIgnoredManifestPath(file, ignoreDirs, isMember, (d) => manifestDirs.has(d));
+    if (byDir || opts.ignoreManifest?.(file)) {
       skipped.push(file);
-      ignored.push(readIgnoredManifest(repoRoot, dir, base === 'package.json' ? 'npm' : 'pub', warn));
+      const m = readIgnoredManifest(repoRoot, dir, base === 'package.json' ? 'npm' : 'pub', warn);
+      if (byDir) {
+        m.byDir = true;
+        if (isConsumerManifestPath(file, ignoreDirs)) m.consumerDir = true;
+      }
+      ignored.push(m);
       continue;
     }
     if (base === 'package.json' && isVscodeExtension(repoRoot, file)) {

@@ -95,15 +95,15 @@ describe('ignored manifest dirs', () => {
     const r = readRepoManifestsWithIgnored(root, warn, listFiles(root), { ignoreManifest: (m) => m.startsWith('gen/') });
     expect(r.packages.map((p) => p.name)).toEqual(['real']);
     expect(r.ignored).toEqual([
-      { path: 'examples/demo', manifest: 'examples/demo/package.json', manager: 'npm', name: 'demo', depsUnknown: false, deps: [
+      { path: 'examples/demo', manifest: 'examples/demo/package.json', manager: 'npm', name: 'demo', depsUnknown: false, byDir: true, consumerDir: true, deps: [
         { name: 'real', manager: 'npm', constraint: '^1' },
         { name: 'vitest', manager: 'npm', constraint: '^1', dev: true },
       ] },
-      { path: 'fixtures/bad', manifest: 'fixtures/bad/package.json', manager: 'npm', name: null, deps: [], depsUnknown: true },
+      { path: 'fixtures/bad', manifest: 'fixtures/bad/package.json', manager: 'npm', name: null, deps: [], depsUnknown: true, byDir: true },
       { path: 'gen/x', manifest: 'gen/x/package.json', manager: 'npm', name: null, depsUnknown: false, deps: [
         { name: 'real', manager: 'npm', constraint: '*' },
       ] },
-      { path: 'templates/app', manifest: 'templates/app/pubspec.yaml', manager: 'pub', name: 'app', depsUnknown: false, deps: [
+      { path: 'templates/app', manifest: 'templates/app/pubspec.yaml', manager: 'pub', name: 'app', depsUnknown: false, byDir: true, deps: [
         { name: 'real_pub', manager: 'pub', constraint: 'path:../..' },
         { name: 'test', manager: 'pub', constraint: 'any', dev: true },
       ] },
