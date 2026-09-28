@@ -288,7 +288,10 @@ export const scipTypescript: Indexer = {
   //   `shorthandRefs` also carries references to CommonJS require bindings
   //   (collectRequireAliasRefs); a tsconfig matching no file is an empty index,
   //   not a failure; `cause:` diagnostics.
-  version: '0.4.0+sentei.8',
+  // +sentei.9: SFC loads (aliases, <script src>, import.meta.glob), `unresolved`
+  // load records and the Astro / Nuxt convention seeds of Phase 3 round 8c: cached
+  // indexes must be redone for them to appear.
+  version: '0.4.0+sentei.9',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
