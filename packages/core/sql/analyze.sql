@@ -526,14 +526,20 @@ SELECT symbol_id FROM external_refs;
 
 -- Old enough to act on. An unknown age (first_seen_at NULL: a shallow clone, which
 -- blame never dates, no git history, or a line blame could not date) counts as old
--- enough: Budro's decision of 2026-09-27 (DESIGN.md Phase 3), stated by a report
--- warning whenever minAgeDays > 0 and some repo is undated. A missing minAgeDays still
+-- enough when the repo could not be blamed (shallow / no history: Budro's decision of
+-- 2026-09-27, DESIGN.md Phase 3), stated by a report warning whenever minAgeDays > 0
+-- and some repo is undated; an undated line in a full clone still counts as young. A missing minAgeDays still
 -- passes nothing (fail closed); a known age also needs `now`.
 CREATE VIEW symbol_age_ok (symbol_id) AS
 SELECT s.symbol_id
 FROM symbols s, analysis_params p
 WHERE p.min_age_days = 0
-   OR (p.min_age_days IS NOT NULL AND s.first_seen_at IS NULL)
+   -- An unknown age passes only where blame could not run at all (a shallow or
+   -- history-less repo, or one not blamed): a line blame could not date inside a
+   -- full clone stays young (fail closed), as before Phase 3.
+   OR (p.min_age_days IS NOT NULL AND s.first_seen_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM packages pk JOIN repo_history h ON h.repo = pk.repo
+                       WHERE pk.package_id = s.package_id AND h.history = 'full'))
    OR (s.first_seen_at IS NOT NULL AND p.now IS NOT NULL
        AND s.first_seen_at <= p.now - p.min_age_days * 86400);
 

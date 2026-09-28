@@ -933,7 +933,7 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
   if (ageApplies) {
     const s = cov.symbols;
     out.push(`blame: ${s.dated} of ${s.exported} exported symbol(s) dated; ${s.undatedShallow} undated in shallow clones, `
-      + `${s.undatedOther} undated otherwise (unknown ages count as old enough)`);
+      + `${s.undatedOther} undated otherwise (unknown ages count as old enough outside full clones)`);
   }
   if (opts.views !== undefined) out.push(`views: ${REPORT_VIEWS.filter((v) => selected.has(v)).join(', ')}`);
 

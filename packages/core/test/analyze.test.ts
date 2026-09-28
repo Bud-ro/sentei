@@ -650,6 +650,14 @@ describe('analyzeOrg on hand-built rows', () => {
       f('unknownAge', 'needs_review', DELETE),
     ]);
     expect(db.prepare('SELECT symbol_id FROM symbol_age_ok WHERE symbol_id = ?').get(unknownAge)).toEqual({ symbol_id: unknownAge });
+    // In a full clone blame ran: an undated line stays young (fail closed), so the
+    // unknown-age symbol drops out of the age rule and of the findings.
+    const repoOfLib = db.prepare('SELECT repo FROM packages WHERE package_id = ?').get(lib) as { repo: string };
+    run(`INSERT INTO repo_history (repo, history) VALUES ('${repoOfLib.repo}', 'full')`);
+    expect(db.prepare('SELECT symbol_id FROM symbol_age_ok WHERE symbol_id = ?').get(unknownAge)).toBeUndefined();
+    analyze();
+    expect(findings().map((r) => r.name)).toEqual(['old', 'oldInternal']);
+    run(`DELETE FROM repo_history WHERE repo = '${repoOfLib.repo}'`);
     // `now` is a run parameter: a year later everything with a known age qualifies.
     analyze(NOW + 365 * DAY);
     expect(findings().map((r) => r.name)).toEqual(['old', 'oldInternal', 'unknownAge', 'young', 'youngInternal']);

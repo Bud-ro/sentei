@@ -651,7 +651,7 @@ The report stage prints: the policy line, where `minAgeDays=180 (applied to K of
 M repos)` counts the repos whose symbols `blame` could date (full clones; see
 [Shallow or full clones](#shallow-or-full-clones-symbol-ages)), and with
 `minAgeDays` > 0 a `blame:` line, e.g. `blame: 1200 of 5400 exported symbol(s)
-dated; 4150 undated in shallow clones, 50 undated otherwise (unknown ages count
+dated; 4150 undated in shallow clones, 50 undated otherwise (unknown ages count, outside full clones,
 as old enough)` (the same numbers are `ageCoverage` in `report.json`); the
 selected views with `--view`; a `!!` warning banner (`minAgeDays` 0, `minAgeDays`
 without effect on shallow or undated repos, repos whose index was partial

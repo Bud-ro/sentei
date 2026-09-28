@@ -3559,7 +3559,26 @@ simulated as described above; the dart-surface re-runs used the clones' existing
    repos)` on the summary's policy line). Parallel blame (`--clone-concurrency`)
    and the token handling (env header only) stay as they were.
 
+2. **`closedOrg` replaces `org_dead`; `deprecate` stays the default.** "For the
+   purposes of evaluation it's okay to stop using `org_dead` (it actually takes
+   away info). `deprecate` is ostensibly the correct default setting unless the
+   user asserts that it's an org which only has code accessible from within the
+   org, and hence `delete` or `org_dead` is the correct choice." Published
+   packages keep `deprecation_candidate` by default; a new policy key
+   `closedOrg` (default false) is the user's assertion that nothing outside the
+   org depends on its published packages, under which their unused exports are
+   `deletion_candidate` like a private package's. `org_dead` leaves the default
+   summary and SARIF and survives only as an explicit, legacy `--view org_dead`.
+
 ### Phase 3: blame only on full clones
+
+**Fail-closed qualification (merge note).** As merged, an unknown age passes the
+age rule only where blame could not run: a shallow or history-less repo, or one
+not blamed. Inside a full clone a line blame could not date still counts as
+young, as before Phase 3, so the warnings' "treated as old enough" applies to
+shallow clones and the `undated otherwise` count in a full clone stays fail
+closed (`symbol_age_ok` joins `repo_history`).
+
 
 **Cloning (git.ts, github.ts).** `ensureClone({ full })` clones without
 `--depth` (still `--single-branch --no-tags`, `GIT_LFS_SKIP_SMUDGE=1`, not
@@ -3649,17 +3668,6 @@ summaries do not change.
 `fetch --unshallow` over https are only exercised against local `file://`
 repos) and its cost on a large org; the dart-lang timing with shallow repos
 skipped (expected: blame in seconds, since it now only runs `rev-parse`).
-
-2. **`closedOrg` replaces `org_dead`; `deprecate` stays the default.** "For the
-   purposes of evaluation it's okay to stop using `org_dead` (it actually takes
-   away info). `deprecate` is ostensibly the correct default setting unless the
-   user asserts that it's an org which only has code accessible from within the
-   org, and hence `delete` or `org_dead` is the correct choice." Published
-   packages keep `deprecation_candidate` by default; a new policy key
-   `closedOrg` (default false) is the user's assertion that nothing outside the
-   org depends on its published packages, under which their unused exports are
-   `deletion_candidate` like a private package's. `org_dead` leaves the default
-   summary and SARIF and survives only as an explicit, legacy `--view org_dead`.
 
 ### Phase 3: closedOrg replaces org_dead
 
