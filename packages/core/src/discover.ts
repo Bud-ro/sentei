@@ -203,6 +203,12 @@ export interface DiscoverRepo {
   localPath: string;
   defaultBranch: string | null;
   headSha: string | null;
+  /**
+   * GitHub source: the checkout's history after cloning ('full': `repos.clone: "full"`
+   * / --full-clone; 'shallow': --depth=1). Informational: blame asks git itself.
+   * Absent for --org-dir.
+   */
+  clone?: 'full' | 'shallow';
   config: RepoConfig;
   packages: DiscoverPackage[];
   /** Sorted by (path, manager); [] when none. */
@@ -257,6 +263,8 @@ export interface DiscoverRepoInput {
   /** Absolute path of the checkout. */
   localPath: string;
   headSha: string | null;
+  /** GitHub source: the checkout's history after cloning ('full' / 'shallow'); absent for --org-dir. */
+  clone?: 'full' | 'shallow';
 }
 
 export interface DiscoverReposOptions {
@@ -432,6 +440,7 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
       localPath,
       defaultBranch: r.defaultBranch,
       headSha: r.headSha,
+      ...(r.clone !== undefined ? { clone: r.clone } : {}),
       config,
       packages: [],
       ignoredManifests: [],

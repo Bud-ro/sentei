@@ -153,5 +153,9 @@ describe('settings', () => {
     expect(() => readRepoSelectConfig('f', { cloneConcurrency: 100 })).toThrow(/1 to 32/);
     expect(() => readRepoSelectConfig('f', { include: 'x' })).toThrow(/array of strings/);
     expect(() => readRepoSelectConfig('f', [])).toThrow(/must be an object/);
+    expect(readRepoSelectConfig('f', { clone: 'full' })).toEqual({ clone: 'full' });
+    expect(readRepoSelectConfig('f', { clone: 'shallow' })).toEqual({ clone: 'shallow' });
+    expect(() => readRepoSelectConfig('f', { clone: 'deep' })).toThrow(/"repos.clone" must be "shallow" or "full"/);
+    expect(() => readRepoSelectConfig('f', { clone: true })).toThrow(/"repos.clone" must be "shallow" or "full"/);
   });
 });

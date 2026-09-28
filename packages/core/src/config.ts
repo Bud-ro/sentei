@@ -72,6 +72,11 @@ export interface RepoSelectConfig {
   probe?: boolean;
   /** Parallel clones (default 8). */
   cloneConcurrency?: number;
+  /**
+   * 'shallow' (default: --depth=1, symbol ages unknown) or 'full' (whole history, so
+   * blame can date symbols for minAgeDays). --full-clone overrides it.
+   */
+  clone?: 'shallow' | 'full';
 }
 
 /** An org config with every default (no sentei.json). */
@@ -296,6 +301,10 @@ export function readRepoSelectConfig(file: string, value: unknown): RepoSelectCo
           throw new Error(`sentei: ${file}: "${where}" must be an integer from 1 to 32`);
         }
         out.cloneConcurrency = v;
+        break;
+      case 'clone':
+        if (v !== 'shallow' && v !== 'full') throw new Error(`sentei: ${file}: "${where}" must be "shallow" or "full"`);
+        out.clone = v;
         break;
       default:
         throw new Error(`sentei: ${file}: unknown key "${where}"`);

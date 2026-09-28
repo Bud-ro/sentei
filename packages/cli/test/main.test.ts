@@ -331,6 +331,34 @@ describe('repos and GitHub discover (fake API)', () => {
 
     const listed = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work);
     expect(listed.out).toMatch(/^gone .* language TypeScript; last clone failed: git clone/m);
+    expect(listed.out).toMatch(/^cloned \(last discover\): 0 full, 1 shallow, 1 not recorded; shallow repos are not blamed .*--full-clone/m);
+  });
+
+  it('--full-clone: only for discover/run --org; clones whole history, recorded in the lockfile and shown by repos', async () => {
+    for (const argv of [['analyze', '--full-clone'], ['repos', '--org', 'acme', '--full-clone'], ['discover', '--org-dir', 'x', '--full-clone']]) {
+      const r = await run(...argv, '--work', freshWork());
+      expect(r.code).toBe(2);
+      expect(r.err).toMatch(/^--full-clone only applies to discover --org \(and run --org\)/);
+    }
+    const root = path.join(tmpRoot, 'gh-full');
+    mkdirSync(root, { recursive: true });
+    const lib = makeBareRepo(root, 'lib');
+    const { fetchImpl } = fakeFetch({
+      [LIST]: [apiRepo('lib', { clone_url: lib.url })],
+      [`${API}/repos/acme/lib/branches/main`]: { commit: { sha: lib.shas[1] } },
+    });
+    const work = freshWork();
+    const r = await runGh(fetchImpl, 'discover', '--org', 'acme', '--work', work, '--config-dir', work, '--full-clone');
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('[discover] clone mode full');
+    const lock = JSON.parse(readFileSync(path.join(work, 'acme.lock.json'), 'utf8'));
+    expect(lock.repos.map((x: { name: string; clone?: string }) => [x.name, x.clone])).toEqual([['lib', 'full']]);
+    const model = JSON.parse(readFileSync(path.join(work, 'discover.json'), 'utf8'));
+    expect(model.repos.map((x: { clone?: string }) => x.clone)).toEqual(['full']);
+    const listed = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work, '--json');
+    expect(JSON.parse(listed.out)[0]).toMatchObject({ name: 'lib', clone: 'full' });
+    const table = await runGh(fetchImpl, 'repos', '--org', 'acme', '--work', work, '--config-dir', work);
+    expect(table.out).toContain('\ncloned (last discover): 1 full, 0 shallow\n');
   });
 });
 

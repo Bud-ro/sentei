@@ -2,7 +2,8 @@
 // round 1): list an org's (or user's) repos over the REST API with plain fetch +
 // Link-header pagination, fetch each candidate's recursive git tree (manifests
 // anywhere, HEAD size), decide which ones to clone (repo-select.ts), pin head shas
-// in a lockfile, shallow-clone the selected repos in parallel, then build the
+// in a lockfile, clone the selected repos in parallel (shallow by default, full
+// history with repos.clone "full" / --full-clone), then build the
 // model with discoverRepos.
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -447,7 +448,17 @@ export interface LockRepo {
   cloneError?: string;
   /** Only when it is not https://github.com/<org>/<name>.git (GitHub Enterprise, tests). */
   cloneUrl?: string;
+  /**
+   * History of the checkout after the last successful clone: 'full' (`repos.clone:
+   * "full"`, `--full-clone`, or an earlier full checkout reused) or 'shallow' (--depth=1).
+   * Absent = not cloned yet (or by a sentei that did not record it). Only full
+   * checkouts are blamed.
+   */
+  clone?: CloneMode;
 }
+
+/** How discover clones: 'shallow' (--depth=1, the default) or 'full' (whole history, for blame). */
+export type CloneMode = 'shallow' | 'full';
 
 /**
  * Lockfile format written by this version. 3: `manifests` is a path list from the
@@ -589,6 +600,10 @@ export function readLockfile(file: string): Lockfile {
       if (typeof e['cloneError'] !== 'string') throw bad(`repos[${i}].cloneError must be a string`);
       out.cloneError = e['cloneError'];
     }
+    if (e['clone'] !== undefined) {
+      if (e['clone'] !== 'full' && e['clone'] !== 'shallow') throw bad(`repos[${i}].clone must be "full" or "shallow"`);
+      out.clone = e['clone'];
+    }
     if (out.selected === true && out.headSha === undefined) throw bad(`repos[${i}] is selected but has no headSha`);
     return out;
   });
@@ -616,7 +631,7 @@ export function writeLockfile(file: string, lock: Lockfile): void {
 
 const LOCK_REPO_KEYS: ReadonlyArray<keyof LockRepo> = [
   'name', 'defaultBranch', 'headSha', 'fork', 'template', 'archived', 'disabled', 'empty', 'language', 'sizeKb', 'headTreeKb',
-  'pushedAt', 'probe', 'manifests', 'selected', 'reasons', 'cloneError', 'cloneUrl',
+  'pushedAt', 'probe', 'manifests', 'selected', 'reasons', 'cloneError', 'cloneUrl', 'clone',
 ];
 
 /** Stable key order whatever order the fields were set in. */
@@ -873,6 +888,8 @@ export interface CloneOutcome {
   seconds: number;
   /** Object-store size after a fresh clone or update (KB); null when cached or failed. */
   sizeKb: number | null;
+  /** The checkout has full history (absent when failed). */
+  full?: boolean;
   /** First line of the error (status 'failed'). */
   error?: string;
 }
@@ -883,6 +900,8 @@ export interface CloneReposOptions {
   clonesDir: string;
   /** Parallel clones (default 8). */
   concurrency?: number;
+  /** Full-history clones (and upgrades of shallow checkouts); default shallow. */
+  full?: boolean;
   token?: string | null;
   log?: (line: string) => void;
   clock?: Clock;
@@ -928,10 +947,13 @@ export async function cloneRepos(opts: CloneReposOptions): Promise<CloneOutcome[
     const start = clock.now();
     let outcome: CloneOutcome;
     try {
-      const { status } = await clone({ dir, cloneUrl: job.cloneUrl, defaultBranch: job.defaultBranch, sha: job.headSha, token: opts.token ?? null, log });
+      const { status, full } = await clone({
+        dir, cloneUrl: job.cloneUrl, defaultBranch: job.defaultBranch, sha: job.headSha, token: opts.token ?? null, log,
+        ...(opts.full ? { full: true } : {}),
+      });
       const seconds = (clock.now() - start) / 1000;
       const sizeKb = status === 'cached' ? null : await sizeOf(dir).catch(() => null);
-      outcome = { name: job.name, status, seconds, sizeKb };
+      outcome = { name: job.name, status, seconds, sizeKb, full };
       if (status !== 'cached') {
         log(`${opts.org}/${job.name}: ${status} ${job.headSha.slice(0, 12)} in ${seconds.toFixed(1)} s${sizeKb !== null ? ` (${fmtMb(sizeKb)})` : ''}`);
       }
@@ -963,6 +985,8 @@ export interface DiscoverGithubOptions extends Omit<SelectGithubReposOptions, 'c
   orgConfigDir: string | null;
   /** Parallel clones; overrides repos.cloneConcurrency (default 8). */
   cloneConcurrency?: number;
+  /** --full-clone: overrides repos.clone (default 'shallow'). */
+  clone?: CloneMode;
   /** Skip repos that fail to clone (with a warning) instead of failing discover. */
   allowCloneFailures?: boolean;
   ensureCloneImpl?: CloneReposOptions['ensureCloneImpl'];
@@ -970,8 +994,8 @@ export interface DiscoverGithubOptions extends Omit<SelectGithubReposOptions, 'c
 }
 
 /**
- * GitHub source for `discover`: selectGithubRepos → parallel shallow clones pinned
- * to each head sha → discoverRepos. A clone failure is recorded per repo
+ * GitHub source for `discover`: selectGithubRepos → parallel clones (shallow, or full
+ * with `clone: 'full'` / repos.clone) pinned to each head sha → discoverRepos. A clone failure is recorded per repo
  * (`cloneError` in the lockfile) and every other repo still clones; discover then
  * fails listing them (a missing consumer repo would make live code look dead)
  * unless `allowCloneFailures`, which skips them with a warning.
@@ -988,11 +1012,14 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
   if (token === undefined) token = await findToken();
 
   const selected = sel.repos.filter((r) => r.decision.include);
+  const cloneMode: CloneMode = opts.clone ?? repoConfig.clone ?? 'shallow';
+  if (cloneMode === 'full') log('clone mode full: whole history, so blame can date symbols (shallow checkouts are upgraded with git fetch --unshallow)');
   const outcomes = await cloneRepos({
     org: opts.org,
     jobs: selected.map((r) => ({ name: r.entry.name, cloneUrl: r.cloneUrl, defaultBranch: r.entry.defaultBranch, headSha: r.entry.headSha! })),
     clonesDir,
     concurrency: opts.cloneConcurrency ?? repoConfig.cloneConcurrency ?? DEFAULT_CLONE_CONCURRENCY,
+    ...(cloneMode === 'full' ? { full: true } : {}),
     token,
     log,
     ...(opts.clock ? { clock: opts.clock } : {}),
@@ -1000,7 +1027,8 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
     ...(opts.sizeOf ? { sizeOf: opts.sizeOf } : {}),
   });
 
-  // Record failures (and clear old ones) in the lockfile so `sentei repos` shows them.
+  // Record failures (and clear old ones) and each checkout's history (`clone`: full or
+  // shallow) in the lockfile so `sentei repos` shows them.
   const failed = outcomes.filter((o) => o.status === 'failed');
   if (sel.lockfile !== null && !sel.legacy) {
     const byName = new Map(outcomes.map((o) => [o.name, o]));
@@ -1013,6 +1041,10 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
         changed = true;
       } else if (o.status !== 'failed' && r.cloneError !== undefined) {
         delete r.cloneError;
+        changed = true;
+      }
+      if (o.full !== undefined && r.clone !== (o.full ? 'full' : 'shallow')) {
+        r.clone = o.full ? 'full' : 'shallow';
         changed = true;
       }
     }
@@ -1046,7 +1078,13 @@ export async function discoverGithub(opts: DiscoverGithubOptions): Promise<Disco
       kind: 'github', org: opts.org, apiUrl: (opts.apiUrl ?? DEFAULT_API_URL).replace(/\/+$/, ''), lockfile: sel.lockfile, clonesDir,
       ...(failed.length > 0 ? { cloneFailures: failed.map((o) => ({ repo: `${opts.org}/${o.name}`, error: o.error! })) } : {}),
     },
-    repos: cloned.map((r) => ({ name: r.entry.name, defaultBranch: r.entry.defaultBranch, localPath: join(clonesDir, r.entry.name), headSha: r.entry.headSha! })),
+    repos: cloned.map((r) => {
+      const full = outcomes.find((o) => o.name === r.entry.name)?.full;
+      return {
+        name: r.entry.name, defaultBranch: r.entry.defaultBranch, localPath: join(clonesDir, r.entry.name), headSha: r.entry.headSha!,
+        ...(full !== undefined ? { clone: full ? 'full' as const : 'shallow' as const } : {}),
+      };
+    }),
     orgConfigDir: opts.orgConfigDir,
     log,
     ...(opts.now !== undefined ? { now: opts.now } : {}),

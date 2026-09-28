@@ -38,7 +38,7 @@ export function githubCoreOptions(ctx: Pick<StageContext, 'work' | 'github'>, or
 
 /**
  * `discover` stage (PLAN.md §6.1). Source: `--org <name>` (GitHub listing, repo
- * selection, parallel shallow clones at <clonesDir>/<name>) or `--org-dir <dir>`
+ * selection, parallel clones at <clonesDir>/<name>: shallow, or full with --full-clone) or `--org-dir <dir>`
  * (local org directory). Rebuilds repos/packages/package_deps/policy/keep_rules and
  * writes <work>/discover.json.
  */
@@ -55,6 +55,7 @@ export async function discover(ctx: StageContext): Promise<void> {
       clonesDir: gh.clonesDir ?? join(ctx.work, 'repos'),
       orgConfigDir: orgConfigDir(gh, log),
       ...(gh.cloneConcurrency !== undefined ? { cloneConcurrency: gh.cloneConcurrency } : {}),
+      ...(gh.fullClone ? { clone: 'full' as const } : {}),
       ...(gh.allowCloneFailures ? { allowCloneFailures: true } : {}),
     });
   } else {

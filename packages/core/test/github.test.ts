@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  cloneRepos, discoverGithub, findToken, GithubApi, listRepos, probeManifests, probeRepoTree, readLockfile, readTree, selectGithubRepos, type Clock,
+  cloneRepos, discoverGithub, findToken, GithubApi, listRepos, probeManifests, probeRepoTree, readLockfile, readTree, selectGithubRepos, writeLockfile, type Clock,
 } from '../src/github.ts';
-import type { EnsureCloneOptions } from '../src/git.ts';
+import { isShallow, type EnsureCloneOptions } from '../src/git.ts';
 import { makeBareRepo } from './helpers/gitRepo.ts';
 
 const API = 'https://api.github.com';
@@ -494,7 +494,7 @@ describe('cloneRepos', () => {
       const i = Number(o.dir.slice(-2));
       clock.t += i * 1000; // repo i "takes" i seconds
       inFlight--;
-      return { status: i < 5 ? 'cached' as const : 'cloned' as const };
+      return { status: i < 5 ? 'cached' as const : 'cloned' as const, full: false };
     };
     const logs: string[] = [];
     const out = await cloneRepos({
@@ -519,7 +519,7 @@ describe('cloneRepos', () => {
       org: 'acme', jobs: jobs.slice(0, 4), clonesDir: join(process.env['TMPDIR'] ?? tmpdir(), 'sentei-clone-fake'), concurrency: 2,
       ensureCloneImpl: async (o) => {
         if (o.dir.endsWith('r01')) throw new Error('git clone failed: remote hung up\ndetails');
-        return { status: 'cloned' };
+        return { status: 'cloned' as const, full: false };
       },
       sizeOf: async () => 0,
       log: (l) => logs.push(l),
@@ -619,6 +619,63 @@ describe('discoverGithub (file:// clones, fake API)', () => {
     expect(updated.repos.map((r) => [r.repo, r.headSha])).toEqual([['acme/lib', lib.shas[1]]]);
     expect(logs3.some((l) => l.startsWith(`acme/lib: updated ${lib.shas[1].slice(0, 12)}`))).toBe(true);
     expect(readLockfile(lockfile).repos.map((r) => [r.name, r.headSha])).toEqual([['lib', lib.shas[1]]]);
+  });
+
+  it('clone mode: shallow by default, full with clone "full" (upgrading shallow checkouts), recorded per repo in the lockfile', async () => {
+    const lib = makeBareRepo(tmp, 'lib');
+    const app = makeBareRepo(tmp, 'app');
+    const { fetchImpl } = fakeFetch({
+      [LIST]: { body: [repo('lib', { clone_url: lib.url }), repo('app', { clone_url: app.url })] },
+      ...branch('lib', lib.shas[0]),
+      ...branch('app', app.shas[1]),
+    });
+    const lockfile = join(tmp, 'acme.lock.json');
+    const clonesDir = join(tmp, 'clones');
+    const shallow = await discoverGithub({ org: 'acme', token: 'tok', fetchImpl, lockfile, clonesDir, orgConfigDir: null });
+    expect(shallow.repos.map((r) => [r.repo, r.clone])).toEqual([['acme/app', 'shallow'], ['acme/lib', 'shallow']]);
+    expect(readLockfile(lockfile).repos.map((r) => [r.name, r.clone])).toEqual([['app', 'shallow'], ['lib', 'shallow']]);
+    expect(await isShallow(join(clonesDir, 'app'))).toBe(true);
+
+    // repos.clone "full" in the org sentei.json: both checkouts are upgraded in place.
+    writeFileSync(join(tmp, 'sentei.json'), JSON.stringify({ repos: { clone: 'full' } }));
+    const logs: string[] = [];
+    const full = await discoverGithub({ org: 'acme', token: null, lockfile, clonesDir, orgConfigDir: tmp, log: (l) => logs.push(l) });
+    expect(full.repos.map((r) => [r.repo, r.clone])).toEqual([['acme/app', 'full'], ['acme/lib', 'full']]);
+    expect(readLockfile(lockfile).repos.map((r) => [r.name, r.clone])).toEqual([['app', 'full'], ['lib', 'full']]);
+    expect(await isShallow(join(clonesDir, 'app'))).toBe(false);
+    expect(await isShallow(join(clonesDir, 'lib'))).toBe(false);
+    expect(logs.some((l) => l.startsWith('clone mode full'))).toBe(true);
+    expect(logs.filter((l) => l.includes('fetching full history'))).toHaveLength(2);
+
+    // A later shallow request reuses the full checkouts (a superset): nothing is re-cloned
+    // and the lockfile keeps saying full.
+    const again = await discoverGithub({ org: 'acme', token: null, lockfile, clonesDir, orgConfigDir: null });
+    expect(again.repos.map((r) => r.clone)).toEqual(['full', 'full']);
+    expect(await isShallow(join(clonesDir, 'lib'))).toBe(false);
+
+    // --full-clone (clone: 'full') beats repos.clone "shallow".
+    writeFileSync(join(tmp, 'sentei.json'), JSON.stringify({ repos: { clone: 'shallow' } }));
+    const flagged = await discoverGithub({ org: 'acme', token: null, lockfile, clonesDir: join(tmp, 'clones2'), orgConfigDir: tmp, clone: 'full' });
+    expect(flagged.repos.map((r) => r.clone)).toEqual(['full', 'full']);
+    expect(await isShallow(join(tmp, 'clones2', 'lib'))).toBe(false);
+  });
+
+  it('lockfile round-trips the per-repo clone mode and rejects other values', () => {
+    const lockfile = join(tmp, 'mode.lock.json');
+    const lock = {
+      version: 3, org: 'acme', generatedAt: 'x',
+      repos: [
+        { name: 'a', defaultBranch: 'main', headSha: sha('a'), selected: true, reasons: [], clone: 'full' as const },
+        { name: 'b', defaultBranch: 'main', headSha: sha('b'), selected: true, reasons: [], clone: 'shallow' as const },
+        { name: 'c', defaultBranch: 'main', headSha: sha('c'), selected: true, reasons: [] },
+      ],
+    };
+    writeLockfile(lockfile, lock);
+    const back = readLockfile(lockfile);
+    expect(back.repos.map((r) => r.clone)).toEqual(['full', 'shallow', undefined]);
+    expect(readFileSync(lockfile, 'utf8')).toContain('"clone": "full"');
+    writeFileSync(lockfile, JSON.stringify({ ...lock, repos: [{ ...lock.repos[0], clone: 'deep' }] }));
+    expect(() => readLockfile(lockfile)).toThrow(/repos\[0\]\.clone must be "full" or "shallow"/);
   });
 
   it('a clone failure is recorded, the others clone, and discover fails listing it unless --allow-clone-failures', async () => {

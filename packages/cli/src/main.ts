@@ -63,8 +63,14 @@ Options:
   --include-archived    discover/repos --org: keep archived repos
                         (org sentei.json "repos" holds the other selection
                         rules: languages, maxSizeMb, minPushed, probe)
-  --clone-concurrency <n>  discover --org: parallel clones; blame: repos unshallowed
-                           and blamed at once (default 8)
+  --clone-concurrency <n>  discover --org: parallel clones; blame: repos blamed at
+                           once (default 8)
+  --full-clone          discover/run --org: clone with whole history (default:
+                        shallow, --depth=1) and upgrade shallow clones, so blame
+                        can date symbols for minAgeDays; shallow repos are never
+                        blamed (ages unknown, treated as old enough). Costs a
+                        full history fetch per repo (org sentei.json:
+                        "repos": { "clone": "full" })
   --allow-clone-failures   discover --org: skip repos that fail to clone
                         (their packages are unknown) instead of failing
   --clones-dir <dir>    discover --org: where clones live (default: <work>/repos)
@@ -173,7 +179,7 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 
 /** --quiet keeps warnings/errors and the report summary (report lines without a [report] prefix). */
 function keepWhenQuiet(stage: string, line: string): boolean {
-  if (/\bwarning\b|\berror\b|\bfail/i.test(line)) return true;
+  if (/\bwarning\b|\bwarn:|\berror\b|\bfail/i.test(line)) return true;
   return stage === 'report' && !line.startsWith('[');
 }
 
@@ -195,6 +201,7 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
         'include-forks': { type: 'boolean' },
         'include-archived': { type: 'boolean' },
         'clone-concurrency': { type: 'string' },
+        'full-clone': { type: 'boolean', default: false },
         'allow-clone-failures': { type: 'boolean', default: false },
         json: { type: 'boolean', default: false },
         'clones-dir': { type: 'string' },
@@ -246,6 +253,9 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
   if (values.json && command !== 'repos' && command !== 'index') return usageError('--json only applies to repos and index');
   if (values.strict && command !== 'index' && command !== 'run') return usageError('--strict only applies to index (and run)');
   if (values['retry-failed'] && command !== 'index' && command !== 'run') return usageError('--retry-failed only applies to index (and run)');
+  if (values['full-clone'] && ((command !== 'discover' && command !== 'run') || values.org === undefined)) {
+    return usageError('--full-clone only applies to discover --org (and run --org): it chooses how repos are cloned');
+  }
   const github: GithubDiscoverOptions = {
     updateLockfile: values['update-lockfile'],
     include: values.include,
@@ -253,6 +263,7 @@ export async function main(argv: readonly string[], io: MainIo = PROCESS_IO): Pr
     ...(values['include-forks'] !== undefined ? { includeForks: values['include-forks'] } : {}),
     ...(values['include-archived'] !== undefined ? { includeArchived: values['include-archived'] } : {}),
     ...(cloneConcurrency !== undefined ? { cloneConcurrency } : {}),
+    ...(values['full-clone'] ? { fullClone: true } : {}),
     ...(values['allow-clone-failures'] ? { allowCloneFailures: true } : {}),
     ...(values.lockfile !== undefined ? { lockfile: values.lockfile } : {}),
     ...(values['clones-dir'] !== undefined ? { clonesDir: values['clones-dir'] } : {}),

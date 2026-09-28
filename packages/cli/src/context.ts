@@ -34,6 +34,8 @@ export interface GithubDiscoverOptions {
   includeArchived?: boolean;
   /** --clone-concurrency (validated); undefined = repos.cloneConcurrency or 8. */
   cloneConcurrency?: number;
+  /** --full-clone: clone with whole history (overrides repos.clone); undefined = repos.clone or shallow. */
+  fullClone?: boolean;
   /** Skip repos that fail to clone instead of failing discover. */
   allowCloneFailures?: boolean;
   /** Default <work>/repos. */

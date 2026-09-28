@@ -34,6 +34,8 @@ export interface RepoRow {
   /** package.json / pubspec.yaml paths; null = not probed. */
   manifests: string[] | null;
   cloneError: string | null;
+  /** History of the last clone ('full' / 'shallow'); null = not cloned yet (or not recorded). */
+  clone: 'full' | 'shallow' | null;
 }
 
 export function repoRows(sel: RepoSelection): RepoRow[] {
@@ -53,6 +55,7 @@ export function repoRows(sel: RepoSelection): RepoRow[] {
     probe: e.probe ?? null,
     manifests: e.manifests ?? null,
     cloneError: e.cloneError ?? null,
+    clone: e.clone ?? null,
   }));
 }
 
@@ -88,6 +91,14 @@ export function formatRepoTable(rows: readonly RepoRow[]): string {
     out.push(`${title} (${group.length}):`, line(header), ...group.map((r) => line(cellsOf(r))));
   }
   out.push('', `${selected.length} of ${rows.length} repo(s) selected`);
+  const full = selected.filter((r) => r.clone === 'full').length;
+  const shallow = selected.filter((r) => r.clone === 'shallow').length;
+  const unknown = selected.length - full - shallow;
+  if (full + shallow > 0) {
+    out.push(`cloned (last discover): ${full} full, ${shallow} shallow${unknown > 0 ? `, ${unknown} not recorded` : ''}`
+      + (shallow > 0 ? '; shallow repos are not blamed (symbol ages unknown, minAgeDays has no effect on them): '
+        + 'discover --full-clone (repos.clone: "full") fetches their history' : ''));
+  }
   const withManifests = excluded.filter((r) => (r.manifests?.length ?? 0) > 0);
   if (withManifests.length > 0) {
     out.push(`${withManifests.length} excluded repo(s) have package manifests and may consume org packages `
