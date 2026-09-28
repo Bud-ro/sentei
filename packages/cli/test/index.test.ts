@@ -1127,6 +1127,14 @@ describe('index cache', () => {
       for (const h of others) expect(h).not.toBe(hash());
       expect(new Set(others).size).toBe(others.length);
     });
+
+    it('ignores the policy keys index does not read (closedOrg and friends never retry a cached failure)', () => {
+      const consumer = { countTestsAsConsumers: false, countDocsAsConsumers: false };
+      const base = hash({ policy: consumer });
+      expect(hash({ policy: { ...consumer, closedOrg: true } })).toBe(base);
+      expect(hash({ policy: { ...consumer, closedOrg: false, minAgeDays: 0, trustPrivateRegistry: false } })).toBe(base);
+      expect(hash({ policy: { ...consumer, countDocsAsConsumers: true, closedOrg: true } })).not.toBe(base);
+    });
   });
 
   it('toolchainVersion: node for npm, dart --version (and the Flutter SDK) for pub', async () => {

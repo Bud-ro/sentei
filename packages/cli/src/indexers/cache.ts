@@ -140,10 +140,18 @@ export interface FailureInputs {
 }
 
 /**
+ * The policy keys index reads (ConsumerPolicy); the others (minAgeDays,
+ * trustPrivateRegistry, closedOrg) only change analyze / witness / report, so
+ * toggling them must not retry a cached failure (DESIGN Phase 2 decision 2).
+ */
+const INDEX_POLICY_KEYS: ReadonlyArray<keyof ConsumerPolicy> = ['countTestsAsConsumers', 'countDocsAsConsumers'];
+
+/**
  * The inputs a partial / failed result depends on, hashed (sha256 hex): the
  * package (id, path, manager, its repo's head sha: its files and manifest), the
  * indexer and version, the install mode, the toolchain version, the consumer
- * policy, and every org package it resolves through, transitively (resolved or
+ * policy (INDEX_POLICY_KEYS only, whatever else the Policy object carries), and
+ * every org package it resolves through, transitively (resolved or
  * candidate ids with their repos' head shas: `pub get` of a package reads its org
  * dependencies' pubspecs through the source-link overrides). Any change retries
  * the failure; an ok result stays keyed by head sha and indexer version only.
@@ -165,7 +173,9 @@ export function failureInputHash(repo: DiscoveredRepo, pkg: DiscoveredPackage, i
     }
   }
   orgDeps.sort();
-  const policy = Object.fromEntries(Object.entries(inputs.policy ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const policy = Object.fromEntries(Object.entries(inputs.policy ?? {})
+    .filter(([k]) => (INDEX_POLICY_KEYS as readonly string[]).includes(k))
+    .sort(([a], [b]) => (a < b ? -1 : 1)));
   const key = JSON.stringify({
     v: 1,
     packageId: pkg.packageId,
