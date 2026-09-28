@@ -1405,9 +1405,10 @@ describe('runWitness: unexports used by ignored manifests and docs files (Phase 
     }]);
     expect(findingsOf(org, 'usedInCode')).toEqual([{ verdict: 'unexport_candidate', reasons: ['internal_refs_only'] }]);
     expectPass(org, org.ids['pendingFn']!);
+    // P's own example (Phase 3 decision 3): a note, the unexport stands.
     expect(findingsOf(org, 'ownExample')).toEqual([{
-      verdict: 'needs_review',
-      reasons: ['internal_refs_only', 'witness_mismatch:self:examples/basic.ts:2 (used in a docs/example file)'],
+      verdict: 'unexport_candidate',
+      reasons: ['internal_refs_only', 'note:used by examples/basic.ts:2'],
     }]);
   });
 
@@ -1447,6 +1448,93 @@ describe('runWitness: unexports used by ignored manifests and docs files (Phase 
         'witness_mismatch:ignored:acme/app/example/pubspec.yaml:example/lib/main.dart:2 (used by ignored manifest acme/app:example/pubspec.yaml)',
       ],
     }]);
+  });
+});
+
+describe('runWitness: a repo\'s own examples are notes, other repos\' count (Phase 3 decision 3)', () => {
+  function unexport(org: Org, name: string): void {
+    org.db.prepare('DELETE FROM findings WHERE symbol_id = ?').run(org.ids[name]!);
+    org.db.prepare("INSERT INTO findings (symbol_id, verdict, reasons, blocked_by) VALUES (?, 'unexport_candidate', '[\"internal_refs_only\"]', '[]')").run(org.ids[name]!);
+  }
+  const findingsOf = (org: Org, name: string): Array<{ verdict: string; reasons: string[] }> => findings(org, org.ids[name]!);
+  const LIB_P = 'pub:acme/lib:lib_pub';
+
+  /** P (pub, acme/lib) with its own `example/` app (a byDir ignored manifest) naming `pendingFn`, `unexportFn` and extension member `loadAcme`. */
+  function ownExampleOrg(policy?: Record<string, unknown>): Org {
+    const org = buildOrg({
+      manager: 'pub', ...(policy ? { policy } : {}),
+      symbols: [{ name: 'pendingFn', file: 'lib/a.dart' }, { name: 'unexportFn', file: 'lib/a.dart' }, { name: 'AcmeLoader', file: 'lib/a.dart' }, { name: 'quietFn', file: 'lib/a.dart' }],
+    });
+    unexport(org, 'unexportFn');
+    org.db.prepare("UPDATE symbols SET kind = 'extension' WHERE symbol_id = ?").run(org.ids['AcmeLoader']!);
+    org.db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name, kind, parent_symbol_id) VALUES ('m', ?, 'lib/a.dart', 'loadAcme', 'method', ?)")
+      .run(LIB_P, org.ids['AcmeLoader']!);
+    const lib = org.discover.repos.find((r) => r.repo === 'acme/lib')!;
+    write(lib.localPath, 'example/bin/demo.dart', "import 'package:lib_pub/a.dart';\nvoid main() {\n  pendingFn();\n  unexportFn();\n  'x'.loadAcme();\n}\n");
+    lib.ignoredManifests = [{ path: 'example', manifest: 'example/pubspec.yaml', deps: [{ resolvedPackageId: LIB_P }], byDir: true }];
+    return org;
+  }
+
+  it('a same-repo byDir ignored manifest never changes a verdict: the candidate passes, the unexport stands, each with a note', () => {
+    const org = ownExampleOrg();
+    const counts = witness(org);
+    expect(findingsOf(org, 'pendingFn')).toEqual([{ verdict: 'deletion_candidate', reasons: ['no_refs', 'note:used by example/pubspec.yaml (example/bin/demo.dart:3)'] }]);
+    expect(witnessOk(org, org.ids['pendingFn']!)).toBe(true);
+    expect(findingsOf(org, 'AcmeLoader')).toEqual([{
+      verdict: 'deletion_candidate', reasons: ['no_refs', 'note:used by example/pubspec.yaml (example/bin/demo.dart:5, member loadAcme)'],
+    }]);
+    expect(findingsOf(org, 'unexportFn')).toEqual([{ verdict: 'unexport_candidate', reasons: ['internal_refs_only', 'note:used by example/pubspec.yaml (example/bin/demo.dart:4)'] }]);
+    expectPass(org, org.ids['quietFn']!);
+    expect(counts).toEqual({ checked: 3, passed: 3, mismatched: 0 });
+    expect(org.log).toContain('[witness] unexports: 1 checked, 0 downgraded to needs_review');
+  });
+
+  it('negative: with countDocsAsConsumers, without byDir (a glob / older discover.json) or in ANOTHER repo, the hit still downgrades', () => {
+    const counted = ownExampleOrg({ countDocsAsConsumers: true });
+    witness(counted);
+    expect(findingsOf(counted, 'pendingFn')[0]!.verdict).toBe('needs_review');
+    expect(findingsOf(counted, 'unexportFn')[0]!.verdict).toBe('needs_review');
+
+    const globbed = ownExampleOrg();
+    globbed.discover.repos.find((r) => r.repo === 'acme/lib')!.ignoredManifests![0]!.byDir = false;
+    witness(globbed);
+    expect(findingsOf(globbed, 'pendingFn')).toEqual([{
+      verdict: 'needs_review',
+      reasons: ['no_refs', 'witness_mismatch:ignored:acme/lib/example/pubspec.yaml:example/bin/demo.dart:3 (used by ignored manifest acme/lib:example/pubspec.yaml)'],
+    }]);
+
+    // A byDir manifest in another repo (not promoted: e.g. under test/fixtures/): still a downgrade.
+    const other = buildOrg({ manager: 'pub', symbols: [{ name: 'pendingFn', file: 'lib/a.dart' }] });
+    const app = other.discover.repos.find((r) => r.repo === 'acme/app')!;
+    write(app.localPath, 'test/fixtures/x/bin/m.dart', "import 'package:lib_pub/a.dart';\nfinal v = pendingFn();\n");
+    app.ignoredManifests = [{ path: 'test/fixtures/x', manifest: 'test/fixtures/x/pubspec.yaml', deps: [{ resolvedPackageId: LIB_P }], byDir: true }];
+    witness(other);
+    expect(findingsOf(other, 'pendingFn')).toEqual([{
+      verdict: 'needs_review',
+      reasons: ['no_refs', 'witness_mismatch:ignored:acme/app/test/fixtures/x/pubspec.yaml:test/fixtures/x/bin/m.dart:2 (used by ignored manifest acme/app:test/fixtures/x/pubspec.yaml)'],
+    }]);
+  });
+
+  it('a promoted consumer in another repo is scanned like any consumer, its files package-relative (not docs); one in P\'s repo is a note', () => {
+    const org = buildOrg({ manager: 'pub', symbols: [{ name: 'crossFn', file: 'lib/a.dart' }, { name: 'ownFn', file: 'lib/a.dart' }] });
+    const db = org.db;
+    // acme/app's consumer package is an example app promoted from example/app (another repo than P).
+    const app = org.discover.repos.find((r) => r.repo === 'acme/app')!;
+    const C = 'pub:acme/app:sample_app';
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/app', 'example/app', 'pub', 'sample_app', 'private')").run(C);
+    db.prepare("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, 'lib_pub', 'pub', ?)").run(C, LIB_P);
+    app.packages.push({ packageId: C, path: 'example/app', promoted: 'example app depends on pub:acme/lib:lib_pub (repo acme/lib)' });
+    write(app.localPath, 'example/app/bin/main.dart', "import 'package:lib_pub/a.dart';\nvoid main() => crossFn();\n");
+    // P's own repo: a promoted example (it also uses another repo's package) naming ownFn.
+    const lib = org.discover.repos.find((r) => r.repo === 'acme/lib')!;
+    const own = 'pub:acme/lib:lib_example';
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/lib', 'example', 'pub', 'lib_example', 'private')").run(own);
+    db.prepare("INSERT INTO package_deps (consumer_package_id, dep_name, dep_manager, resolved_package_id) VALUES (?, 'lib_pub', 'pub', ?)").run(own, LIB_P);
+    lib.packages.push({ packageId: own, path: 'example', promoted: 'example app depends on pub:acme/app:app_pub (repo acme/app)' });
+    write(lib.localPath, 'example/bin/main.dart', "import 'package:lib_pub/a.dart';\nvoid main() => ownFn();\n");
+    witness(org);
+    expect(findingsOf(org, 'crossFn')).toEqual([{ verdict: 'needs_review', reasons: ['no_refs', `witness_mismatch:${C}:example/app/bin/main.dart:2`] }]);
+    expect(findingsOf(org, 'ownFn')).toEqual([{ verdict: 'deletion_candidate', reasons: ['no_refs', 'note:used by example/pubspec.yaml (example/bin/main.dart:2)'] }]);
   });
 });
 

@@ -9,7 +9,9 @@ import type { StageContext } from '../context.ts';
  * deletion_candidate (private package) or deprecation_candidate (published package),
  * hit → needs_review with witness_mismatch reasons. Unexports are re-checked against
  * code the index never saw (ignored manifests, docs / example files, the other
- * manager's packages): a hit makes them needs_review too.
+ * manager's packages): a hit makes them needs_review too. A hit in the package's own
+ * repo's examples / benchmarks / docs (Phase 3 decision 3) is only a `note:used by …`
+ * reason: the verdict stands.
  */
 export async function witness(ctx: StageContext): Promise<void> {
   const file = join(ctx.work, 'discover.json');

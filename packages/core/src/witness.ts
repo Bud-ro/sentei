@@ -25,6 +25,18 @@
 //     ` (used by ignored manifest <org>/<repo>:<manifest>)`), and the docs / example files of P and
 //     of its consumers, whatever countDocsAsConsumers says (reason ending ` (used in a
 //     docs/example file)`). A hit makes it needs_review, never alive.
+// Phase 3 decision 3 (a repo's own examples are never consumers): unless
+// countDocsAsConsumers, a hit in code of P's OWN repo that is example / benchmark /
+// docs code never changes the verdict; it becomes a note reason instead
+// (`note:used by <repo-relative manifest> (<file>:<line>)`, or `note:used by
+// <file>:<line>` for a docs / example file), on the passed candidate, the kept unexport
+// or next to the mismatches (noteOnly): an ignored manifest skipped by the
+// ignoreManifestDirs rule (discover `byDir`) in P's repo, a consumer package promoted
+// from such a manifest (discover `promoted`) in P's repo, and docs / example files of
+// P or of a consumer in P's repo (the unexport re-check). Such code in ANOTHER repo is
+// either an indexed consumer (promoted: its files are scanned like any consumer's, the
+// docs globs relative to its own dir) or, when it stayed ignored (test / fixture /
+// template dirs, an ignoreManifests glob, dev-only deps), still downgrades.
 // In each C:
 //   1. files that import/require/re-export P (per-language regex, whole file);
 //   2. in those files, any NAME of S as a whole identifier: S's declared name plus every
@@ -180,7 +192,13 @@ export interface WitnessDiscoverInput {
   repos: Array<{
     repo: string;
     localPath: string;
-    packages: Array<{ packageId: string; path: string }>;
+    /**
+     * `promoted` (optional): discover's reason when the package is an ignored-dir
+     * manifest promoted to a consumer package; its test/docs globs are then matched
+     * relative to its own dir (as analyze.sql doc_files does), and its hits on packages
+     * of its own repo are notes only.
+     */
+    packages: Array<{ packageId: string; path: string; promoted?: string }>;
     /** Optional (older discover.json files lack it); default []. */
     ignoredManifests?: Array<{
       path: string;
@@ -192,6 +210,12 @@ export interface WitnessDiscoverInput {
       deps: Array<{ resolvedPackageId: string | null; candidates?: string[] }>;
       /** Unparseable manifest: scanned for every package. Default false. */
       depsUnknown?: boolean;
+      /**
+       * Skipped by the ignoreManifestDirs rule (discover `byDir`): its hits on packages of
+       * its own repo are notes only (noteOnly). Absent (older discover.json, a glob, a VS
+       * Code extension, a private duplicate): its hits downgrade, as before.
+       */
+      byDir?: boolean;
     }>;
   }>;
 }
@@ -648,6 +672,24 @@ interface Hit {
    * (the ignored note on every path, the docs note on the unexport re-check). Absent: a plain hit.
    */
   notes?: string[];
+  /**
+   * Present on a hit that must not change the verdict (noteOnly: P's own repo's example /
+   * benchmark / docs code): what used S, a repo-relative manifest or `''` for the file
+   * itself; the hit becomes a `note:used by …` reason (noteOf).
+   */
+  usedBy?: string;
+}
+
+/**
+ * The note reason of a note-only hit (Hit.usedBy): `note:used by <manifest> (<file>:<line>)`
+ * (`, member <name>` inside the parentheses for an extension member), or `note:used by
+ * <file>:<line>` for a docs / example file. Never a policy reason: views and verdicts
+ * ignore it; report.json and the SARIF message print it with the other reasons.
+ */
+function noteOf(h: Hit): string {
+  const member = (h.notes ?? []).find((n) => n.startsWith('member '));
+  const where = `${h.file}:${h.line}${member !== undefined ? `, ${member}` : ''}`;
+  return h.usedBy ? `note:used by ${h.usedBy} (${where})` : `note:used by ${where}`;
 }
 
 /** `witness_mismatch:<consumer>:<file>:<line>` (+ ` (<notes>)`), or `…:checkout missing`. */
@@ -775,12 +817,22 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
   /** Ignored-manifest consumers by resolved package id; `anyPackage` = deps unknown. */
   const ignoredConsumers = new Map<string, Set<string>>();
   const ignoredAnyPackage: string[] = [];
+  /** Repo of every consumer key (package id or `ignored:` key). */
+  const repoOfConsumer = new Map<string, string>();
+  /** Manifest (repo-relative) of every consumer whose same-repo hits are notes only: byDir ignored manifests, promoted packages. */
+  const noteManifest = new Map<string, string>();
   for (const r of discover.repos) {
     for (const p of r.packages) {
+      repoOfConsumer.set(p.packageId, r.repo);
+      if (p.promoted !== undefined) {
+        const file = p.packageId.startsWith('pub:') ? 'pubspec.yaml' : 'package.json';
+        noteManifest.set(p.packageId, p.path === '.' ? file : `${p.path}/${file}`);
+      }
       locs.set(p.packageId, {
         repoDir: r.localPath,
         pkgPath: p.path,
-        globBase: '.',
+        // A promoted consumer (an example app under `example/`): globs relative to its dir.
+        globBase: p.promoted !== undefined ? p.path : '.',
         manager: p.packageId.slice(0, p.packageId.indexOf(':')),
         nestedPaths: new Set(r.packages.filter((q) => q.packageId !== p.packageId).map((q) => q.path)),
       });
@@ -790,6 +842,8 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     }
     for (const m of r.ignoredManifests ?? []) {
       const key = `ignored:${r.repo}/${m.manifest}`;
+      repoOfConsumer.set(key, r.repo);
+      if (m.byDir === true) noteManifest.set(key, m.manifest);
       locs.set(key, {
         repoDir: r.localPath,
         pkgPath: m.path,
@@ -811,6 +865,21 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
 
   const countTests = policyBool(db, 'countTestsAsConsumers');
   const countDocs = policyBool(db, 'countDocsAsConsumers');
+  /** Repo of a package id (`<manager>:<org>/<repo>:<name>`). */
+  const repoOfId = (id: string): string => id.split(':')[1]!;
+  /**
+   * Phase 3 decision 3 (header): the hits of consumer `c` on P are notes only when `c` is
+   * example / benchmark code of P's own repo (a byDir ignored manifest or a promoted
+   * package there), unless countDocsAsConsumers (then such code counts, as analyze
+   * counts the docs uses). Returns the manifest to name in the note, or undefined.
+   */
+  const noteOnly = (c: string, row: PendingRow): string | undefined => {
+    if (countDocs) return undefined;
+    const manifest = noteManifest.get(c);
+    return manifest !== undefined && repoOfConsumer.get(c) === repoOfId(row.package_id) ? manifest : undefined;
+  };
+  /** Hits of a note-only consumer as notes (a missing checkout says nothing either way: dropped). */
+  const asNotes = (hs: Hit[], usedBy: string): Hit[] => hs.filter((h) => h.file !== null).map((h) => ({ ...h, usedBy }));
   const excluded = (relFile: string, loc: ConsumerLoc, withTests: boolean): boolean => {
     if (inSurfaceDir(relFile, loc.manager, loc.pkgPath)) return false; // pub lib/: library code
     const f = loc.globBase === '.' ? relFile : relFile.slice(loc.globBase.length + 1);
@@ -1405,10 +1474,11 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         if (plan.entries !== null && !subs.some((sub) => subpathMatches(plan.entries!, sub))) continue;
       }
       const consumer = c === row.package_id ? 'self' : c;
+      const usedBy = c === row.package_id ? undefined : noteOnly(c, row);
       const named = new Set(nameLines(text, plan.names));
-      for (const line of named) hits.push({ consumer, file, line });
+      for (const line of named) hits.push({ consumer, file, line, ...(usedBy !== undefined ? { usedBy } : {}) });
       for (const h of memberLines(text, plan.members, null)) {
-        if (!named.has(h.line)) hits.push({ consumer, file, line: h.line, notes: [`member ${h.name}`] });
+        if (!named.has(h.line)) hits.push({ consumer, file, line: h.line, notes: [`member ${h.name}`], ...(usedBy !== undefined ? { usedBy } : {}) });
       }
     }
     return hits;
@@ -1471,12 +1541,18 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     const withTests = row.test_support === 1;
     const docsHits = (c: string, tests: boolean, label: string): Hit[] => {
       const dirs = ignoredDirsOf.get(locs.get(c)?.repoDir ?? '') ?? [];
-      return withNote(findHits(row, plan, c, tests, label, true), 'used in a docs/example file')
-        .filter((h) => h.file === null || !dirs.some((d) => under(h.file!, d)));
+      const hs = findHits(row, plan, c, tests, label, true).filter((h) => h.file === null || !dirs.some((d) => under(h.file!, d)));
+      // A docs / example file of P's own repo (P itself, or a consumer there): a note only.
+      const own = !countDocs && (c === row.package_id || repoOfConsumer.get(c) === repoOfId(row.package_id));
+      return own ? asNotes(hs, '') : withNote(hs, 'used in a docs/example file');
     };
     return [
       ...(crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c)),
-      ...ignored.flatMap((c) => withNote(findHits(row, plan, c, withTests), `used by ignored manifest ${ignoredManifestOf.get(c) ?? c}`)),
+      ...ignored.flatMap((c) => {
+        const hs = findHits(row, plan, c, withTests);
+        const usedBy = noteOnly(c, row);
+        return usedBy !== undefined ? asNotes(hs, usedBy) : withNote(hs, `used by ignored manifest ${ignoredManifestOf.get(c) ?? c}`);
+      }),
       ...(consumersOf.all(row.package_id) as Array<{ c: string; dev: number }>).flatMap(({ c, dev }) => docsHits(c, withTests || dev === 1, c)),
       ...docsHits(row.package_id, withTests, 'self')
         .filter((h) => !(h.file === row.file && row.line !== null && h.line === row.line + 1)),
@@ -1488,12 +1564,19 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
     const seen = new Set<string>();
     return all
       .filter((h) => {
-        const k = `${h.consumer.startsWith('self') ? 'self' : h.consumer}\0${h.file ?? ''}\0${h.line}`;
+        const k = `${h.usedBy !== undefined ? 'note' : ''}\0${h.consumer.startsWith('self') ? 'self' : h.consumer}\0${h.file ?? ''}\0${h.line}`;
         if (seen.has(k)) return false;
         seen.add(k);
         return true;
       })
       .sort((a, b) => cmp(a.consumer, b.consumer) || cmp(a.file ?? '', b.file ?? '') || a.line - b.line);
+  };
+
+  /** Split deduped hits into the ones that change the verdict and the note reasons (at most MAX_HITS, one per text). */
+  const splitHits = (hits: Hit[]): { real: Hit[]; notes: string[] } => {
+    const real = hits.filter((h) => h.usedBy === undefined);
+    const notes = [...new Set(hits.filter((h) => h.usedBy !== undefined).map(noteOf))].slice(0, MAX_HITS);
+    return { real, notes };
   };
 
   const del = db.prepare("DELETE FROM findings WHERE symbol_id = ? AND verdict = 'needs_review'");
@@ -1517,6 +1600,9 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         // `ignored:` consumer label alone read like a package.
         ...consumers.flatMap(({ c, dev }) => {
           const hs = findHits(row, plan, c, dev || row.test_support === 1);
+          // P's own repo's examples / benchmarks (Phase 3 decision 3): notes only.
+          const usedBy = noteOnly(c, row);
+          if (usedBy !== undefined) return asNotes(hs, usedBy);
           return c.startsWith('ignored:') ? withNote(hs, `used by ignored manifest ${ignoredManifestOf.get(c) ?? c}`) : hs;
         }),
         ...(crossConsumers.get(row.package_id) ?? []).flatMap((c) => crossHits(row, plan, c)),
@@ -1530,28 +1616,37 @@ export function runWitness(opts: RunWitnessOptions): WitnessCounts {
         ...selfHits(row, plan),
         ...selfStringHits(row, plan),
       ];
-      const hits = dedupeHits(all);
+      const { real: hits, notes } = splitHits(dedupeHits(all));
       del.run(row.symbol_id);
       if (hits.length > 0) {
         const reasons = hits.slice(0, MAX_HITS).map(reasonOf);
-        insFinding.run(row.symbol_id, 'needs_review', JSON.stringify([...base, ...reasons]), row.blocked_by);
+        insFinding.run(row.symbol_id, 'needs_review', JSON.stringify([...base, ...reasons, ...notes]), row.blocked_by);
         counts.mismatched += 1;
         log(`[witness] mismatch ${row.package_id}#${row.name} (${row.file}): ${reasons.join(', ')}${hits.length > MAX_HITS ? ` (+${hits.length - MAX_HITS} more)` : ''}`);
       } else {
         insOk.run(row.symbol_id, now);
-        insFinding.run(row.symbol_id, row.priv === 1 ? 'deletion_candidate' : 'deprecation_candidate', JSON.stringify(base), row.blocked_by);
+        insFinding.run(row.symbol_id, row.priv === 1 ? 'deletion_candidate' : 'deprecation_candidate', JSON.stringify([...base, ...notes]), row.blocked_by);
         counts.passed += 1;
+        if (notes.length > 0) log(`[witness] passed with notes ${row.package_id}#${row.name} (${row.file}): ${notes.join(', ')}`);
       }
     }
     // Counted only when downgraded (checked = passed + mismatched stays true).
     let unexportsDowngraded = 0;
     for (const row of unexports) {
       const plan = planFor(row);
-      const hits = dedupeHits(unexportHits(row, plan));
-      if (hits.length === 0) continue; // the unexport stands
+      const { real: hits, notes } = splitHits(dedupeHits(unexportHits(row, plan)));
+      if (hits.length === 0) {
+        // The unexport stands; P's own repo's examples / docs that use S are noted on it.
+        if (notes.length > 0) {
+          delVerdict.run(row.symbol_id, row.verdict);
+          insFinding.run(row.symbol_id, row.verdict, JSON.stringify([...(JSON.parse(row.reasons) as string[]), ...notes]), row.blocked_by);
+          log(`[witness] unexport kept with notes ${row.package_id}#${row.name} (${row.file}): ${notes.join(', ')}`);
+        }
+        continue;
+      }
       const reasons = hits.slice(0, MAX_HITS).map(reasonOf);
       delVerdict.run(row.symbol_id, row.verdict);
-      insFinding.run(row.symbol_id, 'needs_review', JSON.stringify([...(JSON.parse(row.reasons) as string[]), ...reasons]), row.blocked_by);
+      insFinding.run(row.symbol_id, 'needs_review', JSON.stringify([...(JSON.parse(row.reasons) as string[]), ...reasons, ...notes]), row.blocked_by);
       counts.checked += 1;
       counts.mismatched += 1;
       unexportsDowngraded += 1;

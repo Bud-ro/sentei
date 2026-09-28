@@ -154,9 +154,9 @@ docs / example files: a use there makes them needs_review with a note.
 
 | Case | Where | Expected |
 | --- | --- | --- |
-| Extension used only through a member, by the ignored example | `acme_x.dart` `AcmeLoader` (`'logo'.loadAcme()` in `demo.dart`) | needs_review `["no_refs", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:8 (member loadAcme)"]` |
+| Extension used only through a member, by the ignored example | `acme_x.dart` `AcmeLoader` (`'logo'.loadAcme()` in `demo.dart`) | deletion_candidate `["no_refs", "note:used by example/pubspec.yaml (example/bin/demo.dart:8, member loadAcme)"]`: the member hit is found, but the example is acme_x's own (same repo), so it is a note (Phase 3 decision 3; was needs_review) |
 | Extension whose only member is shorter than 3 characters (negative) | `AcmeTiny` (`sq`; `demo.dart` has a local `sq`) | deletion_candidate `["no_refs"]`: short names and Object members are not searched |
-| Unexport named by the ignored example | `acme_x.dart` `inExample` (used inside acme_x by `_privateFn`; `inExample()` in `demo.dart`) | needs_review `["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest acme/dart-lib-x:example/pubspec.yaml)"]`, not unexport_candidate |
+| Unexport named by the ignored example | `acme_x.dart` `inExample` (used inside acme_x by `_privateFn`; `inExample()` in `demo.dart`) | unexport_candidate `["internal_refs_only", "note:used by example/pubspec.yaml (example/bin/demo.dart:9)"]`: the same-repo example is a note, not a consumer (Phase 3 decision 3; was needs_review) |
 | Unexport nothing outside the index names (negative) | `lib/src/wire_test.dart` `wireTick` | unexport_candidate `["internal_refs_only"]` (unchanged) |
 
 ### Public libraries, `main` anywhere, analyzer excludes (Phase 2 fix round 3)

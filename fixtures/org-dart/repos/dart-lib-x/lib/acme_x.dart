@@ -39,9 +39,9 @@ extension IntTimes on int {
 // link `[docOnly]` on `doubled` above: a doc link is not a reference (fork patch 4).
 int docOnly() => 3;
 
-// Expected: needs_review, reasons ["no_refs", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:8 (member loadAcme)"].
-// Used only through its member, `'logo'.loadAcme()`, by the example app (an ignored
-// manifest): the witness searches an extension's member names too.
+// Expected: deletion_candidate, reasons ["no_refs", "note:used by example/pubspec.yaml (example/bin/demo.dart:8, member loadAcme)"].
+// Used only through its member, `'logo'.loadAcme()`, by acme_x's OWN example app: the witness
+// finds the member, but a same-repo example is only a note (Phase 3 decision 3).
 extension AcmeLoader on String {
   // Expected: no finding (a member of an extension; not exported on its own).
   String loadAcme() => 'acme:$this';
@@ -55,7 +55,7 @@ extension AcmeTiny on int {
   int get sq => this * this;
 }
 
-// Expected: needs_review, reasons ["internal_refs_only", "witness_mismatch:ignored:acme/dart-lib-x/example/pubspec.yaml:example/bin/demo.dart:9 (used by ignored manifest acme/dart-lib-x:example/pubspec.yaml)"].
-// Used inside acme_x only (by _privateFn), so an unexport by the index; the example
-// app (an ignored manifest, never indexed) names it, which the witness reports.
+// Expected: unexport_candidate, reasons ["internal_refs_only", "note:used by example/pubspec.yaml (example/bin/demo.dart:9)"].
+// Used inside acme_x only (by _privateFn), so an unexport by the index; acme_x's own example
+// app names it, which the witness notes without changing the verdict (Phase 3 decision 3).
 int inExample() => 1;
