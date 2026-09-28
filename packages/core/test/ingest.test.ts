@@ -6,7 +6,7 @@ import { create, toBinary } from '@bufbuild/protobuf';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { analyzeOrg } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { anonymousSymbolKey, barePackageName, ingestOrg, repoSlug, SIGNATURE_ROLE, signatureEnd, statusReason, symbolKey, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
+import { anonymousSymbolKey, barePackageName, ERROR_CLASS_ROLE, ingestOrg, isErrorClassHeader, repoSlug, SIGNATURE_ROLE, signatureEnd, statusReason, symbolKey, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile, variableSignatureEnd } from '../src/ingest.ts';
 import { IndexSchema, SymbolInformation_Kind } from '../src/scip/scip_pb.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
@@ -511,6 +511,69 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(end('Foo(this.x, {int y = 1}) : assert(x > 0) {', true)).toEqual({ line: 0, col: 25 });
     expect(end('x) {')).toBeUndefined(); // an unbalanced close: not a declaration head
     expect(end('f(a: A,')).toBeUndefined(); // no body within the text
+  });
+
+  it('marks the signature of a variable holding a function and error class definitions (round 9b)', () => {
+    const src = [
+      'export const route = async (', //                                     0
+      '  handlers: Handlers,', //                                             1
+      '): Promise<Result> => {', //                                            2
+      '  const x: Body = 1;', //                                              3
+      '};', //                                                                4
+      'export class FlueError extends Error {', //                            5
+      '  readonly failure: Failure;', //                                      6
+      '}', //                                                                 7
+      'export class Plain {', //                                              8
+      '}', //                                                                 9
+    ].join('\n');
+    mkdirSync(join(root, 'checkout/src'), { recursive: true });
+    writeFileSync(join(root, 'checkout/src/a.ts'), src);
+    const T = (n: string) => `${LIB}src/\`a.ts\`/${n}`;
+    writeScip('acme/mono', 'lib.scip', [{
+      path: 'src/a.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        // scip-typescript: a variable with a function initializer is enclosed by the initializer.
+        { range: [0, 13, 18], symbol: T('route.'), roles: 1, enclosing: [0, 21, 4, 1] },
+        { range: [1, 12, 20], symbol: T('Handlers#') },
+        { range: [2, 11, 17], symbol: T('Result#') },
+        { range: [3, 11, 15], symbol: T('Body#') },
+        { range: [5, 13, 22], symbol: T('FlueError#'), roles: 1, enclosing: [5, 0, 7, 1] },
+        { range: [6, 20, 27], symbol: T('Failure#') },
+        { range: [8, 13, 18], symbol: T('Plain#'), roles: 1, enclosing: [8, 0, 9, 1] },
+        { range: [17, 12, 20], symbol: T('Handlers#'), roles: 1 },
+        { range: [18, 12, 18], symbol: T('Result#'), roles: 1 },
+        { range: [19, 12, 16], symbol: T('Body#'), roles: 1 },
+        { range: [20, 12, 19], symbol: T('Failure#'), roles: 1 },
+      ],
+    }]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib'));
+    const d = discover();
+    d.repos[0]!.localPath = join(root, 'checkout');
+    run(d);
+    expect(db.prepare(`SELECT s.name, (o.role & ${SIGNATURE_ROLE}) <> 0 AS sig FROM occurrences o JOIN symbols s USING (symbol_id)
+      WHERE o.file = 'src/a.ts' AND (o.role & 1) = 0 ORDER BY o.line`).all()).toEqual([
+      // The parameter and return type are the signature; a body use is not (negative).
+      { name: 'Handlers', sig: 1 }, { name: 'Result', sig: 1 }, { name: 'Body', sig: 0 }, { name: 'Failure', sig: 0 },
+    ]);
+    // Only the class extending Error is an error class (negative: Plain).
+    expect(db.prepare(`SELECT s.name FROM occurrences o JOIN symbols s USING (symbol_id)
+      WHERE (o.role & 1) <> 0 AND (o.role & ${ERROR_CLASS_ROLE}) <> 0`).all()).toEqual([{ name: 'FlueError' }]);
+  });
+
+  it('variableSignatureEnd and isErrorClassHeader (round 9b)', () => {
+    const v = (text: string) => variableSignatureEnd(text.split('\n'), 0, 0);
+    expect(v('f = (\n  a: A,\n): R => a')).toEqual({ line: 2, col: 5 });
+    expect(v('f: (x: X) => Y = function (x: X): Y {')).toEqual({ line: 0, col: 36 });
+    expect(v('f: { a: (b: B) => C } = async <T,>(t: T) => t')).toEqual({ line: 0, col: 41 });
+    expect(v('f;')).toBeUndefined(); // no initializer
+    const e = (text: string, dart = false) => isErrorClassHeader(text.split('\n'), 0, 0, dart);
+    expect(e('X extends Error {')).toBe(true);
+    expect(e('X<T>\n  extends errors.HttpError<T>\n  implements Y {')).toBe(true);
+    expect(e('X implements Exception {', true)).toBe(true);
+    expect(e('X extends ErrorBoundary {')).toBe(false);
+    expect(e('X extends Base { e: Error }')).toBe(false); // a member's type is not the header
+    expect(e('Errors {')).toBe(false);
   });
 
   it('anonymousSymbolKey rewrites only the anonymous package name; symbolKey escapes spaces', () => {

@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from
 import { analyzeOrg, insertPrivateDead, reconcileDeadIslands, type AnalyzeCounts } from '../src/analyze.ts';
 import { runWitness } from '../src/witness.ts';
 import { openDb } from '../src/db.ts';
-import { ingestOrg, SIGNATURE_ROLE } from '../src/ingest.ts';
+import { ERROR_CLASS_ROLE, ingestOrg, SIGNATURE_ROLE } from '../src/ingest.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
 const DAY = 86_400;
@@ -1486,6 +1486,48 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings().filter((r) => r.verdict !== 'private_dead')).toEqual([f('BodyOnlyType', 'unexport_candidate', ['internal_refs_only'])]);
     expect((db.prepare('SELECT s.name FROM signature_pinned p JOIN symbols s USING (symbol_id) ORDER BY 1').all() as Array<{ name: string }>)
       .map((r) => r.name)).toEqual(['PulseHonoHandlers', 'RouterOptions']);
+  });
+
+  it('property types of public classes, interfaces and nested type literals pin; an exported error class pins itself (round 9b)', () => {
+    // scip-typescript gives properties no enclosing range: `readonly failure: Failure` in a
+    // class body, an interface member and a nested type literal's member are all enclosed
+    // by the type declaration itself (symbol_str `…#`, kind '' in npm).
+    const typeDecl = (name: string, line: number): number => {
+      const id = at(aliveExport(name), line, 13, '');
+      run("UPDATE symbols SET symbol_str = symbol_str || '#' WHERE symbol_id = ?", id);
+      return id;
+    };
+    const cls = typeDecl('PublicClass', 10);
+    const iface = typeDecl('PublicOptions', 20);
+    const classProp = at(sym(lib, 'src/fns.ts', 'ClassPropType', { exported: true }), 60, 12, 'typealias');
+    const ifaceProp = at(sym(lib, 'src/fns.ts', 'InterfacePropType', { exported: true }), 61, 12, 'typealias');
+    const nested = at(sym(lib, 'src/fns.ts', 'NestedPropType', { exported: true }), 62, 12, 'typealias');
+    useAt(cls, classProp, 'src/fns.ts', 11, 20); //   `  readonly failure: ClassPropType;`
+    useAt(iface, ifaceProp, 'src/fns.ts', 21, 10); // `  mode: InterfacePropType;`
+    useAt(iface, nested, 'src/fns.ts', 23, 12); //    `  nested: {\n    deep: NestedPropType;`
+    // An exported error class used only inside its package (thrown by public code, caught
+    // by consumers by type): its definition carries ERROR_CLASS_ROLE.
+    const err = at(sym(lib, 'src/fns.ts', 'FlueExecutionError', { exported: true }), 40, 13, '');
+    run("UPDATE symbols SET symbol_str = symbol_str || '#' WHERE symbol_id = ?", err);
+    run('UPDATE occurrences SET role = role | ? WHERE symbol_id = ? AND (role & 1) <> 0', ERROR_CLASS_ROLE, err);
+    const thrower = aliveExport('waitForSubmission');
+    useAt(thrower, err, 'src/fns.ts', 90, 10);
+    const failure = at(sym(lib, 'src/fns.ts', 'FlueExecutionFailure', { exported: true }), 38, 12, 'typealias');
+    useAt(err, failure, 'src/fns.ts', 42, 20); // `  readonly failure: FlueExecutionFailure;`
+    // Negatives: an internal-only class that is no error class stays an unexport, and so
+    // does the type of its property (its API is not public).
+    const plain = at(sym(lib, 'src/fns.ts', 'PlainHelper', { exported: true }), 50, 13, '');
+    run("UPDATE symbols SET symbol_str = symbol_str || '#' WHERE symbol_id = ?", plain);
+    useAt(thrower, plain, 'src/fns.ts', 91, 10);
+    const plainProp = at(sym(lib, 'src/fns.ts', 'PlainPropType', { exported: true }), 63, 12, 'typealias');
+    useAt(plain, plainProp, 'src/fns.ts', 51, 20);
+    analyze();
+    expect(findings().filter((r) => r.verdict !== 'private_dead')).toEqual([
+      f('PlainHelper', 'unexport_candidate', ['internal_refs_only']),
+      f('PlainPropType', 'unexport_candidate', ['internal_refs_only']),
+    ]);
+    expect((db.prepare('SELECT s.name FROM signature_pinned p JOIN symbols s USING (symbol_id) ORDER BY 1').all() as Array<{ name: string }>)
+      .map((r) => r.name)).toEqual(['ClassPropType', 'FlueExecutionError', 'FlueExecutionFailure', 'InterfacePropType', 'NestedPropType']);
   });
 
   it('a type named only by the signature of a would-be deletion stays a dead island; pinned once the witness keeps its user', () => {

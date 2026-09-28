@@ -408,9 +408,11 @@ interface DocWork {
   /**
    * Definitions in this doc with an enclosing range, for enclosing-symbol lookup. `def`:
    * the definition's own position, set for function-like symbols (a method descriptor:
-   * functions, methods, constructors, accessors), whose signature SIGNATURE_ROLE marks.
+   * functions, methods, constructors, accessors; `variable`: a TypeScript / JavaScript
+   * term with an enclosing range, which scip-typescript gives only a variable holding a
+   * function), whose signature SIGNATURE_ROLE marks.
    */
-  spans: Array<{ symbolId: number; span: Span; def?: { line: number; col: number } }>;
+  spans: Array<{ symbolId: number; span: Span; def?: { line: number; col: number; variable?: boolean } }>;
 }
 
 /** SymbolInformation.kind per symbol string, built once per document. */
@@ -451,8 +453,12 @@ export const SIGNATURE_ROLE = 1 << 20;
  * declaration head). Undefined when nothing is found within 200 lines. Limits: a
  * return type written as a function type (`(): () => X {`) ends at its `=>`; nothing
  * after that is marked (fail closed: the symbol stays an unexport candidate).
+ * `annotation`: the head is a variable's (`name: Type = …`): neither `{` (a type
+ * literal) nor `=>` (a function type) ends it, only the initializer's `=` or a `;`.
  */
-export function signatureEnd(lines: readonly string[], line: number, col: number, dart = false): { line: number; col: number } | undefined {
+export function signatureEnd(
+  lines: readonly string[], line: number, col: number, dart = false, annotation = false,
+): { line: number; col: number } | undefined {
   const stack: string[] = [];
   let quote: string | undefined;
   let block = false;
@@ -490,7 +496,7 @@ export function signatureEnd(lines: readonly string[], line: number, col: number
       const depth0 = stack.length === 0;
       if (ch === '(' || ch === '[' || ch === '<') stack.push(ch);
       else if (ch === '{') {
-        if (depth0 && !':|&,'.includes(prev || 'x')) return { line: l, col: c };
+        if (depth0 && !annotation && !':|&,'.includes(prev || 'x')) return { line: l, col: c };
         stack.push(ch);
       } else if (ch === ')' || ch === ']' || ch === '}') {
         const open = ch === ')' ? '(' : ch === ']' ? '[' : '{';
@@ -500,7 +506,7 @@ export function signatureEnd(lines: readonly string[], line: number, col: number
         if (stack.length === 0 && ch === ')') closedParams = true;
       } else if (ch === '>') {
         if (text[c - 1] === '=') {
-          if (depth0) return { line: l, col: c - 1 };
+          if (depth0 && !annotation) return { line: l, col: c - 1 };
         } else if (stack.at(-1) === '<') stack.pop();
       } else if (depth0 && ch === '=' && next !== '>' && next !== '=' && text[c - 1] !== '=' && text[c - 1] !== '!') {
         return { line: l, col: c };
@@ -513,6 +519,48 @@ export function signatureEnd(lines: readonly string[], line: number, col: number
     }
   }
   return undefined;
+}
+
+/**
+ * Where the signature of a variable holding a function ends (`export const f = (\n  a: A,\n):
+ * R => …`, `const g: Handler = async function (x: X) {`): through its type annotation
+ * to the initializer's `=` (signatureEnd in annotation mode), then through the
+ * function's parameters and return type to its `=>` or body (signatureEnd). scip-typescript
+ * gives such a variable an enclosing range (its function initializer), so references in
+ * its parameter list are enclosed by it. Undefined when there is no initializer.
+ */
+export function variableSignatureEnd(lines: readonly string[], line: number, col: number): { line: number; col: number } | undefined {
+  const eq = signatureEnd(lines, line, col, false, true);
+  if (eq === undefined || lines[eq.line]![eq.col] !== '=') return undefined;
+  return signatureEnd(lines, eq.line, eq.col + 1) ?? eq;
+}
+
+/**
+ * A sentei bit in `occurrences.role` of a DEFINITION: the declaration is an error class,
+ * a class whose header extends or implements an `…Error` / `…Exception` type (`class
+ * FlueExecutionError extends Error {`, Dart `class X implements Exception`), read from
+ * the checkout's text at ingest. analyze.sql `signature_pinned` reads it (`role &
+ * 2097152`): what a package throws is part of its API (consumers catch it by type), so
+ * an exported error class is never an unexport candidate, and the types of its public
+ * properties are pinned through it.
+ */
+export const ERROR_CLASS_ROLE = 1 << 21;
+
+/** An error class header (errorClassHeader): extends / implements a `…Error` / `…Exception` type. */
+const ERROR_HEADER = /\b(?:extends|implements|with)\s[^{]*?\b[\w$]*(?:Error|Exception)\b/;
+
+/**
+ * Whether the class whose name starts at (line, col) is an error class (ERROR_CLASS_ROLE):
+ * the text from its name to its body's `{` (signatureEnd) names a supertype ending in
+ * `Error` or `Exception`.
+ */
+export function isErrorClassHeader(lines: readonly string[], line: number, col: number, dart = false): boolean {
+  const end = signatureEnd(lines, line, col, dart);
+  if (end === undefined) return false;
+  const head = end.line === line
+    ? lines[line]!.slice(col, end.col)
+    : [lines[line]!.slice(col), ...lines.slice(line + 1, end.line), lines[end.line]!.slice(0, end.col)].join('\n');
+  return ERROR_HEADER.test(head.replace(/\/\/.*$/gm, ''));
 }
 
 /** Reverse map of SymbolInformation.Kind numbers to lowercased names. */
@@ -1165,8 +1213,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         defPositions.set(`${w.repo}\0${w.file}\0${start.line}\0${start.col}`, row.symbolId);
         const span = occurrenceEnclosingSpan(o);
         if (span && row.symbolId !== w.moduleSymbolId) {
-          const fnLike = p.descriptors.at(-1)!.suffix === 'method';
-          w.spans.push({ symbolId: row.symbolId, span, ...(fnLike ? { def: { line: start.line, col: start.col } } : {}) });
+          const suffix = p.descriptors.at(-1)!.suffix;
+          const variable = suffix === 'term' && !w.file.endsWith('.dart');
+          w.spans.push({
+            symbolId: row.symbolId, span,
+            ...(suffix === 'method' || variable ? { def: { line: start.line, col: start.col, ...(variable ? { variable } : {}) } } : {}),
+          });
         }
       }
     }
@@ -1277,9 +1329,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     const repoRoots = new Map(discover.repos.map((r) => [r.repo, r.localPath]));
     const docLines = new Map<DocWork, string[] | null>();
     const sigEnds = new Map<string, { line: number; col: number } | null>();
-    const inSignature = (w: DocWork, e: DocWork['spans'][number], line: number, col: number): boolean => {
-      const d = e.def;
-      if (d === undefined || line < d.line || (line === d.line && col <= d.col)) return false;
+    const linesOf = (w: DocWork): string[] | null => {
       let lines = docLines.get(w);
       if (lines === undefined) {
         const root = repoRoots.get(w.repo);
@@ -1293,6 +1343,12 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         }
         docLines.set(w, lines);
       }
+      return lines;
+    };
+    const inSignature = (w: DocWork, e: DocWork['spans'][number], line: number, col: number): boolean => {
+      const d = e.def;
+      if (d === undefined || line < d.line || (line === d.line && col <= d.col)) return false;
+      const lines = linesOf(w);
       if (lines === null) return false;
       const key = `${w.repo}\0${w.file}\0${d.line}\0${d.col}`;
       let end = sigEnds.get(key);
@@ -1301,10 +1357,19 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         const head = (lines[d.line] ?? '').slice(0, d.col);
         end = /\bprivate\s+(?:(?:static|readonly|async|override|get|set)\s+)*\*?\s*$/.test(head)
           ? null
-          : signatureEnd(lines, d.line, d.col, w.file.endsWith('.dart')) ?? null;
+          : (d.variable === true ? variableSignatureEnd(lines, d.line, d.col) : signatureEnd(lines, d.line, d.col, w.file.endsWith('.dart'))) ?? null;
         sigEnds.set(key, end);
       }
       return end !== null && (line < end.line || (line === end.line && col < end.col));
+    };
+
+    // Error classes (ERROR_CLASS_ROLE on their definition): the header names a `…Error` /
+    // `…Exception` supertype. Read only when the definition line mentions one.
+    const isErrorClass = (w: DocWork, line: number, col: number): boolean => {
+      const lines = linesOf(w);
+      if (lines === null) return false;
+      if (!/Error|Exception/.test(lines.slice(line, line + 5).join('\n'))) return false;
+      return isErrorClassHeader(lines, line, col, w.file.endsWith('.dart'));
     };
 
     /**
@@ -1381,7 +1446,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         const isSite = exportSites.has(`${w.repo}\0${w.file}\0${start.line}\0${start.col}`) ? 1 : 0;
         const role = !isDef && !isSite && enclosingSpan !== undefined && inSignature(w, enclosingSpan, start.line, start.col)
           ? o.symbolRoles | SIGNATURE_ROLE
-          : o.symbolRoles;
+          : isDef && p.descriptors.at(-1)?.suffix === 'type' && isErrorClass(w, start.line, start.col)
+            ? o.symbolRoles | ERROR_CLASS_ROLE
+            : o.symbolRoles;
         st.occurrence.run(row.symbolId, w.packageId, row.packageId, w.file, start.line, start.col, role, enclosingId, isSite);
         counts.occurrences += 1;
         if (!isDef && !isSite) edgeRun(st.edge, byId.get(enclosingId)!, row, 'scip');

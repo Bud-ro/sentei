@@ -853,10 +853,17 @@ EXCEPT SELECT to_package_id FROM edges WHERE from_package_id <> to_package_id;
 --   (ingest signatureEnd): parameter types on any line of a multi-line parameter list
 --   (drizzle-pulse `createPulseHonoRouter(\n  handlers: PulseHonoHandlers,`), generic
 --   constraints (`<T extends Options>`), the return type; never for a TypeScript
---   `private` member (no consumer calls it).
--- Missed (the symbol stays an unexport candidate, as before): the signature of a
--- variable-held arrow function after its first line, a return type written as a function
--- type after its `=>`, a DB ingested without checkout paths (discover.json localPath).
+--   `private` member (no consumer calls it). Since round 9b also a variable holding a
+--   function (`export const f = (\n  a: A,\n): R =>`, ingest variableSignatureEnd):
+--   its type annotation, parameters and return type.
+-- Property and accessor types need no mark: scip-typescript gives a property, a
+-- property signature and an accessor no enclosing range, so a reference in their type
+-- (`readonly failure: FlueExecutionFailure`, `get state(): State`, an interface member,
+-- a nested type literal's member) is enclosed by the class / interface / type alias
+-- itself: the first rule.
+-- Missed (the symbol stays an unexport candidate, as before): a return type written as
+-- a function type after its `=>`, a DB ingested without checkout paths (discover.json
+-- localPath).
 -- Over-read (no unexport row): a same-line initializer that does not decide the type, a
 -- TS class instantiated in a one-line body.
 CREATE VIEW signature_refs (symbol_id, api_symbol_id) AS
@@ -905,15 +912,31 @@ WHERE r.is_external = 0
 -- name (gamepads_platform_interface GamepadState, the type of the public
 -- GamepadController.state). Reads mat_base_verdicts (filled by analyze.ts before
 -- `verdicts`, kept in the DB for the witness stage).
+--
+-- Error classes (round 9b): an internal-only export whose definition ingest marked
+-- ERROR_CLASS_ROLE (`role & 2097152`: its header extends / implements a `…Error` /
+-- `…Exception` type) is pinned by itself. What a package throws reaches consumers, who
+-- catch it by type (`err instanceof FlueExecutionError`), however deep inside the
+-- package the `throw` is; the index cannot follow a throw to the public call that lets
+-- it escape, so every exported error class counts as public API (fail closed: at worst
+-- an error class used only inside its package keeps its `export`). The types of its
+-- public properties (`readonly failure: FlueExecutionFailure`) are then pinned through
+-- it like any other public signature.
 CREATE VIEW signature_pinned (symbol_id) AS
 WITH RECURSIVE refs (symbol_id, api_symbol_id) AS MATERIALIZED (
   SELECT symbol_id, api_symbol_id FROM signature_refs
 ),
+internal_only (symbol_id) AS MATERIALIZED (
+  SELECT symbol_id FROM mat_base_verdicts v
+  WHERE EXISTS (SELECT 1 FROM json_each(v.reasons) j WHERE j.value = 'internal_refs_only')
+),
 pinned (symbol_id) AS (
   SELECT symbol_id FROM refs
-  WHERE api_symbol_id NOT IN (
-      SELECT symbol_id FROM mat_base_verdicts v
-      WHERE EXISTS (SELECT 1 FROM json_each(v.reasons) j WHERE j.value = 'internal_refs_only'))
+  WHERE api_symbol_id NOT IN (SELECT symbol_id FROM internal_only)
+  UNION
+  SELECT i.symbol_id FROM internal_only i
+  WHERE EXISTS (SELECT 1 FROM occurrences o
+                WHERE o.symbol_id = i.symbol_id AND (o.role & 1) <> 0 AND (o.role & 2097152) <> 0)
   UNION
   SELECT r.symbol_id FROM refs r JOIN pinned p ON p.symbol_id = r.api_symbol_id
 )
