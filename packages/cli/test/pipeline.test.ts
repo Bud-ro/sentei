@@ -139,6 +139,23 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
       .toEqual([['orphanHelper', 'private_dead']]);
     expect(r.packages.find((p) => p.package_id === 'npm:acme/app-astro:@acme/app-astro')?.private_dead_skipped).toBeUndefined();
     expect(r.packages.find((p) => p.package_id === 'npm:acme/app-vite:@acme/app-vite')?.private_dead_skipped).toBeUndefined();
+    // Fix round 8e (repo frameworks): what a framework, a bundler, jscodeshift, Firebase /
+    // terraform, Metro or an Electron window loads by path or by name has no row; only the
+    // one dead helper per package is private_dead (bundled / rn-lib / cloudfn's unused
+    // exports are deletion candidates: their surface now resolves, nothing blocks them).
+    expect(rows.filter((x) => [
+      'footerText', 'slugify', 'remarkPlugin', 'Footer', 'Home', 'sidebars', 'themeClass', 'useCounter', 'clamp', 'handler',
+      'transform', 'parser', 'renameIdentifier', 'ping', 'onSignup', 'translateText', 'Button', 'buttonLabel', 'drawSheet', 'sheetSize',
+    ].includes(x.symbol) && x.package_id.startsWith('npm:acme/frameworks:'))).toEqual([]);
+    expect(rows.filter((x) => x.package_id.startsWith('npm:acme/frameworks:')).map((x) => `${x.symbol} ${x.verdict}`)).toEqual([
+      'bundledMain deletion_candidate', 'internalApi deletion_candidate', 'serverEntry deletion_candidate', 'cloudfnUnused deletion_candidate',
+      'codemodDead private_dead', 'docsDead private_dead', 'rendererDead private_dead', 'functionsDead private_dead', 'nuxtDead private_dead',
+      'renderButton deletion_candidate', 'rnDead private_dead', 'themeDead private_dead',
+    ]);
+    // rn-lib's android/ and ios/ native code does not make it an unindexed consumer of @acme/core,
+    // and the Nx generator template (`"name": "<%= name %>"`) is no package.
+    expect(r.blockers.some((b) => b.blocker_package_id.startsWith('npm:acme/frameworks:'))).toBe(false);
+    expect(r.packages.some((p) => p.name.includes('<%'))).toBe(false);
     // Consumer-only packages without entry points (the nameless demos, the promoted example
     // app) never had private_dead rows either; the note now says so.
     expect(r.packages.filter((p) => p.private_dead_skipped !== undefined).map((p) => p.name)).toEqual([

@@ -1,0 +1,50 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/electron-url/src/main.js",
+    "packages/electron-url/src/renderer.js"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/electron-url",
+  "shorthandRefs": [
+    {
+      "col": 14,
+      "file": "packages/electron-url/src/main.js",
+      "line": 8,
+      "member": "url",
+      "targetCol": 6,
+      "targetFile": "src/main.js",
+      "targetLine": 2,
+      "targetPackage": "@acme/electron-url"
+    },
+    {
+      "col": 14,
+      "file": "packages/electron-url/src/main.js",
+      "line": 9,
+      "member": "path",
+      "targetCol": 6,
+      "targetFile": "src/main.js",
+      "targetLine": 1,
+      "targetPackage": "@acme/electron-url"
+    },
+    {
+      "col": 19,
+      "file": "packages/electron-url/src/renderer.js",
+      "line": 15,
+      "member": "drawSheet",
+      "targetCol": 9,
+      "targetFile": "src/renderer.js",
+      "targetLine": 1,
+      "targetPackage": "@acme/electron-url"
+    }
+  ],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

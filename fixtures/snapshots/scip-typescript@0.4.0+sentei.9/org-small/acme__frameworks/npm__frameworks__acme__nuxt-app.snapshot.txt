@@ -1,0 +1,50 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## app/composables/useCounter.ts
+  import { clamp } from '../../lib/math';
+//^ definition scip-typescript npm @acme/nuxt-app . app/composables/`useCounter.ts`/ enclosing [0:0-6:0]
+//         ^^^^^ reference scip-typescript npm @acme/nuxt-app . lib/`math.ts`/clamp().
+//                      ^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/nuxt-app . lib/`math.ts`/
+
+  // Auto-imported by Nuxt: alive.
+  export function useCounter(): number {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/nuxt-app . app/composables/`useCounter.ts`/useCounter(). enclosing [3:0-5:1]
+    return clamp(1);
+//         ^^^^^ reference scip-typescript npm @acme/nuxt-app . lib/`math.ts`/clamp().
+  }
+
+## lib/math.ts
+  // Used by a composable: alive.
+//^ definition scip-typescript npm @acme/nuxt-app . lib/`math.ts`/ enclosing [1:0-9:0]
+  export function clamp(n: number): number {
+//                ^^^^^ definition scip-typescript npm @acme/nuxt-app . lib/`math.ts`/clamp(). enclosing [1:0-3:1]
+//                      ^ definition scip-typescript npm @acme/nuxt-app . lib/`math.ts`/clamp().(n)
+    return Math.max(0, n);
+//         ^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.core.d.ts`/Math#
+//         ^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.symbol.wellknown.d.ts`/Math#
+//         ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Math#
+//         ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Math.
+//              ^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Math#max().
+//                     ^ reference scip-typescript npm @acme/nuxt-app . lib/`math.ts`/clamp().(n)
+  }
+
+  // Nothing uses it: private_dead.
+  export function nuxtDead(): number {
+//                ^^^^^^^^ definition scip-typescript npm @acme/nuxt-app . lib/`math.ts`/nuxtDead(). enclosing [6:0-8:1]
+    return 0;
+  }
+
+## nuxt.config.ts
+  // A Nuxt 4 app (fix round 8e): app/**, server/** and the config are runtime entries.
+//^ definition scip-typescript npm @acme/nuxt-app . `nuxt.config.ts`/ enclosing [1:0-2:0]
+  export default { modules: [] };
+//                 ^^^^^^^ definition scip-typescript npm @acme/nuxt-app . `nuxt.config.ts`/modules0:
+
+## server/api/health.ts
+  // A Nitro route: alive.
+//^ definition scip-typescript npm @acme/nuxt-app . server/api/`health.ts`/ enclosing [1:0-4:0]
+  export default function handler(): string {
+//                        ^^^^^^^ definition scip-typescript npm @acme/nuxt-app . server/api/`health.ts`/handler(). enclosing [1:0-3:1]
+    return 'ok';
+  }

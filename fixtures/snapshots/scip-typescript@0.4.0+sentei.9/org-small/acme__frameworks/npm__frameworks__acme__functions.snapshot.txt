@@ -1,0 +1,31 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/auth.ts
+  // Deployed through the main's re-export: alive.
+//^ definition scip-typescript npm @acme/functions . src/`auth.ts`/ enclosing [1:0-4:0]
+  export function onSignup(): string {
+//                ^^^^^^^^ definition scip-typescript npm @acme/functions . src/`auth.ts`/onSignup(). enclosing [1:0-3:1]
+    return 'welcome';
+  }
+
+## src/index.ts
+  // Firebase Functions (fix round 8e): firebase.json names this package as the functions
+//^ definition scip-typescript npm @acme/functions . src/`index.ts`/ enclosing [2:0-7:0]
+  // source, so its main's exports, re-exported ones included, are deployed functions.
+  export { onSignup } from './auth';
+//         ^^^^^^^^ reference scip-typescript npm @acme/functions . src/`auth.ts`/onSignup().
+//                         ^^^^^^^^ reference scip-typescript npm @acme/functions . src/`auth.ts`/
+
+  export function ping(): string {
+//                ^^^^ definition scip-typescript npm @acme/functions . src/`index.ts`/ping(). enclosing [4:0-6:1]
+    return 'pong';
+  }
+
+## src/unused.ts
+  // Nothing loads this module: private_dead.
+//^ definition scip-typescript npm @acme/functions . src/`unused.ts`/ enclosing [1:0-4:0]
+  export function functionsDead(): number {
+//                ^^^^^^^^^^^^^ definition scip-typescript npm @acme/functions . src/`unused.ts`/functionsDead(). enclosing [1:0-3:1]
+    return 0;
+  }

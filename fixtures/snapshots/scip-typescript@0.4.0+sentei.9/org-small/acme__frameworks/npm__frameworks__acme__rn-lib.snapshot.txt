@@ -1,0 +1,59 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/Button.android.ts
+  import { buttonLabel } from './shared';
+//^ definition scip-typescript npm @acme/rn-lib . src/`Button.android.ts`/ enclosing [0:0-6:0]
+//         ^^^^^^^^^^^ reference scip-typescript npm @acme/rn-lib . src/`shared.ts`/buttonLabel().
+//                            ^^^^^^^^^^ reference scip-typescript npm @acme/rn-lib . src/`shared.ts`/
+
+  // The android variant of ./Button: alive.
+  export function Button(): string {
+//                ^^^^^^ definition scip-typescript npm @acme/rn-lib . src/`Button.android.ts`/Button(). enclosing [3:0-5:1]
+    return buttonLabel('android');
+//         ^^^^^^^^^^^ reference scip-typescript npm @acme/rn-lib . src/`shared.ts`/buttonLabel().
+  }
+
+## src/Button.ios.ts
+  import { buttonLabel } from './shared';
+//^ definition scip-typescript npm @acme/rn-lib . src/`Button.ios.ts`/ enclosing [0:0-6:0]
+//         ^^^^^^^^^^^ reference scip-typescript npm @acme/rn-lib . src/`shared.ts`/buttonLabel().
+//                            ^^^^^^^^^^ reference scip-typescript npm @acme/rn-lib . src/`shared.ts`/
+
+  // The ios variant of ./Button: alive.
+  export function Button(): string {
+//                ^^^^^^ definition scip-typescript npm @acme/rn-lib . src/`Button.ios.ts`/Button(). enclosing [3:0-5:1]
+    return buttonLabel('ios');
+//         ^^^^^^^^^^^ reference scip-typescript npm @acme/rn-lib . src/`shared.ts`/buttonLabel().
+  }
+
+## src/index.ts
+  // react-native-builder-bob layout (fix round 8e): lib/typescript/commonjs/src/index.d.ts maps
+//^ definition scip-typescript npm @acme/rn-lib . src/`index.ts`/ enclosing [4:0-9:0]
+  // back to this file; `./Button` exists only as Button.ios.ts / Button.android.ts (Metro
+  // picks one), so both are runtime entries.
+  // @ts-ignore: TypeScript resolves no plain ./Button
+  import { Button } from './Button';
+//         ^^^^^^ reference local 0
+
+  export function renderButton(): string {
+//                ^^^^^^^^^^^^ definition scip-typescript npm @acme/rn-lib . src/`index.ts`/renderButton(). enclosing [6:0-8:1]
+    return Button();
+//         ^^^^^^ reference local 0
+  }
+
+## src/shared.ts
+  // Used by both variants: alive.
+//^ definition scip-typescript npm @acme/rn-lib . src/`shared.ts`/ enclosing [1:0-9:0]
+  export function buttonLabel(p: string): string {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/rn-lib . src/`shared.ts`/buttonLabel(). enclosing [1:0-3:1]
+//                            ^ definition scip-typescript npm @acme/rn-lib . src/`shared.ts`/buttonLabel().(p)
+    return p;
+//         ^ reference scip-typescript npm @acme/rn-lib . src/`shared.ts`/buttonLabel().(p)
+  }
+
+  // Nothing uses it: private_dead.
+  export function rnDead(): string {
+//                ^^^^^^ definition scip-typescript npm @acme/rn-lib . src/`shared.ts`/rnDead(). enclosing [6:0-8:1]
+    return '';
+  }

@@ -1,0 +1,16 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/index.ts
+  // infra/main.tf deploys `translateText` (entry_point): an entry symbol, never a verdict.
+//^ definition scip-typescript npm @acme/cloudfn . src/`index.ts`/ enclosing [1:0-9:0]
+  export function translateText(): string {
+//                ^^^^^^^^^^^^^ definition scip-typescript npm @acme/cloudfn . src/`index.ts`/translateText(). enclosing [1:0-3:1]
+    return 'hola';
+  }
+
+  // Nothing deploys or imports it: deletion_candidate.
+  export function cloudfnUnused(): string {
+//                ^^^^^^^^^^^^^ definition scip-typescript npm @acme/cloudfn . src/`index.ts`/cloudfnUnused(). enclosing [6:0-8:1]
+    return '';
+  }

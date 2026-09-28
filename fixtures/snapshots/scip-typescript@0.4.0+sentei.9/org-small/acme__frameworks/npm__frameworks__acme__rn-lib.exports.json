@@ -1,0 +1,48 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/rn-lib/src/Button.android.ts",
+    "packages/rn-lib/src/Button.ios.ts",
+    "packages/rn-lib/src/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/rn-lib/src/Button.android.ts",
+      "exportedAs": "Button",
+      "file": "packages/rn-lib/src/Button.android.ts",
+      "line": 3,
+      "name": "Button",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/rn-lib/src/Button.ios.ts",
+      "exportedAs": "Button",
+      "file": "packages/rn-lib/src/Button.ios.ts",
+      "line": 3,
+      "name": "Button",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/rn-lib/src/index.ts",
+      "exportedAs": "renderButton",
+      "file": "packages/rn-lib/src/index.ts",
+      "line": 6,
+      "name": "renderButton",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/rn-lib",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

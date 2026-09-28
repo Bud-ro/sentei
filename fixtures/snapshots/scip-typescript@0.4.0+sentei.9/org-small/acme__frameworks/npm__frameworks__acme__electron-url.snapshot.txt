@@ -1,0 +1,59 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.js
+  const { app, BrowserWindow } = require('electron');
+//^ definition scip-typescript npm @acme/electron-url . src/`main.js`/ enclosing [0:0-14:0]
+//        ^^^ definition local 1
+//             ^^^^^^^^^^^^^ definition local 2
+  const path = require('path');
+//      ^^^^ definition scip-typescript npm @acme/electron-url . src/`main.js`/path.
+  const url = require('url');
+//      ^^^ definition scip-typescript npm @acme/electron-url . src/`main.js`/url.
+
+  // bluefireteam SpritesheetMapper (fix round 8e): the window's HTML is named by
+  // url.format({ pathname: path.join(__dirname, 'index.html') }) over several lines.
+  app.on('ready', () => {
+//^^^ reference local 1
+    const win = new BrowserWindow({});
+//        ^^^ definition local 5
+//                  ^^^^^^^^^^^^^ reference local 2
+    win.loadURL(url.format({
+//  ^^^ reference local 5
+//              ^^^ reference scip-typescript npm @acme/electron-url . src/`main.js`/url.
+      pathname: path.join(__dirname, 'index.html'),
+//    ^^^^^^^^ definition scip-typescript npm @acme/electron-url . src/`main.js`/pathname0:
+//              ^^^^ reference scip-typescript npm @acme/electron-url . src/`main.js`/path.
+      protocol: 'file:',
+//    ^^^^^^^^ definition scip-typescript npm @acme/electron-url . src/`main.js`/protocol0:
+      slashes: true,
+//    ^^^^^^^ definition scip-typescript npm @acme/electron-url . src/`main.js`/slashes0:
+    }));
+  });
+
+## src/renderer.js
+  // Loaded by index.html: its exports are runtime entry symbols.
+//^ definition scip-typescript npm @acme/electron-url . src/`renderer.js`/ enclosing [1:0-16:0]
+  function drawSheet() {
+//         ^^^^^^^^^ definition scip-typescript npm @acme/electron-url . src/`renderer.js`/drawSheet(). enclosing [1:0-3:1]
+    return sheetSize();
+//         ^^^^^^^^^ reference scip-typescript npm @acme/electron-url . src/`renderer.js`/sheetSize().
+  }
+
+  // Called by drawSheet: alive.
+  function sheetSize() {
+//         ^^^^^^^^^ definition scip-typescript npm @acme/electron-url . src/`renderer.js`/sheetSize(). enclosing [6:0-8:1]
+    return 1;
+  }
+
+  // Nothing calls it: private_dead.
+  function rendererDead() {
+//         ^^^^^^^^^^^^ definition scip-typescript npm @acme/electron-url . src/`renderer.js`/rendererDead(). enclosing [11:0-13:1]
+    return 0;
+  }
+
+  module.exports = { drawSheet };
+//^^^^^^ reference local 3
+//       ^^^^^^^ reference scip-typescript npm @acme/electron-url . src/`renderer.js`/
+//                   ^^^^^^^^^ definition scip-typescript npm @acme/electron-url . src/`renderer.js`/drawSheet0:
+//                   ^^^^^^^^^ reference scip-typescript npm @acme/electron-url . src/`renderer.js`/drawSheet().

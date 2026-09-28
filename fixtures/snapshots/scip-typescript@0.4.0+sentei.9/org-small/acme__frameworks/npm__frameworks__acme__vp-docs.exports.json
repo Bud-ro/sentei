@@ -1,0 +1,51 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/vp-docs/.vitepress/config.ts",
+    "packages/vp-docs/.vitepress/theme/index.ts",
+    "packages/vp-docs/posts.data.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 7,
+      "entry": "packages/vp-docs/.vitepress/config.ts",
+      "exportedAs": "default",
+      "file": "packages/vp-docs/.vitepress/config.ts",
+      "line": 1,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/vp-docs/.vitepress/theme/index.ts",
+      "exportedAs": "default",
+      "file": "packages/vp-docs/.vitepress/theme/index.ts",
+      "line": 3,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/vp-docs/posts.data.ts",
+      "exportedAs": "default",
+      "file": "packages/vp-docs/posts.data.ts",
+      "line": 1,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/vp-docs",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

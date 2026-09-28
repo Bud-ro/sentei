@@ -1,0 +1,14 @@
+{
+  "name": "@acme/bundled",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/esm/index.js",
+    "./server-entry": {
+      "types": "./dist/default-entry/esm/server.d.ts",
+      "default": "./dist/default-entry/esm/server.js"
+    },
+    "./internal": "./dist/node/internal.js"
+  }
+}

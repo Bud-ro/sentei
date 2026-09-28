@@ -1,0 +1,56 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/nuxt-app/app/composables/useCounter.ts",
+    "packages/nuxt-app/nuxt.config.ts",
+    "packages/nuxt-app/server/api/health.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/nuxt-app/app/composables/useCounter.ts",
+      "exportedAs": "useCounter",
+      "file": "packages/nuxt-app/app/composables/useCounter.ts",
+      "line": 3,
+      "name": "useCounter",
+      "sites": []
+    },
+    {
+      "col": 24,
+      "entry": "packages/nuxt-app/server/api/health.ts",
+      "exportedAs": "default",
+      "file": "packages/nuxt-app/server/api/health.ts",
+      "line": 1,
+      "name": "handler",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/nuxt-app/nuxt.config.ts",
+      "exportedAs": "default",
+      "file": "packages/nuxt-app/nuxt.config.ts",
+      "line": 1,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/nuxt-app",
+  "shorthandRefs": [],
+  "unindexedImports": [
+    {
+      "file": "packages/nuxt-app/nuxt.config.ts",
+      "module": "packages/nuxt-app/app/composables/useCounter.ts",
+      "relative": true,
+      "targetPackage": "@acme/nuxt-app"
+    }
+  ],
+  "unresolved": [],
+  "unresolvedImports": []
+}

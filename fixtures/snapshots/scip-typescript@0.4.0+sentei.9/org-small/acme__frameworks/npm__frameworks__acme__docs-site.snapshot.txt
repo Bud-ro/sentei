@@ -1,0 +1,78 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## docusaurus.config.ts
+  // A Docusaurus site (fix round 8e): the config, sidebars, src/theme, src/pages and
+//^ definition scip-typescript npm @acme/docs-site . `docusaurus.config.ts`/ enclosing [3:0-6:0]
+  // src/plugins are runtime entries by convention; so is every own file the config names
+  // with a relative path (require.resolve('./remark-plugin.ts')).
+  export default {
+    presets: [['classic', { docs: { sidebarPath: './sidebars.ts', remarkPlugins: [require.resolve('./remark-plugin.ts')] } }]],
+//  ^^^^^^^ definition scip-typescript npm @acme/docs-site . `docusaurus.config.ts`/presets0:
+//                          ^^^^ definition scip-typescript npm @acme/docs-site . `docusaurus.config.ts`/docs0:
+//                                  ^^^^^^^^^^^ definition scip-typescript npm @acme/docs-site . `docusaurus.config.ts`/sidebarPath0:
+//                                                                ^^^^^^^^^^^^^ definition scip-typescript npm @acme/docs-site . `docusaurus.config.ts`/remarkPlugins0:
+  };
+
+## remark-plugin.ts
+  import { slugify } from './src/lib/text';
+//^ definition scip-typescript npm @acme/docs-site . `remark-plugin.ts`/ enclosing [0:0-6:0]
+//         ^^^^^^^ reference scip-typescript npm @acme/docs-site . src/lib/`text.ts`/slugify().
+//                        ^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/docs-site . src/lib/`text.ts`/
+
+  // Loaded by path from the config: alive.
+  export function remarkPlugin(): string {
+//                ^^^^^^^^^^^^ definition scip-typescript npm @acme/docs-site . `remark-plugin.ts`/remarkPlugin(). enclosing [3:0-5:1]
+    return slugify('Intro');
+//         ^^^^^^^ reference scip-typescript npm @acme/docs-site . src/lib/`text.ts`/slugify().
+  }
+
+## sidebars.ts
+  export const sidebars = { docs: ['intro'] };
+//^ definition scip-typescript npm @acme/docs-site . `sidebars.ts`/ enclosing [0:0-1:0]
+//             ^^^^^^^^ definition scip-typescript npm @acme/docs-site . `sidebars.ts`/sidebars.
+//                          ^^^^ definition scip-typescript npm @acme/docs-site . `sidebars.ts`/docs0:
+
+## src/lib/text.ts
+  // Used by the theme and the remark plugin: alive.
+//^ definition scip-typescript npm @acme/docs-site . src/lib/`text.ts`/ enclosing [1:0-14:0]
+  export function footerText(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/docs-site . src/lib/`text.ts`/footerText(). enclosing [1:0-3:1]
+    return 'footer';
+  }
+
+  // Used by the remark plugin: alive.
+  export function slugify(s: string): string {
+//                ^^^^^^^ definition scip-typescript npm @acme/docs-site . src/lib/`text.ts`/slugify(). enclosing [6:0-8:1]
+//                        ^ definition scip-typescript npm @acme/docs-site . src/lib/`text.ts`/slugify().(s)
+    return s.toLowerCase();
+//         ^ reference scip-typescript npm @acme/docs-site . src/lib/`text.ts`/slugify().(s)
+//           ^^^^^^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/String#toLowerCase().
+  }
+
+  // Nothing uses it: private_dead.
+  export function docsDead(): string {
+//                ^^^^^^^^ definition scip-typescript npm @acme/docs-site . src/lib/`text.ts`/docsDead(). enclosing [11:0-13:1]
+    return 'dead';
+  }
+
+## src/pages/index.ts
+  // A page: alive.
+//^ definition scip-typescript npm @acme/docs-site . src/pages/`index.ts`/ enclosing [1:0-4:0]
+  export default function Home(): string {
+//                        ^^^^ definition scip-typescript npm @acme/docs-site . src/pages/`index.ts`/Home(). enclosing [1:0-3:1]
+    return 'home';
+  }
+
+## src/theme/Footer.ts
+  import { footerText } from '../lib/text';
+//^ definition scip-typescript npm @acme/docs-site . src/theme/`Footer.ts`/ enclosing [0:0-6:0]
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/docs-site . src/lib/`text.ts`/footerText().
+//                           ^^^^^^^^^^^^^ reference scip-typescript npm @acme/docs-site . src/lib/`text.ts`/
+
+  // A swizzled theme component: alive.
+  export default function Footer(): string {
+//                        ^^^^^^ definition scip-typescript npm @acme/docs-site . src/theme/`Footer.ts`/Footer(). enclosing [3:0-5:1]
+    return footerText();
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/docs-site . src/lib/`text.ts`/footerText().
+  }

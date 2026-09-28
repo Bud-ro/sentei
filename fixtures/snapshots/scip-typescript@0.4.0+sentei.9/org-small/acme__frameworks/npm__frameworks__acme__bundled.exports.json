@@ -1,0 +1,48 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/bundled/src/default-entry/server.ts",
+    "packages/bundled/src/index.ts",
+    "packages/bundled/src/node/internalIndex.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/bundled/src/default-entry/server.ts",
+      "exportedAs": "serverEntry",
+      "file": "packages/bundled/src/default-entry/server.ts",
+      "line": 1,
+      "name": "serverEntry",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/bundled/src/index.ts",
+      "exportedAs": "bundledMain",
+      "file": "packages/bundled/src/index.ts",
+      "line": 1,
+      "name": "bundledMain",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/bundled/src/node/internalIndex.ts",
+      "exportedAs": "internalApi",
+      "file": "packages/bundled/src/node/internalIndex.ts",
+      "line": 1,
+      "name": "internalApi",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/bundled",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

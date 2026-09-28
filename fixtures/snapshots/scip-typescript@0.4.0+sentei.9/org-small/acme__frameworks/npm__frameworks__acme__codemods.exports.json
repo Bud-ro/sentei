@@ -1,0 +1,37 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/codemods/src/transforms/rename-api.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 13,
+      "entry": "packages/codemods/src/transforms/rename-api.ts",
+      "exportedAs": "parser",
+      "file": "packages/codemods/src/transforms/rename-api.ts",
+      "line": 8,
+      "name": "parser",
+      "sites": []
+    },
+    {
+      "col": 24,
+      "entry": "packages/codemods/src/transforms/rename-api.ts",
+      "exportedAs": "default",
+      "file": "packages/codemods/src/transforms/rename-api.ts",
+      "line": 4,
+      "name": "transform",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/codemods",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

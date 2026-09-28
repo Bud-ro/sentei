@@ -1,0 +1,8 @@
+{
+  "name": "@acme/codemods",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "jscodeshift": "^17"
+  }
+}

@@ -40,6 +40,16 @@ describe('discoverLocal on fixtures/org-small', () => {
       'acme/app-astro: package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): astro.config.mjs, src/pages/rss.ts',
       'acme/app-vite: package.json: client entry points from HTML / vite / rollup / webpack config: src/main.ts',
       'acme/app-worker: package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): functions/api/hello.ts, src/worker.ts',
+      // Fix round 8e fixture: framework, codemod, Functions, React Native and Electron entries.
+      'acme/frameworks: packages/codemods/package.json: 1 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/codemods/src/transforms/rename-api.ts',
+      'acme/frameworks: packages/docs-site/package.json: 5 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/docs-site/docusaurus.config.ts, packages/docs-site/remark-plugin.ts, packages/docs-site/sidebars.ts, packages/docs-site/src/pages/index.ts, packages/docs-site/src/theme/Footer.ts',
+      'acme/frameworks: packages/electron-url/package.json: client entry points from HTML / vite / rollup / webpack config: packages/electron-url/src/renderer.js',
+      'acme/frameworks: packages/functions/package.json: Firebase Functions source (firebase.json); its exports are deployed functions: packages/functions/src/auth.ts, packages/functions/src/index.ts',
+      'acme/frameworks: packages/nuxt-app/package.json: 3 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/nuxt-app/app/composables/useCounter.ts, packages/nuxt-app/nuxt.config.ts, packages/nuxt-app/server/api/health.ts',
+      'acme/frameworks: packages/rn-lib/package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/rn-lib/src/Button.android.ts, packages/rn-lib/src/Button.ios.ts',
+      'acme/frameworks: packages/vp-docs/package.json: 3 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/vp-docs/.vitepress/config.ts, packages/vp-docs/.vitepress/theme/index.ts, packages/vp-docs/posts.data.ts',
+      // An Nx generator template (its name is `<%= name %>`): never a package.
+      'acme/frameworks: skipped 1 manifest(s) as not org packages (ignoreManifestDirs/ignoreManifests): tools/plugin/src/generators/app/files/package.json',
       'acme/lib-cascade: package.json: client entry points from HTML / vite / rollup / webpack config: src/client.ts',
       'acme/lib-dual: packages/dual-electron/package.json: client entry points from HTML / vite / rollup / webpack config: packages/dual-electron/renderer.js, packages/dual-electron/src/index.js',
       'acme/lib-dual: packages/dual-script/package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): packages/dual-script/next.config.mjs, packages/dual-script/scripts/serve.mjs',
@@ -57,7 +67,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     expect(model.org).toBe('acme');
     expect(model.source).toEqual({ kind: 'local', dir: FIXTURE });
     expect(model.generatedAt).toBe(1_700_000_000);
-    const REPOS = ['app', 'app-astro', 'app-consumer', 'app-dynamic', 'app-lazy', 'app-skew', 'app-vite', 'app-worker', 'lib-cascade', 'lib-core', 'lib-dual', 'lib-dyn', 'lib-lazy', 'lib-lazy-opaque', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'samples', 'tool-py'];
+    const REPOS = ['app', 'app-astro', 'app-consumer', 'app-dynamic', 'app-lazy', 'app-skew', 'app-vite', 'app-worker', 'frameworks', 'lib-cascade', 'lib-core', 'lib-dual', 'lib-dyn', 'lib-lazy', 'lib-lazy-opaque', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'samples', 'tool-py'];
     expect(model.repos.map((r) => r.repo)).toEqual(REPOS.map((n) => `acme/${n}`));
     expect(model.repos[0]!.localPath).toBe(join(FIXTURE, 'repos', 'app'));
 
@@ -76,6 +86,16 @@ describe('discoverLocal on fixtures/org-small', () => {
       // wrangler.jsonc `main` + Pages functions/ (by convention); the `bin` is runtime-only, not an entry point
       { package_id: 'npm:acme/app-worker:@acme/worker', repo: 'acme/app-worker', path: '.', manager: 'npm', name: '@acme/worker', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["functions/api/hello.ts","src/worker.ts"]' },
       { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', path: '.', manager: 'npm', name: '@acme/app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
+      // Fix round 8e: nested / named build outputs (bundled), bob + platform modules (rn-lib), framework conventions.
+      { package_id: 'npm:acme/frameworks:@acme/bundled', repo: 'acme/frameworks', path: 'packages/bundled', manager: 'npm', name: '@acme/bundled', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/bundled/src/default-entry/server.ts","packages/bundled/src/index.ts","packages/bundled/src/node/internalIndex.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/cloudfn', repo: 'acme/frameworks', path: 'packages/cloudfn', manager: 'npm', name: '@acme/cloudfn', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/cloudfn/src/index.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/codemods', repo: 'acme/frameworks', path: 'packages/codemods', manager: 'npm', name: '@acme/codemods', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/codemods/src/transforms/rename-api.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/docs-site', repo: 'acme/frameworks', path: 'packages/docs-site', manager: 'npm', name: '@acme/docs-site', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/docs-site/docusaurus.config.ts","packages/docs-site/remark-plugin.ts","packages/docs-site/sidebars.ts","packages/docs-site/src/pages/index.ts","packages/docs-site/src/theme/Footer.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/electron-url', repo: 'acme/frameworks', path: 'packages/electron-url', manager: 'npm', name: '@acme/electron-url', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/electron-url/src/main.js","packages/electron-url/src/renderer.js"]' },
+      { package_id: 'npm:acme/frameworks:@acme/functions', repo: 'acme/frameworks', path: 'packages/functions', manager: 'npm', name: '@acme/functions', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/functions/src/auth.ts","packages/functions/src/index.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/nuxt-app', repo: 'acme/frameworks', path: 'packages/nuxt-app', manager: 'npm', name: '@acme/nuxt-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/nuxt-app/app/composables/useCounter.ts","packages/nuxt-app/nuxt.config.ts","packages/nuxt-app/server/api/health.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/rn-lib', repo: 'acme/frameworks', path: 'packages/rn-lib', manager: 'npm', name: '@acme/rn-lib', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/rn-lib/src/Button.android.ts","packages/rn-lib/src/Button.ios.ts","packages/rn-lib/src/index.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/vp-docs', repo: 'acme/frameworks', path: 'packages/vp-docs', manager: 'npm', name: '@acme/vp-docs', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/vp-docs/.vitepress/config.ts","packages/vp-docs/.vitepress/theme/index.ts","packages/vp-docs/posts.data.ts"]' },
       // exports "." with an unbuilt `require` arm (fine: `import` resolves), `imports` map arms, index.html client entry
       { package_id: 'npm:acme/lib-cascade:@acme/cascade', repo: 'acme/lib-cascade', path: '.', manager: 'npm', name: '@acme/cascade', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/client.ts","src/impl.node.ts","src/impl.ts","src/index.ts"]' },
       { package_id: 'npm:acme/lib-core:@acme/core', repo: 'acme/lib-core', path: '.', manager: 'npm', name: '@acme/core', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/index.ts"]' },
@@ -117,6 +137,11 @@ describe('discoverLocal on fixtures/org-small', () => {
       { consumer_package_id: 'npm:acme/app-skew:@acme/app-skew', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '1.0.0', resolved_package_id: 'npm:acme/lib-widgets:@acme/widgets', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app-worker:@acme/worker', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-widgets:@acme/widgets', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app:@acme/app', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/codemods', dep_name: 'jscodeshift', dep_manager: 'npm', dep_constraint: '^17', resolved_package_id: null, dev: 1, resolution: null, ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/docs-site', dep_name: '@docusaurus/core', dep_manager: 'npm', dep_constraint: '^3', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/rn-lib', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/rn-lib', dep_name: 'react-native', dep_manager: 'npm', dep_constraint: '*', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/vp-docs', dep_name: 'vitepress', dep_manager: 'npm', dep_constraint: '^1', resolved_package_id: null, dev: 1, resolution: null, ambiguous: 0 },
       { consumer_package_id: 'npm:acme/lib-dual:@acme/dual-app', dep_name: '@acme/dual', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-dual:@acme/dual', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/lib-dual:@acme/dual-app', dep_name: '@acme/dual-legacy', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-dual:@acme/dual-legacy', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/lib-dual:@acme/dual-script', dep_name: 'next', dep_manager: 'npm', dep_constraint: '16.0.0', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
@@ -151,7 +176,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/gone')").run();
     db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:acme/lib-core:@acme/core', 'src/index.ts', 'x')").run();
     writeDiscoverToDb(db, model);
-    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 20 }]);
+    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 21 }]);
     expect(all("SELECT count(*) AS n FROM repos WHERE repo = 'acme/gone'")).toEqual([{ n: 0 }]);
     expect(all('SELECT count(*) AS n FROM symbols')).toEqual([{ n: 0 }]);
   });
@@ -962,7 +987,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 29 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 38 }]);
   });
 });
 

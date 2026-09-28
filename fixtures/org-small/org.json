@@ -9,6 +9,7 @@
     { "name": "app-skew", "default_branch": "main" },
     { "name": "app-vite", "default_branch": "main" },
     { "name": "app-worker", "default_branch": "main" },
+    { "name": "frameworks", "default_branch": "main" },
     { "name": "lib-cascade", "default_branch": "main" },
     { "name": "lib-core", "default_branch": "main" },
     { "name": "lib-dual", "default_branch": "main" },

@@ -1,0 +1,39 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## .vitepress/config.ts
+  // VitePress (fix round 8e): .vitepress/config and theme, *.data.ts loaders are runtime entries.
+//^ definition scip-typescript npm @acme/vp-docs . `.vitepress`/`config.ts`/ enclosing [1:0-2:0]
+  export default { title: 'Docs' };
+//                 ^^^^^ definition scip-typescript npm @acme/vp-docs . `.vitepress`/`config.ts`/title0:
+
+## .vitepress/lib/helpers.ts
+  // Used by the theme: alive.
+//^ definition scip-typescript npm @acme/vp-docs . `.vitepress`/lib/`helpers.ts`/ enclosing [1:0-9:0]
+  export function themeClass(): string {
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/vp-docs . `.vitepress`/lib/`helpers.ts`/themeClass(). enclosing [1:0-3:1]
+    return 'vp';
+  }
+
+  // Nothing uses it: private_dead.
+  export function themeDead(): string {
+//                ^^^^^^^^^ definition scip-typescript npm @acme/vp-docs . `.vitepress`/lib/`helpers.ts`/themeDead(). enclosing [6:0-8:1]
+    return 'dead';
+  }
+
+## .vitepress/theme/index.ts
+  import { themeClass } from '../lib/helpers';
+//^ definition scip-typescript npm @acme/vp-docs . `.vitepress`/theme/`index.ts`/ enclosing [0:0-4:0]
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/vp-docs . `.vitepress`/lib/`helpers.ts`/themeClass().
+//                           ^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/vp-docs . `.vitepress`/lib/`helpers.ts`/
+
+  // The theme entry: alive.
+  export default { enhanceApp(): string { return themeClass(); } };
+//                 ^^^^^^^^^^ definition local 2
+//                                               ^^^^^^^^^^ reference scip-typescript npm @acme/vp-docs . `.vitepress`/lib/`helpers.ts`/themeClass().
+
+## posts.data.ts
+  // A data loader (imported by path from Markdown): alive.
+//^ definition scip-typescript npm @acme/vp-docs . `posts.data.ts`/ enclosing [1:0-2:0]
+  export default { load(): string[] { return []; } };
+//                 ^^^^ definition local 2

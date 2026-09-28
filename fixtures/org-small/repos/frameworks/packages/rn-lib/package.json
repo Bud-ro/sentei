@@ -1,0 +1,16 @@
+{
+  "name": "@acme/rn-lib",
+  "version": "1.0.0",
+  "private": true,
+  "main": "lib/commonjs/index.js",
+  "module": "lib/module/index.js",
+  "types": "lib/typescript/commonjs/src/index.d.ts",
+  "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "peerDependencies": {
+    "react-native": "*"
+  },
+  "dependencies": {
+    "@acme/core": "^1.0.0"
+  }
+}

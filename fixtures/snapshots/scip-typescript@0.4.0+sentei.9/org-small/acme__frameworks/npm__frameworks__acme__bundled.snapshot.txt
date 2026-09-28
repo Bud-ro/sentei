@@ -1,0 +1,35 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## rolldown.config.ts
+  // A named input (fix round 8e): `./dist/node/internal.js` is src/node/internalIndex.ts.
+//^ definition scip-typescript npm @acme/bundled . `rolldown.config.ts`/ enclosing [1:0-2:0]
+  export default { input: { internal: './src/node/internalIndex.ts' }, output: { dir: 'dist/node' } };
+//                 ^^^^^ definition scip-typescript npm @acme/bundled . `rolldown.config.ts`/input0:
+//                          ^^^^^^^^ definition scip-typescript npm @acme/bundled . `rolldown.config.ts`/internal0:
+//                                                                     ^^^^^^ definition scip-typescript npm @acme/bundled . `rolldown.config.ts`/output0:
+//                                                                               ^^^ definition scip-typescript npm @acme/bundled . `rolldown.config.ts`/dir0:
+
+## src/default-entry/server.ts
+  // `./server-entry` (dist/default-entry/esm/server.js).
+//^ definition scip-typescript npm @acme/bundled . src/default-entry/`server.ts`/ enclosing [1:0-4:0]
+  export function serverEntry(): string {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/bundled . src/default-entry/`server.ts`/serverEntry(). enclosing [1:0-3:1]
+    return 'server';
+  }
+
+## src/index.ts
+  // `.` (dist/esm/index.js).
+//^ definition scip-typescript npm @acme/bundled . src/`index.ts`/ enclosing [1:0-4:0]
+  export function bundledMain(): string {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/bundled . src/`index.ts`/bundledMain(). enclosing [1:0-3:1]
+    return 'main';
+  }
+
+## src/node/internalIndex.ts
+  // `./internal` (the rolldown named input `internal`).
+//^ definition scip-typescript npm @acme/bundled . src/node/`internalIndex.ts`/ enclosing [1:0-4:0]
+  export function internalApi(): string {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/bundled . src/node/`internalIndex.ts`/internalApi(). enclosing [1:0-3:1]
+    return 'internal';
+  }

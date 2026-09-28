@@ -1,0 +1,69 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/docs-site/docusaurus.config.ts",
+    "packages/docs-site/remark-plugin.ts",
+    "packages/docs-site/sidebars.ts",
+    "packages/docs-site/src/pages/index.ts",
+    "packages/docs-site/src/theme/Footer.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 13,
+      "entry": "packages/docs-site/sidebars.ts",
+      "exportedAs": "sidebars",
+      "file": "packages/docs-site/sidebars.ts",
+      "line": 0,
+      "name": "sidebars",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/docs-site/remark-plugin.ts",
+      "exportedAs": "remarkPlugin",
+      "file": "packages/docs-site/remark-plugin.ts",
+      "line": 3,
+      "name": "remarkPlugin",
+      "sites": []
+    },
+    {
+      "col": 24,
+      "entry": "packages/docs-site/src/pages/index.ts",
+      "exportedAs": "default",
+      "file": "packages/docs-site/src/pages/index.ts",
+      "line": 1,
+      "name": "Home",
+      "sites": []
+    },
+    {
+      "col": 24,
+      "entry": "packages/docs-site/src/theme/Footer.ts",
+      "exportedAs": "default",
+      "file": "packages/docs-site/src/theme/Footer.ts",
+      "line": 3,
+      "name": "Footer",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "packages/docs-site/docusaurus.config.ts",
+      "exportedAs": "default",
+      "file": "packages/docs-site/docusaurus.config.ts",
+      "line": 3,
+      "name": "default",
+      "note": "default-keyword",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/docs-site",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}
