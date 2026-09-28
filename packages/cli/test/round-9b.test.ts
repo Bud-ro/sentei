@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { importedNames } from '../src/indexers/consumer-checks.ts';
 import { computeExportSurface, nextDotDirEntries } from '../src/indexers/export-surface.ts';
 import { readScipIndex } from '@sentei/core/scip';
-import { RUNTIME_TSCONFIG, scipTypescript } from '../src/indexers/scip-typescript.ts';
+import { BASE_TSCONFIG, RUNTIME_TSCONFIG, scipTypescript } from '../src/indexers/scip-typescript.ts';
 import type { DiscoveredPackage, DiscoveredRepo, ExportsSidecar, IndexerInput } from '../src/indexers/types.ts';
 
 let root: string;
@@ -141,7 +141,11 @@ async function runAdapter(inp: IndexerInput) {
   const out = path.join(root, `out-${inp.pkg.name}`);
   mkdirSync(out, { recursive: true });
   const r = await scipTypescript.run(inp, out);
-  return { ...r, sidecar: JSON.parse(readFileSync(r.exportsFile, 'utf8')) as ExportsSidecar, docs: readScipIndex(r.scipFile).documents.map((d) => d.relativePath).sort() };
+  return {
+    ...r,
+    sidecar: existsSync(r.exportsFile) ? JSON.parse(readFileSync(r.exportsFile, 'utf8')) as ExportsSidecar : undefined,
+    docs: existsSync(r.scipFile) ? readScipIndex(r.scipFile).documents.map((d) => d.relativePath).sort() : [],
+  };
 }
 
 describe('solution-style tsconfigs: entries in no referenced project (astro packages/astro)', () => {
@@ -162,8 +166,8 @@ describe('solution-style tsconfigs: entries in no referenced project (astro pack
     expect(r.status, r.diagnostics.join('\n')).toBe('ok');
     expect(r.diagnostics).toContain(`info: 2 entry point(s) in no project of the solution-style tsconfig (project references) indexed through ${RUNTIME_TSCONFIG}: components/index.ts, types.d.ts`);
     expect(r.docs).toEqual(['components/index.ts', 'src/index.ts', 'types.d.ts']);
-    expect(r.sidecar.exports.map((e) => `${e.entry}#${e.exportedAs}`)).toEqual(['components/index.ts#component', 'src/index.ts#main', 'types.d.ts#Tag']);
-    expect(r.sidecar.missingEntryPoints).toEqual([]);
+    expect(r.sidecar!.exports.map((e) => `${e.entry}#${e.exportedAs}`)).toEqual(['components/index.ts#component', 'src/index.ts#main', 'types.d.ts#Tag']);
+    expect(r.sidecar!.missingEntryPoints).toEqual([]);
     expect(existsSync(path.join(root, 'repos/solution', RUNTIME_TSCONFIG))).toBe(false); // removed after the run
   }, 120_000);
 
@@ -173,5 +177,35 @@ describe('solution-style tsconfigs: entries in no referenced project (astro pack
     }, entries));
     expect(r.status).toBe('partial');
     expect(r.diagnostics.at(-1)).toBe('cause: warn: entry point(s) not in the TypeScript program, export surface unknown: components/index.ts, types.d.ts');
+  }, 120_000);
+});
+
+describe('an extends that cannot be resolved (very_good_workflows site: @tsconfig/docusaurus not installed)', () => {
+  const site = {
+    'package.json': { name: 'site', version: '1.0.0', private: true },
+    'src/pages/index.js': `import { helper } from '../lib/helper';\nexport default function Home() { return helper(); }\n`,
+    'src/lib/helper.js': `export function helper() { return 1; }\n`,
+  };
+
+  it('a package name that is not installed: indexed without it, the rest of the config kept, status ok', async () => {
+    const r = await runAdapter(adapterInput('site', {
+      ...site,
+      'tsconfig.json': '{\n  // editor only\n  "extends": "@tsconfig/docusaurus/tsconfig.json",\n  "compilerOptions": { "baseUrl": ".", "jsx": "react-jsx" },\n}\n',
+    }, { entryPoints: ['src/pages/index.js'] }));
+    expect(r.status, r.diagnostics.join('\n')).toBe('ok');
+    expect(r.diagnostics).toContain(`warn: tsconfig.json extends '@tsconfig/docusaurus/tsconfig.json', which is not installed; indexed through ${BASE_TSCONFIG} `
+      + 'without it (its own compilerOptions, include and files kept; assumed allowJs, module esnext, moduleResolution bundler)');
+    expect(r.docs).toEqual(['src/lib/helper.js', 'src/pages/index.js']);
+    expect(r.sidecar!.exports.map((e) => e.exportedAs)).toEqual(['default']);
+    expect(existsSync(path.join(root, 'repos/site', BASE_TSCONFIG))).toBe(false); // removed after the run
+    expect(readFileSync(path.join(root, 'repos/site/tsconfig.json'), 'utf8')).toContain('@tsconfig/docusaurus'); // never rewritten
+  }, 120_000);
+
+  it('negative: a missing relative extends (a generated .nuxt/tsconfig.json) still fails the index', async () => {
+    const r = await runAdapter(adapterInput('gen', {
+      ...site, 'package.json': { name: 'gen', version: '1.0.0', private: true }, 'tsconfig.json': { extends: './.nuxt/tsconfig.json' },
+    }, { entryPoints: ['src/pages/index.js'] }));
+    expect(r.status).toBe('failed');
+    expect(r.diagnostics.some((d) => d.startsWith('warn: tsconfig.json extends'))).toBe(false);
   }, 120_000);
 });

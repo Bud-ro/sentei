@@ -392,12 +392,17 @@ export const scipTypescript: Indexer = {
     // Runtime entries (scripts, Dockerfile CMD, next.config.*, bins) that no program of
     // the package has: indexed as one more scip-typescript project so their references
     // keep what they use reachable (they are not export surface either way).
-    const runtimeTsconfig = await writeRuntimeTsconfig(repoRoot, dir, tsconfig, pkg, nested, diagnostics);
+    // A package-name `extends` that is not installed: indexed through a copy without it.
+    const baseTsconfig = await writeBaseTsconfig(dir, tsconfig, diagnostics);
+    const effectiveTsconfig = baseTsconfig ?? tsconfig;
+    const runtimeTsconfig = await writeRuntimeTsconfig(repoRoot, dir, effectiveTsconfig, pkg, nested, diagnostics);
 
     try {
       // 3. Index (1–2 are `prepare`).
-      const args = [scipTypescriptBin(), 'index', '--output', scipFile, '--no-progress-bar',
-        ...(runtimeTsconfig !== undefined ? [dir, runtimeTsconfig] : [])];
+      const projects = baseTsconfig !== undefined || runtimeTsconfig !== undefined
+        ? [baseTsconfig ?? dir, ...(runtimeTsconfig !== undefined ? [runtimeTsconfig] : [])]
+        : [];
+      const args = [scipTypescriptBin(), 'index', '--output', scipFile, '--no-progress-bar', ...projects];
       const proc = await runNode({
         what: 'scip-typescript',
         args,
@@ -461,7 +466,7 @@ export const scipTypescript: Indexer = {
             entryPoints: pkg.entryPoints,
             runtimeEntryPoints: runtimeEntryPointsOf(pkg),
             ...(runtimeTsconfig !== undefined ? { runtimeTsconfig } : {}),
-            tsconfig: existsSync(tsconfig) ? tsconfig : undefined,
+            tsconfig: existsSync(tsconfig) ? effectiveTsconfig : undefined,
             orgPackageNames: input.orgPackages.flatMap(({ pkg: p }) => (p.manager === 'npm' && p.name !== null ? [p.name] : [])),
             orgPackageDirs: input.orgPackages.flatMap(({ repo: r, pkg: p }) => {
               const d = packageDir(r, p);
@@ -495,6 +500,7 @@ export const scipTypescript: Indexer = {
       return result();
     } finally {
       if (runtimeTsconfig !== undefined) rmSync(runtimeTsconfig, { force: true });
+      if (baseTsconfig !== undefined) rmSync(baseTsconfig, { force: true });
     }
   },
 };
@@ -556,7 +562,7 @@ async function writeRuntimeTsconfig(
   if (outside.length === 0 && outsideSurface.length === 0) return undefined;
   const rel = (abs: string): string => `./${path.relative(dir, abs).split(path.sep).join('/')}`;
   const files = [...outside, ...outsideSurface].sort();
-  const config = { extends: './tsconfig.json', compilerOptions: { allowJs: true }, include: [], files: files.map(rel) };
+  const config = { extends: `./${path.basename(tsconfig)}`, compilerOptions: { allowJs: true }, include: [], files: files.map(rel) };
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
   if (outside.length > 0) {
     diagnostics.push(`info: ${outside.length} runtime entry point(s) outside the tsconfig program indexed through ${RUNTIME_TSCONFIG}: ${outside.map((f) => rel(f).slice(2)).join(', ')}`);
@@ -564,6 +570,56 @@ async function writeRuntimeTsconfig(
   if (outsideSurface.length > 0) {
     diagnostics.push(`info: ${outsideSurface.length} entry point(s) in no project of the solution-style tsconfig (project references) indexed through ${RUNTIME_TSCONFIG}: ${outsideSurface.map((f) => rel(f).slice(2)).join(', ')}`);
   }
+  return file;
+}
+
+/**
+ * Name of the tsconfig the adapter writes next to a package's tsconfig.json (removed
+ * after the run) when that tsconfig `extends` a package that is not installed
+ * (writeBaseTsconfig).
+ */
+export const BASE_TSCONFIG = 'tsconfig.sentei-base.json';
+
+/**
+ * When the package tsconfig `extends` a package TypeScript cannot resolve (not
+ * installed: very_good_workflows' docs site extends `@tsconfig/docusaurus/tsconfig.json`
+ * with a lockfile install that does not provide it, or `--no-install`), scip-typescript
+ * fails on the config (TS6053) and the package is `failed`. Writes `<dir>/BASE_TSCONFIG`:
+ * the same config (compilerOptions, include, files, exclude, references, the `extends`
+ * entries that do resolve) without the unresolvable ones, plus `allowJs` and, when
+ * neither is set, `module: esnext` / `moduleResolution: bundler` (what such a base
+ * usually provides; the most permissive resolution, and an org module that still does
+ * not resolve makes the result partial as before). Returns its path, or undefined when
+ * the tsconfig is absent, unreadable or resolves. A missing relative `extends` (a
+ * generated `.nuxt/tsconfig.json`) is left alone (export-surface unresolvableExtends).
+ */
+async function writeBaseTsconfig(dir: string, tsconfig: string, diagnostics: string[]): Promise<string | undefined> {
+  const file = path.join(dir, BASE_TSCONFIG);
+  rmSync(file, { force: true }); // never a previous run's leftover
+  if (!existsSync(tsconfig)) return undefined;
+  const { unresolvableExtends } = await import('./export-surface.ts');
+  const found = unresolvableExtends(tsconfig);
+  if (found === undefined || found.missing.length === 0) return undefined;
+  const { config, missing } = found;
+  const ext = config['extends'];
+  const kept = (Array.isArray(ext) ? ext : [ext]).filter((e) => typeof e === 'string' && !missing.includes(e));
+  const options = { ...(typeof config['compilerOptions'] === 'object' && config['compilerOptions'] !== null ? config['compilerOptions'] as Record<string, unknown> : {}) };
+  const assumed: string[] = [];
+  if (!('allowJs' in options)) {
+    options['allowJs'] = true;
+    assumed.push('allowJs');
+  }
+  if (!('module' in options) && !('moduleResolution' in options)) {
+    options['module'] = 'esnext';
+    options['moduleResolution'] = 'bundler';
+    assumed.push('module esnext', 'moduleResolution bundler');
+  }
+  const out: Record<string, unknown> = { ...config, compilerOptions: options };
+  delete out['extends'];
+  if (kept.length > 0) out['extends'] = Array.isArray(ext) ? kept : kept[0];
+  writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
+  diagnostics.push(`warn: ${path.basename(tsconfig)} extends ${missing.map((m) => `'${m}'`).join(', ')}, which is not installed; `
+    + `indexed through ${BASE_TSCONFIG} without it (its own compilerOptions, include and files kept${assumed.length > 0 ? `; assumed ${assumed.join(', ')}` : ''})`);
   return file;
 }
 

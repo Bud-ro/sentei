@@ -828,6 +828,30 @@ export function filesOutsidePrograms(
 }
 
 /**
+ * The `extends` entries of a tsconfig (a string or an array) that name a package
+ * (`@tsconfig/docusaurus/tsconfig.json`, `astro/tsconfigs/strict`) TypeScript cannot
+ * resolve from the tsconfig's directory: not installed. A relative or absolute path that
+ * does not exist (a generated `.nuxt/tsconfig.json`, `.svelte-kit/tsconfig.json`) is not
+ * returned: such a base carries path aliases and generated types, and indexing without it
+ * would make own imports unresolved (fail closed: that index still fails). Also returns
+ * the config as read (JSONC), or undefined when it does not parse.
+ */
+export function unresolvableExtends(tsconfig: string): { config: Record<string, unknown>; missing: string[] } | undefined {
+  const read = ts.readConfigFile(tsconfig, ts.sys.readFile);
+  if (read.error !== undefined || typeof read.config !== 'object' || read.config === null) return undefined;
+  const config = read.config as Record<string, unknown>;
+  const ext = config['extends'];
+  const names = typeof ext === 'string' ? [ext] : Array.isArray(ext) ? ext.filter((e): e is string => typeof e === 'string') : [];
+  const dir = path.dirname(tsconfig);
+  const missing = names.filter((name) => {
+    if (name.startsWith('.') || path.isAbsolute(name)) return false;
+    const probe = ts.parseJsonConfigFileContent({ extends: name, files: [] }, ts.sys, dir, undefined, tsconfig);
+    return probe.errors.some((d) => d.code === 6053 || d.code === 5083);
+  });
+  return { config, missing };
+}
+
+/**
  * Whether a tsconfig has project `references` (read without `extends`, which does not
  * carry them): a solution-style config (`"files": []` + references, astro's packages) or
  * a mixed one. Its entries that no referenced project includes are indexed through the
