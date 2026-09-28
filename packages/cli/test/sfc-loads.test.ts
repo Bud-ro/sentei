@@ -144,6 +144,43 @@ describe('scanUnindexedImports: SFC aliases, <script src>, import.meta.glob, fra
     expect(out.every((u) => u.targetPackage === '@acme/app' || !u.relative)).toBe(true);
   });
 
+  it('MDX: org imports inside fenced blocks and inline code are example text, not consumers (round 8d, trpc docs)', () => {
+    write({
+      'www/blog/post.mdx': [
+        "import { Tabs } from '@acme/ui';",
+        '',
+        'Call `import { initTRPC } from "@acme/server"` once, then:',
+        '',
+        '```ts twoslash',
+        "import { createTRPCClient } from '@acme/client';",
+        "const x = require('@acme/server/adapters');",
+        '```',
+        '',
+        '~~~js',
+        "import('@acme/next');",
+        '~~~',
+        '',
+        '````md',
+        '```ts',
+        "import { nested } from '@acme/nested';",
+        '```',
+        '````',
+      ].join('\n'),
+      // A plain code file keeps every import (only MDX has markdown code).
+      'www/src/plain.ts': "// import { commented } from '@acme/client'\nexport {};\n",
+    });
+    const pkgDir = path.join(root, 'www');
+    const out = scanUnindexedImports({
+      repoRoot: root, pkgDir, nestedPackageDirs: [], indexedFiles: new Set(),
+      orgPackageNames: new Set(['@acme/ui', '@acme/server', '@acme/client', '@acme/next', '@acme/nested']),
+      selfName: 'www',
+    });
+    expect(out.map((u) => `${rel(u)}${u.scope ? ` [${u.scope}]` : ''}`)).toEqual([
+      'www/blog/post.mdx -> @acme/ui (@acme/ui) [docs]',
+      'www/src/plain.ts -> @acme/client (@acme/client)',
+    ]);
+  });
+
   it('a package-like specifier matched only by a catch-all paths entry falls back to a bare import, not a gap', () => {
     write({
       'catchall/src/A.vue': "<script>import { core } from '@acme/core'; import { h } from 'vue';</script>\n",

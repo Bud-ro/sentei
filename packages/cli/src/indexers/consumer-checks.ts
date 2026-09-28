@@ -1042,7 +1042,7 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
       continue;
     }
     if (text.includes('import.meta.glob')) {
-      // (An MDX file's fenced blocks are example code, never run: see `live` below.)
+      // (An MDX file's fenced blocks are example code, never run: see `specifiers` below.)
       for (const g of importMetaGlobs(abs.endsWith('.mdx') ? stripInlineCode(stripFences(text)) : text)) {
         walkedRel ??= files.map(toRepoRel);
         const matched = g === undefined ? undefined : globMatches(g, file, pkgLocation.path, input.aliases, pkgDir, toRepoRel, walkedRel);
@@ -1057,17 +1057,17 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
       }
     }
     if (indexed) continue; // TypeScript resolved its imports (aliases included)
-    const specifiers = specifiersOf(text);
+    // An MDX file's fenced code blocks and inline code spans are example text, never run
+    // (drizzle-orm-docs tutorials show `import { db } from '@/db'`; trpc's docs site shows
+    // `import { initTRPC } from '@trpc/server'` in hundreds of blocks, which made the site
+    // an unindexed consumer blocking 269 of 333 findings): only its real (ESM) imports
+    // load anything, own code and org packages alike.
+    const specifiers = specifiersOf(abs.endsWith('.mdx') ? stripInlineCode(stripFences(text)) : text);
     if (sfc && /\.(?:astro|vue)$/.test(abs)) {
       for (const m of text.matchAll(SCRIPT_SRC_RE)) specifiers.push(m[1]!);
     }
-    // Own-code loads of an MDX file: only its real imports, not the example code of its
-    // fenced blocks (drizzle-orm-docs tutorials show `import { db } from '@/db'`). Imports
-    // of org packages by name are still read from the whole text (fail closed).
-    const live = abs.endsWith('.mdx') ? new Set(specifiersOf(stripFences(text))) : undefined;
     for (const module of specifiers) {
-      if (sfc && live !== undefined && !live.has(module) && barePackageName(module) === undefined) continue;
-      if (sfc && (live === undefined || live.has(module))) {
+      if (sfc) {
         if (VIRTUAL_MODULE.test(module)) continue;
         const targets = aliasTargets(module, pkgDir, input.aliases);
         if (targets !== undefined && aliased(file, module, targets, scope)) continue;
