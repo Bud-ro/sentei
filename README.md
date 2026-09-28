@@ -44,7 +44,12 @@ opens pull requests.
   default; git does not).
 - npm packages are installed with their own lockfile before indexing
   (`npm ci`, `--frozen-lockfile` / `--immutable`, scripts off), found from the
-  package dir up to the repo root. No lifecycle script of the repo or its
+  package dir up to the repo root. A package inside a workspace installs at the
+  workspace root with the root's lockfile and manager (the root has a lockfile and
+  lists the package in `pnpm-workspace.yaml`, its package.json `workspaces` or
+  `lerna.json`, or its lockfile names the package as a workspace importer); a
+  lockfile of the package's own inside such a workspace is ignored with a `warn:`
+  line in the package's diagnostics. No lifecycle script of the repo or its
   dependencies runs: yarn berry gets `--mode=skip-build` and
   `YARN_ENABLE_SCRIPTS=false`, and reads a copy of the repo's `.yarnrc.yml`
   without its `plugins` (yarn plugins are repo code; one ran the root
@@ -110,7 +115,8 @@ opens pull requests.
   missing (under `lib/` or `bin/`), or that lies outside the package, makes the
   package `partial`. A package whose `lib/` has Dart files but whose index has
   none of them is `failed`, never `ok`.
-- Files a runtime starts (a `node scripts/x.mjs` / `tsx` script, a Dockerfile `CMD`,
+- Files a runtime starts (a `node scripts/x.mjs` / `tsx` / `tsm` / `tsimp` /
+  `vite-node` / `jiti` / `bun` / `deno run` script, a Dockerfile `CMD`,
   Next.js `next.config.*` / `middleware`, a `bin`) are entry points that keep what
   they use reachable, never export surface. When the package's tsconfig does not
   include them, they are indexed through a temporary
@@ -144,7 +150,12 @@ opens pull requests.
   `functions.source`: its main and the modules it re-exports, whose exports are all
   deployed); a terraform `entry_point = "name"` (that export of the repo's
   packages); React Native platform modules (`x.ios.js`, `x.android.js`, … of an
-  imported `./x`, and root `index.<platform>.*`). A React Native / Expo package's
+  imported `./x`, and root `index.<platform>.*`); a React Native app's root
+  `index.{js,ts,tsx}` (`AppRegistry.registerComponent`, no exports) and `App.*`
+  (with a `react-native` / `expo` dependency or an `app.json`); an Expo config
+  plugin's `app.plugin.js` (Expo loads it by path; it stays surface too) and the
+  source of what it requires (`require('./plugin/build')` → `plugin/src/index.ts`,
+  also through `plugin/tsconfig.json`'s outDir → rootDir). A React Native / Expo package's
   native code (`android/`, `ios/`, `macos/`, `windows/`, and Java / Kotlin / Swift
   / Objective-C / C++ anywhere in it) never makes it an unindexed consumer.
 - Build output maps back to source through the tsconfig outDirs, the dist→src
@@ -153,7 +164,10 @@ opens pull requests.
   dirs dropped anywhere (`lib/typescript/commonjs/index.d.ts`,
   `dist/default-entry/esm/server.js`), and a bundler's named input (`input: {
   internal: 'src/node/internalIndex.ts' }` → `dist/node/internal.js`, also after a
-  build script's `mv dist/index.mjs dist/cli.js`); a top-level
+  build script's `mv dist/index.mjs dist/cli.js`), a build dir named for one target
+  (`dist-electron/main.js`, `build-<name>/`, `out-<name>/`, `<name>-dist/` →
+  `src/electron/main.ts`, then `electron/`, then `src/`), and a build dir nested in
+  the package (`plugin/build/index.js` → `plugin/src/index.ts`); a top-level
   `main` / `types` that maps nowhere is fine when `source` / `react-native` names the
   source (react-native-builder-bob). A manifest published from its build dir
   (drizzle-orm: `main: ./index.cjs`, no `exports`) names paths under the tsconfig
@@ -506,8 +520,9 @@ all of them are ignored as copies, with a warning listing them and the
 A manifest that does not parse (a mason template's `{{…}}` tags) or whose name is a
 template (`{{project_name}}`) is no package either: a warning, and the report's
 ignored-manifest warning names it. Mason `__brick__/` and `.mason/` are default
-ignored dirs, and `.nx`, `.turbo`, `.yarn`, `.pnpm-store` (package-manager and
-build-tool state) are never scanned, like `node_modules`.
+ignored dirs, and `.nx`, `.turbo`, `.cache`, `.parcel-cache`, `.yarn`,
+`.pnpm-store` (package-manager and build-tool state) are never scanned, like
+`node_modules`.
 
 A `package.json` without `"name"` that declares dependencies (a demo app, a Phoenix
 `assets/` bundle) is still indexed, as a consumer: its name is `_unnamed/<dir>`
