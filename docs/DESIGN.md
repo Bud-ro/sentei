@@ -4777,3 +4777,130 @@ in a public signature, lazy component loaders and the default export, Next route
 under dot directories, solution-style tsconfigs, an unresolvable `extends`) are
 fix round 9 (9a manifests / globs / installs / report, 9b adapter program /
 signatures / loads).
+
+### Phase 3 fix round 9a
+
+From the wrong-row classes of the Phase 3 rerun at `840cd97` (EVAL.md). **Measured**
+with round 8e's `disc.ts` / `cmp.mjs` (discover only, `discoverRepos` over the
+read-only clones of the four rerun orgs, base `bddbd35` against this branch; scripts
+in `$TMPDIR/r9a/`), and the install decision with `installLocation` on the same
+clones. Nothing was re-indexed.
+
+| org | packages | packages whose entries or flags changed | unresolved entry points | detail |
+|---|---|---|---|---|
+| invertase | 42 | 15 | 0 → 0 | 12 Expo plugin packages (the 9 GAM adapters, the adapter `_template`, `react-native-google-mobile-ads`, `react-native-coverage`): `app.plugin.js` and `plugin/src/index.ts` runtime entries; RNGoogleMobileAdsExample, react-native-coverage-example-dynamic, RNAppleAuthExample: root `index.js` (and `App.tsx`) |
+| withastro | 134 | 3 | 1 → 0 | marlo `@workspace/desktop` `dist-electron/main.js` → `src/electron/main.ts` (its `opaque_consumer` flag gone); houston-bot `src/stats.ts` (`tsm`); @astrojs/repl `scripts/build.ts` (`tsm`) |
+| nuxt | 101 | 0 | | |
+| VeryGoodOpenSource | 30 | 0 | | |
+
+**1. Script runners (manifests.ts `SCRIPT_RUNNERS`).** `tsm` was missing
+(houston-discord's `"collect:stats": "tsm src/stats.ts"`: `src/stats.ts` and all it
+imports were private_dead). Checked against the brief's list: `bun run`, `deno run`
+(positional skip), `jiti`, `esno`, `vite-node`, `ts-node-esm` were there, `node
+--import tsx` / `node --loader ts-node/esm` work through the value flags. Added `tsm`,
+`tsimp`, `sucrase-node`, `swc-node`, `ts-node-transpile-only`. `bunx` / `npx` are
+deliberately not runners: they run a package binary (`bunx vitest run x.test.ts` would
+make the test file an entry); `bunx tsm x.ts` is found through the inner `tsm`.
+`runnerTargets` now dedupes (`node --import tsx x.ts` named `x.ts` twice). Measured:
+withastro houston-bot and @astrojs/repl.
+
+**2. Named build dirs (manifests.ts `namedBuildDirGroups`, rule g of
+`distToSrcGroups`).** A leaf under `dist-<name>/`, `build-<name>/`, `out-<name>/` or
+`<name>-dist/` maps to `src/<name>/<p>`, then `<name>/<p>` (TypeScript or JavaScript),
+then `src/<p>` (TypeScript only: a JS file directly under `src/` is more likely the
+other target's code), existence-checked like every rule; `sourceForBuildOutput` goes
+through it. Measured: marlo `@workspace/desktop` (`main: dist-electron/main.js`)
+resolves to `src/electron/main.ts` and is no longer opaque (the 386 withastro rows it
+blocked; not re-analyzed). Negative tests: `dist-electron/gone.js`,
+`distribution/main.js`, `dist-/main.js`, a JavaScript `src/main.js`.
+
+**3. Expo config plugins (manifests.ts `expoConfigPluginEntries`,
+`nestedBuildDirGroups`, rule h).** A package-root `app.plugin.{js,cjs,mjs,ts}` is a
+runtime entry that stays surface (like a Firebase main: it is an `exports` leaf, and
+Expo loads it by path and calls its default export), and every own code file it
+names with a relative literal is a runtime entry, mapped like a deep build-output
+import (`sourceForLayout`, extracted from `sourceForBuildOutput`), else through the
+tsconfig of the literal's top dir (`plugin/tsconfig.json`: outDir → rootDir). The
+new rule h maps a build dir nested in the package, `<d>/{build,dist,out}/<p>` →
+`<d>/src/<p>` at any depth (never `lib/`, which is as often a source dir name), so
+`require('./plugin/build')` → `plugin/build/index.js` → `plugin/src/index.ts`.
+**Deviation:** the condition is the file alone (the brief: an `expo` /
+`@expo/config-plugins` dependency *or* the file; a dependency without the file names
+nothing to load). The adapter's own-module-load scan (consumer-checks, another unit)
+resolves `require('./plugin/build')` through `sourceForBuildOutput` without a change:
+the org-small snapshot of `@acme/expo-plugin` has the shorthandRef
+`app.plugin.js` → `plugin/src/index.ts#withAcme` and no flag. Fixture: org-small
+`frameworks/packages/expo-plugin` (package.json, `app.plugin.js`,
+`plugin/src/index.ts`; it depends on `@acme/core`): on the base (`39be8e7`) it is
+flagged `opaque_consumer` and `dynamic_access` and blocks `@acme/core`
+(`unusedFn` and `internalOnlyFn` turn `blocked`, the `islandA` / `islandB`
+private_dead rows go); now it has no flag and blocks nothing (pipeline test). New
+snapshot files only.
+
+**4. React Native apps (manifests.ts `reactNativeAppEntries`).** For a package that
+declares `react-native` or `expo` (any block) or has an `app.json` at its root, the
+root `index.{js,jsx,ts,tsx}` (Metro's start: `AppRegistry.registerComponent(appName,
+() => App)`, no exports) and `App.{js,jsx,ts,tsx}` are runtime entries; a declared
+`main: index.js` stays surface too. Before, RNGoogleMobileAdsExample's `index.js`
+was the index fallback, a surface guess outside the tsconfig program with no exports
+("no exports found by text scan"), so the app was partial and blocked 197 rows; as a
+runtime entry the adapter's runtime tsconfig indexes it and its imports count. One
+existing test changed on purpose: an Expo app's declared `main: index.js` is now a
+runtime entry as well.
+
+**5. Build caches (globs.ts `BUILD_CACHE_DIRS`, `inBuildCacheDir`).** One list:
+`node_modules`, `.nx`, `.turbo`, `.cache`, `.parcel-cache`, `.yarn`, `.pnpm-store`
+(`.nx/cache/**`, `.nx/workspace-data/**`, `.yarn/cache/**` are covered by their top
+dir). manifests.ts `ALWAYS_SKIP_DIRS` (listFiles: discover, the witness, entry
+resolution, github.ts tree probes) is built from it and gains `.cache` and
+`.parcel-cache`; `.nx`, `.turbo`, `.yarn`, `.pnpm-store` were already there (round
+8e's routing note is done). **Not fixed here (routed):** the react-native-google-mobile-ads
+`unindexed_consumer` flag came from the adapter's own-file walk, consumer-checks.ts
+`walkPackageFiles` / `UNINDEXED_SKIP_DIRS`, which lacks `.nx` and `.parcel-cache`: the
+`.nx/cache` files are created by the install, after discover listed the repo. That
+set should include `BUILD_CACHE_DIRS` (now exported from `@sentei/core`).
+
+**6. Installs at the workspace root (scip-typescript.ts `installLocation`,
+`pnpmWorkspaceGlobs`).** Before, `install` took the first dir with a lockfile from the
+package up; @tanstack-query-firebase/react's stale `packages/react/package-lock.json`
+inside a pnpm workspace made it run `npm ci` there, which failed (54 blocked rows).
+Now that first dir is passed over when a dir further up has a lockfile and has the
+package as a workspace member: a `pnpm-workspace.yaml` `packages` glob, the root
+package.json `workspaces` (array or `{ packages }`), `lerna.json` `packages`
+(`packages/*` by default), or the root lockfile naming the package as a workspace
+importer (pnpm `importers` key, package-lock `"packages"` key, yarn `@workspace:<rel>`,
+bun `workspaces` key). **Deviation:** a root lockfile of another manager counts only
+when it names the package (a standalone project with its own lockfile under a repo
+whose root lockfile does not list it keeps its install), and a workspace root without
+a lockfile does not win (a frozen install needs one). The nearest such root installs
+with its manager (`choosePackageManager` as before), and a `warn: <lockfile>
+ignored: the package is a member of the workspace at <root> (<why>); installing
+there` line goes to the package's diagnostics. Packages outside every workspace
+behave as before (the existing install tests are unchanged). Measured on the clone:
+`packages/react` → the repo root with `pnpm-lock.yaml` (pnpm-workspace.yaml);
+`packages/angular` and the invertase yarn workspaces install at their roots, as before.
+
+**7. `org_dead` out of report.json (report.ts `reportFile`, `ReportFile`).**
+report.json dropped nothing: it carried `views.org_dead` and `packages[].counts.org_dead`
+although README called the view legacy (`--view org_dead` only). The report stage now
+writes `reportFile(r, --view)`: the asserting views (ASSERTING_VIEWS, i.e. org_dead)
+are left out unless `--view` names them; `--view org_dead` writes them (with the
+counts), and prints and emits SARIF for them as before. The default SARIF set already
+left org_dead out (`defaultSarifViews`). **Deviation from round 3's rule** ("report.json
+is the same whatever `--view` says", "Phase 2 fix round 2: report views and rerun
+cost"): a `--view org_dead` run adds that view to report.json, a later default run
+removes it again. The in-memory `Report` (buildReport) keeps every view, so the
+summary and SARIF code are unchanged.
+
+**Not verified / routed.**
+- No org was re-indexed or re-analyzed; the numbers are discover-level, and the row
+  counts in the brief (131, 197, 386, 54) are the blockers' current counts, not
+  measured effects.
+- The index cache is keyed by head sha and adapter version, not by discover's entry
+  lists: rules 1–4 reach a rerun of the same heads only with `index --force` or an
+  adapter version bump (the other unit's call; the adapter's output for these
+  packages changes). Likewise the install change (6) needs `--retry-failed` for a
+  cached failure whose failureInputHash is unchanged.
+- consumer-checks.ts `UNINDEXED_SKIP_DIRS` (rule 5, above).
+- The install at the workspace root was unit-tested with a fake runner; no live
+  pnpm install of tanstack-query-firebase was run.
