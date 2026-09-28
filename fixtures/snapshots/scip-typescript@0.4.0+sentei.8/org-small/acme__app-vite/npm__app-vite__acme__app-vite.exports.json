@@ -1,0 +1,45 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "src/main.ts"
+  ],
+  "entrySymbols": [
+    {
+      "col": 10,
+      "file": "src/env.d.ts",
+      "kind": "ambient",
+      "line": 0,
+      "name": "ImportMeta"
+    }
+  ],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/app-vite:@acme/app-vite",
+  "shorthandRefs": [],
+  "unindexedImports": [
+    {
+      "file": "src/components/Legacy.vue",
+      "module": "src/components/legacy.ts",
+      "relative": true,
+      "targetPackage": "@acme/app-vite"
+    },
+    {
+      "file": "src/components/Profile.vue",
+      "module": "src/api/client.ts",
+      "relative": true,
+      "targetPackage": "@acme/app-vite"
+    },
+    {
+      "file": "src/main.ts",
+      "module": "src/pages/home.ts",
+      "relative": true,
+      "targetPackage": "@acme/app-vite"
+    }
+  ],
+  "unresolved": [],
+  "unresolvedImports": []
+}

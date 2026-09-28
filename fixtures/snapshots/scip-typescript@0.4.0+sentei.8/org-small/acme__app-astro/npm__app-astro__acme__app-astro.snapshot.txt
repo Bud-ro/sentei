@@ -1,0 +1,60 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/content/first.ts
+  export const title = 'First post';
+//^ definition scip-typescript npm @acme/app-astro . src/content/`first.ts`/ enclosing [0:0-1:0]
+//             ^^^^^ definition scip-typescript npm @acme/app-astro . src/content/`first.ts`/title.
+
+## src/lib/feed.ts
+  export function feedItems(): string[] {
+//^ definition scip-typescript npm @acme/app-astro . src/lib/`feed.ts`/ enclosing [0:0-9:0]
+//                ^^^^^^^^^ definition scip-typescript npm @acme/app-astro . src/lib/`feed.ts`/feedItems(). enclosing [0:0-2:1]
+    return ['a'];
+  }
+
+  // Unused, but a component imports this module and sentei cannot tell which names it
+  // uses: every top-level declaration of it is kept alive (fail closed).
+  export function astroDead(): number {
+//                ^^^^^^^^^ definition scip-typescript npm @acme/app-astro . src/lib/`feed.ts`/astroDead(). enclosing [6:0-8:1]
+    return 0;
+  }
+
+## src/lib/orphan.ts
+  // Nothing loads this module. It would be private_dead, but the site's entry set is not
+//^ definition scip-typescript npm @acme/app-astro . src/lib/`orphan.ts`/ enclosing [2:0-5:0]
+  // credible (its roots are file-routed pages): not reported, a skipped note instead.
+  export function orphanHelper(): number {
+//                ^^^^^^^^^^^^ definition scip-typescript npm @acme/app-astro . src/lib/`orphan.ts`/orphanHelper(). enclosing [2:0-4:1]
+    return 1;
+  }
+
+## src/lib/posts.ts
+  export function listPosts(): string[] {
+//^ definition scip-typescript npm @acme/app-astro . src/lib/`posts.ts`/ enclosing [0:0-7:0]
+//                ^^^^^^^^^ definition scip-typescript npm @acme/app-astro . src/lib/`posts.ts`/listPosts(). enclosing [0:0-2:1]
+    return [postTitle('hello')];
+//          ^^^^^^^^^ reference scip-typescript npm @acme/app-astro . src/lib/`posts.ts`/postTitle().
+  }
+
+  function postTitle(s: string): string {
+//         ^^^^^^^^^ definition scip-typescript npm @acme/app-astro . src/lib/`posts.ts`/postTitle(). enclosing [4:0-6:1]
+//                   ^ definition scip-typescript npm @acme/app-astro . src/lib/`posts.ts`/postTitle().(s)
+    return s.toUpperCase();
+//         ^ reference scip-typescript npm @acme/app-astro . src/lib/`posts.ts`/postTitle().(s)
+//           ^^^^^^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/String#toUpperCase().
+  }
+
+## src/pages/rss.ts
+  import { feedItems } from '../lib/feed';
+//^ definition scip-typescript npm @acme/app-astro . src/pages/`rss.ts`/ enclosing [0:0-6:0]
+//         ^^^^^^^^^ reference scip-typescript npm @acme/app-astro . src/lib/`feed.ts`/feedItems().
+//                          ^^^^^^^^^^^^^ reference scip-typescript npm @acme/app-astro . src/lib/`feed.ts`/
+
+  // An Astro endpoint: loaded by the file router (a convention load of astro.config.mjs).
+  export function GET(): number {
+//                ^^^ definition scip-typescript npm @acme/app-astro . src/pages/`rss.ts`/GET(). enclosing [3:0-5:1]
+    return feedItems().length;
+//         ^^^^^^^^^ reference scip-typescript npm @acme/app-astro . src/lib/`feed.ts`/feedItems().
+//                     ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array#length.
+  }

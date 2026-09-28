@@ -188,6 +188,13 @@ export interface ReportPackage {
   counts: Record<string, number>;
   exported: number;
   symbols: number;
+  /**
+   * Set when the package gets no private_dead rows because its entry set is not
+   * credible (analyze.sql private_dead_skipped): `reason` is `no known entry points` or
+   * `unresolved load: <specifier> in <file>`, `symbols` the private symbols unreachable
+   * from what sentei sees (not reported). Absent otherwise.
+   */
+  private_dead_skipped?: { reason: string; symbols: number };
 }
 
 export interface ReportBlocker {
@@ -744,6 +751,12 @@ export function buildReport(opts: BuildReportOptions): Report {
   // Private without closedOrg (private_packages minus its closedOrg clause)?
   const privateByVisibility = (p: { visibility: string }): boolean =>
     p.visibility === 'private' || (p.visibility === 'published-private' && policy.trustPrivateRegistry === true);
+  // Packages whose private_dead rows were skipped (analyze.sql private_dead_skipped; the
+  // view exists once analyze has run, which buildReport requires anyway).
+  const hasSkippedView = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'private_dead_skipped'").get() !== undefined;
+  const skippedOf = new Map((hasSkippedView
+    ? db.prepare('SELECT package_id, reason, symbols FROM private_dead_skipped').all() as Array<{ package_id: string; reason: string; symbols: number }>
+    : []).map((r) => [r.package_id, { reason: r.reason, symbols: r.symbols }]));
   const packages: ReportPackage[] = pkgRows
     .map((p) => {
       const mine = findings.filter((f) => f.package_id === p.package_id);
@@ -754,6 +767,7 @@ export function buildReport(opts: BuildReportOptions): Report {
           : view.rows;
         return [v, rows.filter((f) => f.package_id === p.package_id).length];
       }));
+      const skip = skippedOf.get(p.package_id);
       return {
         package_id: p.package_id,
         name: p.name,
@@ -774,6 +788,7 @@ export function buildReport(opts: BuildReportOptions): Report {
         counts,
         exported: p.exported,
         symbols: p.symbols,
+        ...(skip !== undefined ? { private_dead_skipped: skip } : {}),
       };
     })
     .sort(cmpBy((p) => p.package_id));
@@ -984,6 +999,12 @@ export function formatSummary(report: Report, opts: FormatSummaryOptions = {}): 
   line('unexport', v.unexport.rows.length + v.unexport.published.length,
     v.unexport.published.length > 0 ? `  (${v.unexport.published.length} in published packages: deprecate the export first)` : '');
   line('private_dead', v.private_dead.rows.length);
+  const skippedPkgs = report.packages.filter((p) => p.private_dead_skipped !== undefined);
+  if (selected.has('private_dead') && skippedPkgs.length > 0) {
+    const n = skippedPkgs.reduce((a, p) => a + p.private_dead_skipped!.symbols, 0);
+    lines.push(`  (private_dead skipped for ${skippedPkgs.length} package(s) whose entry points sentei cannot see; `
+      + `${n} unreachable private symbol(s) not reported: ${capList(skippedPkgs.map((p) => `${p.name} (${p.private_dead_skipped!.reason})`), MAX_LIST_ITEMS, 200)})`);
+  }
   line('needs_review', v.needs_review.rows.length);
   line('blocked', v.blocked.rows.length);
   line('version_skew', v.version_skew.rows.length);

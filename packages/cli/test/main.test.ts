@@ -234,7 +234,9 @@ describe('timings and --quiet', () => {
     const quiet = await run('run', '--org-dir', orgDir, '--work', work, '--no-install', '--quiet');
     expect(quiet.code).toBe(0);
     expect(quiet.out).not.toContain('done in');
-    expect(quiet.out).not.toMatch(/^\[discover\]/m);
+    // (Warnings stay: app-astro's "no entry points resolved".)
+    expect(quiet.out).not.toMatch(/^\[discover\] (?!warning:)/m);
+    expect(quiet.out).toMatch(/^\[discover\] warning: acme\/app-astro: package\.json: no entry points resolved$/m);
     expect(quiet.out).toContain('Top blockers');
     expect(quiet.out).toMatch(/^sentei .* report, generated/m);
   }, 300_000);

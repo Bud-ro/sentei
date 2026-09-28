@@ -1,0 +1,41 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/app-astro:@acme/app-astro",
+  "shorthandRefs": [],
+  "unindexedImports": [
+    {
+      "file": "astro.config.mjs",
+      "module": "src/pages/rss.ts",
+      "relative": true,
+      "targetPackage": "@acme/app-astro"
+    },
+    {
+      "file": "src/pages/index.astro",
+      "module": "src/content/first.ts",
+      "relative": true,
+      "targetPackage": "@acme/app-astro"
+    },
+    {
+      "file": "src/pages/index.astro",
+      "module": "src/lib/feed.ts",
+      "relative": true,
+      "targetPackage": "@acme/app-astro"
+    },
+    {
+      "file": "src/pages/index.astro",
+      "module": "src/lib/posts.ts",
+      "relative": true,
+      "targetPackage": "@acme/app-astro"
+    }
+  ],
+  "unresolved": [],
+  "unresolvedImports": []
+}

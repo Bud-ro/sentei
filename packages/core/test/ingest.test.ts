@@ -1145,14 +1145,25 @@ describe('ingestOrg (synthetic SCIP)', () => {
       unindexedImports: [
         { file: 'components/Card.vue', module: 'src/a', targetPackage: '@acme/lib', relative: true },
         { file: 'components/Gone.vue', module: 'src/missing.ts', targetPackage: '@acme/lib', relative: true },
+        // An alias naming no file (fix round 8c): recorded as a gap, nothing seeded.
+        { file: 'components/Alias.vue', module: '~/nowhere/thing', targetPackage: '@acme/lib', relative: true, unresolved: true },
       ],
     });
     const c = run();
-    expect(c.relativeUnindexedImports).toBe(2);
+    expect(c.relativeUnindexedImports).toBe(3);
+    expect(c.unresolvedLoads).toBe(2);
     expect(db.prepare('SELECT consumer_package_id, target_package_id, file FROM witness_files ORDER BY file').all()).toEqual([
+      { consumer_package_id: 'npm:acme/mono:@acme/lib', target_package_id: 'npm:acme/mono:@acme/lib', file: 'components/Alias.vue' },
       { consumer_package_id: 'npm:acme/mono:@acme/lib', target_package_id: 'npm:acme/mono:@acme/lib', file: 'components/Card.vue' },
       { consumer_package_id: 'npm:acme/mono:@acme/lib', target_package_id: 'npm:acme/mono:@acme/lib', file: 'components/Gone.vue' },
     ]);
+    // unindexed_loads: the resolved load names the document; the others are gaps (resolved 0).
+    expect(db.prepare('SELECT file, module, resolved FROM unindexed_loads ORDER BY file').all()).toEqual([
+      { file: 'components/Alias.vue', module: '~/nowhere/thing', resolved: 0 },
+      { file: 'components/Card.vue', module: 'src/a.ts', resolved: 1 },
+      { file: 'components/Gone.vue', module: 'src/missing.ts', resolved: 0 },
+    ]);
+    expect(logs.some((l) => l.includes('components/Alias.vue loads ~/nowhere/thing, which names no file of the package'))).toBe(true);
     // Top-level non-exported declarations of the imported module: entry_symbols (members and exports not).
     expect(db.prepare('SELECT s.name FROM entry_symbols e JOIN symbols s USING (symbol_id) ORDER BY s.name').all()).toEqual([{ name: 'Api' }, { name: 'shown' }]);
     expect(count(db, "SELECT count(*) AS n FROM package_flags WHERE flag = 'unindexed_consumer'")).toBe(0);

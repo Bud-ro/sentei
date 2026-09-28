@@ -115,6 +115,27 @@ opens pull requests.
   `./src/index.{js,ts,jsx,tsx}` without one). A script that loads build output
   (`./dist/main.js`) is mapped to its source like a declared entry, or to the
   webpack entry its `[name].js` names.
+- Own code that single-file components and bundlers load where no index sees it
+  keeps its top-level declarations alive (all of them: sentei cannot see which
+  names are used): relative imports in `.vue` / `.svelte` / `.astro` / `.marko` /
+  `.mdx` files, their aliased imports (`~/lib/api`, `@/api/client`: through the
+  package tsconfig's `paths`, else the Vite / Nuxt / Astro conventions `~/` and
+  `@/` → `src/` when it exists, else the package root, `~~/` and `@@/` → the root,
+  SvelteKit `$lib/` → `src/lib/`; Nuxt's `#imports` / `#app` are skipped; an
+  alias into another org package is an unindexed import of it), `<script src>` in
+  `.astro` / `.vue` files, every file an `import.meta.glob('./pages/*.ts')`
+  pattern matches (in any own file, `!` exclusions and `{a,b}` braces included),
+  and the files a framework loads by convention from its config (Astro:
+  `src/pages/**` endpoints, middleware, actions, content config; Nuxt:
+  auto-imported `composables/`, `utils/`, `stores/`, `shared/`, `server/utils/`,
+  plugins, route middleware, local modules; plus own files the config names, such
+  as Starlight's `routeMiddleware: './src/routeData.ts'`). These are seeds, not
+  entry points (see `private_dead` below). An MDX file's fenced code blocks are
+  example code: only its real imports count here. An alias or glob pattern that
+  names no file is recorded as an unresolved load (`unindexed_loads`, resolved = 0).
+- Importing a module runs its top-level code: a module one of whose declarations
+  is reachable (or that a reachable module imports) keeps alive what its
+  top-level statements and initializers use.
 
   of them is `failed`, never `ok`. Every `.dart` file of the package's `lib/`,
   `bin/`, `test/`, `example/`, `tool/`, `benchmark/`, `web/`,
@@ -462,9 +483,24 @@ else about the world goes in, so every way of reading the result is a
 | `deletion_candidate` | private package (or, with `closedOrg`, a published one), no counted references (or only test references), old enough, not kept, witness found nothing |
 | `deprecation_candidate` | published package (never with `closedOrg`), same evidence (the witness ran too); or, with reason `internal_refs_only`, an export used only inside its published package |
 | `unexport_candidate` | private package with dependents in the org, only used inside its own package: drop the `export` (see below for what never gets one) |
-| `private_dead` | not exported, unreachable from the package's entry points (now, or once the candidates it names are gone) |
+| `private_dead` | not exported, unreachable from the package's entry points (now, or once the candidates it names are gone); only in a package whose entry set sentei trusts (below) |
 | `needs_review` | would be a candidate (or an unexport) but the witness found a textual mention |
 | `blocked` | would have had a verdict, but an opaque package prevents it (`blocked_by`) |
+
+`private_dead` is reported only for a package whose entry set is credible: it has
+a declared or convention entry point (an export, a manifest `main` / `exports` /
+`bin`, a runtime entry: scripts, Dockerfile `CMD`, HTML / bundler client entries,
+Next.js / Nuxt / SvelteKit routes, wrangler `main`, a Dart `main` or builder) and
+none of its own loads went unresolved (an alias or `import.meta.glob` naming no
+file, a loaded file that is not indexed). Seeds from single-file components alone
+do not count: an Astro site with no entry point (its roots are file-routed pages)
+used to get every module its components do not import directly as a false
+`private_dead` row. Such a package gets no `private_dead` rows (fail closed); the
+summary says so under the view totals (`(private_dead skipped for N package(s)
+whose entry points sentei cannot see; M unreachable private symbol(s) not
+reported: <package> (no known entry points), <package> (unresolved load: ~/x in
+src/pages/a.astro), …)`) and `report.json` carries
+`packages[].private_dead_skipped` (`reason`, `symbols`).
 
 No unexport (and no published `deprecation_candidate [internal_refs_only]`) is
 proposed for:
@@ -589,7 +625,7 @@ and every view under `views`, each `{ description, assertion?, rows }`:
 | `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `only_docs_refs` / `dead_island` (empty with `closedOrg`) | DEPRECATE | `sentei/deprecate` (note) |
 | `org_dead` | **legacy, prefer `closedOrg`**: the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion**; empty with `closedOrg` | ORG-DEAD, only with `--view org_dead` | `sentei/org-dead` (warning), only with `--view org_dead` |
 | `unexport` | `unexport_candidate`, plus (`published`) `deprecation_candidate` with only `internal_refs_only`; never for a private app nothing in the org depends on, nor for a type in a public signature | UNEXPORT | `sentei/unexport` (note) |
-| `private_dead` | `private_dead`, minus the helpers of a published package that only its `deprecate` rows unlock (those are in `org_dead`; none with `closedOrg`) | PRIV-DEAD | `sentei/private-dead` (note) |
+| `private_dead` | `private_dead`, minus the helpers of a published package that only its `deprecate` rows unlock (those are in `org_dead`; none with `closedOrg`); packages without a credible entry set have none (`packages[].private_dead_skipped`, a note under the view totals) | PRIV-DEAD | `sentei/private-dead` (note) |
 | `needs_review` | `needs_review` | REVIEW | `sentei/needs-review` (note) |
 | `blocked` | `blocked` | BLOCKED | `sentei/blocked` (note) |
 | `version_skew` | `versionSkew` | VERSION-SKEW | `sentei/version-skew` (note) |
@@ -709,12 +745,15 @@ sqlite> SELECT * FROM blocked_packages;       -- who blocks whom
 sqlite> SELECT * FROM repo_history;           -- which repos blame dated (full / shallow / none)
 
 sqlite> SELECT * FROM promoted_packages;      -- example apps / benchmarks indexed as consumers, and why
+sqlite> SELECT * FROM unindexed_loads WHERE resolved = 0;   -- aliases / globs that named no file
+sqlite> SELECT * FROM private_dead_skipped;   -- packages with no private_dead rows, and why
 ```
 
 `packages/core/sql/analyze.sql` (recreated on every `analyze`) defines the
 views: `external_refs`, `internal_refs`, `test_only_refs`, `symbol_age_ok`,
 `kept_symbols`, `reachable`, `verdict_blockers`, `verdicts`, `candidate_symbols`,
-`reachable_after`, `candidate_reach`, `unreachable_before`, `private_dead`, and
+`reachable_after`, `candidate_reach`, `unreachable_before`, `private_dead`,
+`private_dead_packages` (whose entry set is credible), `private_dead_skipped`, and
 their helpers. `schema.sql` defines `private_packages`, `opaque_packages`
 and `blocked_packages`. The `policy` table holds the policy in effect.
 

@@ -1,0 +1,7 @@
+---
+import { listPosts } from '../lib/posts';
+import { feedItems } from '~/lib/feed';
+const posts = import.meta.glob('../content/*.ts', { eager: true });
+---
+<ul>{listPosts().map((p) => <li>{p}</li>)}</ul>
+<p>{feedItems().length} items, {Object.keys(posts).length} posts</p>

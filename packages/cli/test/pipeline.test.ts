@@ -127,6 +127,36 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     // default ./src/index.js (loaded as dist/main.js by an inline require in the index.html
     // that main.js opens with loadFile) keep their helpers alive; only the unused ones are dead.
     expect(rows.filter((x) => ['renderPage', 'formatTitle', 'rendererBanner'].includes(x.symbol))).toEqual([]);
+    // Fix round 8c. app-vite: an `@/` alias from a .vue file (fetchUser), a <script src>
+    // (legacyInit), an import.meta.glob match (homePage, pageTitle) and a module-level
+    // statement of a loaded module (refreshToken) keep their code alive; authDead and
+    // viteDead stay private_dead (expected-findings). app-astro has no entry point sentei
+    // knows (its roots are file-routed pages): no private_dead at all (src/lib/orphan.ts,
+    // which nothing loads, is not reported), a skipped note instead.
+    expect(rows.filter((x) => ['fetchUser', 'legacyInit', 'homePage', 'pageTitle', 'refreshToken', 'mountApp'].includes(x.symbol))).toEqual([]);
+    expect(rows.filter((x) => x.package_id === 'npm:acme/app-astro:@acme/app-astro')).toEqual([]);
+    expect(r.packages.find((p) => p.package_id === 'npm:acme/app-astro:@acme/app-astro')?.private_dead_skipped)
+      .toEqual({ reason: 'no known entry points', symbols: 1 });
+    expect(r.packages.find((p) => p.package_id === 'npm:acme/app-vite:@acme/app-vite')?.private_dead_skipped).toBeUndefined();
+    // Consumer-only packages without entry points (the nameless demos, the promoted example
+    // app) never had private_dead rows either; the note now says so.
+    expect(r.packages.filter((p) => p.private_dead_skipped !== undefined).map((p) => p.name)).toEqual([
+      '@acme/app-astro', '_unnamed/unnamed-demo', '_unnamed/unnamed-demo-2', '@acme/sample-app',
+    ]);
+    expect(lines.find((l) => l.includes('private_dead skipped'))).toMatch(
+      /^ {2}\(private_dead skipped for 4 package\(s\) whose entry points sentei cannot see; \d+ unreachable private symbol\(s\) not reported: @acme\/app-astro \(no known entry points\), /);
+    await withCtx(org, async (ctx) => {
+      expect(ctx.db.prepare(`SELECT package_id, file, module, resolved FROM unindexed_loads
+        WHERE package_id LIKE 'npm:acme/app-%' ORDER BY package_id, file, module`).all()).toEqual([
+        { package_id: 'npm:acme/app-astro:@acme/app-astro', file: 'astro.config.mjs', module: 'src/pages/rss.ts', resolved: 1 },
+        { package_id: 'npm:acme/app-astro:@acme/app-astro', file: 'src/pages/index.astro', module: 'src/content/first.ts', resolved: 1 },
+        { package_id: 'npm:acme/app-astro:@acme/app-astro', file: 'src/pages/index.astro', module: 'src/lib/feed.ts', resolved: 1 },
+        { package_id: 'npm:acme/app-astro:@acme/app-astro', file: 'src/pages/index.astro', module: 'src/lib/posts.ts', resolved: 1 },
+        { package_id: 'npm:acme/app-vite:@acme/app-vite', file: 'src/components/Legacy.vue', module: 'src/components/legacy.ts', resolved: 1 },
+        { package_id: 'npm:acme/app-vite:@acme/app-vite', file: 'src/components/Profile.vue', module: 'src/api/client.ts', resolved: 1 },
+        { package_id: 'npm:acme/app-vite:@acme/app-vite', file: 'src/main.ts', module: 'src/pages/home.ts', resolved: 1 },
+      ]);
+    });
 
     // Fix round 3. @acme/dual-script's runtime entries outside its tsconfig program
     // (a `node scripts/serve.mjs` start script, next.config.mjs, a CommonJS bin) are

@@ -155,10 +155,17 @@ export interface ExportsSidecar {
     file: string; module: string; targetPackage: string; scope?: 'script' | 'docs' | 'test';
     /**
      * true: `module` is a repo-relative file of the package's OWN code (a `.vue` /
-     * `.svelte` single-file component importing `./components`), `targetPackage` the
-     * package itself. Never a package name: see IngestCounts.relativeUnindexedImports.
+     * `.svelte` single-file component importing `./components` or `~/lib/api`, a
+     * `<script src>`, an `import.meta.glob` match), `targetPackage` the package itself.
+     * Never a package name: see IngestCounts.relativeUnindexedImports.
      */
     relative?: boolean;
+    /**
+     * With `relative`: the load names no file sentei could resolve (an alias, a glob
+     * pattern it cannot read); `module` is the specifier. An `unindexed_loads` row with
+     * resolved = 0: the package gets no private_dead rows.
+     */
+    unresolved?: boolean;
   }>;
   /**
    * `{ ...ns }` spreads of an org namespace import (`import * as _pkg from './utils/pkg';
@@ -301,14 +308,19 @@ export interface IngestCounts {
   runtimeEntrySymbols: number;
   /**
    * Sidecar unindexedImports with `relative: true`: an unindexed own file (a `.vue` /
-   * `.svelte` component) importing the package's own module `module`. Each becomes a
-   * self `witness_files` row (consumer = target = the package: the witness name-searches
-   * the component, so a package export it names is downgraded), and the imported
-   * module's top-level declarations that are not package exports become entry_symbols
-   * (we cannot see which names the component uses: keep them all alive, fail closed).
-   * An imported module that is not an indexed document is warned about.
+   * `.svelte` component) importing the package's own module `module` (relatively, by
+   * an alias, by `<script src>`), or any own file's `import.meta.glob` match. Each
+   * becomes a self `witness_files` row (consumer = target = the package: the witness
+   * name-searches the loading file, so a package export it names is downgraded) and an
+   * `unindexed_loads` row, and the loaded module's top-level declarations that are not
+   * package exports become entry_symbols (we cannot see which names the component uses:
+   * keep them all alive, fail closed). A load that names no file (`unresolved`) or a
+   * module that is not an indexed document is an `unindexed_loads` row with resolved = 0
+   * (the package's entry set is incomplete: no private_dead) and is warned about.
    */
   relativeUnindexedImports: number;
+  /** Of relativeUnindexedImports: loads recorded with resolved = 0 (see above). */
+  unresolvedLoads: number;
   /**
    * Packages whose .scip could not be used (undecodable, or containing unparseable SCIP
    * symbols): flagged index_failed and skipped, the rest of the org ingested (warned).
@@ -725,7 +737,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     namespaceMemberRefs: 0, unmatchedNamespaceMemberRefs: 0, shorthandRefs: 0, unmatchedShorthandRefs: 0, exportAliases: 0,
     resolvedUnresolvedImports: 0, deepImportExports: 0,
     unmatchedEntrySymbols: 0, namespaceSpreadRefs: 0, unmatchedNamespaceSpreadRefs: 0, droppedModuleRefs: 0, witnessFiles: 0,
-    generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, packageErrors: 0, skippedInvalidOccurrences: 0,
+    generatedDocuments: 0, runtimeEntrySymbols: 0, relativeUnindexedImports: 0, unresolvedLoads: 0, packageErrors: 0, skippedInvalidOccurrences: 0,
     ambiguousSymbolRefs: 0, conditionalImports: 0, conditionalMirroredSymbols: 0, conditionalExportSymbols: 0, unmatchedConditionalImports: 0, sharedDefinitions: 0, warnings: 0,
   };
 
@@ -739,6 +751,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     db.exec('DELETE FROM occurrences');
     db.exec('DELETE FROM unresolved_refs');
     db.exec('DELETE FROM witness_files');
+    db.exec('DELETE FROM unindexed_loads');
     db.exec('DELETE FROM documents');
     db.exec('DELETE FROM entry_symbols');
     db.exec('DELETE FROM symbols');
@@ -760,6 +773,9 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       parent: db.prepare('UPDATE symbols SET parent_symbol_id = ? WHERE symbol_id = ?'),
       document: db.prepare('INSERT INTO documents (package_id, file, module_symbol_id, is_entry, is_generated) VALUES (?, ?, ?, ?, ?)'),
       witnessFile: db.prepare('INSERT OR IGNORE INTO witness_files (consumer_package_id, target_package_id, file) VALUES (?, ?, ?)'),
+      // A load seen resolved once stays resolved (the same module named twice, e.g. by two globs).
+      load: db.prepare(`INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES (?, ?, ?, ?)
+        ON CONFLICT (package_id, file, module) DO UPDATE SET resolved = max(resolved, excluded.resolved)`),
       occurrence: db.prepare(`INSERT INTO occurrences
         (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -1330,7 +1346,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     const unmatchedEntry: string[] = [];
     const exportedIds = new Set<number>();
     /** Sidecar unindexedImports with `relative: true` (handled after the export surface). */
-    const relativeImports: Array<{ packageId: string; repo: string; file: string; module: string }> = [];
+    const relativeImports: Array<{ packageId: string; repo: string; file: string; module: string; unresolved: boolean }> = [];
     const docByFile = new Map(docs.map((w) => [`${w.repo}\0${w.file}`, w]));
     for (const { packageId, repo, data } of sidecars) {
       for (const e of data.exports) {
@@ -1390,7 +1406,7 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       // not block a whole package, the witness reads them.
       for (const u of data.unindexedImports ?? []) {
         if (u.relative === true) {
-          relativeImports.push({ packageId, repo, file: u.file, module: u.module });
+          relativeImports.push({ packageId, repo, file: u.file, module: u.module, unresolved: u.unresolved === true });
           continue;
         }
         const resolved = resolveName(packageId, `npm:${barePackageName(u.module)}`);
@@ -1531,14 +1547,23 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
       for (const r of relativeImports) {
         counts.witnessFiles += Number(st.witnessFile.run(r.packageId, r.packageId, r.file).changes);
         counts.relativeUnindexedImports += 1;
+        if (r.unresolved) {
+          st.load.run(r.packageId, r.file, r.module, 0);
+          counts.unresolvedLoads += 1;
+          warn(`${r.packageId}: ${r.file} loads ${r.module}, which names no file of the package; no private_dead for it`);
+          continue;
+        }
         const mod = posix.normalize(r.module);
         const w = ['', '.ts', '.tsx', '.js', '.mjs', '.jsx', '/index.ts', '/index.js']
           .map((ext) => docAt.get(`${r.repo}\0${mod}${ext}`))
           .find((d) => d !== undefined && d.packageId === r.packageId);
         if (!w) {
+          st.load.run(r.packageId, r.file, mod, 0);
+          counts.unresolvedLoads += 1;
           warn(`${r.packageId}: unindexed ${r.file} imports own module ${JSON.stringify(r.module)}, which is not an indexed document`);
           continue;
         }
+        st.load.run(r.packageId, r.file, w.file, 1);
         for (const t of topPrivate.all(w.packageId, w.file, w.moduleSymbolId) as Array<{ symbol_id: number }>) st.entrySymbol.run(t.symbol_id, 'runtime');
       }
     }

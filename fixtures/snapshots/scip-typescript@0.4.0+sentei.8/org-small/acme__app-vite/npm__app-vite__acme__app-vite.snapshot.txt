@@ -1,0 +1,114 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/api/client.ts
+  import { refreshToken } from '../auth';
+//^ definition scip-typescript npm @acme/app-vite . src/api/`client.ts`/ enclosing [0:0-11:0]
+//         ^^^^^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/`auth.ts`/refreshToken().
+//                             ^^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/`auth.ts`/
+
+  const handlers: Array<() => string> = [];
+//      ^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/api/`client.ts`/handlers.
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.core.d.ts`/Array#
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.iterable.d.ts`/Array#
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.symbol.wellknown.d.ts`/Array#
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es2016.array.include.d.ts`/Array#
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es2019.array.d.ts`/Array#
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es2022.array.d.ts`/Array#
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array#
+//                ^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array.
+
+  export function fetchUser(): string {
+//                ^^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/api/`client.ts`/fetchUser(). enclosing [4:0-6:1]
+    return handlers.map((h) => h()).join(',');
+//         ^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/api/`client.ts`/handlers.
+//                  ^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array#map().
+//                       ^ definition local 5
+//                             ^ reference local 5
+//                                  ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array#join().
+  }
+
+  // Module-level code runs when the module is loaded: refreshToken is alive although no
+  // declaration of this module references it (drizzle-team 3310snake src/api/instance.ts).
+  handlers.push(refreshToken);
+//^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/api/`client.ts`/handlers.
+//         ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array#push().
+//              ^^^^^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/`auth.ts`/refreshToken().
+
+## src/auth.ts
+  export function refreshToken(): string {
+//^ definition scip-typescript npm @acme/app-vite . src/`auth.ts`/ enclosing [0:0-7:0]
+//                ^^^^^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/`auth.ts`/refreshToken(). enclosing [0:0-2:1]
+    return 'token';
+  }
+
+  export function authDead(): string {
+//                ^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/`auth.ts`/authDead(). enclosing [4:0-6:1]
+    return 'dead';
+  }
+
+## src/components/legacy.ts
+  export function legacyInit(): void {}
+//^ definition scip-typescript npm @acme/app-vite . src/components/`legacy.ts`/ enclosing [0:0-1:0]
+//                ^^^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/components/`legacy.ts`/legacyInit(). enclosing [0:0-0:37]
+
+## src/env.d.ts
+  interface ImportMeta {
+//^ definition scip-typescript npm @acme/app-vite . src/`env.d.ts`/ enclosing [0:0-3:0]
+//          ^^^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/`env.d.ts`/ImportMeta# enclosing [0:0-2:1]
+    glob(pattern: string | string[], options?: { eager?: boolean }): Record<string, unknown>;
+//  ^^^^ definition scip-typescript npm @acme/app-vite . src/`env.d.ts`/ImportMeta#glob().
+//       ^^^^^^^ definition scip-typescript npm @acme/app-vite . src/`env.d.ts`/ImportMeta#glob().(pattern)
+//                                   ^^^^^^^ definition scip-typescript npm @acme/app-vite . src/`env.d.ts`/ImportMeta#glob().(options)
+//                                               ^^^^^ definition scip-typescript npm @acme/app-vite . src/`env.d.ts`/ImportMeta#glob().(options)typeLiteral0:eager.
+//                                                                   ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Record#
+  }
+
+## src/main.ts
+  import { mountApp } from './mount';
+//^ definition scip-typescript npm @acme/app-vite . src/`main.ts`/ enclosing [0:0-5:0]
+//         ^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/`mount.ts`/mountApp().
+//                         ^^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/`mount.ts`/
+
+  // Every page module is loaded by the glob (no import names them).
+  const pages = import.meta.glob('./pages/*.ts');
+//      ^^^^^ definition scip-typescript npm @acme/app-vite . src/`main.ts`/pages.
+//                          ^^^^ reference scip-typescript npm @acme/app-vite . src/`env.d.ts`/ImportMeta#glob().
+  mountApp(Object.keys(pages));
+//^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/`mount.ts`/mountApp().
+//         ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object#
+//         ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Object.
+//                ^^^^ reference scip-typescript npm typescript . lib/`lib.es2015.core.d.ts`/ObjectConstructor#keys().
+//                ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/ObjectConstructor#keys().
+//                     ^^^^^ reference scip-typescript npm @acme/app-vite . src/`main.ts`/pages.
+
+## src/mount.ts
+  export function mountApp(names: string[]): number {
+//^ definition scip-typescript npm @acme/app-vite . src/`mount.ts`/ enclosing [0:0-3:0]
+//                ^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/`mount.ts`/mountApp(). enclosing [0:0-2:1]
+//                         ^^^^^ definition scip-typescript npm @acme/app-vite . src/`mount.ts`/mountApp().(names)
+    return names.length;
+//         ^^^^^ reference scip-typescript npm @acme/app-vite . src/`mount.ts`/mountApp().(names)
+//               ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array#length.
+  }
+
+## src/pages/home.ts
+  export function homePage(): string {
+//^ definition scip-typescript npm @acme/app-vite . src/pages/`home.ts`/ enclosing [0:0-7:0]
+//                ^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/pages/`home.ts`/homePage(). enclosing [0:0-2:1]
+    return pageTitle('home');
+//         ^^^^^^^^^ reference scip-typescript npm @acme/app-vite . src/pages/`home.ts`/pageTitle().
+  }
+
+  function pageTitle(name: string): string {
+//         ^^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/pages/`home.ts`/pageTitle(). enclosing [4:0-6:1]
+//                   ^^^^ definition scip-typescript npm @acme/app-vite . src/pages/`home.ts`/pageTitle().(name)
+    return `# ${name}`;
+//              ^^^^ reference scip-typescript npm @acme/app-vite . src/pages/`home.ts`/pageTitle().(name)
+  }
+
+## src/unused.ts
+  // Nothing loads this module: its declarations stay private_dead.
+//^ definition scip-typescript npm @acme/app-vite . src/`unused.ts`/ enclosing [1:0-2:0]
+  export function viteDead(): void {}
+//                ^^^^^^^^ definition scip-typescript npm @acme/app-vite . src/`unused.ts`/viteDead(). enclosing [1:0-1:35]

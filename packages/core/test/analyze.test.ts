@@ -638,6 +638,59 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(() => run("INSERT INTO entry_symbols (symbol_id, kind) VALUES (?, 'other')", appDecl)).toThrow(/CHECK/);
   });
 
+  describe('private_dead needs a credible entry set (fix round 8c: waddler-website, 3310snake)', () => {
+    const skipped = (): Array<{ package_id: string; reason: string; symbols: number }> =>
+      db.prepare('SELECT package_id, reason, symbols FROM private_dead_skipped ORDER BY package_id').all() as never;
+
+    /** An Astro-style site: components load src/lib/api.ts (its privates are seeds), no entry point. */
+    function site(): { site: string; helper: number; dead: number } {
+      aliveExport('used');
+      const s = pkg('site');
+      doc(s, 'src/lib/api.ts');
+      const loaded = sym(s, 'src/lib/api.ts', 'fetchPosts');
+      const helper = sym(s, 'src/lib/api.ts', 'toSlug');
+      use(loaded, helper, 'src/lib/api.ts');
+      doc(s, 'src/lib/unused.ts');
+      const dead = sym(s, 'src/lib/unused.ts', 'neverLoaded');
+      run("INSERT INTO entry_symbols (symbol_id, kind) VALUES (?, 'runtime')", loaded);
+      run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES (?, 'src/pages/index.astro', 'src/lib/api.ts', 1)", s);
+      return { site: s, helper, dead };
+    }
+
+    it('no private_dead when the only seeds are single-file-component loads; a skipped note instead', () => {
+      const { site: s } = site();
+      analyze();
+      expect(findings()).toEqual([]);
+      expect(skipped()).toEqual([{ package_id: s, reason: 'no known entry points', symbols: 1 }]);
+    });
+
+    it('an entry point makes the same package eligible: the unloaded module is private_dead, the loaded one alive', () => {
+      const { site: s } = site();
+      doc(s, 'src/entry.ts', true);
+      analyze();
+      expect(findings()).toEqual([f('neverLoaded', 'private_dead', ['already_unreachable'])]);
+      expect(skipped()).toEqual([]);
+    });
+
+    it('an unresolved load (alias naming no file, unreadable glob) blocks private_dead even with an entry point', () => {
+      const { site: s } = site();
+      doc(s, 'src/entry.ts', true);
+      run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES (?, 'src/pages/a.astro', '~/missing/x', 0)", s);
+      run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES (?, 'src/pages/b.astro', '@/gone', 0)", s);
+      analyze();
+      expect(findings()).toEqual([]);
+      expect(skipped()).toEqual([{ package_id: s, reason: 'unresolved load: ~/missing/x in src/pages/a.astro (+1 more)', symbols: 1 }]);
+    });
+
+    it('a runtime entry symbol that no component loads (a Dart main, a builder) still makes a package eligible', () => {
+      const { site: s } = site();
+      doc(s, 'bin/tool.ts');
+      run("INSERT INTO entry_symbols (symbol_id, kind) VALUES (?, 'runtime')", sym(s, 'bin/tool.ts', 'main'));
+      analyze();
+      expect(findings()).toEqual([f('neverLoaded', 'private_dead', ['already_unreachable'])]);
+    });
+  });
+
   it('refuses to run before ingest, and marks the DB analyzed even with zero findings', () => {
     const empty = openDb(':memory:');
     try {

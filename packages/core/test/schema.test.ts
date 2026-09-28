@@ -248,6 +248,20 @@ describe('promoted_packages', () => {
   });
 });
 
+describe('unindexed_loads', () => {
+  it('needs an existing package, a 0/1 resolved flag, one row per load; cascades with its repo (negative)', () => {
+    run("INSERT INTO repos (repo) VALUES ('acme/site')");
+    run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/site:site', 'acme/site', '.', 'npm', 'site', 'private')");
+    run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES ('npm:acme/site:site', 'src/A.vue', 'src/a.ts', 1)");
+    expect(() => run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES ('npm:acme/site:site', 'src/A.vue', 'src/a.ts', 0)")).toThrow();
+    expect(() => run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES ('npm:acme/site:site', 'src/B.vue', '~/x', 2)")).toThrow();
+    expect(() => run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES ('npm:acme/site:nope', 'src/B.vue', '~/x', 0)")).toThrow();
+    expect(() => run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES ('npm:acme/site:site', 'src/B.vue', NULL, 0)")).toThrow();
+    run("DELETE FROM repos WHERE repo = 'acme/site'");
+    expect(count('SELECT count(*) AS n FROM unindexed_loads')).toBe(0);
+  });
+});
+
 describe('excluded_repos', () => {
   it('takes a JSON array of manifests or NULL, nothing else', () => {
     run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/a', 'archived', NULL), ('acme/b', 'size', '[\"package.json\"]')");

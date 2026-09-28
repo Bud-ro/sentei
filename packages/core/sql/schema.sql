@@ -197,6 +197,23 @@ CREATE TABLE IF NOT EXISTS entry_symbols (
   kind      TEXT NOT NULL DEFAULT 'runtime' CHECK (kind IN ('runtime', 'ambient'))
 ) STRICT;
 
+-- Own modules a package loads in ways no index sees (sidecar unindexedImports with
+-- `relative`): a single-file component's relative or aliased import (`~/lib/api`), a
+-- `<script src>`, an `import.meta.glob` pattern. `module` is the loaded repo-relative
+-- file when resolved = 1 (its top-level declarations are entry_symbols); when resolved
+-- = 0 it is the specifier (an alias naming no file, an unreadable glob) or a file that is
+-- no indexed document: the package's entry set is then incomplete, so analyze.sql gives
+-- it no private_dead rows. Loads are seeds, not entry points: a package whose only seeds
+-- come from here is not private_dead-eligible either (analyze.sql private_dead_packages).
+-- Additive (SCHEMA_VERSION unchanged); ingest rewrites it.
+CREATE TABLE IF NOT EXISTS unindexed_loads (
+  package_id TEXT NOT NULL REFERENCES packages (package_id) ON DELETE CASCADE,
+  file       TEXT NOT NULL,                      -- the loading file (repo-relative)
+  module     TEXT NOT NULL,
+  resolved   INTEGER NOT NULL CHECK (resolved IN (0, 1)),
+  PRIMARY KEY (package_id, file, module)
+) STRICT;
+
 -- Reachability graph: enclosing symbol -> referenced symbol, from SCIP or explicit overlays.
 CREATE TABLE IF NOT EXISTS edges (
   from_symbol_id  INTEGER NOT NULL REFERENCES symbols (symbol_id) ON DELETE CASCADE,

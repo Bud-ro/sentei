@@ -36,6 +36,9 @@ describe('discoverLocal on fixtures/org-small', () => {
     const logs: string[] = [];
     const model = discoverLocal({ orgDir: FIXTURE, log: (l) => logs.push(l), now: 1_700_000_000 });
     expect(logs).toEqual([
+      // An Astro site (fix round 8c fixture): no entry points sentei knows of.
+      'warning: acme/app-astro: package.json: no entry points resolved',
+      'acme/app-vite: package.json: client entry points from HTML / vite / rollup / webpack config: src/main.ts',
       'acme/app-worker: package.json: 2 runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): functions/api/hello.ts, src/worker.ts',
       'acme/lib-cascade: package.json: client entry points from HTML / vite / rollup / webpack config: src/client.ts',
       'acme/lib-dual: packages/dual-electron/package.json: client entry points from HTML / vite / rollup / webpack config: packages/dual-electron/renderer.js, packages/dual-electron/src/index.js',
@@ -54,7 +57,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     expect(model.org).toBe('acme');
     expect(model.source).toEqual({ kind: 'local', dir: FIXTURE });
     expect(model.generatedAt).toBe(1_700_000_000);
-    const REPOS = ['app', 'app-consumer', 'app-dynamic', 'app-lazy', 'app-skew', 'app-worker', 'lib-cascade', 'lib-core', 'lib-dual', 'lib-dyn', 'lib-lazy', 'lib-lazy-opaque', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'samples', 'tool-py'];
+    const REPOS = ['app', 'app-astro', 'app-consumer', 'app-dynamic', 'app-lazy', 'app-skew', 'app-vite', 'app-worker', 'lib-cascade', 'lib-core', 'lib-dual', 'lib-dyn', 'lib-lazy', 'lib-lazy-opaque', 'lib-testkit', 'lib-widgets', 'lib-y', 'repo-broken', 'samples', 'tool-py'];
     expect(model.repos.map((r) => r.repo)).toEqual(REPOS.map((n) => `acme/${n}`));
     expect(model.repos[0]!.localPath).toBe(join(FIXTURE, 'repos', 'app'));
 
@@ -63,10 +66,13 @@ describe('discoverLocal on fixtures/org-small', () => {
       REPOS.map((n) => ({ repo: `acme/${n}`, default_branch: 'main', head_sha: null, index_status: null })),
     );
     expect(all('SELECT package_id, repo, path, manager, name, version, visibility, is_library, entry_points FROM packages ORDER BY package_id')).toEqual([
+      { package_id: 'npm:acme/app-astro:@acme/app-astro', repo: 'acme/app-astro', path: '.', manager: 'npm', name: '@acme/app-astro', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '[]' },
       { package_id: 'npm:acme/app-consumer:@acme/consumer', repo: 'acme/app-consumer', path: '.', manager: 'npm', name: '@acme/consumer', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       { package_id: 'npm:acme/app-dynamic:@acme/app-dynamic', repo: 'acme/app-dynamic', path: '.', manager: 'npm', name: '@acme/app-dynamic', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["src/load.cts","src/main.ts"]' },
       { package_id: 'npm:acme/app-lazy:@acme/app-lazy', repo: 'acme/app-lazy', path: '.', manager: 'npm', name: '@acme/app-lazy', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       { package_id: 'npm:acme/app-skew:@acme/app-skew', repo: 'acme/app-skew', path: '.', manager: 'npm', name: '@acme/app-skew', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
+      // index.html `<script type="module" src="/src/main.ts">` (a Vite client entry)
+      { package_id: 'npm:acme/app-vite:@acme/app-vite', repo: 'acme/app-vite', path: '.', manager: 'npm', name: '@acme/app-vite', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
       // wrangler.jsonc `main` + Pages functions/ (by convention); the `bin` is runtime-only, not an entry point
       { package_id: 'npm:acme/app-worker:@acme/worker', repo: 'acme/app-worker', path: '.', manager: 'npm', name: '@acme/worker', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["functions/api/hello.ts","src/worker.ts"]' },
       { package_id: 'npm:acme/app:@acme/app', repo: 'acme/app', path: '.', manager: 'npm', name: '@acme/app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["src/main.ts"]' },
@@ -145,7 +151,7 @@ describe('discoverLocal on fixtures/org-small', () => {
     db.prepare("INSERT INTO repos (repo) VALUES ('acme/gone')").run();
     db.prepare("INSERT INTO symbols (symbol_str, package_id, file, name) VALUES ('s', 'npm:acme/lib-core:@acme/core', 'src/index.ts', 'x')").run();
     writeDiscoverToDb(db, model);
-    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 18 }]);
+    expect(all('SELECT count(*) AS n FROM repos')).toEqual([{ n: 20 }]);
     expect(all("SELECT count(*) AS n FROM repos WHERE repo = 'acme/gone'")).toEqual([{ n: 0 }]);
     expect(all('SELECT count(*) AS n FROM symbols')).toEqual([{ n: 0 }]);
   });
@@ -837,7 +843,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 27 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 29 }]);
   });
 });
 

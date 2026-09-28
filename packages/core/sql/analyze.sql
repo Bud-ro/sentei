@@ -59,7 +59,10 @@ DROP VIEW IF EXISTS candidate_reach;
 DROP VIEW IF EXISTS reachable_after;
 DROP VIEW IF EXISTS reach_seeds_after;
 DROP VIEW IF EXISTS unreachable_before;
+DROP VIEW IF EXISTS private_dead_skipped;
 DROP VIEW IF EXISTS private_dead_eligible;
+DROP VIEW IF EXISTS private_dead_packages;
+DROP VIEW IF EXISTS private_dead_scope;
 DROP VIEW IF EXISTS candidate_symbols;
 DROP VIEW IF EXISTS base_verdicts;
 DROP VIEW IF EXISTS verdict_blockers;
@@ -959,21 +962,18 @@ WITH RECURSIVE reach (origin_id, symbol_id) AS (
 )
 SELECT origin_id, symbol_id FROM reach;
 
--- Symbols that may be reported private_dead: never exported, never a file symbol,
--- never an anonymous-literal member (kind 'anonymous-member', set by ingest: members of
--- an anonymous object/type literal live and die with whatever contains it), never an
+-- Symbols that may be reported private_dead if their package's entry set can be
+-- trusted (private_dead_packages below): never exported, never a file symbol, never an
+-- anonymous-literal member (kind 'anonymous-member', set by ingest: members of an
+-- anonymous object/type literal live and die with whatever contains it), never an
 -- import prefix (kind 'import-prefix', set by ingest: scip-dart defines `import … as p`
 -- prefixes as symbols; they are syntax, not declarations), never a runtime-invoked
 -- entry symbol (entry_symbols; also a seed, so normally reachable anyway), not defined in a
 -- test/docs file (not entry points, so everything in them is "unreachable"), a
--- generated file (regenerated, never reported) or a script file (runnable code), not kept, and in a package we can see
--- into (not opaque, not blocked) that has at least one reachability seed (no entry and
--- no export means the entry points are unknown, not that everything is dead). Ambient
--- entry symbols (entry_symbols.kind 'ambient': global `.d.ts` declarations) are seeds
--- but do not count here: 711 of them in hono.dev's worker-configuration.d.ts said
--- nothing about how the app is run.
-CREATE VIEW private_dead_eligible (symbol_id) AS
-SELECT s.symbol_id
+-- generated file (regenerated, never reported) or a script file (runnable code), not
+-- kept, and in a package we can see into (not opaque, not blocked).
+CREATE VIEW private_dead_scope (symbol_id, package_id) AS
+SELECT s.symbol_id, s.package_id
 FROM symbols s
 WHERE s.is_exported = 0
   AND s.symbol_id NOT IN (SELECT symbol_id FROM module_symbols)
@@ -986,15 +986,70 @@ WHERE s.is_exported = 0
   AND NOT EXISTS (SELECT 1 FROM script_files sf WHERE sf.package_id = s.package_id AND sf.file = s.file)
   AND s.symbol_id NOT IN (SELECT symbol_id FROM kept_symbols)
   AND s.package_id NOT IN (SELECT package_id FROM opaque_packages)
-  AND s.package_id NOT IN (SELECT package_id FROM verdict_blockers)
-  -- (uncorrelated IN: a correlated EXISTS rescans a package's symbols per symbol)
-  AND s.package_id IN (
-    SELECT package_id FROM symbols WHERE is_exported = 1
-    UNION
-    SELECT package_id FROM documents WHERE is_entry = 1
-    UNION
-    SELECT x.package_id FROM entry_symbols e JOIN symbols x ON x.symbol_id = e.symbol_id
-    WHERE e.kind = 'runtime');
+  AND s.package_id NOT IN (SELECT package_id FROM verdict_blockers);
+
+-- Packages whose entry set is credible, so that "unreachable" can mean "dead" (no
+-- entry and no export means the entry points are unknown, not that everything is
+-- dead). A package qualifies when it has a declared or convention entry point: an
+-- export (only entry files have exports), an entry document (manifest main / exports /
+-- bin, runtime entries: scripts, Dockerfile CMD, bundler and HTML client entries,
+-- framework conventions such as Next.js / Nuxt / SvelteKit routes, wrangler main), or a
+-- runtime entry symbol (a Dart `main`, a build.yaml builder, a Durable Object class) --
+-- AND no load of its own code went unresolved (unindexed_loads resolved = 0: an alias
+-- naming no file, an unreadable import.meta.glob, a loaded file that is not indexed).
+-- Not qualifying:
+--   * entry symbols that exist only because a single-file component or an
+--     import.meta.glob loads their module (unindexed_loads resolved = 1): those are
+--     seeds, but a site whose ONLY seeds are its components' imports (an Astro site with
+--     no entry point: drizzle-team waddler-website, 27 false private_dead rows; 3310snake)
+--     has roots sentei cannot see (pages, layouts, middleware), so everything its
+--     components do not name directly looked dead;
+--   * ambient entry symbols (entry_symbols.kind 'ambient': global `.d.ts` declarations):
+--     711 of them in hono.dev's worker-configuration.d.ts said nothing about how the app
+--     is run.
+-- Fail closed: a package that does not qualify gets NO private_dead rows (report note
+-- private_dead_skipped).
+CREATE VIEW private_dead_packages (package_id) AS
+SELECT package_id FROM (
+  -- (uncorrelated IN / EXCEPT: a correlated EXISTS rescans a package's symbols per symbol)
+  SELECT package_id FROM symbols WHERE is_exported = 1
+  UNION
+  SELECT package_id FROM documents WHERE is_entry = 1
+  UNION
+  SELECT x.package_id
+  FROM entry_symbols e JOIN symbols x ON x.symbol_id = e.symbol_id
+  WHERE e.kind = 'runtime'
+    AND NOT EXISTS (SELECT 1 FROM unindexed_loads l
+                    WHERE l.package_id = x.package_id AND l.module = x.file AND l.resolved = 1)
+)
+EXCEPT
+SELECT package_id FROM unindexed_loads WHERE resolved = 0;
+
+CREATE VIEW private_dead_eligible (symbol_id) AS
+SELECT symbol_id FROM private_dead_scope
+WHERE package_id IN (SELECT package_id FROM private_dead_packages);
+
+-- Packages that get no private_dead rows only because their entry set is not credible
+-- (private_dead_packages), with why and how many private symbols are unreachable from
+-- what sentei sees (read by the report: a note per package, never a finding).
+CREATE VIEW private_dead_skipped (package_id, reason, symbols) AS
+SELECT g.package_id,
+       CASE WHEN g.gaps = 0 THEN 'no known entry points'
+            ELSE 'unresolved load: '
+                 || (SELECT l.module || ' in ' || l.file FROM unindexed_loads l
+                     WHERE l.package_id = g.package_id AND l.resolved = 0 ORDER BY l.file, l.module LIMIT 1)
+                 || CASE WHEN g.gaps > 1 THEN ' (+' || (g.gaps - 1) || ' more)' ELSE '' END
+       END,
+       g.n
+FROM (
+  SELECT sc.package_id, count(*) AS n,
+         (SELECT count(*) FROM unindexed_loads u WHERE u.package_id = sc.package_id AND u.resolved = 0) AS gaps
+  FROM private_dead_scope sc
+  JOIN symbols s ON s.symbol_id = sc.symbol_id
+  WHERE sc.package_id NOT IN (SELECT package_id FROM private_dead_packages)
+    AND s.is_entry_reachable = 0
+  GROUP BY sc.package_id
+) g;
 
 -- Already dead before any removal: the private islands per-repo lints miss.
 CREATE VIEW unreachable_before (symbol_id) AS

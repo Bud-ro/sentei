@@ -455,6 +455,25 @@ describe('formatSummary', () => {
     expect(plain).toContain('  DEPRECATE         3');
   });
 
+  it('notes the packages whose private_dead rows were skipped (no credible entry set), in report.json and the view totals', () => {
+    addRepo('acme/site', 'sha-site', 'ok');
+    const site = addPackage('site', 'acme/site');
+    addSymbol(site, 'neverLoaded', { file: 'src/lib/unused.ts', exported: false });
+    const astro = addPackage('astro-site', 'acme/site');
+    addSymbol(astro, 'helper', { file: 'src/lib/a.ts', exported: false });
+    addModule(astro, 'src/entry.ts'); // an entry point, but a load went unresolved
+    run("INSERT INTO unindexed_loads (package_id, file, module, resolved) VALUES (?, 'src/pages/index.astro', '~/missing', 0)", astro);
+    const report = buildReport({ db, now: NOW });
+    expect(report.packages.find((p) => p.package_id === site)!.private_dead_skipped).toEqual({ reason: 'no known entry points', symbols: 1 });
+    expect(report.packages.find((p) => p.package_id === astro)!.private_dead_skipped)
+      .toEqual({ reason: 'unresolved load: ~/missing in src/pages/index.astro', symbols: 1 });
+    expect(report.packages.find((p) => p.name === '@acme/util')!.private_dead_skipped).toBeUndefined();
+    const text = formatSummary(report);
+    expect(text).toContain('  (private_dead skipped for 2 package(s) whose entry points sentei cannot see; 2 unreachable private symbol(s) '
+      + 'not reported: astro-site (unresolved load: ~/missing in src/pages/index.astro), site (no known entry points))');
+    expect(formatSummary(report, { views: ['delete'] })).not.toContain('private_dead skipped');
+  });
+
   it('says so when nothing blocks and prints no warning banner when there are no warnings', () => {
     const empty = openDb(':memory:');
     try {
