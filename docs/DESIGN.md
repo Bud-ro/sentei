@@ -3969,3 +3969,192 @@ and a planted symlink), main.test.ts (duplicate-name error whole and indented,
 packages over the network); the fix was checked with yarn 4.10.3 on the small
 project above (`install()` itself, through the npm exec fallback). yarn 2 / 3
 read `YARN_RC_FILENAME` the same way per their docs; not run.
+
+### Phase 3 fix round 8c: module-level reachability; framework aliases; private_dead eligibility; clone recovery
+
+From evaluation batch B (tool at `f25900a`; `$TMPDIR/eval/{withastro,nuxt,drizzle-team}`).
+**Measured** by re-running analyze (not witness) on copies of the batch DBs with the
+base commit and with this branch, at each run's own `now` (scripts `rerun.ts`,
+`sim.ts`, `cmp.sh`, `cmp2.sh` in `$TMPDIR/r8c/`). Base counts are analyze-only
+(the reports' PRIV-DEAD numbers, 117 / 494 / 87, are after the witness moved some
+candidates): drizzle-team 138, withastro 596, nuxt 114 private_dead rows.
+
+**1. Module-level code (analyze.sql `reach_edges`).** References in a module's
+top-level statements and initializers are attributed to the module pseudo-symbol
+(ingest `enclosingAt`: no declaration encloses them), and the module symbol was
+reachable only for entry documents or through an import specifier from a reachable
+module. drizzle-team 3310snake `src/api/instance.ts`: `instance` is reachable (a
+component imports it), but `axios.create({ baseURL: apiURL, paramsSerializer:
+serializeParams })` and `instance.interceptors.response.use(successInterceptor,
+errorInterceptor)` ran nowhere, so `apiURL`, `serializeParams`, both interceptors,
+`CustomResponse` and `refreshAccessToken` were `private_dead`. New edge: every
+declaration → its document's module symbol (a declaration is only usable once its
+module has loaded, and loading runs the top-level code). The module symbol still
+reaches only what its top-level code references, never the module's declarations,
+so a helper nobody calls stays dead, and a module that nothing reachable defines or
+imports stays unreachable (negative test). A candidate that was a module's only
+reachable declaration unlocks that module's top-level uses (`unlocked_by`).
+Measured (item 1 alone): drizzle-team −6 rows, all 3310snake (`apiURL`,
+`serializeParams`, `errorInterceptor`, `successInterceptor`, `CustomResponse`,
+`refreshAccessToken`); the package's other 2 rows, `hex2dec` / `dec2hex` in
+`src/utils/TOTP.ts`, are genuinely unused (defined, never referenced), so 6 of the
+8, not 8 (item 2 then removes the package's rows altogether). withastro −4 (docs
+`getLanguageFromURL`, storefront `unwrap`, `safeStringify`, `lineItemDataSchema`:
+module-level uses), nuxt −1 (learn.nuxt.com `useUiState`), fluttercommunity −2 and
+invertase −1 (Dart: uses inside an unnamed `extension on X` are attributed to the
+module, so `_colorToJson`, `ColorExt`, melos `_issueLinkRegexp` were false rows),
+bluefireteam 0. Every removed row was checked against the clones: alive. Analyze
+time unchanged within noise (drizzle 11.0 → 11.9 s, withastro 16.3 → 13.3 s, Dart
+orgs ±2 %). Fixture: org-small `app-vite` `src/api/client.ts`
+(`handlers.push(refreshToken)`); unit tests in analyze.test.ts.
+
+**3. Alias, `<script src>` and `import.meta.glob` loads (consumer-checks.ts
+`scanUnindexedImports`).** The SFC scan resolved only relative imports. Now, in
+SFC files (`.vue` `.svelte` `.astro` `.marko` `.mdx`):
+- an alias resolves through the package tsconfig's `paths` (TypeScript's rule: an
+  exact key, else the `*` pattern with the longest prefix; targets absolute through
+  `baseUrl`, else `pathsBasePath`, which follows `extends`; export-surface collects
+  them from the configs it already parses, root first), else by convention: `~/`,
+  `@/` → `src/` when it exists, else the package root (Vite / Astro / Nuxt 3);
+  `~~/`, `@@/` → the root (Nuxt); `$lib/` → `src/lib/` (SvelteKit, whose tsconfig
+  is generated). Nuxt's virtual modules (`#imports`, `#app`, `#build`,
+  `#components`, …) are skipped. Nuxt 4's `app/` srcDir is not a convention, so
+  `~/x` there is a gap (fail closed);
+- an alias that resolves to own code is a relative load (the existing path: self
+  witness file, the module's top-level declarations become entry symbols); to an
+  SFC or asset: nothing (every SFC is scanned itself); into another org package's
+  dir: an unindexed import of that package (a targeted `unindexed_consumer`, as for
+  a bare import); to nothing: an **unresolved load** (`unresolved: true`, `module`
+  = the specifier). A package-like specifier matched only by a catch-all `"*"`
+  paths entry falls back to the bare-import rule (TypeScript falls back to
+  node_modules), so uninstalled dependencies are not gaps;
+- `<script src>` in `.astro` / `.vue` is a load like an import;
+- MDX: fenced blocks and inline code are example text (drizzle-orm-docs tutorials
+  show `import { db } from '@/db'`; the Astro docs say `` `import.meta.glob()` ``
+  in prose), never a load or a gap. Bare org imports are still read from the whole
+  text (fail closed, as before).
+
+And in every own file, indexed or not: each `import.meta.glob` / `globEager` call
+(string or array patterns, `!` exclusions, `{a,b}` braces; `./` relative to the
+file, `/` relative to the package root, aliased patterns through the rules above)
+loads every own code file it matches (matched against the package walk, so nested
+packages and ignored manifests are not ours). A call whose patterns cannot be read
+(`${}`, character classes, extglobs, a non-literal) is an unresolved load; a call
+with no argument is skipped. Loads are seeds only, never edges (PLAN §12).
+
+**Framework conventions (same function, `FRAMEWORK_LOADS`).** Batch B's Astro and
+Nuxt rows were mostly code the framework loads with no import: Astro `src/pages/**`
+endpoints, `src/middleware*`, `src/actions/**`, content config; Nuxt auto-imported
+`composables/`, `utils/`, `stores/`, `shared/`, `server/utils/`, plugins, route
+middleware, local `modules/` (root and `app/`). With the package-root
+`astro.config.*` / `nuxt.config.*` present, those files are loads of the config,
+plus own files the config names with a relative literal (Starlight's
+`routeMiddleware: './src/routeData.ts'`). They are seeds, not entry points: the
+entry points stay manifests.ts's (owned by another unit; Astro has no convention
+there), so an Astro site is still not private_dead-eligible (item 2).
+Deviation: this goes a little beyond the brief (aliases, glob, `<script src>`), in
+the same function and in the same fail-closed direction; without it withastro docs
+kept 26 rows and learn.nuxt.com 16 that the evaluation had already classed as false.
+
+**2. private_dead eligibility (analyze.sql `private_dead_scope`,
+`private_dead_packages`, `private_dead_eligible`, `private_dead_skipped`; schema
+`unindexed_loads`).** A package was eligible as soon as it had any export, entry
+document or runtime entry symbol, and a component's relative import made the
+imported module's declarations runtime entry symbols: waddler-website
+(`entryPoints` `[]`, an Astro site) got 27 private_dead rows from its components'
+imports alone. Now a package is eligible only when its entry set is credible:
+- a declared or convention entry point: an export, an entry document (manifest
+  `main` / `exports` / `bin`, runtime entries, client entries, Next.js / Nuxt /
+  SvelteKit / Cloudflare conventions), or a runtime entry symbol that no unindexed
+  load put there (a Dart `main`, a builder, a Durable Object class). Entry symbols
+  of a module loaded by a component, a glob or a framework convention (an
+  `unindexed_loads` row, resolved = 1, for its file) do not count; ambient ones
+  never did;
+- and no load of its own code went unresolved (`unindexed_loads` resolved = 0: an
+  alias or glob naming no file, or a loaded file that is not an indexed document).
+
+A package that fails gets no private_dead rows at all (fail closed) and a note:
+`private_dead_skipped (package_id, reason, symbols)` (`no known entry points`, or
+`unresolved load: <specifier> in <file> (+N more)`; `symbols` = private symbols
+unreachable from what sentei sees), listed only when some symbol would otherwise
+have been reported. report.json `packages[].private_dead_skipped` (optional, absent
+otherwise); the summary adds one line under the view totals: `(private_dead skipped
+for N package(s) whose entry points sentei cannot see; M unreachable private
+symbol(s) not reported: <name> (<reason>), …)`.
+`unindexed_loads (package_id, file, module, resolved)` is a new additive table
+(SCHEMA_VERSION unchanged, like `promoted_packages`): ingest writes one row per
+relative / aliased / glob / convention load (the loaded document's file when
+resolved, else the specifier or the unindexed file) and warns on every unresolved
+one. **Deviation (ownership):** schema.sql and report.ts are not in this unit's
+list; the gap needed a place in the DB (no existing table can hold a self-targeted
+"entry set incomplete" mark without making the package opaque, which would block
+every package it depends on), and the note needed the report. Both changes are
+additive.
+
+Measured (items 1–3; the batch indexes were made with the old adapter, so `sim.ts`
+re-runs the new `scanUnindexedImports` over the clones with each package's tsconfig
+`paths`, walk and ignored dirs, and applies ingest's relative-load handling to the
+DB copy before analyze):
+- drizzle-team 138 → 103: 3310snake −8 (6 by item 1, then no credible entry: a
+  skip note, 2 symbols) and waddler-website −27 (no entry point). gateway-website,
+  tento-website and waddler-website have an unresolved `@/types/SVGTypes`
+  (`src/mdx/Card.astro`; the checkout has `src/types.ts`, no `src/types/`): a gap.
+  Skipped notes: `@drizzle-pulse/integration-tests` (75), 3310snake (2),
+  drizzle-root (1).
+- withastro 596 → 382: marlo `@workspace/web` −90, storefront −70, docs −26
+  (Starlight: pages, `routeData.ts` through `astro.config`), astro.new −22,
+  view-transitions-demo −3, server-islands −2, blog-tutorial-demo −1. Skipped
+  notes: factory (872: an app with no entry point sentei knows), astro root (63),
+  ts-content-mapper (35), studio-templates (13), storefront (4), marlo (1). No
+  other package changed.
+- nuxt 114 → 36: learn.nuxt.com 84 → 9 (`~/` aliases, auto-imported composables /
+  stores / utils; the 9 left are tutorial template files under
+  `content/**/.template/` that the playground loads as raw text), scripts
+  devtools-app −3. Unresolved loads are concentrated in `@nuxt/devtools` (a Nuxt app
+  under `packages/devtools/client/` whose `~` is `client/`; the package is failed
+  or opaque anyway) and nuxt-a11y's client.
+
+The withastro "CLI bin → unbuilt dist" class (253 rows) is untouched by this round.
+
+**4. Interrupted clones (git.ts `ensureClone`).** A clone killed during its fetch
+leaves `repos/<name>/.git` with an unborn HEAD and nothing checked out; every rerun
+failed on `rev-parse HEAD` ("unknown revision") and `--allow-clone-failures`
+dropped the repo silently. `ensureClone` now checks `rev-parse --verify --quiet
+HEAD^{commit}` first. A directory holding nothing but `.git`, with no commit and an
+`origin` that is the clone URL (or none, or a `.git` git does not recognise), is
+what a clone leaves before its checkout: it is removed (logged) and cloned again.
+Anything else (other files next to `.git`, another origin) throws with a message and
+is never touched. git now runs with `GIT_CEILING_DIRECTORIES` at the checkout's
+parent for the HEAD checks, so a broken `.git` can no longer make git read (or
+fetch into) a repository above the work dir. Tests: fake git (recovery order; other
+files; another origin) and real `file://` repos (`git init` + `remote add origin`
+= an interrupted clone; an empty `.git` directory).
+
+**5. Summary lines.** The index summary counted a failed package in `indexed` (or
+`cached`) and in `failed`; now indexed + cached + failed is the package count
+(partial ones stay in indexed / cached). The blame summary said `0 repo(s)
+skipped` while every repo was a skipped shallow clone; shallow repos now count:
+`3 repo(s) skipped (3 shallow)`. The line is in core `blame.ts` (the stage file
+only calls `runBlame`).
+
+**Fixtures.** org-small gains `app-vite` (Vite + Vue: `@/` alias, `<script src>`,
+`import.meta.glob`, module-level `handlers.push(refreshToken)`; `authDead` and
+`viteDead` private_dead) and `app-astro` (no entry point; `~/` alias, relative
+import, glob, `src/pages/rss.ts` convention load; no rows, a skip note for
+`src/lib/orphan.ts`). New snapshot directories only: the existing fixtures'
+sidecars are unchanged, so the adapter version stays `+sentei.8`. The report now
+also notes the consumer-only packages (`_unnamed/unnamed-demo`, `-demo-2`,
+`@acme/sample-app`), which never had private_dead rows. `app-astro`'s discover
+warning ("no entry points resolved") is kept by `--quiet` (main.test).
+
+**Not verified / open (for routing).**
+- The adapter version is not bumped (scip-typescript.ts belongs to another unit):
+  cached indexes of real orgs keep their old sidecars until `index --force` (or the
+  next version bump), so the new loads and gaps appear only after a re-index. The
+  batch measurements above emulate the new scan (`sim.ts`); no real re-index + ingest
+  was run.
+- Astro file routing is still not an entry-point convention (manifests.ts, other
+  unit): Astro sites stay non-eligible (skip notes) unless they have another entry.
+- Nuxt 4 `app/` srcDir aliases, package.json `imports` (`#x`) in SFCs and
+  baseUrl-only bare specifiers are not resolved (the first is a gap, the others are
+  ignored as before).
