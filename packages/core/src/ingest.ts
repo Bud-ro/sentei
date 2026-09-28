@@ -16,6 +16,7 @@ import { parsePackageRef, packageRefMatches } from './config.ts';
 import { DISCOVER_REASON_PREFIX } from './discover.ts';
 import { matchGlob } from './glob.ts';
 import { GENERATED_GLOBS, inVendoredDir } from './globs.ts';
+import { UNNAMED_PREFIX } from './manifests.ts';
 import {
   normalizeSymbolVersion,
   occurrenceEnclosingSpan,
@@ -708,9 +709,20 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
    * shared and none of those applies; `undefined` for a non-org name.
    */
   const resolveName = (consumer: string, key: string): string | { ambiguous: string[] } | undefined => {
-    const cands = byName.get(key);
+    let cands = byName.get(key);
     if (cands === undefined) return undefined;
     if (nameKeyOf.get(consumer) === key) return consumer;
+    // A nameless package (`_unnamed/<dir>`, discover's consumer-only package for a
+    // package.json without "name") has no name anyone can import: the synthetic name is
+    // unique within its repo only (dirs are), so a use of it (a sidecar target naming the
+    // repo root's `_unnamed/.` because a file lies under that dir) means the one in the
+    // consumer's own repo, never a same-named package of another repo (vitejs: five
+    // unrelated repos' `_unnamed/.` made every such use an ambiguous_dep).
+    if (key.slice(key.indexOf(':') + 1).startsWith(UNNAMED_PREFIX)) {
+      const repo = dbPkgs.get(consumer);
+      cands = cands.filter((c) => dbPkgs.get(c) === repo);
+      if (cands.length === 0) return undefined;
+    }
     if (cands.length === 1) return cands[0]!;
     return depByName.get(consumer)?.get(key) ?? { ambiguous: cands };
   };

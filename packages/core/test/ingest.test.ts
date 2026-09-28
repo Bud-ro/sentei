@@ -399,6 +399,56 @@ describe('ingestOrg (synthetic SCIP)', () => {
     expect(logs.some((l) => l.includes('claimed as their own by two packages'))).toBe(false);
   });
 
+  it('resolves a use of a nameless package (`_unnamed/.`) in the consumer\'s own repo only, never across repos (round 8d, vitejs)', () => {
+    // Three repos each have a nameless root package.json (`_unnamed/.`); a sidecar ref
+    // from acme/x's member names `_unnamed/.` (a file under the repo root dir).
+    const ANON = 'scip-typescript npm . . ';
+    const X_ROOT = 'npm:acme/x:_unnamed/.';
+    const X_MEMBER = 'npm:acme/x:@acme/xa';
+    for (const repo of ['acme/x', 'acme/y']) {
+      db.prepare('INSERT INTO repos (repo) VALUES (?)').run(repo);
+      db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, ?, '.', 'npm', '_unnamed/.', 'private')")
+        .run(`npm:${repo}:_unnamed/.`, repo);
+      writeScip(repo, 'root.scip', [{
+        path: 'tools/t.ts',
+        occurrences: [
+          { range: [0, 0, 0], symbol: `${ANON}tools/\`t.ts\`/`, roles: 1 },
+          { range: [1, 16, 20], symbol: `${ANON}tools/\`t.ts\`/tool().`, roles: 1, enclosing: [1, 0, 1, 30] },
+        ],
+      }]);
+      writeJson(repo, 'root.exports.json', sidecar(`npm:${repo}:_unnamed/.`));
+    }
+    db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/x', 'packages/xa', 'npm', '@acme/xa', 'private')").run(X_MEMBER);
+    writeScip('acme/x', 'xa.scip', [{
+      path: 'src/main.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: 'scip-typescript npm @acme/xa 1.0.0 src/`main.ts`/', roles: 1 },
+        { range: [1, 9, 13], symbol: 'scip-typescript npm @acme/xa 1.0.0 src/`main.ts`/main().', roles: 1, enclosing: [1, 0, 3, 1] },
+      ],
+    }]);
+    const ref = { file: 'packages/xa/src/main.ts', line: 2, col: 2, member: 'tool', targetPackage: '_unnamed/.', targetFile: 'tools/t.ts', targetLine: 1, targetCol: 16 };
+    writeJson('acme/x', 'xa.exports.json', { ...sidecar(X_MEMBER), shorthandRefs: [ref] });
+    indexJson('acme/x', [
+      { packageId: X_ROOT, scip: 'root.scip', exports: 'root.exports.json' },
+      { packageId: X_MEMBER, scip: 'xa.scip', exports: 'xa.exports.json' },
+    ]);
+    indexJson('acme/y', [{ packageId: 'npm:acme/y:_unnamed/.', scip: 'root.scip', exports: 'root.exports.json' }]);
+    // @acme/app (acme/mono, which has no nameless package) names `_unnamed/.` too.
+    writeJson('acme/mono', 'app.exports.json', { ...sidecar('npm:acme/mono:@acme/app'), shorthandRefs: [{ ...ref, file: 'apps/app/src/main.ts' }] });
+    const d = discover();
+    d.repos.push(
+      { repo: 'acme/x', packages: [{ packageId: X_ROOT, path: '.', entryPoints: [] }, { packageId: X_MEMBER, path: 'packages/xa', entryPoints: [] }] },
+      { repo: 'acme/y', packages: [{ packageId: 'npm:acme/y:_unnamed/.', path: '.', entryPoints: [] }] },
+    );
+    const c = run(d);
+    expect(count(db, "SELECT count(*) AS n FROM package_flags WHERE flag = 'ambiguous_dep'")).toBe(0);
+    // acme/x's member reaches acme/x's root tool(); acme/y's is untouched.
+    expect(db.prepare(`SELECT s.package_id, o.package_id AS consumer FROM occurrences o JOIN symbols s USING (symbol_id)
+      WHERE s.name = 'tool' AND (o.role & 1) = 0`).all()).toEqual([{ package_id: X_ROOT, consumer: X_MEMBER }]);
+    expect(c.shorthandRefs).toBe(1);
+    expect(logs.some((l) => l.includes('npm:acme/mono:@acme/app') && l.includes('target is not an org package, ignored'))).toBe(true);
+  });
+
   it('anonymousSymbolKey rewrites only the anonymous package name; symbolKey escapes spaces', () => {
     expect(anonymousSymbolKey('scip-typescript npm . . lib/`a.ts`/f().', 'npm:acme/r:_unnamed/.', '_unnamed/.'))
       .toBe('scip-typescript npm _unnamed/. npm:acme/r:_unnamed/. lib/`a.ts`/f().');
