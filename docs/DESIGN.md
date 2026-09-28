@@ -4762,3 +4762,18 @@ main since `1979f6a`, before this round was cherry-picked; the two were develope
 against the same base and touch different code (8d the adapter, 8f the manifest
 reader), and the org-small fixtures for both index identically under adapter
 `0.4.0+sentei.10`.
+
+### Phase 3 verification reruns at `840cd97`
+
+nuxt, withastro, VeryGoodOpenSource and invertase were rerun on the merged tool
+(rounds 8a–8f) with the `f25900a` lockfiles; the numbers, spot checks and the
+remaining wrong-row classes are in docs/EVAL.md ("Phase 3 rerun at `840cd97`").
+Private-dead rows fell from 87 / 494 / 32 / 128 to 9 / 32 / 5 / 115; blocked from
+544 / 997 / 0 / 293 to 422 / 679 / 0 / 274; no view gained a wrong row. The
+remaining classes (a `tsm` runner, `dist-<name>/` and Expo `plugin/build`
+outputs, a React Native app's `index.js`, build caches as consumers, installs
+inside a workspace package, `org_dead` in the full report; class property types
+in a public signature, lazy component loaders and the default export, Next routes
+under dot directories, solution-style tsconfigs, an unresolvable `extends`) are
+fix round 9 (9a manifests / globs / installs / report, 9b adapter program /
+signatures / loads).
