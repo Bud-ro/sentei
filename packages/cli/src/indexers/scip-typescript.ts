@@ -1398,7 +1398,9 @@ export function deepImportLinks(
     if (exportKeys.some((k) => exportKeyMatches(k, `./${sub}`))) continue;
     if (targetExists(targetDir, sub)) continue;
     repoFiles ??= listFiles(repoRoot);
-    const source = sourceForBuildOutput(repoRoot, pkgPath, sub, repoFiles);
+    // A dist-layout manifest (`drizzle-orm/pg-core`: the repo publishes from `dist/`, so
+    // the subpath names `dist/pg-core/index.js`): the same path under a source root.
+    const source = sourceForBuildOutput(repoRoot, pkgPath, sub, repoFiles) ?? distLayoutSource(targetDir, sub);
     if (source === null) {
       if (/(?:^|\/)dist(?:\/|$)/.test(sub)) unmapped.push(sub); // the imports the export surface flags
       continue;
@@ -1569,8 +1571,9 @@ function shadowManifest(targetDir: string): ShadowManifest | undefined {
   }
   const rewritten: string[] = [];
   const missing: string[] = [];
+  const roots = sourceRoots(targetDir);
   const rewrite = (field: string, v: string): string => {
-    const r = rewriteTarget(targetDir, v);
+    const r = rewriteTarget(targetDir, v, roots);
     if (r === undefined) return v;
     if (r === null) {
       missing.push(`${field}: ${v}`);
@@ -1616,24 +1619,109 @@ const RESOLVE_EXTS = ['', '.ts', '.tsx', '.d.ts', '.js', '.mjs', '.cjs', '.jsx',
  * The rewritten target when `target` does not exist in `dir` and a source
  * counterpart does; `undefined` when it exists (or is not a path), `null` when it
  * is missing without a counterpart. `*` patterns are rewritten textually and
- * "exist" when some file matches.
+ * "exist" when some file matches. A build-output path (`dist/…`) maps to `src/`;
+ * any other missing path is tried as a dist-layout manifest (distLayoutSource: the
+ * same path under each of `roots`).
  */
-function rewriteTarget(dir: string, target: string): string | undefined | null {
+function rewriteTarget(dir: string, target: string, roots: readonly string[] = ['src']): string | undefined | null {
   const dot = target.startsWith('./');
   const rel = dot ? target.slice(2) : target;
   if (rel === '' || rel.startsWith('/') || rel.startsWith('../') || /^[a-z]+:/i.test(rel)) return undefined;
   if (targetExists(dir, rel)) return undefined;
-  if (!BUILD_DIR.test(rel)) return null;
-  const stems = [rel.replace(BUILD_DIR, 'src/')];
-  if (BUILD_SUBDIR.test(rel)) stems.push(rel.replace(BUILD_SUBDIR, 'src/'));
-  const exts = BUILT_EXT.test(rel) ? ['.ts', '.tsx'] : [''];
-  for (const stem of stems) {
-    for (const ext of exts) {
-      const cand = stem.replace(BUILT_EXT, '') + ext;
-      if (targetExists(dir, cand)) return (dot ? './' : '') + cand;
+  if (BUILD_DIR.test(rel)) {
+    const stems = [rel.replace(BUILD_DIR, 'src/')];
+    if (BUILD_SUBDIR.test(rel)) stems.push(rel.replace(BUILD_SUBDIR, 'src/'));
+    const exts = BUILT_EXT.test(rel) ? ['.ts', '.tsx'] : [''];
+    for (const stem of stems) {
+      for (const ext of exts) {
+        const cand = stem.replace(BUILT_EXT, '') + ext;
+        if (targetExists(dir, cand)) return (dot ? './' : '') + cand;
+      }
+    }
+    return null;
+  }
+  const cand = distLayoutSource(dir, rel, roots);
+  return cand === null ? null : (dot ? './' : '') + cand;
+}
+
+/** Source extensions a dist-layout target maps to, in TypeScript's order. */
+const LAYOUT_SOURCE_EXTS = ['.ts', '.tsx', '.mts', '.cts'];
+
+/**
+ * A manifest copied from the build output (drizzle-orm: `main: ./index.cjs`,
+ * `types: ./index.d.ts`, and subpaths like `drizzle-orm/pg-core` resolved by file
+ * layout, because the repo publishes `dist/` with its own package.json): a declared
+ * path that does not exist at the package root names the build output, whose
+ * sources are the same path under the source root. For each root of `roots` (the
+ * tsconfig `rootDir`s, then `src`; sourceRoots): a built file (`index.cjs`,
+ * `pg-core/index.js`, `index.d.ts`) → `<root>/<path minus its build extension>.ts`
+ * (`.tsx`, `.mts`, `.cts`); an extension-less path → `<root>/<path>.ts` or
+ * `<root>/<path>/index.ts`; any other file → `<root>/<path>` when it exists. `*`
+ * patterns are rewritten textually (checked by targetExists). Package-relative;
+ * null when nothing exists.
+ */
+export function distLayoutSource(dir: string, rel: string, roots: readonly string[] = sourceRoots(dir)): string | null {
+  const clean = rel.replace(/^\.\//, '');
+  if (clean === '' || clean.startsWith('../') || clean.startsWith('/')) return null;
+  for (const root of roots) {
+    if (clean === root || clean.startsWith(`${root}/`)) continue;
+    const stem = `${root}/${clean}`;
+    const cands = BUILT_EXT.test(clean)
+      ? LAYOUT_SOURCE_EXTS.map((e) => stem.replace(BUILT_EXT, '') + e)
+      : path.posix.extname(clean) === '' || clean.includes('*')
+        ? [...LAYOUT_SOURCE_EXTS.map((e) => stem + e), ...LAYOUT_SOURCE_EXTS.map((e) => `${stem}/index${e}`)]
+        : [stem];
+    for (const c of cands) {
+      if (c.includes('*') ? targetExists(dir, c) : isFile(path.join(dir, ...c.split('/')))) return c;
     }
   }
   return null;
+}
+
+function isFile(abs: string): boolean {
+  try {
+    return statSync(abs).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Source roots of the package at `dir` for dist-layout mapping: the `rootDir` of each
+ * package-root `tsconfig*.json` (read leniently: comments and trailing commas
+ * stripped, `extends` not followed, unreadable configs skipped), then `src`. Only
+ * dirs that exist and stay inside the package.
+ */
+export function sourceRoots(dir: string): string[] {
+  const out: string[] = [];
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((n) => /^tsconfig[^/]*\.json$/.test(n)).sort();
+  } catch {
+    names = [];
+  }
+  for (const n of names) {
+    try {
+      const text = readFileSync(path.join(dir, n), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:\\])\/\/.*$/gm, '$1')
+        .replace(/,(\s*[}\]])/g, '$1');
+      const rootDir = (JSON.parse(text) as { compilerOptions?: { rootDir?: unknown } }).compilerOptions?.rootDir;
+      if (typeof rootDir !== 'string') continue;
+      const r = path.posix.normalize(rootDir.replace(/\\/g, '/')).replace(/^\.\/|\/$/g, '');
+      if (r !== '' && r !== '.' && !r.startsWith('..') && !path.posix.isAbsolute(r) && !out.includes(r)) out.push(r);
+    } catch {
+      // unreadable: the `src` convention only
+    }
+  }
+  if (!out.includes('src')) out.push('src');
+  return out.filter((r) => {
+    try {
+      return statSync(path.join(dir, ...r.split('/'))).isDirectory();
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** A target file (extensionless allowed) or a `*` pattern matching at least one file. */
