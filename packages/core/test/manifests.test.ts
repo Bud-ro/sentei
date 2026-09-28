@@ -950,6 +950,18 @@ describe('npm manifests', () => {
     expect(runnerTargets('deno run https://deno.land/x/y.ts')).toEqual([]);
   });
 
+  it('runnerTargets: tsm, tsimp and the other TypeScript runners (houston-discord: tsm src/stats.ts)', () => {
+    expect(runnerTargets('tsm src/stats.ts')).toEqual(['src/stats.ts']);
+    expect(runnerTargets('tsimp scripts/x.ts')).toEqual(['scripts/x.ts']);
+    expect(runnerTargets('bunx tsm --require dotenv/config src/a.ts')).toEqual(['src/a.ts']);
+    expect(runnerTargets('node --import tsx src/b.ts')).toEqual(['src/b.ts']);
+    expect(runnerTargets('ts-node-esm src/c.ts && jiti src/d.ts && esno src/e.ts && vite-node src/f.ts')).toEqual(['src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts']);
+    expect(runnerTargets('sucrase-node g.ts; swc-node h.ts')).toEqual(['g.ts', 'h.ts']);
+    // bunx / npx run a package binary, not a file: its arguments are not entries.
+    expect(runnerTargets('bunx vitest run src/x.test.ts')).toEqual([]);
+    expect(runnerTargets('npx eslint src/y.ts')).toEqual([]);
+  });
+
   it('dockerfileTargets: CMD / ENTRYPOINT in exec and shell form, WORKDIR-absolute paths, not HEALTHCHECK', () => {
     expect(dockerfileTargets([
       'FROM node:20 AS build', 'WORKDIR /usr/src/app', 'COPY . .', 'RUN npm run build',

@@ -1642,10 +1642,17 @@ export function urlReferencedFiles(text: string): string[] {
   return out;
 }
 
-/** Commands that run the file named by their first positional argument. */
+/**
+ * Commands that run the file named by their first positional argument. `bun run x`,
+ * `deno run x` work through the positional skip; `node --import tsx x` / `node --loader
+ * ts-node/esm x` through RUNNER_VALUE_FLAGS. `bunx` / `npx` are not runners (they run a
+ * package binary: `bunx vitest run x.test.ts` names no entry); `bunx tsm x.ts` is found
+ * through the inner runner.
+ */
 const SCRIPT_RUNNERS = new Set([
-  'node', 'nodejs', 'tsx', 'ts-node', 'ts-node-esm', 'ts-node-script', 'bun', 'deno', 'nodemon', 'vite-node',
-  'esno', 'esr', 'esrun', 'jiti', 'babel-node', 'node-dev', 'ts-node-dev', 'tsnd',
+  'node', 'nodejs', 'tsx', 'ts-node', 'ts-node-esm', 'ts-node-script', 'ts-node-transpile-only', 'bun', 'deno',
+  'nodemon', 'vite-node', 'esno', 'esr', 'esrun', 'jiti', 'babel-node', 'node-dev', 'ts-node-dev', 'tsnd',
+  'tsm', 'tsimp', 'sucrase-node', 'swc-node',
 ]);
 /** Runner flags whose value is the next token (`node -r dotenv/config x.js`). */
 const RUNNER_VALUE_FLAGS = new Set([
@@ -1695,7 +1702,7 @@ export function runnerTargets(script: string): string[] {
       }
     }
   }
-  return out;
+  return [...new Set(out)]; // `node --import tsx x.ts`: node and tsx both name x.ts
 }
 
 /** `Dockerfile`, `Dockerfile.prod`, `api.Dockerfile` at the package root. */
