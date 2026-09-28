@@ -18,7 +18,7 @@ import {
 import { matchGlob } from './glob.ts';
 import { npmSatisfies, pubSatisfies } from './semver.ts';
 import {
-  DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, listFiles, readNpmPackage, readPubPackage, readRepoManifestsWithIgnored,
+  DEFAULT_IGNORE_MANIFEST_DIRS, inIgnoredDir, isReactNativePackage, listFiles, readNpmPackage, readPubPackage, readRepoManifestsWithIgnored,
   type IgnoredManifest, type Manager, type ManifestPackage, type Visibility,
 } from './manifests.ts';
 import type { ExcludedRepoInfo } from './repo-select.ts';
@@ -759,7 +759,10 @@ export function discoverRepos(opts: DiscoverReposOptions): DiscoverModel {
     // unindexed_consumer (PLAN §2, M4): an org-package consumer with code we cannot index.
     for (const p of r.packages) {
       if (!p.deps.some((d) => d.resolvedPackageId !== null || d.ambiguous === true)) continue;
-      const flag = unindexedConsumerFlag(p, r.packages, r.files, ignoreDirs);
+      const flag = unindexedConsumerFlag(p, r.packages, r.files, ignoreDirs, p.manager === 'npm' && isReactNativePackage(
+        r.localPath, p.path, new Set(p.deps.map((d) => d.name)),
+        new Set(RN_MARKER_FILES.filter((f) => r.files.includes(p.path === '.' ? f : `${p.path}/${f}`))),
+      ));
       if (flag && p.manager === 'pub') {
         // JS reaches a dependency's Dart only through that dependency's JS exports.
         const exporter = p.deps
@@ -826,6 +829,22 @@ export const PUB_PLATFORM_DIRS: ReadonlySet<string> = new Set(['android', 'ios',
 /** Flutter tool output inside platform dirs, wherever it sits. */
 const PUB_GENERATED_DIRS: ReadonlySet<string> = new Set(['.plugin_symlinks', 'ephemeral']);
 
+/**
+ * Top-level dirs of a React Native / Expo npm package (isReactNativePackage) holding the
+ * native projects (Kotlin / Java, Swift / Objective-C, C++): they reach JS over the bridge
+ * or JSI by module name, never by importing a JS export, so they are no consumers (the
+ * pub side's PUB_PLATFORM_DIRS rule, fix round 2).
+ */
+export const NPM_RN_PLATFORM_DIRS: ReadonlySet<string> = new Set(['android', 'ios', 'macos', 'windows', 'visionos']);
+/**
+ * The languages of React Native native modules and their builds (Java / Kotlin incl.
+ * Gradle `.kts`, Swift, Objective-C, C / C++): in a React Native package they are never
+ * consumers wherever they sit (a root `build.gradle.kts`, a `cpp/` TurboModule dir).
+ */
+const NPM_RN_NATIVE_EXTS: ReadonlySet<string> = new Set(['.java', '.kt', '.kts', '.swift', '.m', '.mm', '.h', '.hpp', '.c', '.cc', '.cpp']);
+/** Package-root files isReactNativePackage looks at. */
+const RN_MARKER_FILES = ['react-native.config.js', 'react-native.config.cjs', 'app.json'];
+
 /** Is repo-relative `file` platform / native code of the pub package at `pkgPath`? */
 function isPubPlatformFile(pkgPath: string, file: string): boolean {
   const rel = pkgPath === '.' ? file : file.slice(pkgPath.length + 1);
@@ -839,10 +858,13 @@ function isPubPlatformFile(pkgPath: string, file: string): boolean {
  * DART_TO_JS_EXPORT gate): files under its dir, minus nested packages' dirs, skipped
  * dirs (already absent from `files`, see listFiles), ignored manifest dirs (package-
  * relative) and, for pub packages, platform code (PUB_PLATFORM_DIRS: `web/index.html`
- * of a Flutter app is its runner). null if there are none.
+ * of a Flutter app is its runner), for React Native npm packages (`reactNative`) the
+ * native project dirs (NPM_RN_PLATFORM_DIRS) and native-module languages anywhere
+ * (NPM_RN_NATIVE_EXTS). null if there are none.
  */
 function unindexedConsumerFlag(
   pkg: DiscoverPackage, repoPkgs: readonly DiscoverPackage[], files: readonly string[], ignoreDirs: ReadonlySet<string>,
+  reactNative = false,
 ): DiscoverFlag | null {
   const hits: string[] = [];
   const byExt = new Map<string, number>();
@@ -854,6 +876,7 @@ function unindexedConsumerFlag(
     // isIgnoredManifestPath) still has its own code scanned.
     if (inIgnoredDir(pkg.path === '.' ? f : f.slice(pkg.path.length + 1), ignoreDirs)) continue;
     if (pkg.manager === 'pub' && isPubPlatformFile(pkg.path, f)) continue;
+    if (reactNative && (NPM_RN_NATIVE_EXTS.has(ext) || NPM_RN_PLATFORM_DIRS.has((pkg.path === '.' ? f : f.slice(pkg.path.length + 1)).split('/')[0]!))) continue;
     hits.push(f);
     byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
   }

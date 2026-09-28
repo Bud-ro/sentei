@@ -762,6 +762,36 @@ describe('discoverLocal on a synthetic org', () => {
       });
     });
 
+    it('npm: the native projects of a React Native / Expo package are not consumers; other native code still is', () => {
+      // invertase react-native-google-mobile-ads adapters: android/**/*.java, ios/*.m beside the JS.
+      org(['core', 'ads', 'expo', 'cfg', 'plain']);
+      write('org/repos/core/package.json', { name: '@acme/core' });
+      write('org/repos/ads/package.json', { name: '@acme/ads', peerDependencies: { 'react-native': '*' }, dependencies: { '@acme/core': '^1' } });
+      for (const f of ['src/index.ts', 'android/src/main/java/Marker.java', 'ios/Marker.m', 'macos/M.swift', 'windows/W.cpp',
+        'build.gradle.kts', 'cpp/TurboModule.cpp', 'scripts/release.rb']) write(`org/repos/ads/${f}`, '');
+      // Expo app (app.json `expo`, no react-native dependency declared): its ios/ is exempt,
+      // but a Python script elsewhere still flags it.
+      write('org/repos/expo/package.json', { name: 'expo-app', private: true, dependencies: { '@acme/core': '^1' } });
+      write('org/repos/expo/app.json', { expo: { name: 'x' } });
+      for (const f of ['App.tsx', 'ios/AppDelegate.swift', 'scripts/gen.py']) write(`org/repos/expo/${f}`, '');
+      // react-native.config.js marks a package too (a monorepo member).
+      write('org/repos/cfg/packages/m/package.json', { name: '@acme/m', dependencies: { '@acme/core': '^1' } });
+      write('org/repos/cfg/packages/m/react-native.config.js', 'module.exports = {};');
+      write('org/repos/cfg/packages/m/android/B.kt', '');
+      // Not React Native: an android/ dir is just code.
+      write('org/repos/plain/package.json', { name: 'plain', dependencies: { '@acme/core': '^1' } });
+      write('org/repos/plain/android/B.kt', '');
+      const m = discoverLocal({ orgDir: join(tmp, 'org') });
+      expect(Object.fromEntries(m.repos.flatMap((r) => r.packages.map((p) => [p.packageId, p.flags])))).toEqual({
+        // Ruby is not a native-module language: scripts/release.rb still flags it.
+        'npm:acme/ads:@acme/ads': [{ flag: 'unindexed_consumer', reason: '1 .rb file(s), e.g. scripts/release.rb', file: 'scripts/release.rb' }],
+        'npm:acme/cfg:@acme/m': [],
+        'npm:acme/core:@acme/core': [],
+        'npm:acme/expo:expo-app': [{ flag: 'unindexed_consumer', reason: '1 .py file(s), e.g. scripts/gen.py', file: 'scripts/gen.py' }],
+        'npm:acme/plain:plain': [{ flag: 'unindexed_consumer', reason: '1 .kt file(s), e.g. android/B.kt', file: 'android/B.kt' }],
+      });
+    });
+
     it('pub: JS-family files flag a consumer only when an org dependency exports Dart to JS; npm keeps its language list', () => {
       org(['widgets', 'bridge', 'web', 'site', 'npmlib', 'npmapp']);
       write('org/repos/widgets/pubspec.yaml', 'name: acme_widgets\n');
