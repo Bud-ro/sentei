@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from
 import { analyzeOrg, insertPrivateDead, reconcileDeadIslands, type AnalyzeCounts } from '../src/analyze.ts';
 import { runWitness } from '../src/witness.ts';
 import { openDb } from '../src/db.ts';
-import { ingestOrg } from '../src/ingest.ts';
+import { ingestOrg, SIGNATURE_ROLE } from '../src/ingest.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
 const DAY = 86_400;
@@ -1465,6 +1465,27 @@ describe('analyzeOrg on hand-built rows', () => {
     ]);
     expect((db.prepare('SELECT s.name FROM signature_pinned p JOIN symbols s USING (symbol_id) ORDER BY 1').all() as Array<{ name: string }>)
       .map((r) => r.name)).toEqual(['AtlasBase', 'GamepadState', 'TexturePackerAtlas']);
+  });
+
+  it('a reference ingest marked SIGNATURE_ROLE (a parameter on a later line, a constraint) pins; a body use does not (round 8d)', () => {
+    // drizzle-pulse: `export function createPulseHonoRouter(\n  handlers: PulseHonoHandlers,\n ...): Hono {`.
+    const router = at(aliveExport('createPulseHonoRouter'), 11, 16);
+    const handlers = at(sym(lib, 'src/fns.ts', 'PulseHonoHandlers', { exported: true }), 8, 12, 'typealias');
+    const opts = at(sym(lib, 'src/fns.ts', 'RouterOptions', { exported: true }), 9, 12, 'typealias');
+    const bodyType = at(sym(lib, 'src/fns.ts', 'BodyOnlyType', { exported: true }), 10, 12, 'typealias');
+    const sig = (to: number, line: number, col: number): void => {
+      run(`INSERT INTO occurrences (symbol_id, package_id, def_package_id, file, line, col, role, enclosing_symbol_id, is_export_site)
+        VALUES (?, ?, ?, 'src/fns.ts', ?, ?, ?, ?, 0)`, to, lib, lib, line, col, 8 | SIGNATURE_ROLE, router);
+      edge(router, to);
+    };
+    sig(handlers, 12, 12);
+    sig(opts, 11, 40); // `<T extends RouterOptions>` on the name line, after the name
+    // Negative: a use in the body (no SIGNATURE_ROLE, a later line) stays an unexport.
+    useAt(router, bodyType, 'src/fns.ts', 20, 4);
+    analyze();
+    expect(findings().filter((r) => r.verdict !== 'private_dead')).toEqual([f('BodyOnlyType', 'unexport_candidate', ['internal_refs_only'])]);
+    expect((db.prepare('SELECT s.name FROM signature_pinned p JOIN symbols s USING (symbol_id) ORDER BY 1').all() as Array<{ name: string }>)
+      .map((r) => r.name)).toEqual(['PulseHonoHandlers', 'RouterOptions']);
   });
 
   it('a type named only by the signature of a would-be deletion stays a dead island; pinned once the witness keeps its user', () => {

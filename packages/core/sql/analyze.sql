@@ -847,8 +847,16 @@ EXCEPT SELECT to_package_id FROM edges WHERE from_package_id <> to_package_id;
 --   `kind` empty and writes every annotation after the name) a TYPE S (`#` descriptor)
 --   on E's definition line anywhere: a type there is an annotation (`export function
 --   f(): Report {`, `export const config: Config =`), whereas a body line may call.
--- Missed (the symbol stays an unexport candidate, as before): Dart parameter types,
--- non-type TS signature names (a `typeof x`), and any signature line after the first.
+-- - any reference ingest marked SIGNATURE_ROLE (`role & 1048576`, round 8d): E is
+--   function-like (a function, method, constructor or accessor) and the reference lies
+--   between E's name and the start of its body, found by scanning the checkout's text
+--   (ingest signatureEnd): parameter types on any line of a multi-line parameter list
+--   (drizzle-pulse `createPulseHonoRouter(\n  handlers: PulseHonoHandlers,`), generic
+--   constraints (`<T extends Options>`), the return type; never for a TypeScript
+--   `private` member (no consumer calls it).
+-- Missed (the symbol stays an unexport candidate, as before): the signature of a
+-- variable-held arrow function after its first line, a return type written as a function
+-- type after its `=>`, a DB ingested without checkout paths (discover.json localPath).
 -- Over-read (no unexport row): a same-line initializer that does not decide the type, a
 -- TS class instantiated in a one-line body.
 CREATE VIEW signature_refs (symbol_id, api_symbol_id) AS
@@ -881,6 +889,7 @@ WHERE r.is_external = 0
   AND substr(e.name, 1, 1) NOT IN ('_', '#')
   AND (e.kind IN ('class', 'interface', 'typealias', 'type', 'enum', 'mixin', 'extension', 'struct', 'trait', 'protocol')
        OR e.symbol_str LIKE '%#'
+       OR (r.role & 1048576) <> 0
        OR (r.file = e.file AND r.line = e.line
            AND (e.kind IN ('field', 'variable', 'property', 'constant', 'staticfield', 'staticproperty', 'staticvariable')
                 OR r.col < e.col

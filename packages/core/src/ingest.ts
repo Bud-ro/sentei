@@ -40,6 +40,11 @@ import {
 export interface IngestDiscoverInput {
   repos: Array<{
     repo: string;
+    /**
+     * Absolute checkout path (discover.json). Optional: without it, signature references
+     * of multi-line declarations (SIGNATURE_ROLE) are not marked.
+     */
+    localPath?: string;
     config?: { extraEdges?: Array<{ from: string; to: string }> };
     packages: Array<{
       packageId: string;
@@ -400,8 +405,12 @@ interface DocWork {
   file: string;
   doc: Document;
   moduleSymbolId: number;
-  /** Definitions in this doc with an enclosing range, for enclosing-symbol lookup. */
-  spans: Array<{ symbolId: number; span: Span }>;
+  /**
+   * Definitions in this doc with an enclosing range, for enclosing-symbol lookup. `def`:
+   * the definition's own position, set for function-like symbols (a method descriptor:
+   * functions, methods, constructors, accessors), whose signature SIGNATURE_ROLE marks.
+   */
+  spans: Array<{ symbolId: number; span: Span; def?: { line: number; col: number } }>;
 }
 
 /** SymbolInformation.kind per symbol string, built once per document. */
@@ -421,6 +430,90 @@ interface SymRow {
 }
 
 const DEFINITION = SymbolRole.Definition;
+
+/**
+ * A sentei bit in `occurrences.role` (above every SCIP SymbolRole bit): the reference
+ * lies in the signature of its enclosing function-like declaration (parameter types,
+ * generic constraints, return type), between the declaration's name and its body
+ * (signatureEnd). analyze.sql `signature_refs` reads it (`role & 1048576`): a type
+ * named only there is pinned by that public signature, never an unexport candidate.
+ */
+export const SIGNATURE_ROLE = 1 << 20;
+
+/**
+ * Where the body of the function-like declaration whose name starts at (line, col)
+ * begins, scanning `lines` forward: the first `{` (a body; a `{` right after `:`, `|`,
+ * `&` or `,` opens a type literal instead: `(): { a: T } {`), `=>` (an arrow body or a
+ * Dart `=> expr`), `=` (an initializer) or `;` (no body: an overload, an abstract or
+ * `declare` member) at bracket depth 0, skipping strings, template literals and
+ * comments; in Dart also a `:` after the parameter list (a constructor initializer
+ * list). A `)` or `]` that closes nothing ends the search (the name was not a
+ * declaration head). Undefined when nothing is found within 200 lines. Limits: a
+ * return type written as a function type (`(): () => X {`) ends at its `=>`; nothing
+ * after that is marked (fail closed: the symbol stays an unexport candidate).
+ */
+export function signatureEnd(lines: readonly string[], line: number, col: number, dart = false): { line: number; col: number } | undefined {
+  const stack: string[] = [];
+  let quote: string | undefined;
+  let block = false;
+  let closedParams = false;
+  let prev = ''; // last non-space character outside strings/comments
+  for (let l = line; l < lines.length && l < line + 200; l += 1) {
+    const text = lines[l]!;
+    for (let c = l === line ? col : 0; c < text.length; c += 1) {
+      const ch = text[c]!;
+      const next = text[c + 1];
+      if (block) {
+        if (ch === '*' && next === '/') {
+          block = false;
+          c += 1;
+        }
+        continue;
+      }
+      if (quote !== undefined) {
+        if (ch === '\\') c += 1;
+        else if (ch === quote) quote = undefined;
+        continue;
+      }
+      if (ch === '/' && next === '/') break;
+      if (ch === '/' && next === '*') {
+        block = true;
+        c += 1;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch;
+        prev = ch;
+        continue;
+      }
+      if (/\s/.test(ch)) continue;
+      const depth0 = stack.length === 0;
+      if (ch === '(' || ch === '[' || ch === '<') stack.push(ch);
+      else if (ch === '{') {
+        if (depth0 && !':|&,'.includes(prev || 'x')) return { line: l, col: c };
+        stack.push(ch);
+      } else if (ch === ')' || ch === ']' || ch === '}') {
+        const open = ch === ')' ? '(' : ch === ']' ? '[' : '{';
+        while (stack.length > 0 && stack.at(-1) === '<') stack.pop();
+        if (stack.at(-1) !== open) return undefined;
+        stack.pop();
+        if (stack.length === 0 && ch === ')') closedParams = true;
+      } else if (ch === '>') {
+        if (text[c - 1] === '=') {
+          if (depth0) return { line: l, col: c - 1 };
+        } else if (stack.at(-1) === '<') stack.pop();
+      } else if (depth0 && ch === '=' && next !== '>' && next !== '=' && text[c - 1] !== '=' && text[c - 1] !== '!') {
+        return { line: l, col: c };
+      } else if (depth0 && ch === ';') {
+        return { line: l, col: c };
+      } else if (depth0 && dart && ch === ':' && closedParams) {
+        return { line: l, col: c };
+      }
+      prev = ch;
+    }
+  }
+  return undefined;
+}
 
 /** Reverse map of SymbolInformation.Kind numbers to lowercased names. */
 const KIND_NAMES = new Map<number, string>(
@@ -1071,7 +1164,10 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
         }
         defPositions.set(`${w.repo}\0${w.file}\0${start.line}\0${start.col}`, row.symbolId);
         const span = occurrenceEnclosingSpan(o);
-        if (span && row.symbolId !== w.moduleSymbolId) w.spans.push({ symbolId: row.symbolId, span });
+        if (span && row.symbolId !== w.moduleSymbolId) {
+          const fnLike = p.descriptors.at(-1)!.suffix === 'method';
+          w.spans.push({ symbolId: row.symbolId, span, ...(fnLike ? { def: { line: start.line, col: start.col } } : {}) });
+        }
       }
     }
 
@@ -1159,15 +1255,56 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
     const byId = new Map<number, SymRow>();
     for (const row of symbols.values()) byId.set(row.symbolId, row);
 
-    /** Innermost definition in `w` whose enclosing_range contains (line, col), else the module symbol. */
-    const enclosingAt = (w: DocWork, line: number, col: number, exclude?: number): number => {
-      let enclosing: { symbolId: number; span: Span } | undefined;
+    /** Innermost definition span in `w` containing (line, col). */
+    const enclosingSpanAt = (w: DocWork, line: number, col: number, exclude?: number): DocWork['spans'][number] | undefined => {
+      let enclosing: DocWork['spans'][number] | undefined;
       for (const s of w.spans) {
         if (s.symbolId === exclude) continue;
         if (!contains(s.span, line, col)) continue;
         if (!enclosing || startsAfter(s.span, enclosing.span)) enclosing = s;
       }
-      return enclosing?.symbolId ?? w.moduleSymbolId;
+      return enclosing;
+    };
+    /** Innermost definition in `w` whose enclosing_range contains (line, col), else the module symbol. */
+    const enclosingAt = (w: DocWork, line: number, col: number, exclude?: number): number =>
+      enclosingSpanAt(w, line, col, exclude)?.symbolId ?? w.moduleSymbolId;
+
+    // Signature references (SIGNATURE_ROLE): a reference inside a function-like
+    // declaration between its name and where its body starts (parameters, generic
+    // constraints, return type), found by scanning the checkout's file text from the
+    // definition (signatureEnd). The file is read once per document, only when some
+    // reference lies after a function-like definition on another line or column.
+    const repoRoots = new Map(discover.repos.map((r) => [r.repo, r.localPath]));
+    const docLines = new Map<DocWork, string[] | null>();
+    const sigEnds = new Map<string, { line: number; col: number } | null>();
+    const inSignature = (w: DocWork, e: DocWork['spans'][number], line: number, col: number): boolean => {
+      const d = e.def;
+      if (d === undefined || line < d.line || (line === d.line && col <= d.col)) return false;
+      let lines = docLines.get(w);
+      if (lines === undefined) {
+        const root = repoRoots.get(w.repo);
+        lines = null;
+        if (root !== undefined) {
+          try {
+            lines = readFileSync(join(root, ...w.file.split('/')), 'utf8').split(/\r?\n/);
+          } catch {
+            lines = null;
+          }
+        }
+        docLines.set(w, lines);
+      }
+      if (lines === null) return false;
+      const key = `${w.repo}\0${w.file}\0${d.line}\0${d.col}`;
+      let end = sigEnds.get(key);
+      if (end === undefined) {
+        // A TypeScript `private` member is no API a consumer can call: its signature pins nothing.
+        const head = (lines[d.line] ?? '').slice(0, d.col);
+        end = /\bprivate\s+(?:(?:static|readonly|async|override|get|set)\s+)*\*?\s*$/.test(head)
+          ? null
+          : signatureEnd(lines, d.line, d.col, w.file.endsWith('.dart')) ?? null;
+        sigEnds.set(key, end);
+      }
+      return end !== null && (line < end.line || (line === end.line && col < end.col));
     };
 
     /**
@@ -1239,9 +1376,13 @@ export function ingestOrg(opts: IngestOptions): IngestCounts {
           continue;
         }
         const isDef = (o.symbolRoles & DEFINITION) !== 0;
-        const enclosingId = enclosingAt(w, start.line, start.col, isDef ? row.symbolId : undefined);
+        const enclosingSpan = enclosingSpanAt(w, start.line, start.col, isDef ? row.symbolId : undefined);
+        const enclosingId = enclosingSpan?.symbolId ?? w.moduleSymbolId;
         const isSite = exportSites.has(`${w.repo}\0${w.file}\0${start.line}\0${start.col}`) ? 1 : 0;
-        st.occurrence.run(row.symbolId, w.packageId, row.packageId, w.file, start.line, start.col, o.symbolRoles, enclosingId, isSite);
+        const role = !isDef && !isSite && enclosingSpan !== undefined && inSignature(w, enclosingSpan, start.line, start.col)
+          ? o.symbolRoles | SIGNATURE_ROLE
+          : o.symbolRoles;
+        st.occurrence.run(row.symbolId, w.packageId, row.packageId, w.file, start.line, start.col, role, enclosingId, isSite);
         counts.occurrences += 1;
         if (!isDef && !isSite) edgeRun(st.edge, byId.get(enclosingId)!, row, 'scip');
       }

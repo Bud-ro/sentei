@@ -6,7 +6,7 @@ import { create, toBinary } from '@bufbuild/protobuf';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { analyzeOrg } from '../src/analyze.ts';
 import { openDb } from '../src/db.ts';
-import { anonymousSymbolKey, barePackageName, ingestOrg, repoSlug, statusReason, symbolKey, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
+import { anonymousSymbolKey, barePackageName, ingestOrg, repoSlug, SIGNATURE_ROLE, signatureEnd, statusReason, symbolKey, type ExportsSidecar, type IngestCounts, type IngestDiscoverInput, type RepoIndexFile } from '../src/ingest.ts';
 import { IndexSchema, SymbolInformation_Kind } from '../src/scip/scip_pb.ts';
 import { buildOrgSmallInputs, findScipTypescript, type OrgSmallInputs } from './helpers/orgSmallScip.ts';
 
@@ -447,6 +447,70 @@ describe('ingestOrg (synthetic SCIP)', () => {
       WHERE s.name = 'tool' AND (o.role & 1) = 0`).all()).toEqual([{ package_id: X_ROOT, consumer: X_MEMBER }]);
     expect(c.shorthandRefs).toBe(1);
     expect(logs.some((l) => l.includes('npm:acme/mono:@acme/app') && l.includes('target is not an org package, ignored'))).toBe(true);
+  });
+
+  it('marks references in a function-like signature SIGNATURE_ROLE, reading the checkout text (round 8d)', () => {
+    const src = [
+      'export function route<T extends Opts>(', //                       0
+      '  handlers: Handlers, // a comment with { and =', //               1
+      "  label: string = '{',", //                                        2
+      '): Result {', //                                                   3
+      '  const x: Body = 1;', //                                          4
+      '}', //                                                             5
+      'class C {', //                                                     6
+      '  private apply(', //                                              7
+      '    x: Hidden,', //                                                8
+      '  ) {}', //                                                        9
+      '}', //                                                             10
+    ].join('\n');
+    mkdirSync(join(root, 'checkout/src'), { recursive: true });
+    writeFileSync(join(root, 'checkout/src/a.ts'), src);
+    const T = (n: string) => `${LIB}src/\`a.ts\`/${n}`;
+    writeScip('acme/mono', 'lib.scip', [{
+      path: 'src/a.ts',
+      occurrences: [
+        { range: [0, 0, 0], symbol: `${LIB}src/\`a.ts\`/`, roles: 1 },
+        { range: [0, 16, 21], symbol: T('route().'), roles: 1, enclosing: [0, 0, 5, 1] },
+        { range: [0, 32, 36], symbol: T('Opts#') },
+        { range: [1, 12, 20], symbol: T('Handlers#') },
+        { range: [3, 3, 9], symbol: T('Result#') },
+        { range: [4, 11, 15], symbol: T('Body#') },
+        { range: [6, 6, 7], symbol: T('C#'), roles: 1, enclosing: [6, 0, 10, 1] },
+        { range: [7, 10, 15], symbol: T('C#apply().'), roles: 1, enclosing: [7, 2, 9, 6] },
+        // A private member's parameter type is no public signature (negative).
+        { range: [8, 7, 13], symbol: T('Hidden#') },
+        { range: [17, 12, 16], symbol: T('Opts#'), roles: 1 },
+        { range: [18, 12, 20], symbol: T('Handlers#'), roles: 1 },
+        { range: [19, 12, 18], symbol: T('Result#'), roles: 1 },
+        { range: [20, 12, 16], symbol: T('Body#'), roles: 1 },
+        { range: [21, 12, 18], symbol: T('Hidden#'), roles: 1 },
+      ],
+    }]);
+    writeJson('acme/mono', 'lib.exports.json', sidecar('npm:acme/mono:@acme/lib'));
+    const d = discover();
+    d.repos[0]!.localPath = join(root, 'checkout');
+    run(d);
+    const marked = () => db.prepare(`SELECT s.name, (o.role & ${SIGNATURE_ROLE}) <> 0 AS sig FROM occurrences o JOIN symbols s USING (symbol_id)
+      WHERE o.file = 'src/a.ts' AND (o.role & 1) = 0 ORDER BY o.line`).all();
+    expect(marked()).toEqual([
+      { name: 'Opts', sig: 1 }, { name: 'Handlers', sig: 1 }, { name: 'Result', sig: 1 }, { name: 'Body', sig: 0 }, { name: 'Hidden', sig: 0 },
+    ]);
+    // Without a checkout path nothing is marked (fail closed: the old same-line rule only).
+    run();
+    expect(marked()).toEqual([{ name: 'Opts', sig: 0 }, { name: 'Handlers', sig: 0 }, { name: 'Result', sig: 0 }, { name: 'Body', sig: 0 }, { name: 'Hidden', sig: 0 }]);
+  });
+
+  it('signatureEnd: body braces, arrows, initializers, bodiless declarations, type literals, Dart initializer lists', () => {
+    const end = (text: string, dart = false) => signatureEnd(text.split('\n'), 0, 0, dart);
+    expect(end('f(a: A): R {\n}')).toEqual({ line: 0, col: 11 });
+    expect(end('f(a: { b: B }): { c: C } {')).toEqual({ line: 0, col: 25 });
+    expect(end('f<T extends Map<K, V>>(\n  a: A,\n): Promise<R> {')).toEqual({ line: 2, col: 14 });
+    expect(end('f(cb: (x: X) => void) => cb')).toEqual({ line: 0, col: 22 });
+    expect(end('f(a: A): R;')).toEqual({ line: 0, col: 10 });
+    expect(end('f(a = `}`, /* ) */ b = "{"): R {')).toEqual({ line: 0, col: 31 });
+    expect(end('Foo(this.x, {int y = 1}) : assert(x > 0) {', true)).toEqual({ line: 0, col: 25 });
+    expect(end('x) {')).toBeUndefined(); // an unbalanced close: not a declaration head
+    expect(end('f(a: A,')).toBeUndefined(); // no body within the text
   });
 
   it('anonymousSymbolKey rewrites only the anonymous package name; symbolKey escapes spaces', () => {
