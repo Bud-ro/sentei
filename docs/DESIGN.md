@@ -4698,3 +4698,67 @@ pnpm 12 and a read-only store lock dir, failed installs are partial (fail closed
 - indexers/types.ts (doc comments only): `unindexedImports[].relative` is now also
   produced for non-SFC files (runtime loads from non-entry files); `shorthandRefs` also
   carry own-module load references; TypeScript `entrySymbols` of kind `runtime` exist.
+
+### Phase 3 fix round 8f: entry resolution for dist-layout manifests; bundler outputs
+
+Routed from round 8d. **Measured** with round 8e's `disc.ts` / `cmp.mjs` (discover
+only, over the read-only clones) on the base commit (`620c45c`) and on this branch.
+
+**1. The dist-layout rule (manifests.ts `distLayoutGroups`, `resolveEntry`).** A
+manifest copied into the build output and published from there (drizzle-orm:
+`main: ./index.cjs`, `module: ./index.js`, `types: ./index.d.ts`, no `exports`,
+sources under `src/`) names paths relative to the build dir. A declared leaf that is
+missing and not under a build dir (`dist|lib|build|out/`, a tsconfig outDir) now
+resolves, after every other rule, to the same path under each tsconfig `rootDir`
+(not the package itself), then `src/`: a built extension maps to `.ts` / `.tsx` /
+`.mts` / `.cts` / `.js` / `.jsx` (plus `.d.ts` for a declaration leaf), an
+extension-less path to `<p>.*` or `<p>/index.*`, guarded by existence. When a
+top-level `main` / `module` / `types` / `typings` needed the rule and there is no
+`exports`, every directory index under that root (`src/<dir>/…/index.{ts,tsx,mts,cts,js,jsx}`,
+not the root's own index) is surface too: consumers import those subpaths
+(`drizzle-orm/pg-core`). `sourceForBuildOutput` goes through `resolveEntry`, so a
+deep import `pg-core` maps to `src/pg-core/index.ts` as well. Files reached only this
+way are a mapping, not a declaration: like the index fallback, a convention that runs
+one (`tsx src/index.ts`) keeps it a runtime entry (without that, seven drizzle-team
+packages, drizzle-seed among them, lost `src/index.ts` from their runtime entries).
+`*` patterns are not mapped by this rule.
+
+Measured on drizzle-team: packages with a `discover: unresolved entry point` flag 26
+→ 9 (74 → 10 flags), no new one; drizzle-orm 1 → 63 entry points, its 3 flags
+(`./index.cjs`, `./index.d.ts`, `./index.js`) gone; drizzle-kit, -zod, -valibot,
+-typebox, -arktype, -seed, brocli, drizzle-graphql and the drizzle-orm-backup2
+packages lose theirs; drizzle-prisma-generator 2 → 8 entries (its directory
+indices). Left: `index.js` mains with no source anywhere (7 apps / examples),
+tento's `index.cjs` / `index.js` (no `src/index.ts`), an Expo `expo/AppEntry.js`.
+withastro: no package changed.
+
+**2. Bundler outputs (`bundlerNamedInputs`, `buildScriptRenames`).** tsdown / tsup /
+rolldown / rollup / vite `entry` / `input` (string, array, object) already mapped
+`dist/<name>.(m|c)js` to the source (round 8e rule f); new: a package.json script
+`mv <dir>/<a>.<ext> <dir>/<b>.<ext>` adds `<b>` for `<a>`'s source (renames within
+one dir of a known named input only). @flue/cli (`tsdown && mv dist/flue.mjs
+dist/flue.js`, bin importing `../dist/flue.js`) keeps the name, so
+`sourceForBuildOutput(…, 'dist/flue.js')` was already `src/main.ts` on the base
+(checked on the clone); the tests pin it and cover a real rename.
+
+**3. `indexers/types.ts`** doc comments for round 8d's sidecar: `unindexedImports[].relative`
+from non-SFC files, own-module load references in `shorthandRefs`, TypeScript
+`entrySymbols` of kind `runtime` (own-module loads, string entries).
+
+**Fixture.** org-small `frameworks` gains `@acme/distlayout` (the drizzle-orm
+manifest shape) and `@acme/distlayout-app` (imports `@acme/distlayout/pg`). Base:
+distlayout opaque (3 unresolved entry points), exports blocked. Now: `pgTable`
+alive, `distRootUnused` / `pgUnused` deletion candidates, `tableHelperDead`
+`private_dead`. New snapshot files only (adapter `0.4.0+sentei.9` on this base; the
+base adapter's deep-import link already goes through `sourceForBuildOutput`).
+
+**Not verified.** No org was re-indexed; numbers are discover-level. The adapter's
+shadow manifest (`rewriteTarget`, another unit's) still leaves a dist-layout `main`
+like `./index.cjs` unrewritten, so a bare `import 'drizzle-orm'` resolves only
+through round 8d's shadow link, which is not in this base.
+
+**Merge note.** Round 8d (its shadow link and dist-layout adapter handling) is on
+main since `1979f6a`, before this round was cherry-picked; the two were developed
+against the same base and touch different code (8d the adapter, 8f the manifest
+reader), and the org-small fixtures for both index identically under adapter
+`0.4.0+sentei.10`.

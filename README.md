@@ -152,9 +152,14 @@ opens pull requests.
   `src/x.*`), a `src/` under the output dir (`dist/esm/src/index.d.ts`), build-format
   dirs dropped anywhere (`lib/typescript/commonjs/index.d.ts`,
   `dist/default-entry/esm/server.js`), and a bundler's named input (`input: {
-  internal: 'src/node/internalIndex.ts' }` → `dist/node/internal.js`); a top-level
+  internal: 'src/node/internalIndex.ts' }` → `dist/node/internal.js`, also after a
+  build script's `mv dist/index.mjs dist/cli.js`); a top-level
   `main` / `types` that maps nowhere is fine when `source` / `react-native` names the
-  source (react-native-builder-bob).
+  source (react-native-builder-bob). A manifest published from its build dir
+  (drizzle-orm: `main: ./index.cjs`, no `exports`) names paths under the tsconfig
+  rootDir (else `src/`): `./index.cjs` → `src/index.ts`, and without `exports` every
+  directory index under it (`src/pg-core/index.ts`, the `drizzle-orm/pg-core`
+  subpath) is surface too.
 - Own code that single-file components and bundlers load where no index sees it
   keeps its top-level declarations alive (all of them: sentei cannot see which
   names are used): relative imports in `.vue` / `.svelte` / `.astro` / `.marko` /
