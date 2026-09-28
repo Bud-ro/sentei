@@ -645,9 +645,10 @@ export function readNpmPackage(
     ...terraformEntryPoints(repoRoot, files),
   ])].sort(cmp);
   const convention = conventionAll.filter((f) => !resolved.entryPoints.includes(f) && !clientAll.includes(f));
-  if (convention.length > 0) {
-    log(`${manifest}: ${convention.length} runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): ${
-      convention.slice(0, 5).join(', ')}${convention.length > 5 ? ', ...' : ''}`);
+  const conventionLog = convention.filter((f) => !firebase.includes(f)); // (logged above)
+  if (conventionLog.length > 0) {
+    log(`${manifest}: ${conventionLog.length} runtime entry point(s) by convention (wrangler main, functions/, routes/, node|tsx <file> scripts, Dockerfile CMD…): ${
+      conventionLog.slice(0, 5).join(', ')}${conventionLog.length > 5 ? ', ...' : ''}`);
   }
   const entryPoints = [...new Set([...resolved.entryPoints, ...client, ...convention])].sort(cmp);
   if (resolved.noneResolved && entryPoints.length === 0) warn(`${manifest}: no entry points resolved`);
