@@ -90,6 +90,8 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:acme/frameworks:@acme/bundled', repo: 'acme/frameworks', path: 'packages/bundled', manager: 'npm', name: '@acme/bundled', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/bundled/src/default-entry/server.ts","packages/bundled/src/index.ts","packages/bundled/src/node/internalIndex.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/cloudfn', repo: 'acme/frameworks', path: 'packages/cloudfn', manager: 'npm', name: '@acme/cloudfn', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/cloudfn/src/index.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/codemods', repo: 'acme/frameworks', path: 'packages/codemods', manager: 'npm', name: '@acme/codemods', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/codemods/src/transforms/rename-api.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/distlayout', repo: 'acme/frameworks', path: 'packages/distlayout', manager: 'npm', name: '@acme/distlayout', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/distlayout/src/index.ts","packages/distlayout/src/pg/index.ts"]' },
+      { package_id: 'npm:acme/frameworks:@acme/distlayout-app', repo: 'acme/frameworks', path: 'packages/distlayout-app', manager: 'npm', name: '@acme/distlayout-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/distlayout-app/src/main.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/docs-site', repo: 'acme/frameworks', path: 'packages/docs-site', manager: 'npm', name: '@acme/docs-site', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/docs-site/docusaurus.config.ts","packages/docs-site/remark-plugin.ts","packages/docs-site/sidebars.ts","packages/docs-site/src/pages/index.ts","packages/docs-site/src/theme/Footer.ts"]' },
       { package_id: 'npm:acme/frameworks:@acme/electron-url', repo: 'acme/frameworks', path: 'packages/electron-url', manager: 'npm', name: '@acme/electron-url', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/electron-url/src/main.js","packages/electron-url/src/renderer.js"]' },
       { package_id: 'npm:acme/frameworks:@acme/functions', repo: 'acme/frameworks', path: 'packages/functions', manager: 'npm', name: '@acme/functions', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/functions/src/auth.ts","packages/functions/src/index.ts"]' },
@@ -140,6 +142,7 @@ describe('discoverLocal on fixtures/org-small', () => {
       { consumer_package_id: 'npm:acme/app-worker:@acme/worker', dep_name: '@acme/widgets', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-widgets:@acme/widgets', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/app:@acme/app', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/codemods', dep_name: 'jscodeshift', dep_manager: 'npm', dep_constraint: '^17', resolved_package_id: null, dev: 1, resolution: null, ambiguous: 0 },
+      { consumer_package_id: 'npm:acme/frameworks:@acme/distlayout-app', dep_name: '@acme/distlayout', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/frameworks:@acme/distlayout', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/docs-site', dep_name: '@docusaurus/core', dep_manager: 'npm', dep_constraint: '^3', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/rn-lib', dep_name: '@acme/core', dep_manager: 'npm', dep_constraint: '^1.0.0', resolved_package_id: 'npm:acme/lib-core:@acme/core', dev: 0, resolution: 'name', ambiguous: 0 },
       { consumer_package_id: 'npm:acme/frameworks:@acme/rn-lib', dep_name: 'react-native', dep_manager: 'npm', dep_constraint: '*', resolved_package_id: null, dev: 0, resolution: null, ambiguous: 0 },
@@ -989,7 +992,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 40 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 42 }]);
   });
 });
 

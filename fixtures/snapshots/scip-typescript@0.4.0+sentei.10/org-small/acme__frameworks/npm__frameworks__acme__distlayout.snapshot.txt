@@ -1,0 +1,42 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/index.ts
+  // The package's `.` (main ./index.cjs, published from dist/: src/index.ts). Nothing
+//^ definition scip-typescript npm @acme/distlayout . src/`index.ts`/ enclosing [2:0-5:0]
+  // imports the root: deletion_candidate.
+  export function distRootUnused(): string {
+//                ^^^^^^^^^^^^^^ definition scip-typescript npm @acme/distlayout . src/`index.ts`/distRootUnused(). enclosing [2:0-4:1]
+    return 'root';
+  }
+
+## src/pg/index.ts
+  // The subpath `@acme/distlayout/pg` (a directory index of a dist-layout manifest without
+//^ definition scip-typescript npm @acme/distlayout . src/pg/`index.ts`/ enclosing [2:0-8:0]
+  // `exports`: surface).
+  export { pgTable } from './table';
+//         ^^^^^^^ reference scip-typescript npm @acme/distlayout . src/pg/`table.ts`/pgTable().
+//                        ^^^^^^^^^ reference scip-typescript npm @acme/distlayout . src/pg/`table.ts`/
+
+  // Nothing imports it: deletion_candidate.
+  export function pgUnused(): string {
+//                ^^^^^^^^ definition scip-typescript npm @acme/distlayout . src/pg/`index.ts`/pgUnused(). enclosing [5:0-7:1]
+    return '';
+  }
+
+## src/pg/table.ts
+  // Re-exported by pg/index.ts, used by @acme/distlayout-app: alive, no finding.
+//^ definition scip-typescript npm @acme/distlayout . src/pg/`table.ts`/ enclosing [1:0-10:0]
+  export function pgTable(name: string): string {
+//                ^^^^^^^ definition scip-typescript npm @acme/distlayout . src/pg/`table.ts`/pgTable(). enclosing [1:0-3:1]
+//                        ^^^^ definition scip-typescript npm @acme/distlayout . src/pg/`table.ts`/pgTable().(name)
+    return `table ${name}`;
+//                  ^^^^ reference scip-typescript npm @acme/distlayout . src/pg/`table.ts`/pgTable().(name)
+  }
+
+  // Not re-exported by the index, and nothing imports this module's other names:
+  // private_dead (a module file is not surface, only directory indices are).
+  export function tableHelperDead(): string {
+//                ^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/distlayout . src/pg/`table.ts`/tableHelperDead(). enclosing [7:0-9:1]
+    return '';
+  }

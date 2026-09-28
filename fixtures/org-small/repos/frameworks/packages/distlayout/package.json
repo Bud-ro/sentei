@@ -1,0 +1,12 @@
+{
+  "name": "@acme/distlayout",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.cjs",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "scripts": {
+    "build": "tsup && cp package.json dist/"
+  }
+}

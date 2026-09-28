@@ -1,0 +1,23 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/main.ts
+  // Consumer of the dist-layout package @acme/distlayout through a subpath (as apps import
+//^ definition scip-typescript npm @acme/distlayout-app . src/`main.ts`/ enclosing [3:0-11:0]
+  // `drizzle-orm/pg-core`): `pg` is dist/pg/index.js in the published package, and
+  // src/pg/index.ts in the checkout.
+  import { pgTable } from '@acme/distlayout/pg';
+//         ^^^^^^^ reference scip-typescript npm @acme/distlayout . src/pg/`table.ts`/pgTable().
+//                        ^^^^^^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/distlayout . src/pg/`index.ts`/
+
+  // Expected: alive, no finding (not exported; called from the entry file top level).
+  function main(): void {
+//         ^^^^ definition scip-typescript npm @acme/distlayout-app . src/`main.ts`/main(). enclosing [6:0-8:1]
+    console.log(pgTable('users'));
+//  ^^^^^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/console.
+//          ^^^ reference scip-typescript npm typescript . lib/`lib.dom.d.ts`/Console#log().
+//              ^^^^^^^ reference scip-typescript npm @acme/distlayout . src/pg/`table.ts`/pgTable().
+  }
+
+  main();
+//^^^^ reference scip-typescript npm @acme/distlayout-app . src/`main.ts`/main().

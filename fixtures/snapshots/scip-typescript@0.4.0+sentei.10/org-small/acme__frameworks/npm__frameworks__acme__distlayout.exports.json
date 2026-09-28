@@ -1,0 +1,53 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/distlayout/src/index.ts",
+    "packages/distlayout/src/pg/index.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/distlayout/src/index.ts",
+      "exportedAs": "distRootUnused",
+      "file": "packages/distlayout/src/index.ts",
+      "line": 2,
+      "name": "distRootUnused",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/distlayout/src/pg/index.ts",
+      "exportedAs": "pgTable",
+      "file": "packages/distlayout/src/pg/table.ts",
+      "line": 1,
+      "name": "pgTable",
+      "sites": [
+        {
+          "col": 9,
+          "file": "packages/distlayout/src/pg/index.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "col": 16,
+      "entry": "packages/distlayout/src/pg/index.ts",
+      "exportedAs": "pgUnused",
+      "file": "packages/distlayout/src/pg/index.ts",
+      "line": 5,
+      "name": "pgUnused",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/distlayout",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

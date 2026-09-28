@@ -143,13 +143,17 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     // terraform, Metro or an Electron window loads by path or by name has no row; only the
     // one dead helper per package is private_dead (bundled / rn-lib / cloudfn's unused
     // exports are deletion candidates: their surface now resolves, nothing blocks them).
+    // Fix round 8f: the dist-layout @acme/distlayout resolves too (its unused `.` and `./pg`
+    // exports are deletion candidates, `pgTable` is used through `@acme/distlayout/pg`).
     expect(rows.filter((x) => [
       'footerText', 'slugify', 'remarkPlugin', 'Footer', 'Home', 'sidebars', 'themeClass', 'useCounter', 'clamp', 'handler',
       'transform', 'parser', 'renameIdentifier', 'ping', 'onSignup', 'translateText', 'Button', 'buttonLabel', 'drawSheet', 'sheetSize',
     ].includes(x.symbol) && x.package_id.startsWith('npm:acme/frameworks:'))).toEqual([]);
     expect(rows.filter((x) => x.package_id.startsWith('npm:acme/frameworks:')).map((x) => `${x.symbol} ${x.verdict}`)).toEqual([
       'bundledMain deletion_candidate', 'internalApi deletion_candidate', 'serverEntry deletion_candidate', 'cloudfnUnused deletion_candidate',
-      'codemodDead private_dead', 'docsDead private_dead', 'rendererDead private_dead', 'functionsDead private_dead', 'nuxtDead private_dead',
+      'codemodDead private_dead',
+      'distRootUnused deletion_candidate', 'pgUnused deletion_candidate', 'tableHelperDead private_dead',
+      'docsDead private_dead', 'rendererDead private_dead', 'functionsDead private_dead', 'nuxtDead private_dead',
       'renderButton deletion_candidate', 'rnDead private_dead', 'themeDead private_dead',
     ]);
     // rn-lib's android/ and ios/ native code does not make it an unindexed consumer of @acme/core,

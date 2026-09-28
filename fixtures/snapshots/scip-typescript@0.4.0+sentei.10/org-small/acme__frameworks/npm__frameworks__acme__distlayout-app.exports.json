@@ -1,0 +1,33 @@
+{
+  "deepImportExports": [
+    {
+      "entry": "src/pg/index.ts",
+      "exportedAs": "pgTable",
+      "file": "src/pg/table.ts",
+      "name": "pgTable",
+      "targetPackage": "@acme/distlayout"
+    },
+    {
+      "entry": "src/pg/index.ts",
+      "exportedAs": "pgUnused",
+      "file": "src/pg/index.ts",
+      "name": "pgUnused",
+      "targetPackage": "@acme/distlayout"
+    }
+  ],
+  "entryPoints": [
+    "packages/distlayout-app/src/main.ts"
+  ],
+  "entrySymbols": [],
+  "exports": [],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/frameworks:@acme/distlayout-app",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}
