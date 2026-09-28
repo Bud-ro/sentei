@@ -4158,3 +4158,178 @@ warning ("no entry points resolved") is kept by `--quiet` (main.test).
 - Nuxt 4 `app/` srcDir aliases, package.json `imports` (`#x`) in SFCs and
   baseUrl-only bare specifiers are not resolved (the first is a gap, the others are
   ignored as before).
+
+### Phase 3 fix round 8b: Dart templates, framework entries, unnamed extensions, apps
+
+Evidence: evaluation batches C (VeryGoodOpenSource, bluefireteam,
+fluttercommunity) and D (Baseflow, material-foundation, invertase), plus
+drizzle-team's duplicate-name abort, all with the tool at f25900a (adapter
+`+sentei.14`). Batch C scored 9/16, 13/14, 15/17 on spot checks; PRIV-DEAD was
+wrong in 63 rows (VeryGoodOpenSource 27 of 32, bluefireteam 16 of 17,
+fluttercommunity 20 of 41). Batch D: Baseflow 13/16 (analyzer-plugin and pigeon
+rows). Adapter **`1.7.0+sentei.15`**; fork patch 15 in
+`packages/indexers/scip-dart/PATCHES.md`; snapshots regenerated (only acme_x,
+acme_app and the new dart-frameworks repo change).
+
+**1. An unparseable manifest never aborts discover.** VeryGoodOpenSource's
+`very_good_docs_site/__brick__/package.json` (`{{^publishable}}`) made
+`readNpmPackage` throw and discover exit 1 for the whole org. Both readers now
+throw a `ManifestParseError`; `readRepoManifestsWithIgnored` turns it into a
+warning (`<manifest>: cannot parse (…); not an org package: its deps are
+unknown, …`) and keeps the manifest as an ignored manifest with `depsUnknown`
+(the witness scans it as a consumer of every package: fail closed) and
+`reason: cannot parse: …`. discover records the reason as the manifest's
+`ignoredBy`, so it lands in `ignored_manifests` and the report's
+ignored-manifest warning names it (**deviation:** that warning's heading still
+says "excluded by ignoreManifests"; repo-select.ts is not this unit's, the item
+text carries the reason). The promotion pass already caught the error.
+
+**2. Templates are not packages.** Nine `{{project_name.snakeCase()}}_android`
+bricks were indexed, failed and became blockers. `__brick__` and `.mason` join
+the default ignored manifest dirs (`templates` / `template` were already there;
+`bricks/<b>/__brick__` is covered by `__brick__`; a brick's `hooks/` package
+beside it stays a package), subject to the monorepo-member rule like every
+default. A name containing `{{` is never accepted: the manifest becomes an
+ignored manifest (`reason: template name …`, deps kept), whatever dir it is in.
+On the VeryGoodOpenSource clones (discover only, through a symlinked
+`--org-dir` view, no config): 30 packages (was 39 with the `ignoreManifests`
+workaround), 20 manifests skipped under `__brick__`, no abort.
+
+**Also (coordinator addendum): package-manager / build-tool state.** `.nx`,
+`.turbo`, `.yarn`, `.pnpm-store` join `ALWAYS_SKIP_DIRS` (listFiles in and out
+of git, and TREE_SKIP_DIRS for the GitHub tree probe). invertase's
+react-native-google-mobile-ads had 40 `.nx/cache/` files flagged
+`unindexed_consumer`; on its clone discover now flags only the monorepo root's
+`build.gradle.kts` (gap G6, not this round).
+
+**3. Framework entry conventions (dart-surface `entrySymbols`, like build.yaml
+factories and Flutter plugin classes).** Rules, all on package-relative paths:
+- mason hooks: `run` of `pre_gen.dart` / `post_gen.dart` at the root of a
+  package whose dir is named `hooks` or that depends on `mason`, or under a
+  `hooks/` dir of the package;
+- dart_frog: `onRequest` of every `routes/**.dart`, `middleware` of every
+  `routes/**/_middleware.dart`, and `init` / `run` of the root `main.dart` when
+  the package depends on `dart_frog` (its custom entrypoint);
+- analyzer plugins: the top-level `plugin` (variable, getter or function) of
+  `lib/main.dart` when the package depends on `analysis_server_plugin` or
+  `analyzer_plugin`. The legacy `tools/analyzer_plugin/bin/plugin.dart` needs
+  nothing new: its `main` is an entry symbol (main anywhere);
+- **pigeon inputs (decided: entry symbols, not generated).** Every top-level
+  declaration of an own file outside `lib/` that imports `package:pigeon/…`
+  (by the URI text, so an unfetched pigeon still counts). Marking the file
+  generated would only suppress its own rows; as entry symbols its
+  declarations get no verdict (ingest: entry symbols never do) AND keep what
+  they use alive (a pigeon input may use the package's own types), and the
+  owner → member edges keep their fields and methods. Files under `lib/` are
+  left alone (nothing there imports pigeon; if it did, it is real API).
+One `info: framework entry symbols by convention: …` line counts them. Fixture:
+new org-dart repo `dart-frameworks` (README table), with stand-in `mason`,
+`dart_frog`, `pigeon` and `analysis_server_plugin` packages in
+`fixtures/org-dart/stubs/` as `path:` dependencies (CI resolves offline with no
+pub cache; outside `repos/`, so never discovered). Checked by running it with
+the previous dart-surface: `plugin` DEPRECATE and `AcmePlugin` private_dead
+(`unlocked_by:plugin`), the pigeon input's `GreetRequest` / `GreeterHostApi`
+private_dead; the hooks and backend packages had no seed at all (no public
+library, no bin), so they got no verdict of any kind (fail closed), and now get
+their own dead code (`staleVar`, `unusedRouteHelper`). An adapter test covers
+the dart_frog entrypoint, a nested `_middleware.dart`, `hooks/` inside a
+package, an unresolved pigeon import, `analyzer_plugin` and a `plugin` without
+the dependency (no entry).
+
+**4. Unnamed extensions (fork patch 15).** Members of `extension on T { … }`
+were `local` symbols, so their uses had no global user. The fork names an
+unnamed extension `` `<extension on T, line N>` `` (the extended type's
+display string and the line of its `extension` keyword) and uses that name as
+the owner of its members: they are global symbols with definitions and their
+references are recorded. Unambiguous because an unnamed extension is visible
+only in its own library (every reference is resolved in the same run as the
+definition). A local function is now always `local` (upstream gave a public
+one the top-level-looking `<file>/name().`, which could collide with a real
+top-level and was reported like one: very_good_cli `twoDigits`); its uses
+belong to the enclosing member. Verified on a copy of very_good_cli: `excludes`
+is `lib/src/cli/cli.dart/<extension on Set<String>, line 195>#excludes().`,
+referenced from `dart_cli.dart` and `flutter_cli.dart`, and its body's
+reference to `_ignoredDirectories` is enclosed by it; `formatted` likewise, with
+`twoDigits` local. Fixture: dart-lib-x `lib/src/impl.dart` (`shoutAll` →
+`extension on String { loud }` → `_upper`, alive; an unused
+`<extension on bool, line 38>` private_dead `already_unreachable`).
+
+**5. `pub get --no-example`.** Verified that `--[no-]example` exists on both
+`dart pub get` and `flutter pub get` (Dart 3.13.4 / Flutter 3.47.5; it dates
+from Dart 2.x, so 3.11 has it). On a copy of fluttercommunity firestore_helpers:
+`flutter pub get --offline` exits 1 (`Resolving dependencies in ./example`…
+`Because firestorehelpertest depends on analyzer 0.33.0 …`), with
+`--no-example` exits 0. Both prepare paths (single package, workspace root) use
+`pubGetArgs`. **Rule for a promoted example app:** it is its own package with
+its own prepare, so its `pub get` runs in its own dir and resolves it; the
+parent's `--no-example` only stops the parent from also resolving it (which
+also removes a concurrent write of the example's package config). The example
+was never part of the parent's index (scip-dart and dart-surface skip nested
+packages). Adapter test: a pre-null-safety `example/` leaves its package `ok`.
+
+**6. The recorded cause.** After a failed pub get every later failure
+(scip-dart's `Unable to locate packageConfig`, the missing `.scip`, unresolved
+own URIs) replaced the cause, so the report hint and the pre-null-safety
+wording never matched (bluefireteam heeve / snake_chef, the 8 Baseflow
+failures, fluttercommunity redux_undo). Now the pub get error stays the cause
+of everything after it. The failure line (`pubFailureLine`) skips noise
+(Flutter's `Waiting for another flutter command to release the startup
+lock...`, which was rocket_guide's summary line; progress lines; the solver's
+`The current Dart SDK version is …` preamble; `For details` / `Failed to
+update packages`) and joins a sentence pub wrapped (`must be 2.12.0'` +
+`or higher to enable null safety.`), capped at 300 characters. `report.ts`
+`blockerHint` matches `lower bound of "sdk: …" must be 2.12` (pre-null-safety
+SDK constraint, as before) and `doesn't / does not support null safety` (new:
+"a dependency without null safety, the current Dart SDK cannot resolve it").
+Unit tests use the verbatim stderr of rocket_guide, heeve and service_manager;
+an adapter test indexes a `>=2.7.0 <3.0.0` package whose scip-dart then fails
+and checks the single `cause:` line.
+
+**7. Extension-type primary constructors (decided: fold into the type's
+row).** The `<constructor>` UNEXPORT rows (very_good_core_hooks, 5) were not a
+naming problem: patch 14 defined an unnamed primary constructor at the type
+name, the type's own definition position, and ingest matches the export
+surface by position, so the export went to the constructor and the type was
+unexported. Fork patch 15 defines it at the `(` of its parameter list; the type
+is exported and the constructor is its member (it goes with the type's row, as
+every constructor does). Verified on a copy of very_good_core/hooks
+(`AndroidApplicationId#<constructor>().` at 13:35, the type at 13:15).
+Fixture: dart-lib-x `extension type Plain(int raw)`, exported and unused:
+`Plain` deletion_candidate, no `<constructor>` row.
+
+**8. Apps are private; same-repo duplicates never abort.** A pub package
+without `publish_to` is private when it is an application (`pubApplicationReason`):
+`lib/main.dart` declares a top-level `main`; or a `flutter:` section with
+`assets` / `uses-material-design` and no public library besides
+`lib/main.dart`; or mason hooks (`pre_gen.dart` / `post_gen.dart` at the root
+and a `mason` dependency). An explicit `publish_to` wins (a declaration). An
+analyzer plugin's `lib/main.dart` declares `plugin`, not `main`, so it stays a
+library. Logged per package (`… an application (…) without publish_to:
+treated as private`). Duplicates within one repo (coordinator addendum:
+manager-independent): private duplicates are auto-ignored as before; when two
+or more of one name are not private, **all** of them become ignored manifests
+(`ignoredBy: same-repo duplicate name <id>`, so the report names them) with one
+warning listing the manifests and the ready-to-paste `ignoreManifests`
+entries. Their ids would collide and none can be told apart as the real
+package; ignoring fails closed (no verdict on any copy, the witness scans them).
+**Decision on the cross-repo case:** no hard error remains anywhere; same-name
+published packages in different repos stay separate packages and a consumer
+that cannot be resolved between them is `ambiguous_dep` (blocked, with a
+warning), as since Phase 2. `formatError` (main.ts, another unit) is not needed
+for this message any more. On the clones (discover only): Baseflow runs with no
+config (both `bloc_counter` copies are apps: ignored private duplicates),
+drizzle-team warns about the four `planetscale-mysql2`
+projects instead of stopping, invertase about the two `mre-template` copies.
+Fixture: dart-frameworks `cli_app` (`unusedInApp` deletion_candidate, not a
+deprecation), `workshop/{start,finish}`.
+
+**Not verified:** no org was re-indexed or re-reported end to end (the
+per-defect checks above are discover-only runs through symlinked `--org-dir`
+views of the clones, and scip-dart / pub get runs on copies of single
+packages); the PRIV-DEAD counts after the fix are therefore estimates (the
+mason, dart_frog, pigeon and unnamed-extension classes behind 63 wrong rows in
+batch C should disappear; bluefireteam's 16 Electron rows, D8, are not Dart).
+The mason hooks packages being private turns their former DEPRECATE rows into
+UNEXPORT / DELETE rows (a hooks `lib/` used only by its own `pre_gen.dart` is
+`internal_refs_only`); not measured. Snapshot byte identity on Dart 3.11.3 was
+not re-checked.

@@ -151,7 +151,21 @@ opens pull requests.
   (`flutter.plugin.platforms.*.pluginClass` / `dartPluginClass`), and the
   `main` / `hybridMain` of a library of the repo that a `package:` string
   literal names (`spawnHybridUri('package:x/src/server.dart')`,
-  `Isolate.spawnUri(Uri.parse('package:x/worker.dart'), …)`).
+  `Isolate.spawnUri(Uri.parse('package:x/worker.dart'), …)`). Framework
+  conventions too: mason hooks' `run` (`pre_gen.dart` / `post_gen.dart`),
+  dart_frog's `onRequest` (`routes/**`), `middleware` (`_middleware.dart`) and
+  entrypoint `init` / `run`, an analyzer plugin's `plugin` (`lib/main.dart` of a
+  package depending on `analysis_server_plugin` / `analyzer_plugin`), and every
+  declaration of a pigeon input (a file outside `lib/` importing
+  `package:pigeon/…`: a codegen input, no verdicts).
+- Dart applications: a pub package without `publish_to` whose `lib/main.dart`
+  declares `main`, a Flutter app (`flutter: uses-material-design` / `assets`
+  and no library besides `lib/main.dart`) or mason hooks is private (nobody
+  depends on an app), so its unused exports are deletions, not deprecations.
+- `pub get` runs with `--no-example`: a package's `example/` (not part of its
+  index) cannot make it `partial`. After a failed `pub get` its error, not what
+  fails next, is the recorded cause (the report names a pre-null-safety SDK
+  bound or dependency).
 - Dart re-exports of another org package of the same repo (`package:test`'s
   `export 'package:matcher/expect.dart'`) are exports of the re-exporting entry
   too; re-exports of packages in other repos are not recorded.
@@ -436,8 +450,15 @@ A package is identified by where it lives, not by its name: its id is
 rewrite, a private copy); both are real packages with their own findings. Report
 rows, `blocked_by` entries, blockers, `witness_mismatch` consumers and SARIF
 fingerprints all use this id; the summary table shows the name and the repo in two
-columns. (Within one repo a name must stay unique per manager: a private duplicate
-there is ignored like a template; two public ones are an error.)
+columns. (Within one repo the ids of two manifests of one name would collide:
+private duplicates are ignored like templates; when two or more are not private,
+all of them are ignored as copies, with a warning listing them and the
+`ignoreManifests` entries that keep the real one. Discover never stops on it.)
+A manifest that does not parse (a mason template's `{{…}}` tags) or whose name is a
+template (`{{project_name}}`) is no package either: a warning, and the report's
+ignored-manifest warning names it. Mason `__brick__/` and `.mason/` are default
+ignored dirs, and `.nx`, `.turbo`, `.yarn`, `.pnpm-store` (package-manager and
+build-tool state) are never scanned, like `node_modules`.
 
 A `package.json` without `"name"` that declares dependencies (a demo app, a Phoenix
 `assets/` bundle) is still indexed, as a consumer: its name is `_unnamed/<dir>`
