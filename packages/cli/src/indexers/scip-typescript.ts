@@ -296,7 +296,12 @@ export const scipTypescript: Indexer = {
   //   entry `<self>/<subpath>` or `./x.ts`: runtime entrySymbols; unmapped build output:
   //   partial with a cause), dist-layout manifests in the shadow package (drizzle-orm),
   //   MDX fenced / inline code imports nothing.
-  version: '0.4.0+sentei.10',
+  // +sentei.11 (round 9b): dynamic imports' used names (a lazy component loader's
+  //   `default`) as shorthandRefs; Next.js app-router files under dot directories and
+  //   entries outside a solution-style tsconfig's programs indexed through the runtime
+  //   tsconfig or a sibling tsconfig; a package-name `extends` that cannot be resolved
+  //   is dropped (tsconfig.sentei-base.json).
+  version: '0.4.0+sentei.11',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
