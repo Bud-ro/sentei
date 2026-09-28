@@ -363,8 +363,17 @@ export interface UnindexedImport {
    * entries to the witness, never to flags.
    */
   scope?: 'script' | 'docs' | 'test';
-  /** An SFC's relative import of this package's own code file (see `module`). */
+  /**
+   * An own file of this package loaded by an unindexed file (an SFC's relative or
+   * aliased import, a `<script src>`) or by an `import.meta.glob` pattern (see `module`).
+   */
   relative?: true;
+  /**
+   * With `relative`: the load could not be resolved to a file (an alias naming no file,
+   * an unreadable glob pattern); `module` is the specifier as written. Core then cannot
+   * trust the package's entry set (no private_dead).
+   */
+  unresolved?: true;
 }
 
 export interface NamespaceMemberRef extends SourcePosition {

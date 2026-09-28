@@ -17,6 +17,7 @@ import {
   scanUnindexedImports,
   unindexedScope,
   walkPackageFiles,
+  type AliasConfig,
   type ConsumerCheckResult,
   type OrgPackageDir,
 } from './consumer-checks.ts';
@@ -119,7 +120,8 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   const toRepoRel = (abs: string): string =>
     path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
 
-  const specs = createPrograms(input, diagnostics);
+  const aliasConfigs: AliasConfig[] = [];
+  const specs = createPrograms(input, diagnostics, aliasConfigs);
   if (specs === undefined) {
     const why = diagnostics.find((d) => d.startsWith('error:')) ?? 'error: the tsconfig cannot be read';
     return {
@@ -409,12 +411,18 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     orgPackageNames: input.orgPackageNames,
     selfName,
     files: walked,
+    // The package's own tsconfig `paths` (the first config that declares any: the root, then its references).
+    ...(aliasConfigs[0] !== undefined ? { aliases: aliasConfigs[0] } : {}),
+    orgPackageDirs: input.orgPackageDirs,
   });
   for (const u of scanned) {
     const scoped = u.scope !== undefined ? ` (${u.scope} file: witness only)` : '';
     diagnostics.push(
-      u.relative === true
-        ? `info: ${u.file} is not indexed and imports own file ${u.module}${scoped}`
+      u.unresolved === true
+        ? `warn: ${u.file} loads ${u.module}, which names no file of the package (alias or glob sentei cannot resolve): `
+          + `its entry set is incomplete, no private_dead for it${scoped}`
+        : u.relative === true
+        ? `info: ${u.file} loads own file ${u.module} (not indexed importer, alias, <script src> or import.meta.glob)${scoped}`
         : u.targetPackage === selfName
           ? `info: ${u.file} is in no tsconfig and imports this package by name ('${u.module}'; self-witness)${scoped}`
           : `warn: ${u.file} is in no tsconfig and imports org module '${u.module}' (unindexed consumer of ${u.targetPackage})${scoped}`,
@@ -587,6 +595,8 @@ interface ProgramSpec {
 function createPrograms(
   input: Pick<ExportSurfaceInput, 'tsconfig' | 'pkgDir' | 'repoRoot' | 'entryPoints' | 'runtimeTsconfig'>,
   diagnostics: string[],
+  /** Receives the `paths` of each visited config that declares any (root first). */
+  aliasOut?: AliasConfig[],
 ): ProgramSpec[] | undefined {
   if (input.tsconfig !== undefined && existsSync(input.tsconfig)) {
     const programs: ProgramSpec[] = [];
@@ -614,6 +624,8 @@ function createPrograms(
       // TS18003 "no inputs" is expected for solution-style configs (and reported by scip-typescript).
       const errors = parsed.errors.filter((d) => d.code !== 18003 && d.category === ts.DiagnosticCategory.Error);
       for (const d of errors) diagnostics.push(`error: tsconfig${isRoot ? '' : ` ${rel}`}: ${flatten(d)}`);
+      const alias = aliasConfigOf(parsed.options, key);
+      if (alias !== undefined) aliasOut?.push(alias);
       if (parsed.fileNames.length > 0) {
         const { fileNames, options } = parsed;
         programs.push({ rootNames: fileNames, create: () => ts.createProgram({ rootNames: fileNames, options: { ...options, noEmit: true } }) });
@@ -632,6 +644,22 @@ function createPrograms(
   diagnostics.push('info: export surface computed from entry files with default compiler options');
   const options = { ...ts.getDefaultCompilerOptions(), allowJs: true, noEmit: true };
   return [{ rootNames, create: () => ts.createProgram({ rootNames, options }) }];
+}
+
+/**
+ * A config's `compilerOptions.paths` with absolute substitutions: relative to `baseUrl`
+ * when set, else to the directory of the config that declared `paths` (TypeScript's
+ * internal `pathsBasePath`, which follows `extends`), else to this config's directory.
+ */
+function aliasConfigOf(options: ts.CompilerOptions, configFile: string): AliasConfig | undefined {
+  if (options.paths === undefined) return undefined;
+  const base = options.baseUrl ?? (options as { pathsBasePath?: string }).pathsBasePath ?? path.dirname(configFile);
+  return {
+    paths: Object.entries(options.paths).map(([pattern, targets]) => ({
+      pattern,
+      targets: targets.map((t) => path.resolve(base, t)),
+    })),
+  };
 }
 
 /** A file extension TypeScript can take as a program root with allowJs (no declaration files). */

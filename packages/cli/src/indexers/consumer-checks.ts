@@ -940,6 +940,10 @@ export interface UnindexedScanInput extends PackageWalkInput {
   files?: readonly string[];
   /** The package's manager (default `npm`): its SURFACE_DIRS are never scoped. */
   manager?: string;
+  /** Module aliases (tsconfig `paths`) for SFC imports and `import.meta.glob`; see aliasTargets. */
+  aliases?: AliasConfig;
+  /** Org npm packages with their checkout dirs (realpath): an alias into one is an import of it. */
+  orgPackageDirs?: readonly OrgPackageDir[];
 }
 
 /**
@@ -953,11 +957,22 @@ export interface UnindexedScanInput extends PackageWalkInput {
  *    (`eslint.config.mjs` importing the package) is recorded the same way with
  *    `targetPackage` = `selfName` (core: the self-witness covers the file);
  *  - SFC files only: each relative import of one of the package's own code files
- *    (`import { x } from '../samples/components.ts'` in `pages/playground.vue`) is
- *    recorded with `relative: true`, `module` = the resolved file (repo-relative
- *    POSIX) and `targetPackage` = this package, so core can keep that file's
- *    declarations alive. Imports of other SFCs, assets and aliases (`~/`, `@/`)
- *    are not resolved.
+ *    (`import { x } from '../samples/components.ts'` in `pages/playground.vue`), each
+ *    aliased one (`~/lib/api`, `@/api/client`: aliasTargets, tsconfig `paths` first,
+ *    then the Vite / Nuxt / Astro conventions) and each `<script src="./x.ts">` of a
+ *    `.astro` / `.vue` file is recorded with `relative: true`, `module` = the resolved
+ *    file (repo-relative POSIX) and `targetPackage` = this package, so core can keep
+ *    that file's declarations alive. An alias that names no file is recorded with
+ *    `relative` and `unresolved: true` (`module` = the specifier): core then cannot
+ *    trust the package's entry set (fail closed: no private_dead). An alias into
+ *    another org package is an import of that package (an unindexed consumer).
+ *    Imports of other SFCs and assets are not followed (every SFC is scanned itself);
+ *    Nuxt's virtual modules (`#imports`, `#app`, ...) are skipped;
+ *  - every own file, indexed or not: each `import.meta.glob('./pages/*.ts')` (or
+ *    `globEager`, an array of patterns, `!` exclusions, `{a,b}` braces, a `/`-rooted
+ *    or aliased pattern) loads every own code file it matches: each is recorded like a
+ *    relative import. A pattern sentei cannot read (a template with `${`, character
+ *    classes, extglobs, an unknown alias) is recorded as `unresolved`.
  * Every entry carries the file's `scope` (see `unindexedScope`) when it has one.
  */
 export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport[] {
@@ -967,17 +982,57 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
   const nested = input.nestedPackageDirs.map((d) => path.resolve(d));
   const toRepoRel = (abs: string): string => path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
   const pkgLocation: PackageLocation = { manager: input.manager ?? 'npm', path: toRepoRel(pkgDir) || '.' };
+  const realPkgDir = realpathOr(pkgDir);
+  const realNested = nested.map(realpathOr);
   const isOwnCode = (abs: string): boolean =>
-    isInside(abs, pkgDir) && !abs.split(path.sep).includes('node_modules') && !nested.some((d) => isInside(abs, d));
+    (isInside(abs, pkgDir) || isInside(abs, realPkgDir)) && !abs.split(path.sep).includes('node_modules')
+    && !nested.some((d) => isInside(abs, d)) && !realNested.some((d) => isInside(abs, d));
+  const self = input.selfName ?? '';
   const push = (u: UnindexedImport): void => {
-    const key = `${u.file}\0${u.module}\0${u.relative === true ? 'r' : ''}`;
+    const key = `${u.file}\0${u.module}\0${u.relative === true ? 'r' : ''}${u.unresolved === true ? 'u' : ''}`;
     if (seen.has(key)) return;
     seen.add(key);
     out.push(u);
   };
-  for (const abs of input.files ?? walkPackageFiles(input)) {
+  const files = input.files ?? walkPackageFiles(input);
+  /** A relative (own file) load of `abs` by `file`. */
+  const own = (file: string, abs: string, scope: UnindexedImport['scope']): void => {
+    push({ file, module: toRepoRel(abs), targetPackage: self, relative: true, ...(scope !== undefined ? { scope } : {}) });
+  };
+  const gap = (file: string, module: string, scope: UnindexedImport['scope']): void => {
+    push({ file, module, targetPackage: self, relative: true, unresolved: true, ...(scope !== undefined ? { scope } : {}) });
+  };
+  /**
+   * An aliased specifier in an SFC: own code, another org package's file, some other
+   * file, or nothing. Nothing is a gap, except for a package-like specifier (a `*`
+   * catch-all `paths` entry): TypeScript then falls back to node_modules, so the
+   * specifier is handled like any bare import (false: not handled here).
+   */
+  const aliased = (file: string, module: string, targets: readonly string[], scope: UnindexedImport['scope']): boolean => {
+    for (const t of targets) {
+      const r = resolveTarget(t);
+      if (r === undefined) continue;
+      if (r.code === undefined) return true; // an SFC, asset or data file: not code (SFCs are scanned themselves)
+      if (isOwnCode(r.code)) {
+        own(file, r.code, scope);
+        return true;
+      }
+      const owner = input.orgPackageDirs !== undefined ? orgOwner(r.code, input.orgPackageDirs) : undefined;
+      if (owner !== undefined && owner.pkg.name !== input.selfName) {
+        push({ file, module, targetPackage: owner.pkg.name, ...(scope !== undefined ? { scope } : {}) });
+      }
+      return true; // else outside every org package (or in a nested package of our own name): not ours to seed
+    }
+    if (!ALIAS_LEAD.test(module) && barePackageName(module) !== undefined) return false;
+    gap(file, module, scope);
+    return true;
+  };
+  let walkedRel: string[] | undefined;
+  for (const abs of files) {
     const sfc = SFC_FILE.test(abs);
-    if (!sfc && (!CODE_FILE.test(abs) || input.indexedFiles.has(abs))) continue;
+    const code = CODE_FILE.test(abs);
+    if (!sfc && !code) continue;
+    const indexed = !sfc && input.indexedFiles.has(abs);
     const file = toRepoRel(abs);
     const scope = unindexedScope(file, pkgLocation);
     let text: string;
@@ -986,31 +1041,330 @@ export function scanUnindexedImports(input: UnindexedScanInput): UnindexedImport
     } catch {
       continue;
     }
-    for (const re of SPECIFIER_RES) {
-      for (const m of text.matchAll(re)) {
-        const module = m[1] ?? m[2];
-        if (module === undefined) continue;
-        const target = barePackageName(module);
-        if (target !== undefined) {
-          // The package imported by its own name counts too (`targetPackage` = self):
-          // core's self-witness reads such files, since SCIP never sees them.
-          if (target !== input.selfName && !input.orgPackageNames.has(target)) continue;
-          push({ file, module, targetPackage: target, ...(scope !== undefined ? { scope } : {}) });
-        } else if (sfc && input.selfName !== null && (module.startsWith('./') || module.startsWith('../'))) {
-          const resolved = resolveRelative(path.dirname(abs), module);
-          if (resolved === undefined || !isOwnCode(resolved)) continue;
-          push({
-            file,
-            module: toRepoRel(resolved),
-            targetPackage: input.selfName,
-            relative: true,
-            ...(scope !== undefined ? { scope } : {}),
-          });
+    if (text.includes('import.meta.glob')) {
+      // (An MDX file's fenced blocks are example code, never run: see `live` below.)
+      for (const g of importMetaGlobs(abs.endsWith('.mdx') ? stripInlineCode(stripFences(text)) : text)) {
+        walkedRel ??= files.map(toRepoRel);
+        const matched = g === undefined ? undefined : globMatches(g, file, pkgLocation.path, input.aliases, pkgDir, toRepoRel, walkedRel);
+        if (matched === undefined) {
+          gap(file, `import.meta.glob(${g === undefined ? '…' : g.map((p) => JSON.stringify(p)).join(', ')})`, scope);
+          continue;
+        }
+        for (const rel of matched) {
+          const target = path.join(input.repoRoot, ...rel.split('/'));
+          if (CODE_FILE.test(rel) && !/\.d\.[cm]?ts$/.test(rel) && isOwnCode(target)) own(file, target, scope);
         }
       }
     }
+    if (indexed) continue; // TypeScript resolved its imports (aliases included)
+    const specifiers = specifiersOf(text);
+    if (sfc && /\.(?:astro|vue)$/.test(abs)) {
+      for (const m of text.matchAll(SCRIPT_SRC_RE)) specifiers.push(m[1]!);
+    }
+    // Own-code loads of an MDX file: only its real imports, not the example code of its
+    // fenced blocks (drizzle-orm-docs tutorials show `import { db } from '@/db'`). Imports
+    // of org packages by name are still read from the whole text (fail closed).
+    const live = abs.endsWith('.mdx') ? new Set(specifiersOf(stripFences(text))) : undefined;
+    for (const module of specifiers) {
+      if (sfc && live !== undefined && !live.has(module) && barePackageName(module) === undefined) continue;
+      if (sfc && (live === undefined || live.has(module))) {
+        if (VIRTUAL_MODULE.test(module)) continue;
+        const targets = aliasTargets(module, pkgDir, input.aliases);
+        if (targets !== undefined && aliased(file, module, targets, scope)) continue;
+      }
+      const target = barePackageName(module);
+      if (target !== undefined) {
+        // The package imported by its own name counts too (`targetPackage` = self):
+        // core's self-witness reads such files, since SCIP never sees them.
+        if (target !== input.selfName && !input.orgPackageNames.has(target)) continue;
+        push({ file, module, targetPackage: target, ...(scope !== undefined ? { scope } : {}) });
+      } else if (sfc && (module.startsWith('./') || module.startsWith('../'))) {
+        const resolved = resolveRelative(path.dirname(abs), module);
+        if (resolved === undefined || !isOwnCode(resolved)) continue;
+        own(file, resolved, scope);
+      }
+    }
   }
-  return out.sort((a, b) => cmp(a.file, b.file) || cmp(a.module, b.module));
+  // Files a framework loads by convention from its config (Astro pages / middleware /
+  // actions, Nuxt auto-imports and plugins, own files the config names).
+  for (const { config, targets } of frameworkLoads(pkgDir, files)) {
+    const file = toRepoRel(config);
+    const scope = unindexedScope(file, pkgLocation);
+    for (const t of targets) if (isOwnCode(t)) own(file, t, scope);
+  }
+  return out.sort((a, b) => cmp(a.file, b.file) || cmp(a.module, b.module) || cmp(String(a.unresolved ?? ''), String(b.unresolved ?? '')));
+}
+
+/**
+ * Framework conventions for code the framework loads with no import anyone can see,
+ * keyed by the package-root config file that makes the package such an app. Package-
+ * relative globs (glob.ts syntax); every own code file matching is a load of the config.
+ *  - Astro: file-routed endpoints (`src/pages/**`: `.ts` routes and their helpers),
+ *    middleware, actions, content-layer config.
+ *  - Nuxt: auto-imported `composables/` / `utils/` / `stores/` (pinia) / `shared/`,
+ *    `server/utils/`, plugins, route middleware, local modules, app config, router
+ *    options; at the root (Nuxt 3) and under `app/` (Nuxt 4 srcDir).
+ * These are seeds, never entry points: the package's credibility for private_dead still
+ * comes from real entries (manifests' conventions, e.g. Nuxt `pages/`).
+ */
+const FRAMEWORK_LOADS: ReadonlyArray<{ configs: RegExp; globs: readonly string[] }> = [
+  {
+    configs: /^astro\.config\.[cm]?[jt]s$/,
+    globs: ['src/pages/**', 'src/middleware.*', 'src/middleware/**', 'src/actions/**',
+      'src/content.config.*', 'src/content/config.*', 'src/live.config.*'],
+  },
+  {
+    configs: /^nuxt\.config\.[cm]?[jt]s$/,
+    globs: ['{,app/}composables/**', '{,app/}utils/**', '{,app/}stores/**', 'shared/**', 'server/utils/**',
+      '{,app/}plugins/**', '{,app/}middleware/**', 'modules/**', '{,app/}app.config.*', '{,app/}router.options.*'],
+  },
+];
+
+/**
+ * Own code files a framework config at the package root loads (FRAMEWORK_LOADS), plus the
+ * own code files its `./` / `../` string literals name (Starlight's `routeMiddleware:
+ * './src/routeData.ts'`, an integration's entrypoint).
+ */
+function frameworkLoads(pkgDir: string, files: readonly string[]): Array<{ config: string; targets: string[] }> {
+  const out: Array<{ config: string; targets: string[] }> = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(pkgDir);
+  } catch {
+    return out;
+  }
+  for (const fw of FRAMEWORK_LOADS) {
+    const name = entries.filter((e) => fw.configs.test(e)).sort()[0];
+    if (name === undefined) continue;
+    const config = path.join(pkgDir, name);
+    const globs = fw.globs.flatMap(expandBraces);
+    const targets = files.filter((abs) => {
+      if (!CODE_FILE.test(abs) || /\.d\.[cm]?ts$/.test(abs)) return false;
+      const rel = path.relative(pkgDir, abs).split(path.sep).join(path.posix.sep);
+      return globs.some((g) => matchGlob(g, rel));
+    });
+    let text = '';
+    try {
+      text = readFileSync(config, 'utf8');
+    } catch {
+      // unreadable config: conventions only
+    }
+    for (const m of text.matchAll(/['"`](\.\.?\/[^'"`\n$]+)['"`]/g)) {
+      const r = resolveRelative(pkgDir, m[1]!);
+      if (r !== undefined) targets.push(r);
+    }
+    out.push({ config, targets });
+  }
+  return out;
+}
+
+/** Module specifiers of a text scan (SPECIFIER_RES), in order, with repeats. */
+function specifiersOf(text: string): string[] {
+  const out: string[] = [];
+  for (const re of SPECIFIER_RES) {
+    for (const m of text.matchAll(re)) {
+      const module = m[1] ?? m[2];
+      if (module !== undefined) out.push(module);
+    }
+  }
+  return out;
+}
+
+/** Markdown text without its fenced code blocks (``` or ~~~, three or more; an unclosed one runs to the end). */
+function stripFences(text: string): string {
+  let fence: string | undefined;
+  return text.split('\n').map((line) => {
+    const m = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (fence === undefined) {
+      if (m === null) return line;
+      fence = m[1]!;
+      return '';
+    }
+    if (m !== null && m[1]![0] === fence[0] && m[1]!.length >= fence.length && line.trim() === m[1]) fence = undefined;
+    return '';
+  }).join('\n');
+}
+
+/** Markdown text without its inline code spans (`` `import.meta.glob()` `` in prose). */
+function stripInlineCode(text: string): string {
+  return text.replace(/(`+)[^`\n]*?\1/g, (span) => ' '.repeat(span.length));
+}
+
+/** `<script src="…">` of an `.astro` / `.vue` file (Astro bundles a local script; Vue's `<script src>` is the component's code). */
+const SCRIPT_SRC_RE = /<script\b[^>]*?\bsrc\s*=\s*["']([^"'\n]+)["'][^>]*>/gi;
+
+/**
+ * Nuxt's virtual modules (generated at build time under `.nuxt/`): no file of the
+ * checkout, and no own code to keep alive. Skipped, not a gap.
+ */
+const VIRTUAL_MODULE = /^#(?:imports|app|build|components|head|vue-router|internal\/nuxt)(?:\/|$)/;
+
+/** Specifiers that can only be aliases (never an npm package name). */
+const ALIAS_LEAD = /^(?:~|@\/|@@\/|\$lib\/|#)/;
+
+/**
+ * Module aliases of a package: tsconfig `compilerOptions.paths`, patterns in
+ * declaration order with absolute substitutions (baseUrl / pathsBasePath applied).
+ */
+export interface AliasConfig {
+  paths?: ReadonlyArray<{ pattern: string; targets: readonly string[] }>;
+}
+
+/**
+ * Absolute candidate paths an aliased specifier names (before extension resolution),
+ * or undefined when it is not an alias:
+ *  - tsconfig `paths` (TypeScript's rule: an exact key wins, else the `*` pattern with
+ *    the longest prefix), when the package's tsconfig declares them;
+ *  - else the bundler conventions: `~~/`, `@@/` → the package root (Nuxt); `~/`, `@/`
+ *    → `src/` when it exists, else the package root (Vite / Astro / Nuxt 3 srcDir);
+ *    `$lib/` → `src/lib/` (SvelteKit, whose tsconfig is generated).
+ * Nuxt 4's `app/` srcDir is not a convention here: `~/x` then names a missing root
+ * file and is a gap (fail closed).
+ */
+export function aliasTargets(spec: string, pkgDir: string, aliases: AliasConfig | undefined): string[] | undefined {
+  const bare = spec.replace(/[?#].*$/, '');
+  const paths = aliases?.paths ?? [];
+  const exact = paths.find((p) => !p.pattern.includes('*') && p.pattern === bare);
+  if (exact !== undefined) return [...exact.targets];
+  let best: { prefix: string; suffix: string; targets: readonly string[] } | undefined;
+  for (const p of paths) {
+    const star = p.pattern.indexOf('*');
+    if (star < 0) continue;
+    const prefix = p.pattern.slice(0, star);
+    const suffix = p.pattern.slice(star + 1);
+    if (bare.length < prefix.length + suffix.length || !bare.startsWith(prefix) || !bare.endsWith(suffix)) continue;
+    if (best === undefined || prefix.length > best.prefix.length) best = { prefix, suffix, targets: p.targets };
+  }
+  if (best !== undefined) {
+    const middle = bare.slice(best.prefix.length, bare.length - best.suffix.length);
+    return best.targets.map((t) => t.replace('*', middle));
+  }
+  const conv = /^(~~|@@|~|@|\$lib)\/(.*)$/.exec(bare);
+  if (conv === null) return undefined;
+  const rest = conv[2]!;
+  const dir = conv[1] === '~~' || conv[1] === '@@' ? pkgDir
+    : conv[1] === '$lib' ? path.join(pkgDir, 'src', 'lib')
+      : isDir(path.join(pkgDir, 'src')) ? path.join(pkgDir, 'src') : pkgDir;
+  return [path.join(dir, ...rest.split('/'))];
+}
+
+function isDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Extensions an SFC-side import may name without a code extension (not code: nothing to seed, but not missing). */
+const NON_CODE_EXTS = ['.vue', '.svelte', '.astro', '.json', '.css', '.scss'];
+
+/**
+ * An alias target resolved like a relative import: `{ code }` for an own-or-other code
+ * file (exact, `.js` → `.ts`, added extension, `/index.*`), `{}` for an existing file
+ * that is not code (an SFC, an asset), undefined when nothing exists there.
+ */
+function resolveTarget(abs: string): { code?: string } | undefined {
+  const code = resolveRelative(path.dirname(abs), `./${path.basename(abs)}`);
+  if (code !== undefined) return { code };
+  const base = abs.replace(/[?#].*$/, '');
+  for (const c of [base, ...NON_CODE_EXTS.map((e) => base + e)]) {
+    try {
+      statSync(c);
+      return {};
+    } catch {
+      // next
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The pattern lists of the `import.meta.glob(…)` / `import.meta.globEager(…)` calls
+ * in `text`: string literals of the first argument (a string or an array of
+ * strings); undefined for a call whose patterns cannot be read (a template with
+ * `${…}`, a non-literal argument). A call without arguments is skipped (Vite rejects it:
+ * it is text about the function, as in the Astro docs).
+ */
+export function importMetaGlobs(text: string): Array<string[] | undefined> {
+  const out: Array<string[] | undefined> = [];
+  const call = /import\.meta\.glob(?:Eager)?\s*(?:<[^>()]*>)?\s*\(\s*/g;
+  for (const m of text.matchAll(call)) {
+    const rest = text.slice(m.index + m[0].length);
+    if (rest.startsWith(')')) continue; // `import.meta.glob()` with no pattern: prose, not a call Vite accepts
+    const arg = /^(\[[^\]]*\]|'[^'\n]*'|"[^"\n]*"|`[^`]*`)/.exec(rest);
+    if (arg === null) {
+      out.push(undefined);
+      continue;
+    }
+    const lits = [...arg[1]!.matchAll(/'([^'\n]*)'|"([^"\n]*)"|`([^`]*)`/g)];
+    if (lits.length === 0 || lits.some((l) => l[3] !== undefined && l[3].includes('${'))) {
+      out.push(undefined);
+      continue;
+    }
+    out.push(lits.map((l) => (l[1] ?? l[2] ?? l[3])!));
+  }
+  return out;
+}
+
+/** `a/{b,c}/*.{ts,js}` → every brace alternative (nested braces too). */
+function expandBraces(p: string): string[] {
+  const open = p.indexOf('{');
+  if (open < 0) return [p];
+  let depth = 0;
+  for (let i = open; i < p.length; i++) {
+    if (p[i] === '{') depth++;
+    else if (p[i] === '}' && --depth === 0) {
+      const inner = p.slice(open + 1, i);
+      const parts: string[] = [];
+      let d = 0;
+      let start = 0;
+      for (let j = 0; j < inner.length; j++) {
+        if (inner[j] === '{') d++;
+        else if (inner[j] === '}') d--;
+        else if (inner[j] === ',' && d === 0) {
+          parts.push(inner.slice(start, j));
+          start = j + 1;
+        }
+      }
+      parts.push(inner.slice(start));
+      return parts.flatMap((alt) => expandBraces(p.slice(0, open) + alt + p.slice(i + 1)));
+    }
+  }
+  return [p];
+}
+
+/**
+ * Repo-relative files of the repo that the glob patterns of one `import.meta.glob`
+ * call in `file` match, or undefined when a pattern cannot be read: `./` / `../`
+ * patterns are relative to the file, `/` ones to the package root (Vite's root), aliased
+ * ones go through aliasTargets; `!` patterns exclude. Only files under the package dir
+ * are listed (`walked`: the package walk, nested packages are not ours).
+ */
+function globMatches(
+  patterns: readonly string[], file: string, pkgRel: string, aliases: AliasConfig | undefined, pkgDir: string,
+  toRepoRel: (abs: string) => string, walked: readonly string[],
+): string[] | undefined {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const raw of patterns) {
+    const neg = raw.startsWith('!');
+    const p = neg ? raw.slice(1) : raw;
+    if (/[[\]()]/.test(p)) return undefined; // classes / extglobs: glob.ts cannot match them
+    let rels: string[];
+    if (p.startsWith('./') || p.startsWith('../')) rels = [path.posix.join(path.posix.dirname(file), p)];
+    else if (p.startsWith('/')) rels = [path.posix.join(pkgRel, p.slice(1))];
+    else {
+      const targets = aliasTargets(p, pkgDir, aliases);
+      if (targets === undefined) return undefined;
+      rels = targets.map(toRepoRel);
+    }
+    for (const rel of rels) {
+      if (rel.startsWith('../')) return undefined; // outside the repo
+      for (const g of expandBraces(rel)) (neg ? exclude : include).push(g);
+    }
+  }
+  return walked.filter((rel) => include.some((g) => matchGlob(g, rel)) && !exclude.some((g) => matchGlob(g, rel)));
 }
 
 /** An own code file a relative specifier names (exact, `.js` → `.ts`, added extension, `/index.*`), or undefined. */
