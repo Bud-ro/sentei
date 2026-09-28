@@ -1485,6 +1485,9 @@ const RELATIVE_CODE = /^\.\.?\/.*\.(?:[cm]?[jt]s|[jt]sx)$/;
  * them) and are skipped; so are SFCs (scanUnindexedImports) and declaration files
  * (they load no code).
  */
+/** Bundler / build tool configs: their string literals are build inputs, not runtime loads. */
+const BUILD_CONFIG_FILE = /^(?:[\w.-]+\.config\.[cm]?[jt]sx?|(?:rollup|rolldown|tsup|tsdown|vite|vitest|webpack|esbuild|build)\.[\w.-]*[cm]?[jt]s)$/;
+
 export function scanOwnModuleLoads(input: OwnLoadScanInput): { loads: OwnModuleLoad[]; gaps: OwnLoadGap[] } {
   const loads: OwnModuleLoad[] = [];
   const gaps: OwnLoadGap[] = [];
@@ -1554,6 +1557,10 @@ export function scanOwnModuleLoads(input: OwnLoadScanInput): { loads: OwnModuleL
       const spec = lit.text;
       const imported = importedNames(lit, pos);
       const isImport = imported !== null;
+      // A build config's strings (`rolldown.config.ts` `input: { x: './src/x.ts' }`,
+      // tsup / vite / webpack `entry`) name build INPUTS, whose outputs the manifest maps
+      // back to source as surface (manifests.ts): not a runtime string entry.
+      if (!isImport && BUILD_CONFIG_FILE.test(path.basename(abs))) return;
       const at = pos(lit);
       const push = (targets: string[]): void => {
         if (targets.length === 0) return;

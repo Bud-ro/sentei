@@ -210,7 +210,7 @@ WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file
     OR ('/' || rel) GLOB '*/demo/*'
     OR ('/' || rel) GLOB '*/blog/*'
     OR ('/' || rel) GLOB '*/versioned_docs/*'
-    OR ('/' || rel) GLOB '*/.vitepress/*');
+);
 
 -- Vendored files: a `third_party/`, `vendor/` or `vendored/` directory BELOW the
 -- package root (the path is made package-relative first, so a package whose own root

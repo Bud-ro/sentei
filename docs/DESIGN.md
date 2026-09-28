@@ -4530,6 +4530,18 @@ so for such sites the conventions only make the entry set credible.
 - ng-packagr (Angular) build layouts, and round 8a's proposed `ALWAYS_SKIP_DIRS`
   additions (`.nx`, `.turbo`, `.yarn`, `.pnpm-store`), are not done.
 
+### Phase 3 fix round 8d/8e merge corrections
+
+Two round-8d rules collided with round 8e's `frameworks` fixture and were
+narrowed at merge time: a bundler config's string literals (`rolldown.config.ts`
+`input: { internal: './src/node/internalIndex.ts' }`, tsup / vite / webpack
+`entry`) are build inputs whose outputs the manifest already maps back to source
+as surface, so they are no longer runtime string entries (`internalApi`, the
+unused `./internal` export, is a deletion candidate again); and `.vitepress/` is
+not a docs directory: it holds the site's theme and config code (`themeDead` in
+`.vitepress/lib/helpers.ts` is private dead code again). `blog/` and
+`versioned_docs/` stay docs.
+
 ### Phase 3 fix round 8d: bin→dist wrappers; dist-layout manifests; string entries; docs sites; test support; signature parameters
 
 From evaluation batches A, B and D (tool at `f25900a`; `$TMPDIR/eval/<org>/`). Adapter

@@ -145,10 +145,10 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
     }
   });
 
-  it('fix round 8d globs: tests-e2e / e2e-tests dirs are tests; Docusaurus blog / versioned_docs and .vitepress are docs', () => {
+  it('fix round 8d globs: tests-e2e / e2e-tests dirs are tests; Docusaurus blog / versioned_docs are docs, .vitepress/ (theme and config code) is not', () => {
     const tests = ['packages/cli/tests-e2e/helpers.ts', 'e2e-tests/run.ts'];
-    const docs = ['www/blog/2023-01-17-post.mdx', 'www/versioned_docs/version-10.x/setup.mdx', 'docs/.vitepress/config.ts', '.vitepress/theme/index.ts'];
-    const not = ['packages/db-collection-e2e/src/suite.ts', 'src/tests-e2e.ts', 'src/blogger/a.ts', 'src/blog.ts', 'src/vitepress/a.ts', 'versioned_docs.ts'];
+    const docs = ['www/blog/2023-01-17-post.mdx', 'www/versioned_docs/version-10.x/setup.mdx'];
+    const not = ['packages/db-collection-e2e/src/suite.ts', 'src/tests-e2e.ts', 'src/blogger/a.ts', 'src/blog.ts', 'src/vitepress/a.ts', 'versioned_docs.ts', 'docs/.vitepress/config.ts', '.vitepress/theme/index.ts'];
     for (const p of tests) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(true);
     for (const p of docs) expect(DOCS_GLOBS.some((g) => matchGlob(g, p)), p).toBe(true);
     for (const p of not) expect([...TEST_GLOBS, ...DOCS_GLOBS].some((g) => matchGlob(g, p)), p).toBe(false);

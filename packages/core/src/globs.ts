@@ -95,10 +95,9 @@ export const DOCS_GLOBS: readonly string[] = Object.freeze([
   '**/example/**',
   '**/demo/**',
   // Phase 3 fix round 8d (trpc www: Docusaurus `blog/` and `versioned_docs/` MDX were
-  // unscoped consumers; vitejs: VitePress theme / config under `.vitepress/`).
+  // unscoped consumers). `.vitepress/` is NOT docs: it holds the site's theme and config code.
   '**/blog/**',
   '**/versioned_docs/**',
-  '**/.vitepress/**',
 ]);
 
 /**
