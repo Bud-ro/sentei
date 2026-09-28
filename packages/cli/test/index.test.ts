@@ -172,11 +172,11 @@ describe('index stage on fixtures/org-small', () => {
       '[index] acme/app npm:acme/app:@acme/app: cached (ok at sha-app; use --force to re-index)',
       '[index] acme/app pub:acme/app:app_tool: cached (failed at sha-app; use --force to re-index)',
       // The end-of-run summary: a cached failure is still a failure (--strict exits 2 on it).
-      '[index] summary: 0 indexed, 3 cached, 1 failed',
+      '[index] summary: 0 indexed, 2 cached, 1 failed',
       '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
-      '  (none)                 0       1       1        0',
+      '  (none)                 0       0       1        0',
       '  scip-typescript        0       2       0        0',
-      '  total                  0       3       1        0',
+      '  total                  0       2       1        0',
       "[index] 1 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):",
       '  pub:acme/app:app_tool: no indexer',
     ]);
@@ -2173,14 +2173,15 @@ describe('index summary formatting', () => {
     countPackage(s, 'acme/a', entry('npm:acme/a:b', 'scip-typescript', 'partial'), false, null);
     countPackage(s, 'acme/d', entry('pub:acme/d:d', 'scip-dart', 'failed', ['error: pub get failed to resolve']), false, 'work/index/acme__d/pub__d__d.log');
     countPackage(s, 'acme/p', entry('pub:acme/p:p', null, 'failed', ['error: no indexer']), false, null);
-    expect(s).toMatchObject({ indexed: 3, cached: 1, failed: 2, partial: 1 });
+    // A failed package is counted once, as failed (not also as indexed / cached).
+    expect(s).toMatchObject({ indexed: 1, cached: 1, failed: 2, partial: 1 });
     expect(formatIndexSummary(s)).toEqual([
-      '[index] summary: 3 indexed, 1 cached, 2 failed, 1 partial',
+      '[index] summary: 1 indexed, 1 cached, 2 failed, 1 partial',
       '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
-      '  (none)                 1       0       1        0',
-      '  scip-dart              1       0       1        0',
+      '  (none)                 0       0       1        0',
+      '  scip-dart              0       0       1        0',
       '  scip-typescript        1       1       0        1',
-      '  total                  3       1       2        1',
+      '  total                  1       1       2        1',
       "[index] 2 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):",
       '  pub:acme/d:d: pub get failed to resolve (log: work/index/acme__d/pub__d__d.log)',
       '  pub:acme/p:p: no indexer',

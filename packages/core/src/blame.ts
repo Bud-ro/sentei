@@ -511,9 +511,13 @@ export async function runBlame(opts: RunBlameOptions): Promise<BlameCounts> {
   const notes = [
     shallowUndated ? `${shallowUndated} shallow` : '', noLine ? `${noLine} without a line` : '', network ? `${network} network?` : '',
   ].filter(Boolean);
+  // Shallow repos are skipped too (never blamed): counted here, named in the parenthesis
+  // (batch B printed "0 repo(s) skipped" while every repo was a skipped shallow clone).
+  const skipped = counts.skippedRepos + counts.shallowRepos;
   log(
     `[blame] ${counts.symbols} symbol(s): ${counts.blamed} blamed, ${counts.cached} cached, ` +
-      `${undated} undated${notes.length ? ` (${notes.join(', ')})` : ''}; ${counts.skippedRepos} repo(s) skipped`,
+      `${undated} undated${notes.length ? ` (${notes.join(', ')})` : ''}; ${skipped} repo(s) skipped` +
+      (counts.shallowRepos > 0 ? ` (${counts.shallowRepos} shallow)` : ''),
   );
   if (counts.shallowRepos > 0) {
     log(`[blame] ${counts.shallowRepos} of ${allRepos.length} repo(s) are shallow clones: not blamed (never unshallowed), `

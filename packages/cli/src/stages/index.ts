@@ -273,11 +273,15 @@ export function prepareLine(repo: DiscoveredRepo, pkg: DiscoveredPackage, instal
 
 /** Per-indexer package counts of one `index` run (`(none)`: no indexer owns the package). */
 export interface IndexCounts {
-  /** Indexed in this run (any status). */
+  /** Indexed in this run with status ok / partial (a failure is counted in `failed` only). */
   indexed: number;
-  /** Reused from a previous run (ok, or a cached partial / failed result: the failure cache). */
+  /** Reused from a previous run with status ok / partial (a cached failure is counted in `failed` only). */
   cached: number;
-  /** Status `failed` (fresh or reused), included in indexed / cached. */
+  /**
+   * Status `failed` (fresh or reused: the failure cache). Not in indexed / cached, so
+   * indexed + cached + failed is the number of packages (batch B: "N indexed, … F
+   * failed" counted every failed package twice).
+   */
   failed: number;
   /** Status `partial` (fresh or reused), included in indexed / cached. */
   partial: number;
@@ -312,9 +316,9 @@ export function countPackage(
   const key = entry.indexer ?? NO_INDEXER;
   const per = (summary.byIndexer[key] ??= emptyCounts());
   for (const c of [summary, per]) {
-    if (cached) c.cached++;
-    else c.indexed++;
     if (entry.status === 'failed') c.failed++;
+    else if (cached) c.cached++;
+    else c.indexed++;
     if (entry.status === 'partial') c.partial++;
   }
   if (entry.status === 'failed') {

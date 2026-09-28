@@ -245,7 +245,7 @@ describe('runBlame', () => {
     expect(ages(db, ids['acme/lib:b']!)).toEqual({ sha: null, at: null });
     expect(logs.filter((l) => l.startsWith('[blame] acme/lib: shallow clone, not blamed: 2 symbol age(s) unknown, treated as old enough')))
       .toHaveLength(1);
-    expect(logs).toContain('[blame] 2 symbol(s): 0 blamed, 0 cached, 2 undated (2 shallow); 0 repo(s) skipped');
+    expect(logs).toContain('[blame] 2 symbol(s): 0 blamed, 0 cached, 2 undated (2 shallow); 1 repo(s) skipped (1 shallow)');
     expect(logs.some((l) => l.startsWith('[blame] 1 of 1 repo(s) are shallow clones: not blamed'))).toBe(true);
     // Default policy (minAgeDays 180): the warning.
     expect(logs.at(-1)).toBe('[blame] warn: minAgeDays=180 has no effect on 1 of 1 repos (shallow clones: symbol ages unknown, '
@@ -463,7 +463,7 @@ describe('runBlame across repos (dart-lang: 31 repos one at a time, 1280 s)', ()
       '[blame] 3 of 6 repo(s) are shallow clones: not blamed (never unshallowed), their 3 symbol(s) have unknown ages, '
         + 'treated as old enough; pass --full-clone (repos.clone: "full") to date symbols',
     ]);
-    expect(r.logs).toContain('[blame] 6 symbol(s): 3 blamed, 0 cached, 3 undated (3 shallow); 0 repo(s) skipped');
+    expect(r.logs).toContain('[blame] 6 symbol(s): 3 blamed, 0 cached, 3 undated (3 shallow); 3 repo(s) skipped (3 shallow)');
     expect(r.logs.at(-1)).toBe('[blame] warn: minAgeDays=180 has no effect on 3 of 6 repos (shallow clones: symbol ages unknown, '
       + 'treated as old enough); pass --full-clone (repos.clone: "full") to date symbols');
     expect(r.db.prepare("SELECT count(*) AS n FROM repo_history WHERE history = 'shallow'").get()).toEqual({ n: 3 });

@@ -638,15 +638,17 @@ than 20 packages, `N/M packages prepared` / `N/M packages done` lines.
 ## Reading the summary
 
 `index` ends with its own summary: packages indexed, reused from the cache and
-failed (plus partial), per indexer, then one line per failed package with the
+failed (plus partial), per indexer (a failed package counts as failed only, so
+indexed + cached + failed is the number of packages; partial ones are also in
+indexed or cached), then one line per failed package with the
 first line of its diagnostics that names a cause (a `TS1012`, an `Error:`, heap
 exhaustion, ...) and the path of its log (`work/index/<owner>__<repo>/<pkg>.log`,
 the full indexer and install output):
 
 ```
-[index] summary: 15 indexed, 0 cached, 1 failed
+[index] summary: 14 indexed, 0 cached, 1 failed
   INDEXER          INDEXED  CACHED  FAILED  PARTIAL
-  scip-typescript       15       0       1        0
+  scip-typescript       14       0       1        0
 [index] 1 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):
   npm:acme/repo-broken:@acme/broken: tsconfig.json(11,2): error TS1012: Unexpected token. (log: work/index/acme__repo-broken/npm__repo-broken__acme__broken.log)
 ```
@@ -690,7 +692,8 @@ the version skew count, with one line per class of unresolved references that
 are indexing gaps rather than skew. `blame` dates the last edit of the definition line, not
 its creation, which errs toward younger (the safe direction). The `blame` stage
 itself ends with `[blame] N symbol(s): a blamed, b cached, c undated (d shallow,
-...); e repo(s) skipped`, and, when some repos are shallow, `[blame] S of M
+...); e repo(s) skipped (s shallow)` (shallow clones count as skipped: they are
+never blamed), and, when some repos are shallow, `[blame] S of M
 repo(s) are shallow clones: not blamed ...` plus the `warn:` line about
 `minAgeDays`.
 

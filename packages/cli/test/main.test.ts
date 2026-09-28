@@ -426,11 +426,11 @@ describe('index summary, --strict and --json', () => {
     expect(lenient.code).toBe(0);
     expect(lenient.err).toBe('');
     const lines = lenient.out.split('\n');
-    const at = lines.indexOf('[index] summary: 2 indexed, 0 cached, 1 failed');
+    const at = lines.indexOf('[index] summary: 1 indexed, 0 cached, 1 failed');
     expect(at).toBeGreaterThan(-1);
     expect(lines.slice(at + 1, at + 5)).toEqual([
       '  INDEXER          INDEXED  CACHED  FAILED  PARTIAL',
-      '  scip-typescript        2       0       1        0',
+      '  scip-typescript        1       0       1        0',
       "[index] 1 package(s) failed to index; their consumers' findings are blocked (index_failed). (exit 2 with --strict):",
       `  ${broken}: tsconfig.json(11,2): error TS1012: Unexpected token. (log: ${log})`,
     ]);
@@ -438,17 +438,17 @@ describe('index summary, --strict and --json', () => {
 
     const strict = await run('index', '--work', work, '--no-install', '--force', '--strict');
     expect(strict.code).toBe(2);
-    expect(strict.out).toContain('[index] summary: 2 indexed, 0 cached, 1 failed');
+    expect(strict.out).toContain('[index] summary: 1 indexed, 0 cached, 1 failed');
     expect(strict.err).toBe(`sentei index: --strict: 1 package(s) failed to index: ${broken}\n`);
 
     // --json: stdout is only the summary; progress (and the table) on stderr.
     const json = await run('index', '--work', work, '--no-install', '--force', '--json', '--strict');
     expect(json.code).toBe(2);
-    expect(json.err).toContain('[index] summary: 2 indexed');
+    expect(json.err).toContain('[index] summary: 1 indexed');
     const { summary } = JSON.parse(json.out) as { summary: Record<string, unknown> };
     expect(summary).toEqual({
-      indexed: 2, cached: 0, failed: 1, partial: 0,
-      byIndexer: { 'scip-typescript': { indexed: 2, cached: 0, failed: 1, partial: 0 } },
+      indexed: 1, cached: 0, failed: 1, partial: 0,
+      byIndexer: { 'scip-typescript': { indexed: 1, cached: 0, failed: 1, partial: 0 } },
       failures: [{
         repo: 'acme/repo-broken', packageId: broken, indexer: 'scip-typescript',
         error: 'tsconfig.json(11,2): error TS1012: Unexpected token.', log,
