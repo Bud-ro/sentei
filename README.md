@@ -27,8 +27,9 @@ dogfooded on public orgs (unjs and honojs for TypeScript; supabase for a
 TypeScript / Dart mix; Workiva, flame-engine and dart-lang for Dart and Flutter;
 lockfiles in `fixtures/orgs/`), with spot checks against the clones recorded in
 `docs/DESIGN.md` ("Phase 2 verification reruns"). Findings only see consumers
-inside the org (the `org_dead` view states outright that it assumes there are no
-others), so treat them as candidates to review, not instructions. sentei only reports: it never edits, deletes or pushes code and never
+inside the org (unused exports of published packages are therefore only
+*deprecation* candidates, unless the org asserts `closedOrg`, which the report then
+states), so treat them as candidates to review, not instructions. sentei only reports: it never edits, deletes or pushes code and never
 opens pull requests.
 
 ## Requirements
@@ -148,7 +149,7 @@ $S ingest     # load .scip files into work/sentei.db
 $S blame      # first-seen dates for exported symbols (unshallows clones, --clone-concurrency at a time)
 $S analyze    # reachability + verdicts
 $S witness    # text-search check: witnessed candidates become deletion/deprecation candidates
-$S report     # report.json, SARIF, summary on stdout (--view org_dead,... to pick views)
+$S report     # report.json, SARIF, summary on stdout (--view delete,... to pick views)
 # or all of the above in order:
 $S run --org unjs --lockfile fixtures/orgs/unjs.lock.json
 ```
@@ -342,6 +343,7 @@ keys and wrong types are errors, so a typo cannot silently fail open.
 | `trustPrivateRegistry` | true | `published-private` packages count as private (nobody outside the org can depend on them) |
 | `countTestsAsConsumers` | false | references from test files count as uses (always, without it, for a dev-only dependency and for test-support code, below) |
 | `countDocsAsConsumers` | false | references from docs files count as uses |
+| `closedOrg` | false | the org **asserts** that nothing outside it depends on its published packages: their unused exports are `delete` (deletion candidates, witness still required), not `deprecate`. sentei cannot check this; the summary's policy line, `report.json` `assertions` and SARIF state it. No re-index (see [Views](#views)) |
 | `keep` | `[]` | never report these: `"npm:@acme/foo#sym"` (every package named `@acme/foo`), `"npm:acme/foo:@acme/foo#sym"` (only the one in repo `acme/foo`), `"pub:bar#*"` |
 | `ignoreManifestDirs` | built-in list | directory names (fixtures, templates, examples, test, ...) whose manifests are not org packages; replaces the default. A name matching any *ancestor* of the manifest's dir always ignores it; matching the manifest's *own* dir ignores it unless that dir is a monorepo member: its parent is `pkgs`, `packages`, `apps`, `libs` or `modules` (`pkgs/test` is the `test` package), or it is a pub `workspace:` / npm `workspaces` member (or has `resolution: workspace`) whose parent dir holds no manifest (a package's own `example/` stays ignored) |
 | `ignoreManifests` | `[]` | globs `"<repo>/<manifest path>"` (repo name without the org), e.g. `"vscode/package.json"`, `"over_react/app/**"`: those manifests are not org packages (never indexed, never a blocker, not a counted consumer; the text witness still scans their code, fail closed). The report lists every one in a warning. Use it for a package that cannot be indexed and that nothing depends on (a pre-Dart-2.12 example app, a repo-internal demo); a blocker's hint gives the exact entry |
@@ -401,14 +403,15 @@ is none.
 `analyze` + `witness` give each exported symbol one **base verdict**. It depends on
 the evidence (references, age, `keep`, blockers, the witness) and on whether the
 package is **private** (`private`, or `published-private` with
-`trustPrivateRegistry`: nobody outside the org can depend on it) or **published**
-(everything else). Nothing else about the world goes in, so every way of reading
-the result is a [view](#views) over the same findings.
+`trustPrivateRegistry`: nobody outside the org can depend on it; with `closedOrg`,
+every package, by the org's assertion) or **published** (everything else). Nothing
+else about the world goes in, so every way of reading the result is a
+[view](#views) over the same findings.
 
 | Verdict | Meaning |
 |---|---|
-| `deletion_candidate` | private package, no counted references (or only test references), old enough, not kept, witness found nothing |
-| `deprecation_candidate` | published package, same evidence (the witness ran too); or, with reason `internal_refs_only`, an export used only inside its published package |
+| `deletion_candidate` | private package (or, with `closedOrg`, a published one), no counted references (or only test references), old enough, not kept, witness found nothing |
+| `deprecation_candidate` | published package (never with `closedOrg`), same evidence (the witness ran too); or, with reason `internal_refs_only`, an export used only inside its published package |
 | `unexport_candidate` | private package with dependents in the org, only used inside its own package: drop the `export` (see below for what never gets one) |
 | `private_dead` | not exported, unreachable from the package's entry points (now, or once the candidates it names are gone) |
 | `needs_review` | would be a candidate (or an unexport) but the witness found a textual mention |
@@ -510,31 +513,46 @@ own root is under such a directory is still org code).
 
 ## Views
 
-`report.json` holds the base `findings` and every view under `views`, each
-`{ description, assertion?, rows }`:
+**Delete or deprecate.** By default an unused export is `delete` in a private
+package (nobody outside the org can depend on it) and `deprecate` in a published
+one (consumers outside the org may exist: deprecate now, remove in a major
+version). Set `closedOrg: true` (org `sentei.json`, or `--policy closedOrg=true`
+at discover) only if you can assert that **nothing outside the org depends on its
+published packages** (a monorepo that publishes for itself, an internal org with
+public package names): then unused exports are `delete` in both, under that
+assertion, which the summary's policy line (`closedOrg=true (asserted: ...)`), the
+`PRIVATE` column (`closedOrg` instead of `yes`), `report.json` (`assertions`,
+`views.delete.assertion`, `packages[].private_by_assertion`) and each affected
+SARIF `sentei/delete` result state. The evidence is the same either way, the text
+witness included.
+
+`report.json` holds the base `findings`, `assertions` (empty unless `closedOrg`)
+and every view under `views`, each `{ description, assertion?, rows }`:
 
 | View | Rows | Summary column | SARIF rule (level) |
 |---|---|---|---|
-| `delete` | `deletion_candidate` | DELETE | `sentei/delete` (warning) |
-| `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `only_docs_refs` / `dead_island` | DEPRECATE | `sentei/deprecate` (note) |
-| `org_dead` | the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion** | ORG-DEAD (rows plus the unlocked helpers; the total line carries a footnote) | `sentei/org-dead` (warning), only with `--view org_dead` |
+| `delete` | `deletion_candidate` (with `closedOrg`, published packages too; the view then carries the assertion) | DELETE | `sentei/delete` (warning) |
+| `deprecate` | `deprecation_candidate` with `no_refs` / `only_test_refs` / `only_docs_refs` / `dead_island` (empty with `closedOrg`) | DEPRECATE | `sentei/deprecate` (note) |
+| `org_dead` | **legacy, prefer `closedOrg`**: the `deprecate` rows read as deletions, plus (`private_dead`) the private helpers only they unlock; carries an **assertion**; empty with `closedOrg` | ORG-DEAD, only with `--view org_dead` | `sentei/org-dead` (warning), only with `--view org_dead` |
 | `unexport` | `unexport_candidate`, plus (`published`) `deprecation_candidate` with only `internal_refs_only`; never for a private app nothing in the org depends on, nor for a type in a public signature | UNEXPORT | `sentei/unexport` (note) |
-| `private_dead` | `private_dead`, minus the helpers listed under `org_dead` | PRIV-DEAD | `sentei/private-dead` (note) |
+| `private_dead` | `private_dead`, minus the helpers of a published package that only its `deprecate` rows unlock (those are in `org_dead`; none with `closedOrg`) | PRIV-DEAD | `sentei/private-dead` (note) |
 | `needs_review` | `needs_review` | REVIEW | `sentei/needs-review` (note) |
 | `blocked` | `blocked` | BLOCKED | `sentei/blocked` (note) |
 | `version_skew` | `versionSkew` | VERSION-SKEW | `sentei/version-skew` (note) |
 
-`org_dead` replaces the old `assumeClosedWorld` flag: for an org whose published
-packages have no consumer outside it (a dogfood run on a public org, a monorepo
-that publishes for itself), it lists what the org could delete. It is only as
-true as its assertion, "the org is the only consumer of these packages", which
-`report.json`, the summary footnote, the SARIF run (`run.properties.assertions`)
-and every `sentei/org-dead` result message state. It is the same evidence as
-`deprecate`, witness included; only the label differs.
+`org_dead` (legacy) was the Phase 2 way to read the `deprecate` rows as
+deletions, as a view that asserted "the org is the only consumer of these
+packages" on its own. It is no longer in the default summary (no column, total
+line or footnote) or SARIF; `--view org_dead` still prints it, with its assertion
+in the footnote, the SARIF run (`run.properties.assertions`) and every
+`sentei/org-dead` result message, and `report.json` keeps `views.org_dead` for
+compatibility. Prefer `closedOrg`: the org makes the assertion once, the rows
+become real `deletion_candidate`s (so the private helpers they unlock are plain
+`private_dead`), and `org_dead` is empty by construction.
 
 `sentei report --view <name>[,<name>]` (repeatable; `org-dead` works too) limits
 the stdout summary and the SARIF logs to those views; `report.json` always has
-all of them. Default: every view on stdout, every view except `org_dead` in SARIF.
+all of them. Default: every view except `org_dead`, on stdout and in SARIF.
 The SARIF of a `--view` run goes to its own directory next to the default set,
 `work/sarif-<view>[,<view>]/` (views in the order of the table above, e.g.
 `work/sarif-delete,org_dead/`); `work/sarif/` is only written by a run without
@@ -544,14 +562,16 @@ prints where each file went.
 **No option needs a re-index.** Indexing is the only expensive stage and is
 cached per package by head sha and indexer version. Changing the policy
 (`minAgeDays`, `countTestsAsConsumers`, `countDocsAsConsumers`,
-`trustPrivateRegistry`, `keep`) needs `discover` (it records the policy in the DB)
-and then `analyze`, `witness` and `report`, never `index`; choosing views needs
-only `report`.
+`trustPrivateRegistry`, `closedOrg`, `keep`) needs `discover` (it records the
+policy in the DB) and then `index` (all cached), `ingest`, `analyze`, `witness`
+and `report`, never a re-index; choosing views needs only `report`.
 
 Partial and failed results are cached too, keyed by everything they depend on:
 the package's head sha, indexer version, install mode (`--no-install`), toolchain
-(`node` version for npm; `dart --version` and the Flutter SDK for pub), policy,
-and the head shas of every org package it resolves through. While those are
+(`node` version for npm; `dart --version` and the Flutter SDK for pub), the
+policy keys index reads (`countTestsAsConsumers`, `countDocsAsConsumers`; not
+`minAgeDays`, `trustPrivateRegistry` or `closedOrg`), and the head shas of every
+org package it resolves through. While those are
 unchanged a rerun reuses the failure without re-running its install and replays
 it (`cached failure from <time>; rerun with --retry-failed to retry`, with the
 log path). `--retry-failed` (index/run) retries them after you fixed the
@@ -582,16 +602,18 @@ consume is `blocked` with `<package id>:index_failed` rather than reported dead,
 and the run exits 0. Fix those first (they cost verdicts, see top blockers
 below), or pass `--strict` in CI to make them exit 2.
 
-The report stage prints: the policy line (and the selected views with
-`--view`); a `!!` warning banner (`minAgeDays` 0, repos whose index was partial
+The report stage prints: the policy line (with `closedOrg=true`, followed by
+`(asserted: nothing outside the org depends on published packages)`), and the
+selected views with `--view`; a `!!` warning banner (`minAgeDays` 0, repos whose index was partial
 or failed, dependencies on a name several org packages share, excluded or
 uncloned repos that carry manifests, manifests excluded by `ignoreManifests`:
 the first ten on stdout, all of them in `report.json`); a per-package
-table (package name, repo, visibility, private, opaque, one count per view,
-blockers); the **view totals**, with the reasons of the DELETE and DEPRECATE rows
-(`no_refs`, `only_test_refs`, `only_docs_refs`, `dead_island`: islands are a
-reason, not a column)
-and ORG-DEAD printed once as "= DEPRECATE" with the assertion as a footnote; then
+table (package name, repo, visibility, private (`yes`, or `closedOrg` when only
+the assertion makes it so), opaque, one count per view, blockers); the **view
+totals**, with the reasons of the DELETE and DEPRECATE rows (`no_refs`,
+`only_test_refs`, `only_docs_refs`, `dead_island`: islands are a reason, not a
+column) (with `--view org_dead`, ORG-DEAD printed once as "= DEPRECATE" with its
+assertion as a footnote); then
 **top blockers**, the opaque packages preventing the most verdicts, the "fix that
 repo's tsconfig first" list (the top 10; all of them are in `report.json`),
 followed by a "What to do:" line per blocker (`report.json` `blockers[].hint`):
@@ -629,8 +651,9 @@ Each `work/sarif/<owner>__<repo>.sarif` is one Code Scanning upload: one rule
 per [view](#views) (`sentei/delete` and `sentei/org-dead` at level `warning`, the
 rest `note`), results for the selected views only (default: all but `org_dead`),
 locations repo-relative. Every run declares every rule, lists its views in
-`run.properties.views` and the assertions they rely on in
-`run.properties.assertions`. Fingerprints (`senteiSymbol/v1`) depend on the
+`run.properties.views`, the policy in `run.properties.policy` and the assertions
+they rely on in `run.properties.assertions` (`delete`'s with `closedOrg`, whose
+published-package delete results also repeat it in their message). Fingerprints (`senteiSymbol/v1`) depend on the
 package, symbol and file, not on the line or the view, so an alert survives code
 moving within its file. Upload with the repo owner's token (`security_events`,
 or `public_repo` for a public repo):

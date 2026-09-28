@@ -3542,3 +3542,91 @@ acme_pub, new acme_match).
 **Not verified:** a real re-index of dart-lang (the adapter's output was
 simulated as described above; the dart-surface re-runs used the clones' existing
 `.dart_tool` package configs); the cross-repo re-export case (not recorded).
+
+## Phase 3 (2026-09-27): decisions from Budro
+
+2. **`closedOrg` replaces `org_dead`; `deprecate` stays the default.** "For the
+   purposes of evaluation it's okay to stop using `org_dead` (it actually takes
+   away info). `deprecate` is ostensibly the correct default setting unless the
+   user asserts that it's an org which only has code accessible from within the
+   org, and hence `delete` or `org_dead` is the correct choice." Published
+   packages keep `deprecation_candidate` by default; a new policy key
+   `closedOrg` (default false) is the user's assertion that nothing outside the
+   org depends on its published packages, under which their unused exports are
+   `deletion_candidate` like a private package's. `org_dead` leaves the default
+   summary and SARIF and survives only as an explicit, legacy `--view org_dead`.
+
+### Phase 3: closedOrg replaces org_dead
+
+**Why not a view.** `org_dead` printed the DEPRECATE rows a second time under
+another label, with a column, a total line and a footnote, and moved the
+private helpers those rows unlock out of PRIV-DEAD into a sub-list: every
+default summary carried a duplicate reading that most orgs should never act on,
+and hid a count (the helpers) from the view people read. That is the
+information it "took away". The question it answered ("could we delete these
+if nobody outside uses them?") is a property of the org, not of a view, so it is
+now asserted once, by the user, as policy.
+
+**What `closedOrg` does.** It is one more clause of the schema view
+`private_packages` (nobody outside the org can depend on the package):
+`private`; `published-private` with `trustPrivateRegistry`; or, with
+`closedOrg`, any package. That view is the only input about the world, read by
+analyze.sql `base_verdicts` (unexport vs published unexport), the witness
+(deletion vs deprecation on a pass), analyze.ts `reconcileDeadIslands` and the
+findings triggers, so the rule is exactly `trustPrivateRegistry`'s, widened: the
+published package's would-be deletions become `deletion_candidate` (witness
+still required), its internal-only exports `unexport_candidate`, and the helpers
+they unlock plain `private_dead`. The evidence does not change; the org-small
+pipeline test runs the same org with and without it and checks that only the
+published package's verdicts flip. `deprecate` and `org_dead` are then empty by
+construction.
+
+**Why this is not `assumeClosedWorld`.** Phase 2 removed `assumeClosedWorld`
+because it turned deprecations into deletions silently and because comparing
+the two readings required re-analysis. `closedOrg` keeps the first objection
+answered: the assertion is printed wherever its rows appear (summary policy
+line `closedOrg=true (asserted: nothing outside the org depends on published
+packages)`, PRIVATE column `closedOrg` instead of `yes`, report.json
+`assertions`, `views.delete.assertion` and description,
+`packages[].private_by_assertion`, SARIF `run.properties.assertions` with view
+`delete` and the message of each `sentei/delete` result in an asserted
+package). The second objection does not apply to a policy over one index: like
+every policy key it is recorded at discover and absorbed by analyze, witness
+and report, and index is never redone. The old key stays rejected in sentei.json
+(the message points at `closedOrg`), and its trigger `policy_drop_removed_keys`
+still drops a stale `assumeClosedWorld` row: it is never read as `closedOrg`.
+
+**Invariants.** `findings_requires_private_package` still reads
+`private_packages`, so a `deletion_candidate` / `unexport_candidate` in a
+published package is accepted only when `closedOrg` is true (a missing key is
+false: fail closed); its message now says "(or policy closedOrg)".
+`findings_deprecation_requires_published_package` rejects a
+`deprecation_candidate` under `closedOrg`. The witness, keep and
+opaque-consumer triggers are untouched and apply to published deletions as to
+private ones (schema.test.ts negative tests for each, witness.test.ts for the
+witness gate). The policy CHECK accepts `closedOrg`, seeded `false`: schema
+v13 (old work DBs are refused, as for every schema change).
+
+**Report.** Default views (stdout and SARIF) are every view but `org_dead`
+(`defaultViews()`; ASSERTING_VIEWS still names it). The summary has no ORG-DEAD
+column, total line or footnote by default; `--view org_dead` prints them, the
+footnote marked legacy. report.json keeps `views.org_dead` and
+`packages[].counts.org_dead` for compatibility (both empty/zero under
+`closedOrg`). SARIF rule selection for the default policy is unchanged (all but
+`sentei/org-dead`); the `sentei/deprecate` help now points at `closedOrg`
+instead of the org-dead view.
+
+**Index cache.** `failureInputHash` hashed the whole Policy object from
+discover.json, so toggling any policy key (now `closedOrg` too) retried every
+cached failure: a partial re-index. It now hashes only the keys index reads
+(`countTestsAsConsumers`, `countDocsAsConsumers`). Deviation: existing failure
+entries were hashed with all four keys, so they are retried once after this
+change.
+
+**Not verified:** a real org rerun with `closedOrg` (only the org-small and
+org-dart fixtures ran; the org-small pipeline test re-runs discover with the
+`closedOrg=true` override (what `--policy` sets) on the same work dir, but the
+fixture repos are not
+git checkouts, so its index stage re-indexes instead of hitting the cache; that
+the cache is untouched is only covered by the failureInputHash unit test and by
+`closedOrg` not being an index input).
