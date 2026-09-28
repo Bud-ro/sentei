@@ -5,15 +5,7 @@
     "packages/bundled/src/index.ts",
     "packages/bundled/src/node/internalIndex.ts"
   ],
-  "entrySymbols": [
-    {
-      "col": 16,
-      "file": "packages/bundled/src/node/internalIndex.ts",
-      "kind": "runtime",
-      "line": 1,
-      "name": "internalApi"
-    }
-  ],
+  "entrySymbols": [],
   "exports": [
     {
       "col": 16,
@@ -50,14 +42,7 @@
   "namespaceSpreadRefs": [],
   "packageId": "npm:acme/frameworks:@acme/bundled",
   "shorthandRefs": [],
-  "unindexedImports": [
-    {
-      "file": "packages/bundled/rolldown.config.ts",
-      "module": "packages/bundled/src/node/internalIndex.ts",
-      "relative": true,
-      "targetPackage": "@acme/bundled"
-    }
-  ],
+  "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []
 }

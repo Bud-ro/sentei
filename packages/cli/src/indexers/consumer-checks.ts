@@ -1485,8 +1485,13 @@ const RELATIVE_CODE = /^\.\.?\/.*\.(?:[cm]?[jt]s|[jt]sx)$/;
  * them) and are skipped; so are SFCs (scanUnindexedImports) and declaration files
  * (they load no code).
  */
-/** Bundler / build tool configs: their string literals are build inputs, not runtime loads. */
-const BUILD_CONFIG_FILE = /^(?:[\w.-]+\.config\.[cm]?[jt]sx?|(?:rollup|rolldown|tsup|tsdown|vite|vitest|webpack|esbuild|build)\.[\w.-]*[cm]?[jt]s)$/;
+/**
+ * Bundler / build tool configs (rollup.config.ts, webpack.prod.js, tsup.config.ts,
+ * build.mjs…): their string literals are build inputs, not runtime loads. Framework
+ * configs (docusaurus.config.ts, astro.config.mjs, nuxt.config.ts…) are NOT in this
+ * set: the framework really loads the files they name.
+ */
+const BUILD_CONFIG_FILE = /^(?:rollup|rolldown|tsup|tsdown|vite|vitest|webpack|rspack|esbuild|build)(?:[.-][\w.-]*)?\.[cm]?[jt]sx?$/;
 
 export function scanOwnModuleLoads(input: OwnLoadScanInput): { loads: OwnModuleLoad[]; gaps: OwnLoadGap[] } {
   const loads: OwnModuleLoad[] = [];

@@ -12,14 +12,7 @@
   "namespaceSpreadRefs": [],
   "packageId": "npm:acme/lib-dual:@acme/dual-webpack",
   "shorthandRefs": [],
-  "unindexedImports": [
-    {
-      "file": "packages/dual-webpack/webpack.config.js",
-      "module": "packages/dual-webpack/src/app.js",
-      "relative": true,
-      "targetPackage": "@acme/dual-webpack"
-    }
-  ],
+  "unindexedImports": [],
   "unresolved": [],
   "unresolvedImports": []
 }

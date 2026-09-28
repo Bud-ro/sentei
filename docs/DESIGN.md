@@ -4537,7 +4537,11 @@ narrowed at merge time: a bundler config's string literals (`rolldown.config.ts`
 `input: { internal: './src/node/internalIndex.ts' }`, tsup / vite / webpack
 `entry`) are build inputs whose outputs the manifest already maps back to source
 as surface, so they are no longer runtime string entries (`internalApi`, the
-unused `./internal` export, is a deletion candidate again); and `.vitepress/` is
+unused `./internal` export, is a deletion candidate again). The exclusion names
+the bundlers (rollup, rolldown, tsup, tsdown, vite, vitest, webpack, rspack,
+esbuild, `build.*`); framework configs (`docusaurus.config.ts`, `astro.config.mjs`,
+`nuxt.config.ts`) keep their string entries because the framework really loads
+the files they name (`sidebars.ts`, a remark plugin). And `.vitepress/` is
 not a docs directory: it holds the site's theme and config code (`themeDead` in
 `.vitepress/lib/helpers.ts` is private dead code again). `blog/` and
 `versioned_docs/` stay docs.
