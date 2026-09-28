@@ -264,6 +264,34 @@ describe('analyzeOrg on hand-built rows', () => {
     expect(findings()).toEqual([]);
   });
 
+  it('promoted consumers (Phase 3 decision 3): another repo\'s example app counts; one in the package\'s own repo is a docs use', () => {
+    const promoted = (id: string, repo: string): void => {
+      if (!db.prepare('SELECT 1 FROM repos WHERE repo = ?').get(repo)) run('INSERT INTO repos (repo) VALUES (?)', repo);
+      run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, ?, 'examples/app', 'npm', ?, 'private')",
+        id, repo, id.slice(id.lastIndexOf(':') + 1));
+      run('INSERT INTO promoted_packages (package_id, reason) VALUES (?, ?)', id, 'example app depends on @acme/lib');
+      dep(id, lib);
+    };
+    promoted('npm:acme/samples:samples-app', 'acme/samples');
+    promoted('npm:acme/lib:lib-example', 'acme/lib');
+    // Their files sit under examples/: not docs for a promoted package (package-relative globs).
+    const samplesMain = doc('npm:acme/samples:samples-app', 'examples/app/src/main.ts');
+    const ownMain = doc('npm:acme/lib:lib-example', 'examples/app/src/main.ts');
+    const crossUsed = sym(lib, 'src/fns.ts', 'usedBySamples', { exported: true });
+    use(samplesMain, crossUsed, 'examples/app/src/main.ts');
+    const ownUsed = sym(lib, 'src/fns.ts', 'usedByOwnExample', { exported: true });
+    use(ownMain, ownUsed, 'examples/app/src/main.ts');
+    analyze();
+    // usedBySamples: alive (a real consumer). usedByOwnExample: the own repo's example is
+    // a docs use, like the package's own example/ (negative: not counted).
+    expect(findings()).toEqual([f('usedByOwnExample', 'needs_review', ['only_docs_refs', 'witness_pending'])]);
+    expect(db.prepare('SELECT symbol_id, consumer_package_id FROM external_refs').all())
+      .toEqual([{ symbol_id: crossUsed, consumer_package_id: 'npm:acme/samples:samples-app' }]);
+    setPolicy('countDocsAsConsumers', true);
+    analyze();
+    expect(findings()).toEqual([]);
+  });
+
   it('only_docs_refs: the package\'s own example/, next to only_test_refs and internal_refs_only; only_test_refs unchanged', () => {
     // extension_methods getTeam (dart-lang): used only by its own example/fluid_api.dart.
     const example = doc(lib, 'example/fluid_api.dart');

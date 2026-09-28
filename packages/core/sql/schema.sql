@@ -100,6 +100,19 @@ CREATE TABLE IF NOT EXISTS package_deps (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS package_deps_resolved ON package_deps (resolved_package_id);
 
+-- Consumer packages promoted from an ignored-dir manifest (Phase 3 decision 3): an
+-- example app, benchmark, sample, demo or playground under ignoreManifestDirs that
+-- depends on an org package of ANOTHER repo (discover.ts). Private, no library, no
+-- export surface; its uses count like any consumer's, with two differences in
+-- analyze.sql: the docs globs match its PACKAGE-relative paths (its root under
+-- `example/` does not make every file a docs file), and its uses of packages of its
+-- own repo are docs uses (a repo's own examples never count as consumers).
+-- Additive like ignored_manifests (SCHEMA_VERSION unchanged).
+CREATE TABLE IF NOT EXISTS promoted_packages (
+  package_id TEXT PRIMARY KEY REFERENCES packages (package_id) ON DELETE CASCADE,
+  reason     TEXT NOT NULL                       -- e.g. "example app depends on pub:acme/x:x (repo acme/x)"
+) STRICT;
+
 -- Interned SCIP symbols (definitions); symbol_str is the SCIP symbol string with its
 -- package version replaced by '.', or, when several org packages share the symbol's
 -- package name, by the owning package_id (ingest.ts symbolKey), so it stays unique.

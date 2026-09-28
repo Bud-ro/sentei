@@ -182,15 +182,24 @@ WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'jest.setup.*'
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'setupTests.*');
 
--- Docs globs: docs and in-package examples / demos.
+-- Docs globs: docs and in-package examples / demos. `rel` is the repo-relative path,
+-- except for a package promoted from an ignored-dir manifest (promoted_packages: an
+-- example app of another repo's package, Phase 3 decision 3), where it is the
+-- PACKAGE-relative path: its own root under `example/` does not make every file of it a
+-- docs file, while its own `docs/` or `example/` below the root still are.
 CREATE VIEW doc_files (package_id, file) AS
 SELECT package_id, file
-FROM documents
+FROM (SELECT d.package_id, d.file,
+             CASE WHEN pp.package_id IS NULL OR p.path IN ('.', '') THEN d.file
+                  ELSE substr(d.file, length(p.path) + 2) END AS rel
+      FROM documents d
+      JOIN packages p ON p.package_id = d.package_id
+      LEFT JOIN promoted_packages pp ON pp.package_id = d.package_id)
 WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file FROM surface_files)
-  AND (('/' || file) GLOB '*/docs/*'
-    OR ('/' || file) GLOB '*/examples/*'
-    OR ('/' || file) GLOB '*/example/*'
-    OR ('/' || file) GLOB '*/demo/*');
+  AND (('/' || rel) GLOB '*/docs/*'
+    OR ('/' || rel) GLOB '*/examples/*'
+    OR ('/' || rel) GLOB '*/example/*'
+    OR ('/' || rel) GLOB '*/demo/*');
 
 -- Vendored files: a `third_party/`, `vendor/` or `vendored/` directory BELOW the
 -- package root (the path is made package-relative first, so a package whose own root
@@ -407,10 +416,19 @@ JOIN packages pe ON pe.package_id = d.package_id AND pe.repo = ps.repo;
 -- whole purpose is its consumers' tests, so those test uses count (external_refs).
 -- A REGULAR dependency on the re-exporter counts only through test_support_symbols
 -- (an exporting entry named like `test.dart`), as for the symbol's own package.
+-- A use by a promoted consumer (promoted_packages: an example app / benchmark under an
+-- ignored dir that depends on another repo's package) of a package of its OWN repo is a
+-- docs use (in_docs), like the package's own example/: a repo's own examples never
+-- count as consumers (Phase 3 decision 3); its uses of other repos' packages count.
 CREATE VIEW external_ref_occurrences AS
 SELECT r.symbol_id, r.member_symbol_id, r.package_id AS consumer_package_id, r.file, r.line, r.col,
        t.file IS NOT NULL AS in_test,
-       d.file IS NOT NULL AS in_docs,
+       (d.file IS NOT NULL
+        OR EXISTS (SELECT 1 FROM promoted_packages pp
+                   JOIN packages pc ON pc.package_id = pp.package_id
+                   JOIN symbols s ON s.symbol_id = r.symbol_id
+                   JOIN packages ps ON ps.package_id = s.package_id
+                   WHERE pp.package_id = r.package_id AND ps.repo = pc.repo)) AS in_docs,
        (EXISTS (SELECT 1 FROM symbols s
                 JOIN package_deps pd ON pd.resolved_package_id = s.package_id
                 WHERE s.symbol_id = r.symbol_id

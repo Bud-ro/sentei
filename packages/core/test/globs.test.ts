@@ -25,7 +25,7 @@ function viewGlobs(view: string): string[] {
     let m: RegExpExecArray | null;
     if ((m = /^(.*) GLOB '([^']*)'$/.exec(cond))) {
       if (m[1] === BASENAME && !m[2]!.includes('/')) out.push(`**/${m[2]}`);
-      else if ((m[1] === "('/' || file)" || m[1] === PKGREL) && /^\*\/[^*/]+\/\*$/.test(m[2]!)) out.push(`**/${m[2]!.slice(2, -2)}/**`);
+      else if ((m[1] === "('/' || file)" || m[1] === "('/' || rel)" || m[1] === PKGREL) && /^\*\/[^*/]+\/\*$/.test(m[2]!)) out.push(`**/${m[2]!.slice(2, -2)}/**`);
       else throw new Error(`${view}: unrecognised GLOB condition: ${cond}`);
     }
   }
@@ -225,6 +225,35 @@ describe('VENDORED_GLOBS: vendored code below the package root is generated code
       const want = docs.filter(([, , v]) => v).map(([, f]) => f).sort();
       expect(inView('vendored_files')).toEqual(want);
       expect(inView('generated_files')).toEqual(want);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('doc_files for a promoted consumer (Phase 3 decision 3): docs globs on the package-relative path', () => {
+  it('its root under example/ is not docs; its own docs/ and example/ are; other packages keep repo-relative globs (negative)', () => {
+    const db = openDb(':memory:');
+    try {
+      db.exec("INSERT INTO repos (repo) VALUES ('acme/s')");
+      const pkg = db.prepare("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES (?, 'acme/s', ?, ?, ?, 'private')");
+      pkg.run('pub:acme/s:app', 'example/app', 'pub', 'app'); // promoted
+      pkg.run('npm:acme/s:site', 'docs/site', 'npm', 'site'); // promoted, under docs/
+      pkg.run('npm:acme/s:demo', 'examples/demo', 'npm', 'demo'); // NOT promoted: repo-relative globs
+      db.exec("INSERT INTO promoted_packages (package_id, reason) VALUES ('pub:acme/s:app', 'example app depends on x'), ('npm:acme/s:site', 'r')");
+      const ins = db.prepare('INSERT INTO documents (package_id, file) VALUES (?, ?)');
+      const appFiles = ['example/app/bin/main.dart', 'example/app/lib/main.dart', 'example/app/docs/a.dart', 'example/app/example/b.dart', 'example/app/test/c_test.dart'];
+      for (const f of appFiles) ins.run('pub:acme/s:app', f);
+      for (const f of ['docs/site/src/a.ts', 'docs/site/demo/b.ts']) ins.run('npm:acme/s:site', f);
+      ins.run('npm:acme/s:demo', 'examples/demo/src/c.ts');
+      db.exec(analyzeSql());
+      const inView = (v: string): string[] =>
+        (db.prepare(`SELECT file FROM ${v} ORDER BY file`).all() as Array<{ file: string }>).map((r) => r.file);
+      expect(inView('doc_files')).toEqual([
+        'docs/site/demo/b.ts', 'example/app/docs/a.dart', 'example/app/example/b.dart', 'examples/demo/src/c.ts',
+      ]);
+      // Test globs are unchanged: a promoted package's tests stay tests.
+      expect(inView('test_files')).toEqual(['example/app/test/c_test.dart']);
     } finally {
       db.close();
     }

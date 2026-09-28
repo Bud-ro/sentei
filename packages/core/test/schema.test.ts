@@ -235,6 +235,19 @@ describe('repo_history', () => {
   });
 });
 
+describe('promoted_packages', () => {
+  it('names an existing package once, with a reason; cascades with its repo (negative)', () => {
+    run("INSERT INTO repos (repo) VALUES ('acme/pr')");
+    run("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:acme/pr:app', 'acme/pr', 'example/app', 'pub', 'app', 'private')");
+    run("INSERT INTO promoted_packages (package_id, reason) VALUES ('pub:acme/pr:app', 'example app depends on pub:acme/x:x')");
+    expect(() => run("INSERT INTO promoted_packages (package_id, reason) VALUES ('pub:acme/pr:app', 'again')")).toThrow();
+    expect(() => run("INSERT INTO promoted_packages (package_id, reason) VALUES ('pub:acme/pr:nope', 'x')")).toThrow();
+    expect(() => run("INSERT INTO promoted_packages (package_id, reason) VALUES ('pub:acme/pr:app', NULL)")).toThrow();
+    run("DELETE FROM repos WHERE repo = 'acme/pr'");
+    expect(count('SELECT count(*) AS n FROM promoted_packages')).toBe(0);
+  });
+});
+
 describe('excluded_repos', () => {
   it('takes a JSON array of manifests or NULL, nothing else', () => {
     run("INSERT INTO excluded_repos (repo, reason, manifests) VALUES ('acme/a', 'archived', NULL), ('acme/b', 'size', '[\"package.json\"]')");
