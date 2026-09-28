@@ -10,7 +10,7 @@ import { readScipIndex } from '@sentei/core/scip';
 import { statusReason } from '../../core/src/ingest.ts';
 import { failureInputHash, isCached, toolchainVersion } from '../src/indexers/cache.ts';
 import { isExcludedConsumerFile, isGeneratedFile, scanUnindexedImports, unindexedScope } from '../src/indexers/consumer-checks.ts';
-import { choosePackageManager, hermeticEnv, install, installArgs, noFilesIndexed, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner, writeYarnrcWithoutPlugins, YARNRC_WITHOUT_PLUGINS, yarnrcWithoutPlugins } from '../src/indexers/scip-typescript.ts';
+import { choosePackageManager, hermeticEnv, install, installArgs, installLocation, noFilesIndexed, pnpmWorkspaceGlobs, NUXT_PREPARE_TIMEOUT_MS, nuxtPrepare, packageSlug, pinnedVersion, runNode, runSurfaceWorker, scanDeepImports, scipTypescript, stderrTail, toolVersionPin, tsCompatNotes, type ExecResult, type Runner, writeYarnrcWithoutPlugins, YARNRC_WITHOUT_PLUGINS, yarnrcWithoutPlugins } from '../src/indexers/scip-typescript.ts';
 import { typescriptVersionProblem } from '../src/indexers/export-surface.ts';
 import type { DiscoverFile, DiscoveredRepo, ExportsSidecar } from '../src/indexers/types.ts';
 import { countPackage, emptySummary, firstMeaningfulError, formatIndexSummary, index, prepareLine, progressStep, type PackageIndex, type RepoIndex } from '../src/stages/index.ts';
@@ -791,6 +791,97 @@ describe('package-manager fallbacks (no network: the runner is faked)', () => {
     const d2: string[] = [];
     expect(await install(npmRepo, npmRepo, d2, [], fakeRunner(['npm'], []), root)).toBe(false);
     expect(d2).toEqual(['error: npm ci --ignore-scripts --engine-strict=false in . could not start (ENOENT: spawn npm ENOENT)']);
+  });
+
+  /** Writes `files` (POSIX paths, nested dirs allowed) under a fresh repo dir. */
+  function tree(name: string, files: Record<string, string>): string {
+    const dir = path.join(root, name);
+    for (const [f, body] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      writeFileSync(path.join(dir, f), body);
+    }
+    return dir;
+  }
+
+  it('installLocation: a stale per-package lockfile inside a workspace installs at the workspace root', () => {
+    // @tanstack-query-firebase/react: pnpm workspace root, packages/react/package-lock.json.
+    const tqf = tree('ws-pnpm', {
+      'package.json': JSON.stringify({ name: 'root', packageManager: 'pnpm@10.10.0' }),
+      'pnpm-workspace.yaml': "packages:\n  - 'examples/*'\n  - 'packages/*' # libs\n  - '!packages/private'\n",
+      'pnpm-lock.yaml': "lockfileVersion: '9.0'\nimporters:\n  .: {}\n  packages/react: {}\n",
+      'packages/react/package.json': '{"name":"@x/react"}',
+      'packages/react/package-lock.json': '{}',
+      'packages/private/package.json': '{"name":"p"}',
+      'packages/private/package-lock.json': '{}',
+      'tools/standalone/package.json': '{"name":"s"}',
+      'tools/standalone/package-lock.json': '{}',
+    });
+    expect(installLocation(tqf, path.join(tqf, 'packages/react'))).toEqual({
+      dir: tqf, lockfiles: ['pnpm-lock.yaml'],
+      ignored: { lockfile: 'packages/react/package-lock.json', why: 'pnpm-workspace.yaml' },
+    });
+    // Not a member (outside the globs, or negated): its own lockfile, as before.
+    expect(installLocation(tqf, path.join(tqf, 'tools/standalone'))).toEqual({
+      dir: path.join(tqf, 'tools/standalone'), lockfiles: ['package-lock.json'],
+    });
+    expect(installLocation(tqf, path.join(tqf, 'packages/private'))!.dir).toBe(path.join(tqf, 'packages/private'));
+    // A member without a lockfile of its own: the root, nothing ignored.
+    expect(installLocation(tqf, path.join(tqf, 'examples/a'))).toEqual({ dir: tqf, lockfiles: ['pnpm-lock.yaml'] });
+    // No lockfile anywhere.
+    const none = tree('ws-none', { 'package.json': '{}', 'a/package.json': '{}' });
+    expect(installLocation(none, path.join(none, 'a'))).toBeUndefined();
+  });
+
+  it('installLocation: npm / yarn workspaces, lerna.json, a root lockfile of another manager naming the package', () => {
+    const npmWs = tree('ws-npm', {
+      'package.json': JSON.stringify({ workspaces: { packages: ['libs/**'] } }),
+      'yarn.lock': '',
+      'libs/a/b/package.json': '{}',
+      'libs/a/b/pnpm-lock.yaml': '',
+    });
+    expect(installLocation(npmWs, path.join(npmWs, 'libs/a/b'))).toMatchObject({ dir: npmWs, ignored: { why: 'package.json workspaces' } });
+    const lerna = tree('ws-lerna', { 'package.json': '{}', 'lerna.json': '{}', 'package-lock.json': '{}', 'packages/x/package.json': '{}', 'packages/x/yarn.lock': '' });
+    expect(installLocation(lerna, path.join(lerna, 'packages/x'))).toMatchObject({ dir: lerna, ignored: { why: 'lerna.json packages' } });
+    // No workspace declaration, but the root lockfile (another manager) has the package as an importer.
+    const lock = tree('ws-lock', {
+      'package.json': '{}',
+      'pnpm-lock.yaml': "importers:\n  apps/web:\n    dependencies: {}\n",
+      'apps/web/package.json': '{}',
+      'apps/web/package-lock.json': '{}',
+      'apps/other/package.json': '{}',
+      'apps/other/package-lock.json': '{}',
+    });
+    expect(installLocation(lock, path.join(lock, 'apps/web'))).toMatchObject({ dir: lock, ignored: { why: 'pnpm-lock.yaml lists it as a workspace package' } });
+    // A root lockfile that does not name the package: a standalone project, its own lockfile.
+    expect(installLocation(lock, path.join(lock, 'apps/other'))!.dir).toBe(path.join(lock, 'apps/other'));
+  });
+
+  it('install: runs the workspace root manager and warns about the ignored lockfile', async () => {
+    const ws = tree('ws-install', {
+      'package.json': JSON.stringify({ name: 'root', packageManager: 'pnpm@10.10.0' }),
+      'pnpm-workspace.yaml': 'packages: [packages/*]\n',
+      'pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+      'packages/react/package.json': '{"name":"@x/react"}',
+      'packages/react/package-lock.json': '{}',
+    });
+    const calls: Array<[string, string[]]> = [];
+    const diagnostics: string[] = [];
+    const cwds: string[] = [];
+    const runner: Runner = async (cmd, args, cwd) => {
+      calls.push([cmd, args]);
+      cwds.push(cwd);
+      return { code: 0, signal: null, stdout: '', stderr: '' };
+    };
+    expect(await install(ws, path.join(ws, 'packages/react'), diagnostics, [], runner, root)).toBe(true);
+    expect(calls.map(([c]) => c)).toEqual(['pnpm']);
+    expect(cwds).toEqual([ws]);
+    expect(diagnostics[0]).toBe('warn: packages/react/package-lock.json ignored: the package is a member of the workspace at . (pnpm-workspace.yaml); installing there');
+  });
+
+  it('pnpmWorkspaceGlobs: block and flow lists, quotes and comments', () => {
+    expect(pnpmWorkspaceGlobs("packages:\n  - 'a/*'\n  - \"b\" # c\n  # x\n  - !c\ncatalog:\n  - no\n")).toEqual(['a/*', 'b', '!c']);
+    expect(pnpmWorkspaceGlobs("packages: ['a/*', b]\n")).toEqual(['a/*', 'b']);
+    expect(pnpmWorkspaceGlobs('onlyBuiltDependencies:\n  - esbuild\n')).toEqual([]);
   });
 
   it('(hermetic) every install subprocess keeps global/state/cache writes in the work dir', async () => {

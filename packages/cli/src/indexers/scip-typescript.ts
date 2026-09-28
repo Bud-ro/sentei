@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { listFiles, sourceForBuildOutput, splitPackageId } from '@sentei/core';
+import { listFiles, matchGlob, sourceForBuildOutput, splitPackageId } from '@sentei/core';
 import type { SurfaceJob, SurfaceWorkerResult } from './surface-worker.ts';
 import type { DiscoveredPackage, DiscoveredRepo, ExportsSidecar, Indexer, IndexerInput, IndexerResult, IndexStatus } from './types.ts';
 import { worstStatus } from './types.ts';
@@ -868,6 +868,137 @@ export function hermeticEnv(workDir: string, base: NodeJS.ProcessEnv = process.e
   return { env: { ...base, ...set }, keys: Object.keys(set) };
 }
 
+/** Where `install` runs: the dir, its lockfiles, and why a nearer lockfile was ignored. */
+export interface InstallLocation {
+  /** Absolute dir to install in. */
+  dir: string;
+  /** Lockfile names present in `dir` (LOCKFILES order). */
+  lockfiles: string[];
+  /**
+   * Set when a nearer dir's lockfile was passed over for the workspace root: that
+   * lockfile (repo-relative) and the membership evidence.
+   */
+  ignored?: { lockfile: string; why: string };
+}
+
+/** Lockfile names (LOCKFILES order) present in `dir`. */
+function lockfilesIn(dir: string): string[] {
+  return LOCKFILES.map(([f]) => f).filter((f) => existsSync(path.join(dir, f)));
+}
+
+/** The `packages:` globs of a pnpm-workspace.yaml (block or flow list), unquoted; negations kept. */
+export function pnpmWorkspaceGlobs(text: string): string[] {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const at = lines.findIndex((l) => /^packages\s*:/.test(l));
+  if (at < 0) return [];
+  const unq = (v: string): string => v.trim().replace(/^(['"])(.*)\1$/, '$2');
+  const inline = lines[at]!.replace(/#.*$/, '').replace(/^packages\s*:/, '').trim();
+  if (inline.startsWith('[')) return inline.replace(/^\[|\]$/g, '').split(',').map(unq).filter((v) => v !== '');
+  const out: string[] = [];
+  for (const raw of lines.slice(at + 1)) {
+    const line = raw.replace(/\s+#.*$/, '');
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    if (!/^\s/.test(line) && !line.startsWith('-')) break; // the next top-level key
+    const m = /^\s*-\s+(.+)$/.exec(line);
+    if (m) out.push(unq(m[1]!));
+  }
+  return out;
+}
+
+/**
+ * Why the workspace rooted at `root` has the package at `rel` (POSIX, relative to
+ * `root`) as a member, or undefined: a `pnpm-workspace.yaml` `packages` glob, the root
+ * package.json `workspaces` (array or `{ packages }`), a `lerna.json` `packages` glob
+ * (`packages/*` by default), or the root lockfile naming the package as a workspace
+ * importer (pnpm `importers:` key, package-lock `"packages"` key, yarn
+ * `@workspace:<rel>`, bun `workspaces` key) — which covers a root lockfile of another
+ * manager than the package's. A negated glob (`!x`) excludes.
+ */
+function workspaceMemberWhy(root: string, rel: string, rootLockfiles: readonly string[]): string | undefined {
+  const read = (f: string): string | undefined => {
+    try {
+      return readFileSync(path.join(root, f), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  const norm = (g: string): string => g.replace(/^\.\//, '').replace(/\/+$/, '');
+  const inGlobs = (globs: readonly string[]): boolean => {
+    const neg = globs.filter((g) => g.startsWith('!')).map((g) => norm(g.slice(1)));
+    return !neg.some((g) => matchGlob(g, rel)) && globs.filter((g) => !g.startsWith('!')).some((g) => matchGlob(norm(g), rel));
+  };
+  const pnpmWs = read('pnpm-workspace.yaml');
+  if (pnpmWs !== undefined && inGlobs(pnpmWorkspaceGlobs(pnpmWs))) return 'pnpm-workspace.yaml';
+  let rootJson: unknown;
+  try {
+    rootJson = JSON.parse(read('package.json') ?? 'null');
+  } catch {
+    rootJson = undefined;
+  }
+  const ws = typeof rootJson === 'object' && rootJson !== null ? (rootJson as { workspaces?: unknown }).workspaces : undefined;
+  const wsList = Array.isArray(ws) ? ws : typeof ws === 'object' && ws !== null && Array.isArray((ws as { packages?: unknown }).packages)
+    ? (ws as { packages: unknown[] }).packages : [];
+  if (inGlobs(wsList.filter((g): g is string => typeof g === 'string'))) return 'package.json workspaces';
+  const lerna = read('lerna.json');
+  if (lerna !== undefined) {
+    let pk: unknown;
+    try {
+      pk = (JSON.parse(lerna) as { packages?: unknown }).packages;
+    } catch {
+      pk = undefined;
+    }
+    const globs = Array.isArray(pk) ? pk.filter((g): g is string => typeof g === 'string') : ['packages/*'];
+    if (inGlobs(globs)) return 'lerna.json packages';
+  }
+  const esc = rel.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&');
+  const named: Record<string, RegExp> = {
+    'pnpm-lock.yaml': new RegExp(`^  ['"]?${esc}['"]?:\\s*$`, 'm'),
+    'package-lock.json': new RegExp(`^\\s*"${esc}":\\s*\\{`, 'm'),
+    'yarn.lock': new RegExp(`@workspace:${esc}["\\s,]`),
+    'bun.lock': new RegExp(`^\\s*"${esc}":\\s*\\{`, 'm'),
+  };
+  for (const f of rootLockfiles) {
+    const re = named[f];
+    const text = re !== undefined ? read(f) : undefined;
+    if (text !== undefined && re!.test(text)) return `${f} lists it as a workspace package`;
+  }
+  return undefined;
+}
+
+/**
+ * Where to install for the package at `pkgDir` (absolute, inside `repoRoot`): the
+ * first dir from `pkgDir` up to `repoRoot` holding a lockfile (a workspace package
+ * installs at its workspace root that way), unless that dir lies inside a workspace
+ * rooted further up that has the package as a member (workspaceMemberWhy) and a
+ * lockfile of its own: then the nearest such root, and the nearer lockfile is ignored
+ * (@tanstack-query-firebase/react: a stale `packages/react/package-lock.json` in a pnpm
+ * workspace, where `npm ci` failed). A package outside every workspace keeps its own
+ * lockfile. Undefined without any lockfile.
+ */
+export function installLocation(repoRoot: string, pkgDir: string): InstallLocation | undefined {
+  const root = path.resolve(repoRoot);
+  const up = (d: string): string | undefined => (d === root || path.dirname(d) === d ? undefined : path.dirname(d));
+  let near: string | undefined;
+  for (let d: string | undefined = path.resolve(pkgDir); d !== undefined; d = up(d)) {
+    if (lockfilesIn(d).length > 0) {
+      near = d;
+      break;
+    }
+  }
+  if (near === undefined) return undefined;
+  const nearLocks = lockfilesIn(near);
+  for (let a = up(near); a !== undefined; a = up(a)) {
+    const locks = lockfilesIn(a);
+    if (locks.length === 0) continue;
+    const rel = path.relative(a, path.resolve(pkgDir)).split(path.sep).join('/');
+    const why = workspaceMemberWhy(a, rel, locks);
+    if (why === undefined) continue;
+    const lockfile = path.relative(root, path.join(near, nearLocks[0]!)).split(path.sep).join('/');
+    return { dir: a, lockfiles: locks, ignored: { lockfile, why } };
+  }
+  return { dir: near, lockfiles: nearLocks };
+}
+
 /** `<workDir>/.pm/pnpm-store`, passed to pnpm as `--store-dir`. */
 function pnpmStoreDir(workDir: string): string {
   return path.resolve(workDir, '.pm', 'pnpm-store');
@@ -875,8 +1006,10 @@ function pnpmStoreDir(workDir: string): string {
 
 /**
  * Runs the lockfile's install when the lockfile's dir has no node_modules.
- * The lockfile is searched from the package dir up to the repo root, so a
- * workspace package installs at the workspace root. Returns false on failure.
+ * The dir is installLocation's: the first with a lockfile from the package dir up
+ * to the repo root, or the workspace root above it when the package is a member of
+ * that workspace (a per-package lockfile inside a workspace is ignored, with a
+ * warning). Returns false on failure.
  *
  * The manager is `choosePackageManager`'s pick among the lockfiles of the
  * first dir that has any. A missing pnpm/yarn/bun binary falls back to
@@ -899,8 +1032,16 @@ export async function install(
   run: Runner = exec,
   workDir: string = path.join(tmpdir(), 'sentei-pm'),
 ): Promise<boolean> {
-  for (let d = pkgDir; ; d = path.dirname(d)) {
-    const lockfiles = LOCKFILES.map(([f]) => f).filter((f) => existsSync(path.join(d, f)));
+  const where = installLocation(repoRoot, pkgDir);
+  if (where !== undefined) {
+    const d = where.dir;
+    const lockfiles = where.lockfiles;
+    if (where.ignored !== undefined) {
+      diagnostics.push(
+        `warn: ${where.ignored.lockfile} ignored: the package is a member of the workspace at ` +
+          `${path.relative(repoRoot, d) || '.'} (${where.ignored.why}); installing there`,
+      );
+    }
     const choice = choosePackageManager(nearestManagerManifest(repoRoot, d)?.json, lockfiles);
     if (choice !== undefined) {
       const { pm, lockfile } = choice;
@@ -1004,7 +1145,6 @@ export async function install(
         for (const f of rcCopies) rmSync(f, { force: true });
       }
     }
-    if (d === repoRoot || path.dirname(d) === d) break;
   }
   diagnostics.push('info: no lockfile; install skipped');
   return true;
