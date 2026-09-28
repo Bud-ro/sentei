@@ -4529,3 +4529,156 @@ so for such sites the conventions only make the entry set credible.
   conditional imports), so only the names the importer uses are seeds.
 - ng-packagr (Angular) build layouts, and round 8a's proposed `ALWAYS_SKIP_DIRS`
   additions (`.nx`, `.turbo`, `.yarn`, `.pnpm-store`), are not done.
+
+### Phase 3 fix round 8d: bin→dist wrappers; dist-layout manifests; string entries; docs sites; test support; signature parameters
+
+From evaluation batches A, B and D (tool at `f25900a`; `$TMPDIR/eval/<org>/`). Adapter
+`0.4.0+sentei.10`. **Measured** by re-ingesting each evaluation's own index (the old
+sidecars) into a copy of its DB and re-running analyze (not the witness) at the run's
+own `now`, with the base commit (`5b05f1c`, round 8c) and with this branch (scripts
+`meas.ts`, `m.sh`, `sim8d.ts` in `$TMPDIR/r8d/`). The sidecar changes (items 1, 3, 4)
+need a re-index; `sim8d.ts` emulates them on the DB copy: it runs the new
+`scanOwnModuleLoads` / `scanUnindexedImports` over the clones, adds the runtime entry
+symbols (by name) and `unindexed_loads` rows that ingest would write, and drops the
+MDX `unindexed_consumer` flags the new scan no longer reports. Its limits: the loaded
+module's names come from a text scan when the load names none, references are not
+added, and the old DBs lack round 8c's loads (so a few rows below overlap 8c).
+
+**1. Bins and scripts loading the package's own unbuilt output** (consumer-checks
+`scanOwnModuleLoads`, export-surface `resolveOwnLoads`). create-astro's bin does
+`import('./dist/index.js')`, @flue/cli's `import('../dist/flue.js')`,
+@nuxt/scripts-cli's `import { runCli } from '../dist/cli.mjs'`. The clones are
+unbuilt, SCIP linked nothing, and the packages were `ok` with their whole `src/`
+private_dead (fail-open) and `runCli` a DEPRECATE. Every own code file (walked, plus
+extension-less bins among the runtime entries; not SFCs, not `.d.ts`) is parsed, and a
+relative module specifier (import / export from, `import x = require()`, `import()`,
+`require()`) that names no existing file in the package is mapped with core's
+`sourceForBuildOutput` (tsconfig outDir → rootDir, dist → src) and the dist-layout rule
+of item 2. Mapped: a load of that source with the names it takes (named / default
+imports, export specifiers, `const { a } = await import()`, `import().then(({ a }) =>
+…)`, `require().a`; otherwise every export). The export surface resolves the names
+against the program that has the source: a `shorthandRefs` record from the import
+position (the loading file must be an indexed document) and, when the load comes from
+an entry / runtime entry file (a bin) or a file no index has, a runtime `entrySymbols`
+record: the bin calls it, so it gets no verdict (it is not unused surface) and seeds its
+module. A module with no exports seeds its top-level declarations. Test and docs files
+only reference. Unmapped, a code-looking path under `dist/`, `build/`, `out/` or `lib/`
+is a gap: the result is partial with `cause: error: <file>:<l>:<c> loads '<spec>', the
+package's own unbuilt build output, which no source maps to` (a warning in test / docs
+files). Fixture: org-small `@acme/dual-cli` (`runCli`, `runTasks` alive; `cliUnused`
+deletion; `taskDead` private_dead). Unit tests: `round-8d.test.ts` (import forms, gaps,
+negatives: a missing non-build relative import, a native addon, a `.d.ts` re-export).
+
+**3. String entry points** (same scan). A string `<own name>/<subpath>` (through the
+manifest's `exports`: an exact key, else the longest `*` pattern, every condition;
+without `exports` the path itself; each target as a file, then sourceForBuildOutput,
+then the dist layout) or a relative string with a code extension naming an own file
+(relative to the file, else to the package; directly or via dist → src) is a load of
+every export of that module, as runtime entry symbols (a framework or tool reads them:
+`serverEntrypoint: '@astrojs/preact/server.js'`,
+`require.resolve('@trpc/upgrade/transforms/provider')` (jscodeshift's `parser` and
+transform), `new URL('./worker.ts', import.meta.url)`). A string is no reference. A
+runtime load from a file that is no entry point (`astro.config.mjs`, a tool config) is
+also sent as a `relative` unindexed import, so ingest writes an `unindexed_loads` row
+and its entry symbols never make the package's entry set credible for private_dead
+(without that, withastro's contribute-docs Starlight site gained 5 false private_dead
+rows in the measurement). Fixture: org-small `@acme/dual-integration`
+(`serverEntrypoint` through `exports` to `src/server.ts`: no findings there,
+`serverDead` private_dead). The bump also changes two existing sidecars: dual-server's
+`new URL('./bundled-worker.ts', …)` now also names its top-level declaration, and
+dual-webpack's `entry: './src/app.js'` is a load record.
+
+Measured (sim): withastro private_dead 407 → 270 (create-astro −61, @astrojs/upgrade
+−51, docs −13 through `astro.config`'s `routeMiddleware` / sidebar strings, @flue/cli
+−12), deprecation 103 → 81 and blocked 997 → 793 (with item 6), no row added. In a real
+run @flue/cli is partial instead: `../dist/flue.js` is tsdown output (`tsdown && mv
+dist/flue.mjs dist/flue.js`) that no rule maps (the only gap in the org; the bundler
+mapping belongs in manifests.ts, below). nuxt: @nuxt/scripts-cli −27 private_dead,
+`runCli` and `CliIo` no longer findings; `CliResult` and `resolveCliCommand`, used only
+by runCli, turn from dead-island needs_review into `deprecation_candidate
+[internal_refs_only]` (published). nuxt private_dead 110 → 83, blocked 544 → 523.
+trpc: `@trpc/upgrade`'s two `parser` exports lose their verdicts.
+
+**2. Dist-layout manifests** (scip-typescript.ts shadow package, `distLayoutSource`,
+`sourceRoots`). drizzle-orm's package.json is the copy published from `dist/`
+(`main: ./index.cjs`, `types: ./index.d.ts`, no `exports`; `drizzle-orm/pg-core` exists
+only as `dist/pg-core/`): no sibling resolved `drizzle-orm`, the family was partial or
+blocked. A declared target that is missing and not under a build dir is now tried under
+each source root (package-root tsconfigs' `rootDir`, read leniently without `extends`,
+then `src`): a built extension becomes `.ts` / `.tsx` / `.mts` / `.cts`, an
+extension-less path `<root>/<p>.ts` or `<root>/<p>/index.ts`. That covers main / module /
+types, every `exports` leaf and `typesVersions`; a deep subpath without `exports`
+(`pg-core`) that sourceForBuildOutput cannot map gets a link in the shadow
+(`pg-core.ts` → `src/pg-core/index.ts`). Verified on a scratch copy of the drizzle-orm
+clone (drizzle-orm + drizzle-zod, no install): `drizzle-orm` and its four `*-core`
+subpaths resolve into `drizzle-orm/src/`, and drizzle-zod's export surface is no longer
+partial (was `unresolved org module 'drizzle-orm'`). Not verified: a full re-index of
+drizzle-team. drizzle-orm itself stays opaque until discover resolves its entries the
+same way (routed below): three `discover: unresolved entry point ./index.*` flags.
+drizzle-orm's own `~/…` path alias is not the consumer's, so inside a consumer's program
+those imports of drizzle-orm's files stay unresolved (types only; the names a consumer
+imports resolve through relative `export *` chains).
+
+**4. Docs sites** (consumer-checks `scanUnindexedImports`; globs). An MDX file's
+specifiers are read from its text without fenced blocks and inline code spans, for org
+imports too (round 8c did it for own-code loads only). DOCS_GLOBS and `doc_files` gain
+`**/blog/**`, `**/versioned_docs/**` (Docusaurus) and `**/.vitepress/**`. Measured
+(sim): all 30 `unindexed_consumer` flags of trpc's `www` (from `blog/` and
+`versioned_docs/` MDX) go; blocked 301 → 242, and @trpc/tanstack-react-query gets its
+verdicts (13 deprecation_candidate, 9 needs_review, 2 private_dead). The remaining
+blocked rows have other blockers. Risk: a real app dir named `blog/` is now docs (its
+uses count only with `countDocsAsConsumers`); the witness still reads docs files.
+
+**5. Test support.** `test_support_names` gains `e2e`, `*-e2e`, `*_e2e`; TEST_GLOBS /
+`test_files` gain `**/tests-e2e/**`, `**/e2e-tests/**`. tanstack: the 22 dead-island /
+deletion rows of `@tanstack/db-collection-e2e` (`createMutationsTestSuite`, …, run by
+four packages' e2e tests) and 60 private_dead rows (28 in cli's `tests-e2e/helpers.ts`,
+the rest unlocked by those candidates) go; 5 helpers the live suites use become
+`unexport_candidate` (the package is private). Negative test: `@acme/e2easy`.
+
+**6. Signature parameters** (ingest `signatureEnd`, `SIGNATURE_ROLE`; analyze.sql
+`signature_refs`). The cheapest correct source for the signature end is the checkout
+text at ingest: ingest already has every definition's position, and discover.json's
+`localPath` names the checkout (the sidecar would need a new field in `types.ts` and
+covers TypeScript only). For a reference whose innermost enclosing declaration is
+function-like (a method descriptor), ingest scans from the declaration's name to its
+body (the first `{` at bracket depth 0, unless right after `:` `|` `&` `,`, a type
+literal; `=>`; `=`; `;`; Dart: `:` after the parameter list), skipping strings,
+templates and comments, and sets bit `1 << 20` of `occurrences.role` (above every SCIP
+role bit) on references before it; never for a TypeScript `private` member (a `private`
+modifier before the name). `signature_refs` accepts such references. A DB ingested
+without `localPath` marks nothing. Measured: drizzle-team deprecation 30 → 22 (the 8
+drizzle-pulse types, `PulseHonoHandlers` among them), blocked 628 → 567; tanstack
+deprecation 399 → 238 (−161, e.g. `BytePlusImageSize`, a parameter of the public
+`resolveBytePlusImageSize(\n  size: …`), blocked 3913 → 2962 (with item 5); vitejs
+blocked 358 → 321 (37 internal-only types of @vitejs/plugin-rsc and devtools-kit).
+Ingest time: tanstack 90.6 → 93.2 s, drizzle-team 9.8 → 9.6 s (noise); analyze
+unchanged. Negative tests: a body use stays an unexport; a private method's parameter
+is not marked. Missed: a variable-held arrow function after its first line, a return
+type written as a function type after its `=>`.
+
+**7. `_unnamed/.` across repos** (ingest `resolveName`). A use of a nameless package's
+synthetic name resolves among the candidates of the consumer's own repo only (none: not
+an org package, ignored with a warning). vitejs: `ambiguous_dep` flags 20 → 0 (four
+devtools packages × the five repos' `_unnamed/.`); no finding changed (the targets have
+no findings).
+
+**8. Docs.** CLAUDE.md lists nodejs.org and registry.yarnpkg.com; README: network hosts,
+pnpm 12 and a read-only store lock dir, failed installs are partial (fail closed).
+
+**Open (for routing).**
+- manifests.ts (entry points): the dist-layout rule of item 2 in `resolveEntry` /
+  `resolveNpmEntryPoints`: a declared `main` / `module` / `types` / `exports` leaf that
+  does not exist and is not under a build dir resolves to the same path under the
+  tsconfig `rootDir` (else `src/`): built extension → `.ts` / `.tsx` / `.mts` / `.cts`,
+  extension-less → `<p>.ts` or `<p>/index.ts`; not `unresolved` when that exists.
+  Without it drizzle-orm keeps three `opaque_consumer` flags. For such a manifest
+  without `exports` (subpaths by file layout) every `<rootDir>/<dir>/index.ts` is a
+  public subpath (`drizzle-orm/pg-core`): add them as surface entry points, else their
+  unused exports are private_dead instead of deprecation candidates.
+- manifests.ts (`sourceForBuildOutput`): bundler outputs named by config (`tsdown` /
+  `tsup` / rolldown `entry` → `dist/<name>.(m)js`, plus a `mv` in the build script, as
+  in @flue/cli) would map `../dist/flue.js`; today it is a gap (partial, fail closed).
+- indexers/types.ts (doc comments only): `unindexedImports[].relative` is now also
+  produced for non-SFC files (runtime loads from non-entry files); `shorthandRefs` also
+  carry own-module load references; TypeScript `entrySymbols` of kind `runtime` exist.
