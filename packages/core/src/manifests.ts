@@ -592,7 +592,8 @@ export function readNpmPackage(
   const version = typeof json['version'] === 'string' ? json['version'] : null;
 
   const files = repoFiles ?? listFiles(repoRoot);
-  const resolved = resolveNpmEntryPoints(dir, json, files, warn, tsconfigOutDirs(repoRoot, dir, packageFiles(dir, files)));
+  const layout = sourceLayout(repoRoot, dir, packageFiles(dir, files));
+  const resolved = resolveNpmEntryPoints(dir, json, files, warn, layout.outDirs, layout.namedInputs);
   const { unresolved } = resolved;
   const clientAll = clientEntryPoints(repoRoot, dir, files);
   const client = clientAll.filter((f) => !resolved.entryPoints.includes(f));
@@ -688,7 +689,7 @@ export function npmVisibility(json: Record<string, unknown>, manifest = 'package
 
 /**
  * Entry points (PLAN §6.3 step 4): `main`, `module`, `types`/`typings`, `bin`
- * (string or object), `browser` if a string, and every string leaf of `exports`
+ * (string or object), `browser`, `source` and `react-native` if a string, and every string leaf of `exports`
  * (all conditions, nested objects, arrays; `null` exclusions ignored). A `*` in
  * an `exports` target is resolved against the filesystem.
  *
@@ -703,9 +704,10 @@ export function npmVisibility(json: Record<string, unknown>, manifest = 'package
  *         built twice (`tsconfig.json` → `dist/main`, `tsconfig.module.json` →
  *         `dist/module`, both rootDir `src`) maps `dist/module/index.d.ts` → `src/index.ts`;
  *      b. the convention below;
- *      c. one leading output segment stripped (`dist/<seg>/rest` → `src/rest`), only
+ *      c. leading output segments stripped (`dist/<seg>/rest` → `src/rest`), each only
  *         when nothing under `src/<seg>` exists (then `<seg>` is a subpath, not a format),
- *         and never for a `*` pattern;
+ *         and never for a `*` pattern; then a `src/` (or rootDir) under the output dir,
+ *         build-format dirs dropped anywhere, bundler named inputs (distToSrcGroups d–f);
  *      the convention: if `<p>` starts with `dist/`, `lib/`,
  *      `build/` or `out/`, replace that first segment with `src/` and the
  *      extension (`.js .mjs .cjs .jsx .d.ts .d.mts .d.cts`) with `.ts`, then `.tsx`
@@ -734,17 +736,27 @@ export function npmEntryPoints(
  * resolved (one resolving condition makes the entry fine), as written, sorted,
  * deduplicated. `bin` and `browser` are not checked (bins
  * are scripts run by name, not import surface). The index fallback does not clear them.
+ * A top-level main / module / types / typings miss is dropped when a top-level `source` /
+ * `react-native` leaf, or a `source` / `react-native` condition of a resolving `.` export,
+ * names the source (react-native-builder-bob: the missing leaf is a build of it).
  */
 export function resolveNpmEntryPoints(
   dir: string, json: Record<string, unknown>, repoFiles: readonly string[], warn: Warn = () => {},
-  outDirs: readonly TsOutDir[] = [],
+  outDirs: readonly TsOutDir[] = [], namedInputs: ReadonlyArray<readonly [string, string]> = [],
 ):{ entryPoints: string[]; unresolved: string[]; runtime: string[]; surface: string[]; fallback: string | null; noneResolved: boolean } {
   // `entry`: the exports entry (subpath key) a leaf belongs to; undefined outside exports.
-  const declared: Array<{ path: string; surface: boolean; entry?: string }> = [];
+  // `top`: a top-level main / module / types / typings leaf; `source`: a top-level
+  // `source` / `react-native` leaf (react-native-builder-bob, microbundle: the source the
+  // build outputs are made from; Metro loads `react-native` as is).
+  const declared: Array<{ path: string; surface: boolean; entry?: string; top?: true; source?: true }> = [];
   const patterns: Array<{ path: string; entry: string }> = [];
   for (const key of ['main', 'module', 'types', 'typings'] as const) {
     const v = json[key];
-    if (typeof v === 'string') declared.push({ path: v, surface: true });
+    if (typeof v === 'string') declared.push({ path: v, surface: true, top: true });
+  }
+  for (const key of ['source', 'react-native'] as const) {
+    const v = json[key];
+    if (typeof v === 'string') declared.push({ path: v, surface: true, source: true });
   }
   // `bin` targets are run, never imported: runtime entry points only (never in
   // entryPoints, so a bin outside the TS program cannot make the adapter report a missing
@@ -775,21 +787,28 @@ export function resolveNpmEntryPoints(
 
   const pkgFiles = packageFiles(dir, repoFiles);
   const pkgFileSet = new Set(pkgFiles);
-  const layout: SourceLayout = { files: pkgFileSet, outDirs };
+  const layout: SourceLayout = { files: pkgFileSet, outDirs, namedInputs };
   const found = new Set<string>();
   const add = (rel: string | null): void => {
     if (rel === null) return;
     if (!CODE_EXT.test(rel) && posix.extname(rel) !== '') return;
     found.add(joinRel(dir, rel));
   };
-  for (const { path: p, surface, entry } of declared) {
+  const topMisses: string[] = [];
+  let sourceOk = false;
+  for (const { path: p, surface, entry, top, source } of declared) {
     const n = normalizeRel(p);
     if (n === null) {
       warn(`${joinRel(dir, 'package.json')}: entry ${JSON.stringify(p)} escapes the package, ignored`);
       continue;
     }
     const r = resolveEntry(n, layout);
-    if (!noteEntry(entry, p, r !== null, CODE_EXT.test(n)) && r === null && surface && CODE_EXT.test(n)) unresolved.add(p);
+    if (source === true) {
+      if (r !== null) sourceOk = true;
+    } else if (!noteEntry(entry, p, r !== null, CODE_EXT.test(n)) && r === null && surface && CODE_EXT.test(n)) {
+      if (top === true) topMisses.push(p);
+      else unresolved.add(p);
+    }
     add(r);
   }
   // `files` (what npm publishes) bounds what an exports `*` pattern can match: with
@@ -816,6 +835,14 @@ export function resolveNpmEntryPoints(
     noteEntry(entry, p, matched, CODE_EXT.test(n));
   }
   for (const [entry, misses] of entryMisses) if (!entryOk.has(entry)) misses.forEach((m) => unresolved.add(m));
+  // The `.` export's `source` / `react-native` condition (bob) names the source like the
+  // top-level fields do.
+  const dot = exportEntries(json['exports']).find(([e]) => e === '.')?.[1];
+  if (isObject(dot) && (dot['source'] !== undefined || dot['react-native'] !== undefined) && entryOk.has('.')) sourceOk = true;
+  // A top-level main / module / types that maps to no source is the build of the package's
+  // declared source when a `source` / `react-native` leaf resolves (bob's
+  // `lib/typescript/commonjs/index.d.ts` beside `source: src/index.ts`): not unresolved.
+  if (!sourceOk) topMisses.forEach((m) => unresolved.add(m));
   const binFiles: string[] = [];
   for (const b of bins) {
     const n = normalizeRel(b);
@@ -898,7 +925,7 @@ export function clientEntryPoints(repoRoot: string, dir: string, repoFiles: read
       return '';
     }
   };
-  const layout: SourceLayout = { files: fileSet, outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) };
+  const layout = sourceLayout(repoRoot, dir, pkgFiles);
   const isUrl = (target: string): boolean => /^[a-z][\w+.-]*:|^\/\//i.test(target);
   /** Resolve `target` (from a file in package dir `base`) to a package file; null if not local. */
   const resolveLocal = (target: string, base: string): string | null => {
@@ -1011,12 +1038,23 @@ function literalsOfValue(text: string, at: number): string[] {
  * `src/x.js`); expressions yield nothing.
  */
 export function webpackEntries(text: string): Array<{ name: string; path: string }> {
-  const out: Array<{ name: string; path: string }> = [];
+  return configEntries(text, 'entry').map(({ name, path }) => ({ name: name ?? 'main', path }));
+}
+
+/**
+ * The path-looking literals of every `<key>:` value in a bundler config: an object value
+ * names each of its values' literals by the key (a `{ import: './x', dependOn: … }`
+ * descriptor contributes its literals too), a string or array value gives `name`
+ * undefined. Only path-looking literals (`./x`, `../x`, `src/x.js`); expressions yield
+ * nothing.
+ */
+function configEntries(text: string, key: 'entry' | 'input'): Array<{ name: string | undefined; path: string }> {
+  const out: Array<{ name: string | undefined; path: string }> = [];
   const looksLocal = (s: string): boolean => /^\.{1,2}\//.test(s) || (s.includes('/') && CODE_EXT.test(s) && !s.startsWith('@'));
-  for (const m of text.matchAll(/\bentry\s*:\s*/g)) {
+  for (const m of text.matchAll(key === 'entry' ? /\bentry\s*:\s*/g : /\binput\s*:\s*/g)) {
     const at = m.index + m[0].length;
     if (text[at] !== '{') {
-      for (const lit of literalsOfValue(text, at)) if (looksLocal(lit)) out.push({ name: 'main', path: lit });
+      for (const lit of literalsOfValue(text, at)) if (looksLocal(lit)) out.push({ name: undefined, path: lit });
       continue;
     }
     // Object entry: `name: 'x'`, `'name': ['x', 'y']`, `name: { import: 'x' }`.
@@ -1224,7 +1262,7 @@ export function conventionEntryPoints(
   // Files a runtime is started on: `node dist/server.js` / `tsx src/x.ts` in any
   // package.json script, a package-root Dockerfile's CMD / ENTRYPOINT. Build output is
   // mapped to its source like a declared entry (tsconfig outDirs first).
-  const layout: SourceLayout = { files: fileSet, outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) };
+  const layout = sourceLayout(repoRoot, dir, pkgFiles);
   const launched = [
     ...(mains.length > 0 ? mains : wranglerScriptMains(scripts)),
     ...scripts.flatMap(runnerTargets),
@@ -1459,6 +1497,45 @@ function collectExportLeaves(v: unknown, out: (leaf: string) => void): void {
 export interface SourceLayout {
   files: ReadonlySet<string>;
   outDirs: readonly TsOutDir[];
+  /** Bundler named inputs (bundlerNamedInputs): output name → package-relative source. */
+  namedInputs?: ReadonlyArray<readonly [string, string]>;
+}
+
+/** The SourceLayout of the npm package at `dir` (`pkgFiles` package-relative). */
+function sourceLayout(repoRoot: string, dir: string, pkgFiles: readonly string[]): SourceLayout {
+  const files = new Set(pkgFiles);
+  return { files, outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles), namedInputs: bundlerNamedInputs(repoRoot, dir, pkgFiles) };
+}
+
+/**
+ * Named inputs of the package-root bundler configs (`rolldown.config.*`, `rollup.config.*`,
+ * `tsdown.config.*`, `tsup.config.*`, `vite.config.*`, also `<tool>.<x>.config.*`): every
+ * `input:` / `entry:` value, an object's keys naming their literals (`input: { cli:
+ * resolve(dirname, 'src/node/cli.ts') }` → `cli`), a string or array value naming each
+ * literal by its file stem (rollup's `[name]` of an unnamed input). Only literals that are
+ * package files are kept (`./` stripped). The output name → source pairs map a declared
+ * `dist/…/<name>.js` that no other rule resolves (distToSrcGroups f).
+ */
+export function bundlerNamedInputs(repoRoot: string, dir: string, pkgFiles: readonly string[]): Array<[string, string]> {
+  const files = new Set(pkgFiles);
+  const out: Array<[string, string]> = [];
+  for (const cfg of pkgFiles.filter((f) => /^(?:rolldown|rollup|tsdown|tsup|vite)(?:\.[\w-]+)*\.config(?:\.[\w-]+)*\.[cm]?[jt]s$/.test(f))) {
+    let text: string;
+    try {
+      text = readFileSync(join(repoRoot, joinRel(dir, cfg)), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const key of ['input', 'entry'] as const) {
+      for (const { name, path: lit } of configEntries(text, key)) {
+        const n = normalizeRel(lit);
+        if (n === null || !files.has(n) || !CODE_EXT.test(n)) continue;
+        const named = name ?? posix.basename(n).replace(/\.[^.]+$/, '');
+        if (!out.some(([a, b]) => a === named && b === n)) out.push([named, n]);
+      }
+    }
+  }
+  return out;
 }
 
 /** Resolve one declared entry (package-relative, normalized) against the package's files. */
@@ -1490,12 +1567,22 @@ const ROOTDIR_SOURCE_EXT = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs'
  *    then the index variants;
  * b. dist/foo.js → [[src/foo.ts, src/foo.tsx], [src/foo/index.ts, src/foo/index.tsx]];
  *    dist/x/index.js → [[src/x/index.ts, src/x/index.tsx], [src/x.ts, src/x.tsx]];
- * c. dist/<seg>/foo.js → src/foo.* (one leading output segment stripped), only when no
- *    package file sits at `src/<seg>.*` or under `src/<seg>/` (else `<seg>` is a subpath);
- *    never for a `*` pattern (`dist/gone/*.js` → `src/*.ts` would match every source).
+ * c. dist/<seg>/foo.js → src/foo.* (leading output segments stripped one at a time:
+ *    `dist/a/b/foo.js` → `src/b/foo.*`, then `src/foo.*`), each only while no package file
+ *    sits at `src/<seg>.*` or under `src/<seg>/` (else `<seg>` is a subpath);
+ *    never for a `*` pattern (`dist/gone/*.js` → `src/*.ts` would match every source);
+ * d. the rest after some leading segments when it starts with `src/` or a tsconfig rootDir
+ *    (`dist/esm/src/index.d.ts` → `src/index.ts`);
+ * e. build-format dirs (FORMAT_DIRS: `esm`, `cjs`, `commonjs`, `module`, `typescript`, …)
+ *    dropped wherever they sit, then a–d on the result (`lib/typescript/commonjs/index.d.ts`
+ *    → `lib/index.d.ts` → `src/index.ts`);
+ * f. a bundler named input whose name is the path's stem or its last segments
+ *    (SourceLayout.namedInputs: `dist/node/internal.js` → `src/node/internalIndex.ts`).
+ * Every rule is guarded by existence (resolveEntry keeps the first candidate that is a
+ * package file); a later rule only matters when the earlier ones name nothing.
  * [] if the path is not build-output-shaped.
  */
-function distToSrcGroups(p: string, layout: SourceLayout): string[][] {
+function distToSrcGroups(p: string, layout: SourceLayout, nested = false): string[][] {
   if (!BUILT_EXT.test(p)) return [];
   const decl = /\.d\.[cm]?ts$/.test(p);
   const out: string[][] = [];
@@ -1507,22 +1594,60 @@ function distToSrcGroups(p: string, layout: SourceLayout): string[][] {
   if (!BUILD_DIR.test(p)) return out;
   out.push(...stemGroups(p.replace(BUILD_DIR, 'src/').replace(BUILT_EXT, ''), 'src', decl, ['.ts', '.tsx']));
   const segs = p.split('/');
-  if (segs.length >= 3 && !p.includes('*')) {
-    const seg = segs[1]!;
-    let taken = false;
-    for (const f of layout.files) {
-      if (f.startsWith(`src/${seg}/`) || f.startsWith(`src/${seg}.`)) {
-        taken = true;
-        break;
-      }
+  if (p.includes('*')) return out;
+  // c. Leading output segments stripped (`dist/<a>/<b>/x.js` → `src/b/x.*`, then `src/x.*`),
+  // each only while nothing sits at `src/<seg>` (then `<seg>` is a subpath, not a format).
+  const taken = (seg: string): boolean => {
+    for (const f of layout.files) if (f.startsWith(`src/${seg}/`) || f.startsWith(`src/${seg}.`)) return true;
+    return false;
+  };
+  // Never down to a bare `index.*` past the one-segment strip: in `dist/esm/gone/index.js`
+  // the dir before `index` names the module (`src/index.ts` would be another module). With
+  // the format dirs already dropped (`nested`, rule e) the remaining dir is never a format.
+  const index = /^index\./.test(segs.at(-1)!);
+  const lastK = !index ? segs.length - 1 : nested ? segs.length - 2 : Math.max(2, segs.length - 2);
+  for (let k = 2; k <= lastK && !taken(segs[k - 1]!); k += 1) {
+    const stem = `src/${segs.slice(k).join('/')}`.replace(BUILT_EXT, '');
+    out.push(...stemGroups(stem, 'src', decl, ['.ts', '.tsx', '.mts', '.cts']));
+  }
+  // d. The rest after some leading segments is itself under a source root
+  // (`dist/esm/src/index.d.ts` → `src/index.ts`, a build whose rootDir is the package).
+  const roots = [...new Set(['src', ...layout.outDirs.map((o) => o.rootDir).filter((r) => r !== '')])];
+  for (let k = 1; k < segs.length - 1; k += 1) {
+    const rest = segs.slice(k).join('/');
+    for (const root of roots) {
+      if (rest.startsWith(`${root}/`)) out.push(...stemGroups(rest.replace(BUILT_EXT, ''), root, decl, ROOTDIR_SOURCE_EXT));
     }
-    if (!taken) {
-      const stem = `src/${segs.slice(2).join('/')}`.replace(BUILT_EXT, '');
-      out.push(...stemGroups(stem, 'src', decl, ['.ts', '.tsx', '.mts', '.cts']));
+  }
+  // e. Build-format dirs dropped wherever they sit, then the rules above again
+  // (react-native-builder-bob `lib/typescript/commonjs/index.d.ts` → `lib/index.d.ts` →
+  // `src/index.ts`; tanstack `dist/default-entry/esm/server.js` → `src/default-entry/server.ts`).
+  if (!nested) {
+    const q = segs.filter((s, i) => i === 0 || i === segs.length - 1 || !FORMAT_DIRS.has(s)).join('/');
+    if (q !== p) out.push(...distToSrcGroups(q, layout, true));
+  }
+  // f. A bundler's named input (`input: { internal: 'src/node/internalIndex.ts' }` in a
+  // rolldown / rollup / tsdown / tsup / vite config) is emitted as `<outDir>/<name>.js`:
+  // vite's `./dist/node/internal.js` → `src/node/internalIndex.ts`.
+  // The output dir is the build dir plus at most one dir of its own (`dist/node/`), format
+  // dirs aside (`dist/solid-class/esm/class.js`); deeper paths are other modules.
+  if (!nested) {
+    const stem = p.replace(BUILT_EXT, '');
+    for (const [name, source] of layout.namedInputs ?? []) {
+      if (!stem.endsWith(`/${name}`)) continue;
+      const outDir = stem.slice(0, -name.length - 1).split('/').slice(1).filter((s) => !FORMAT_DIRS.has(s));
+      if (outDir.length <= 1) out.push([source]);
     }
   }
   return out;
 }
+
+/**
+ * Directory names bundlers give one output format inside the build dir (`dist/esm/`,
+ * `lib/commonjs/`, `lib/typescript/`): never a source subpath of their own, so they are
+ * dropped when mapping build output back to source (distToSrcGroups e).
+ */
+const FORMAT_DIRS: ReadonlySet<string> = new Set(['esm', 'cjs', 'es', 'umd', 'mjs', 'commonjs', 'module', 'typescript', 'types']);
 
 /**
  * Candidate groups for one source stem under `root`: [stem.{exts}] (plus `stem.d.ts` for
@@ -1557,7 +1682,7 @@ export function sourceForBuildOutput(
   const n = normalizeRel(rel);
   if (n === null || n === '') return null;
   const pkgFiles = packageFiles(dir, repoFiles ?? listFiles(repoRoot));
-  const layout: SourceLayout = { files: new Set(pkgFiles), outDirs: tsconfigOutDirs(repoRoot, dir, pkgFiles) };
+  const layout = sourceLayout(repoRoot, dir, pkgFiles);
   const direct = resolveEntry(n, layout);
   if (direct !== null) return direct;
   if (posix.extname(n) !== '' && BUILT_EXT.test(n)) return null;

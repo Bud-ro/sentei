@@ -545,6 +545,12 @@ describe('npm manifests', () => {
     expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/esm/lib/types.js')).toBe('src/lib/types.ts');
     expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/module/lib/helpers')).toBe('src/lib/helpers/index.ts');
     expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/module/lib/gone')).toBeNull();
+    // Several leading segments may go, but never down to a bare index (lib-dual's
+    // `@acme/dual-legacy/dist/esm/internal/gone` stays without a source).
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/esm/internal/gone')).toBeNull();
+    // ... nor through a dropped format dir (`dist/esm/gone/index.js` → `dist/gone/index.js`).
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/esm/gone')).toBeNull();
+    expect(sourceForBuildOutput(root, 'pkgs/sb', 'dist/esm/extra/lib/types.js')).toBe('src/lib/types.ts');
     expect(sourceForBuildOutput(root, 'pkgs/sb', '../escape')).toBeNull();
   });
 
@@ -572,6 +578,88 @@ describe('npm manifests', () => {
     const [p] = readRepoManifests(root, warn);
     expect(p!.entryPoints).toEqual(['src/api.ts', 'src/index.ts']);
     expect(p!.unresolvedEntryPoints).toEqual(['./dist/react/index.js']);
+  });
+
+  it('react-native-builder-bob: format dirs are dropped and `source` / `react-native` cover the top-level build fields', () => {
+    // invertase react-native-google-mobile-ads packages/core.
+    pkgJson('core/package.json', {
+      name: 'rngma', main: 'lib/commonjs/index.js', module: 'lib/module/index.js', types: 'lib/typescript/commonjs/index.d.ts',
+      'react-native': 'src/index.ts', source: 'src/index.ts',
+      exports: { '.': {
+        'react-native': { types: './lib/typescript/module/index.d.ts', default: './src/index.ts' },
+        import: { types: './lib/typescript/module/index.d.ts', default: './lib/module/index.js' },
+        require: { types: './lib/typescript/commonjs/index.d.ts', default: './lib/commonjs/index.js' },
+      } },
+    });
+    write('core/src/index.ts');
+    // react-native-coverage: `lib/typescript/src/index.d.ts` (tsc rootDir = the package).
+    pkgJson('cov/package.json', { name: 'cov', main: './lib/module/index.js', types: './lib/typescript/src/index.d.ts', exports: { './node': { types: './lib/typescript/src/node.d.ts', default: './lib/module/node.js' } } });
+    write('cov/src/index.tsx');
+    write('cov/src/node.ts');
+    // A top-level field whose source is really missing stays unresolved without a `source`.
+    pkgJson('gone/package.json', { name: 'gone', main: 'lib/commonjs/index.js', types: 'lib/typescript/commonjs/gone.d.ts' });
+    write('gone/src/index.ts');
+    // ... but a resolving `source` covers it (it is a build of that source).
+    pkgJson('src-only/package.json', { name: 'src-only', source: 'src/main.ts', types: 'lib/typescript/whatever.d.ts' });
+    write('src-only/src/main.ts');
+    const pkgs = readRepoManifests(root, warn);
+    const by = (n: string) => pkgs.find((p) => p.name === n)!;
+    expect(by('rngma').entryPoints).toEqual(['core/src/index.ts']);
+    expect(by('rngma').unresolvedEntryPoints).toEqual([]);
+    expect(by('cov').entryPoints).toEqual(['cov/src/index.tsx', 'cov/src/node.ts']);
+    expect(by('cov').unresolvedEntryPoints).toEqual([]);
+    expect(by('gone').unresolvedEntryPoints).toEqual(['lib/typescript/commonjs/gone.d.ts']);
+    expect(by('src-only').entryPoints).toEqual(['src-only/src/main.ts']);
+    expect(by('src-only').unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('nested build outputs: format dirs anywhere, several leading segments, a src/ under the output dir', () => {
+    // tanstack react-start `./dist/default-entry/esm/server.js`, react-start-rsc
+    // `dist/esm/src/index.d.ts`, devtools-utils `./dist/react/esm/index.js`.
+    pkgJson('package.json', {
+      name: 'x', types: 'dist/esm/src/index.d.ts',
+      exports: {
+        '.': { import: './dist/esm/index.js' },
+        './server-entry': { types: './dist/default-entry/esm/server.d.ts', default: './dist/default-entry/esm/server.js' },
+        './react': './dist/react/esm/index.js',
+        './deep': './dist/web/v2/deep.js',
+      },
+    });
+    for (const f of ['src/index.ts', 'src/server.tsx', 'src/default-entry/server.ts', 'src/react/index.ts', 'src/deep.ts']) write(f);
+    const [p] = readRepoManifests(root, warn);
+    // default-entry/esm/server.js must reach src/default-entry/server.ts, not src/server.tsx.
+    expect(p!.entryPoints).toEqual(['src/deep.ts', 'src/default-entry/server.ts', 'src/index.ts', 'src/react/index.ts']);
+    expect(p!.unresolvedEntryPoints).toEqual([]);
+  });
+
+  it('bundler named inputs map dist/<name>.js to their source (vite rolldown.config.ts, tanstack vite.config.<x>.ts)', () => {
+    pkgJson('vite/package.json', {
+      name: 'vite',
+      exports: { '.': './dist/node/index.js', './internal': './dist/node/internal.js', './module-runner': './dist/node/module-runner.js', './gone': './dist/node/gone.js' },
+    });
+    write('vite/rolldown.config.ts', [
+      'const nodeConfig = defineConfig({',
+      '  input: {',
+      "    index: path.resolve(dirname, 'src/node/index.ts'),",
+      "    internal: path.resolve(dirname, 'src/node/internalIndex.ts'),",
+      '  },',
+      '})',
+      "const runner = defineConfig({ input: { 'module-runner': path.resolve(dirname, 'src/module-runner/index.ts') } })",
+      "const missing = defineConfig({ input: { gone: './src/nowhere.ts' } })",
+    ].join('\n'));
+    for (const f of ['src/node/index.ts', 'src/node/internalIndex.ts', 'src/module-runner/index.ts']) write(`vite/${f}`);
+    pkgJson('utils/package.json', { name: 'utils', exports: { './solid/class': './dist/solid-class/esm/class.js' } });
+    write('utils/vite.config.solid-class.ts', "export default tanstackViteConfig({ entry: ['./src/solid/class.ts', './src/solid/mount.tsx'], outDir: './dist/solid-class' })");
+    write('utils/src/solid/class.ts');
+    write('utils/src/solid/mount.tsx');
+    write('utils/src/solid/index.ts');
+    const pkgs = readRepoManifests(root, warn);
+    const vite = pkgs.find((p) => p.name === 'vite')!;
+    expect(vite.entryPoints).toEqual(['vite/src/module-runner/index.ts', 'vite/src/node/index.ts', 'vite/src/node/internalIndex.ts']);
+    expect(vite.unresolvedEntryPoints).toEqual(['./dist/node/gone.js']);
+    const utils = pkgs.find((p) => p.name === 'utils')!;
+    expect(utils.entryPoints).toEqual(['utils/src/solid/class.ts']);
+    expect(utils.unresolvedEntryPoints).toEqual([]);
   });
 
   it('the segment strip needs the source to exist and never maps to the src dir itself', () => {
