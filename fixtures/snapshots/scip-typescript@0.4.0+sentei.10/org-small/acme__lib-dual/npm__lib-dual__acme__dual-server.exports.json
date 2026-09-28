@@ -5,7 +5,15 @@
     "packages/dual-server/src/server.ts",
     "packages/dual-server/src/worker.ts"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 9,
+      "file": "packages/dual-server/src/bundled-worker.ts",
+      "kind": "runtime",
+      "line": 6,
+      "name": "handleJob"
+    }
+  ],
   "exports": [],
   "flags": [],
   "generatedFiles": [],

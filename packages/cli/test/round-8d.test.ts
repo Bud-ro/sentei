@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { scanOwnModuleLoads } from '../src/indexers/consumer-checks.ts';
+import { computeExportSurface } from '../src/indexers/export-surface.ts';
 import { distLayoutSource, scipTypescript, sourceRoots } from '../src/indexers/scip-typescript.ts';
 import type { DiscoverFile } from '../src/indexers/types.ts';
 
@@ -119,5 +121,140 @@ describe('dist-layout manifests (drizzle-orm: main ./index.cjs, subpaths by file
     expect(JSON.parse(readFileSync(path.join(root, 'repos/flat/packages/orm/package.json'), 'utf8'))['main']).toBe('./index.cjs');
     expect(prep.diagnostics.some((d) => d.startsWith('info: node_modules/@acme/orm is a shadow of') && d.includes('main: ./index.cjs → ./src/index.ts')
       && d.includes('deep imports linked to sources: pg-core → src/pg-core/index.ts, sqlite-core → src/sqlite-core.ts'))).toBe(true);
+  });
+});
+
+describe('own-module loads: bins loading unbuilt dist/, string entry points (withastro, nuxt, trpc)', () => {
+  const TSCONFIG = {
+    compilerOptions: { strict: true, target: 'es2022', module: 'esnext', moduleResolution: 'bundler', noEmit: true, skipLibCheck: true, allowJs: true, types: [] },
+    include: ['src', 'bin'],
+  };
+  function surface(repo: string, name: string, extra: Partial<Parameters<typeof computeExportSurface>[0]> = {}) {
+    const pkgDir = path.join(root, 'repos', repo);
+    return computeExportSurface({
+      packageId: `npm:acme/${repo}:${name}`, repoRoot: pkgDir, pkgDir, nestedPackageDirs: [], entryPoints: [], runtimeEntryPoints: [],
+      tsconfig: path.join(pkgDir, 'tsconfig.json'), orgPackageNames: new Set([name]), orgPackageDirs: [], packageName: name, ...extra,
+    });
+  }
+  const runtime = (r: ReturnType<typeof surface>): string[] =>
+    r.sidecar.entrySymbols.filter((e) => e.kind === 'runtime').map((e) => `${e.file}#${e.name}`);
+
+  it('a bin importing ../dist/cli.mjs references and seeds the mapped source exports (named, destructured, whole module)', () => {
+    write('cli', {
+      'package.json': { name: '@acme/cli', version: '1.0.0', type: 'module', exports: { '.': './dist/cli.mjs' }, bin: { cli: './bin/cli.mjs' } },
+      'tsconfig.json': TSCONFIG,
+      'bin/cli.mjs': [
+        `import { runCli } from '../dist/cli.mjs';`,
+        `process.exitCode = runCli(process.argv.slice(2));`,
+        `void import('../dist/run.js').then(({ main }) => main());`,
+        `const all = await import('../dist/all.js');`,
+        `export { all };`,
+        '',
+      ].join('\n'),
+      'bin/plain': `#!/usr/bin/env node\nrequire('../dist/plain.js');\n`,
+      'src/cli.ts': `export function runCli(args: string[]): number { return args.length; }\nexport function cliUnused(): void {}\n`,
+      'src/run.ts': `function runHelper(): number { return 1; }\nexport function main(): number { return runHelper(); }\nexport function runOther(): void {}\n`,
+      'src/all.ts': `export const a = 1;\nexport const b = 2;\n`,
+      'src/plain.ts': `const plainTop = 1;\nconsole.log(plainTop);\n`,
+      // A test's load: nothing seeded (and no reference: the file is in no program).
+      'test/cli.test.mjs': `import { cliUnused } from '../dist/cli.mjs';\ncliUnused();\n`,
+    });
+    const r = surface('cli', '@acme/cli', { entryPoints: ['src/cli.ts'], runtimeEntryPoints: ['bin/cli.mjs', 'bin/plain'] });
+    expect(r.partial).toBe(false);
+    // runCli (named by the bin), main (destructured in `.then`), every export of a whole-module
+    // import; a module with no exports: its top-level declarations (the extension-less bin).
+    expect(runtime(r)).toEqual(['src/all.ts#a', 'src/all.ts#b', 'src/cli.ts#runCli', 'src/plain.ts#plainTop', 'src/run.ts#main']);
+    expect(r.sidecar.shorthandRefs.map((x) => `${x.file}:${x.line}:${x.col} ${x.member} -> ${x.targetPackage}/${x.targetFile}:${x.targetLine}`)).toEqual([
+      'bin/cli.mjs:0:9 runCli -> @acme/cli/src/cli.ts:0',
+      'bin/cli.mjs:2:38 main -> @acme/cli/src/run.ts:1',
+      'bin/cli.mjs:3:25 a -> @acme/cli/src/all.ts:0',
+      'bin/cli.mjs:3:25 b -> @acme/cli/src/all.ts:1',
+    ]);
+    expect(r.diagnostics).toContain("info: bin/cli.mjs:1:24 loads own module src/cli.ts ('../dist/cli.mjs')");
+  });
+
+  it('unbuilt output that no source maps to makes the package partial with a cause (never ok); from a test file it does not', () => {
+    write('gap', {
+      'package.json': { name: '@acme/gap', version: '1.0.0', bin: './bin/gap.mjs' },
+      'tsconfig.json': TSCONFIG,
+      'bin/gap.mjs': `import('../dist/gone.js');\n`,
+      'src/index.ts': `export const x = 1;\n`,
+      'test/a.test.mjs': `import '../dist/nothing.js';\n`,
+    });
+    const r = surface('gap', '@acme/gap', { runtimeEntryPoints: ['bin/gap.mjs'] });
+    expect(r.partial).toBe(true);
+    expect(r.diagnostics.at(-1)).toBe("cause: error: bin/gap.mjs:1:8 loads '../dist/gone.js', the package's own unbuilt build output, which no source maps to (what it uses is unknown)");
+    expect(r.diagnostics).toContain("warn: test/a.test.mjs:1:8 loads '../dist/nothing.js', the package's own build output with no source (test file, not a counted consumer; status unaffected)");
+    // Negative: a missing relative import outside a build dir, or a native addon, is no gap.
+    write('nogap', {
+      'package.json': { name: '@acme/nogap', version: '1.0.0' },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': `export const x = 1;\n`,
+      'bin/run.mjs': `import('./missing.js');\nrequire('../build/Release/addon.node');\n`,
+    });
+    expect(surface('nogap', '@acme/nogap').partial).toBe(false);
+  });
+
+  it('string entries naming the package\'s own subpath or an own file are runtime entries (Astro serverEntrypoint, jscodeshift)', () => {
+    write('integration', {
+      'package.json': {
+        name: '@acme/integration', version: '1.0.0', type: 'module',
+        exports: { '.': './dist/index.js', './server.js': './dist/server.js', './transforms/*': './dist/transforms/*.js' },
+      },
+      'tsconfig.json': TSCONFIG,
+      'src/index.ts': [
+        `export default function integration() {`,
+        `  return {`,
+        `    serverEntrypoint: '@acme/integration/server.js',`,
+        `    transform: require.resolve('@acme/integration/transforms/provider'),`,
+        `    worker: new URL('./worker.ts', import.meta.url),`,
+        `    label: './notes.md',`,
+        `  };`,
+        `}`,
+        `declare const require: { resolve(s: string): string };`,
+        '',
+      ].join('\n'),
+      'src/server.ts': `export default { check() { return true; } };\nexport function renderToStaticMarkup(): string { return ''; }\n`,
+      'src/transforms/provider.ts': `export const parser = 'tsx';\nexport default function transformer(): void {}\n`,
+      'src/worker.ts': `export function onMessage(): void {}\n`,
+      'src/notes.md': '# not code\n',
+      'src/unrelated.ts': `export function notLoaded(): void {}\n`,
+    });
+    const r = surface('integration', '@acme/integration', { entryPoints: ['src/index.ts', 'src/server.ts'] });
+    expect(r.partial).toBe(false);
+    // The anonymous `export default {…}` has no SCIP definition to name (not recorded).
+    expect(runtime(r)).toEqual([
+      'src/server.ts#renderToStaticMarkup', 'src/transforms/provider.ts#parser', 'src/transforms/provider.ts#transformer', 'src/worker.ts#onMessage',
+    ]);
+    expect(r.sidecar.shorthandRefs).toEqual([]); // a string is not a reference
+  });
+
+  it('scanOwnModuleLoads: existing relative imports are ordinary imports; names from each import form', () => {
+    write('forms', {
+      'package.json': { name: '@acme/forms', version: '1.0.0' },
+      'src/a.ts': `export const a = 1;\n`,
+      'bin/x.cjs': [
+        `const { one, two: renamed } = require('../dist/a.js');`,
+        `const ns = require('../dist/a.js');`,
+        `import def, { three } from '../lib/a.js';`,
+        `import * as star from '../dist/a.js';`,
+        `export { four } from '../dist/a.js';`,
+        `import { a } from '../src/a.js';`,
+        `const five = require('../dist/a.js').five;`,
+        '',
+      ].join('\n'),
+    });
+    const pkgDir = path.join(root, 'repos/forms');
+    const { loads, gaps } = scanOwnModuleLoads({ repoRoot: pkgDir, pkgDir, nestedPackageDirs: [], files: [path.join(pkgDir, 'bin/x.cjs')], selfName: '@acme/forms' });
+    expect(gaps).toEqual([]);
+    expect(loads.map((l) => `${l.line}:${l.spec} ${l.names === undefined ? '*' : l.names.map((n) => n.name).join(',')}`)).toEqual([
+      '0:../dist/a.js one,two',
+      '1:../dist/a.js *',
+      '2:../lib/a.js default,three',
+      '3:../dist/a.js *',
+      '4:../dist/a.js four',
+      '6:../dist/a.js five',
+    ]);
+    expect(new Set(loads.flatMap((l) => l.targets.map((t) => path.relative(pkgDir, t))))).toEqual(new Set(['src/a.ts']));
   });
 });

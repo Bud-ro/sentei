@@ -1,0 +1,62 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-integration/src/index.ts",
+    "packages/dual-integration/src/server.ts"
+  ],
+  "entrySymbols": [
+    {
+      "col": 16,
+      "file": "packages/dual-integration/src/server.ts",
+      "kind": "runtime",
+      "line": 10,
+      "name": "check"
+    },
+    {
+      "col": 16,
+      "file": "packages/dual-integration/src/server.ts",
+      "kind": "runtime",
+      "line": 5,
+      "name": "renderToStaticMarkup"
+    }
+  ],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/dual-integration/src/index.ts",
+      "exportedAs": "integration",
+      "file": "packages/dual-integration/src/index.ts",
+      "line": 5,
+      "name": "integration",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual-integration/src/server.ts",
+      "exportedAs": "check",
+      "file": "packages/dual-integration/src/server.ts",
+      "line": 10,
+      "name": "check",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual-integration/src/server.ts",
+      "exportedAs": "renderToStaticMarkup",
+      "file": "packages/dual-integration/src/server.ts",
+      "line": 5,
+      "name": "renderToStaticMarkup",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-integration",
+  "shorthandRefs": [],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

@@ -1,0 +1,49 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## src/index.ts
+  // An Astro-style integration: the framework imports the module the string names
+//^ definition scip-typescript npm @acme/dual-integration . src/`index.ts`/ enclosing [5:0-8:0]
+  // (`@astrojs/preact` registers `serverEntrypoint: '@astrojs/preact/server.js'`).
+  // The subpath maps through `exports` (./server.js → dist/server.js) to src/server.ts.
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (no org package uses the integration).
+  export function integration(): { name: string; serverEntrypoint: string } {
+//                ^^^^^^^^^^^ definition scip-typescript npm @acme/dual-integration . src/`index.ts`/integration(). enclosing [5:0-7:1]
+//                                 ^^^^ definition scip-typescript npm @acme/dual-integration . src/`index.ts`/integration().typeLiteral0:name.
+//                                               ^^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-integration . src/`index.ts`/integration().typeLiteral0:serverEntrypoint.
+    return { name: 'acme-integration', serverEntrypoint: '@acme/dual-integration/server.js' };
+//           ^^^^ reference scip-typescript npm @acme/dual-integration . src/`index.ts`/integration().typeLiteral0:name.
+//                                     ^^^^^^^^^^^^^^^^ reference scip-typescript npm @acme/dual-integration . src/`index.ts`/integration().typeLiteral0:serverEntrypoint.
+  }
+
+## src/server.ts
+  // The server entrypoint the framework loads by the string in src/index.ts. An entry
+//^ definition scip-typescript npm @acme/dual-integration . src/`server.ts`/ enclosing [5:0-23:0]
+  // point (the `./server.js` export), but no org code imports it: its exports are
+  // runtime entries, never unused surface.
+
+  // Expected: alive, no finding (was a deletion_candidate before round 8d).
+  export function renderToStaticMarkup(): string {
+//                ^^^^^^^^^^^^^^^^^^^^ definition scip-typescript npm @acme/dual-integration . src/`server.ts`/renderToStaticMarkup(). enclosing [5:0-7:1]
+    return render();
+//         ^^^^^^ reference scip-typescript npm @acme/dual-integration . src/`server.ts`/render().
+  }
+
+  // Expected: alive, no finding (the framework reads the module's exports).
+  export function check(): boolean {
+//                ^^^^^ definition scip-typescript npm @acme/dual-integration . src/`server.ts`/check(). enclosing [10:0-12:1]
+    return true;
+  }
+
+  // Expected: alive (renderToStaticMarkup uses it).
+  function render(): string {
+//         ^^^^^^ definition scip-typescript npm @acme/dual-integration . src/`server.ts`/render(). enclosing [15:0-17:1]
+    return '<div></div>';
+  }
+
+  // Expected: private_dead, reasons ["already_unreachable"].
+  function serverDead(): string {
+//         ^^^^^^^^^^ definition scip-typescript npm @acme/dual-integration . src/`server.ts`/serverDead(). enclosing [20:0-22:1]
+    return '';
+  }

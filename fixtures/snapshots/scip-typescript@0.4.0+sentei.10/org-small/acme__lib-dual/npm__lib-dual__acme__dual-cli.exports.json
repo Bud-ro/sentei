@@ -1,0 +1,73 @@
+{
+  "deepImportExports": [],
+  "entryPoints": [
+    "packages/dual-cli/src/cli.ts"
+  ],
+  "entrySymbols": [
+    {
+      "col": 16,
+      "file": "packages/dual-cli/src/cli.ts",
+      "kind": "runtime",
+      "line": 4,
+      "name": "runCli"
+    },
+    {
+      "col": 16,
+      "file": "packages/dual-cli/src/tasks.ts",
+      "kind": "runtime",
+      "line": 8,
+      "name": "runTasks"
+    }
+  ],
+  "exports": [
+    {
+      "col": 16,
+      "entry": "packages/dual-cli/src/cli.ts",
+      "exportedAs": "cliUnused",
+      "file": "packages/dual-cli/src/cli.ts",
+      "line": 14,
+      "name": "cliUnused",
+      "sites": []
+    },
+    {
+      "col": 16,
+      "entry": "packages/dual-cli/src/cli.ts",
+      "exportedAs": "runCli",
+      "file": "packages/dual-cli/src/cli.ts",
+      "line": 4,
+      "name": "runCli",
+      "sites": []
+    }
+  ],
+  "flags": [],
+  "generatedFiles": [],
+  "missingEntryPoints": [],
+  "namespaceMemberRefs": [],
+  "namespaceSpreadRefs": [],
+  "packageId": "npm:acme/lib-dual:@acme/dual-cli",
+  "shorthandRefs": [
+    {
+      "col": 40,
+      "file": "packages/dual-cli/bin/cli.mjs",
+      "line": 7,
+      "member": "runTasks",
+      "targetCol": 16,
+      "targetFile": "src/tasks.ts",
+      "targetLine": 8,
+      "targetPackage": "@acme/dual-cli"
+    },
+    {
+      "col": 9,
+      "file": "packages/dual-cli/bin/cli.mjs",
+      "line": 4,
+      "member": "runCli",
+      "targetCol": 16,
+      "targetFile": "src/cli.ts",
+      "targetLine": 4,
+      "targetPackage": "@acme/dual-cli"
+    }
+  ],
+  "unindexedImports": [],
+  "unresolved": [],
+  "unresolvedImports": []
+}

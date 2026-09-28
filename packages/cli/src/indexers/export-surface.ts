@@ -14,14 +14,17 @@ import {
   collectRequireAliasRefs,
   isExcludedConsumerFile,
   isGeneratedFile,
+  scanOwnModuleLoads,
   scanUnindexedImports,
   unindexedScope,
   walkPackageFiles,
   type AliasConfig,
   type ConsumerCheckResult,
   type OrgPackageDir,
+  type OwnLoadGap,
+  type OwnModuleLoad,
 } from './consumer-checks.ts';
-import type { ConsumerPolicy, DeepImportExport, ExportRecord, ExportsSidecar, SourcePosition, UnindexedImport } from './types.ts';
+import type { ConsumerPolicy, DeepImportExport, EntrySymbol, ExportRecord, ExportsSidecar, ShorthandRef, SourcePosition, UnindexedImport } from './types.ts';
 
 export interface ExportSurfaceInput {
   packageId: string;
@@ -284,6 +287,26 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   const found = new Set<string>();
   /** Deep-import surface of other org packages, keyed by JSON (dedupes across programs). */
   const deepImportExports = new Map<string, DeepImportExport>();
+
+  // Own code and SFC files outside UNINDEXED_SKIP_DIRS, nested packages and ignored manifests.
+  const walked = walkPackageFiles({
+    repoRoot: input.repoRoot,
+    pkgDir: input.pkgDir,
+    nestedPackageDirs: input.nestedPackageDirs,
+    ...(input.ignoredDirs !== undefined ? { ignoredDirs: input.ignoredDirs } : {}),
+  });
+  // Loads of the package's own modules that no index links (round 8d): its unbuilt build
+  // output named by a bin or script (`import('./dist/index.js')`), and string entries a
+  // framework resolves (`serverEntrypoint: '<self>/server.js'`). Resolved per program below.
+  const ownLoads = collectOwnLoads(input, walked, isOwnFile);
+  const pendingLoads = new Map<string, OwnModuleLoad[]>();
+  for (const l of ownLoads.loads) {
+    for (const t of l.targets) pendingLoads.set(t, [...(pendingLoads.get(t) ?? []), l]);
+  }
+  /** Runtime entry symbols and references from own-module loads (merged into the sidecar). */
+  const loadEntrySymbols: Array<SourcePosition & { name: string }> = [];
+  const loadRefs: ShorthandRef[] = [];
+  const entryFiles = new Set([...input.entryPoints, ...runtimeEntries]);
   for (const spec of specs) {
     const roots = spec.rootNames.map((f) => path.resolve(f));
     const rootSet = new Set(roots);
@@ -312,6 +335,25 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       consumer.shorthandRefs.push(...collectRequireAliasRefs(indexed, checker, input.pkgDir, input.packageName, toRepoRel));
     }
     collectDeepImportExports(files, checker, input.orgPackageDirs, input.packageName ?? null, deepImportExports);
+    for (const [target, loads] of pendingLoads) {
+      const sf = program.getSourceFile(target);
+      if (sf === undefined) continue;
+      pendingLoads.delete(target);
+      if (rootsKnown && !indexedFiles.has(path.resolve(sf.fileName))) {
+        diagnostics.push(`info: ${loads.map((l) => `${l.file}:${l.line + 1}:${l.col + 1}`).join(', ')} load ${toRepoRel(target)}, which no tsconfig lists (scip-typescript did not index it)`);
+        continue;
+      }
+      resolveOwnLoads(sf, loads, checker, {
+        isOwnFile, toRepoRel, pkgDir: input.pkgDir, selfName: input.packageName ?? null, diagnostics,
+        // References only from files SCIP indexes (they must be documents); entry symbols
+        // for runtime or tool loads and for loads from files no index has.
+        refsFrom: (file) => rootsKnown && indexedFiles.has(path.resolve(input.repoRoot, ...file.split('/'))),
+        isEntryLoad: (l) => l.scope !== 'test' && l.scope !== 'docs'
+          && (l.kind === 'string' || entryFiles.has(l.file) || !(rootsKnown && indexedFiles.has(path.resolve(input.repoRoot, ...l.file.split('/'))))),
+        entrySymbols: loadEntrySymbols,
+        refs: loadRefs,
+      });
+    }
     // Every other compiler error is informational: it does not change what SCIP links.
     // Per own file (plus the program's global/options diagnostics), deduplicated.
     const fileDiags = files.length > 0 ? files.flatMap((sf) => ts.getPreEmitDiagnostics(program, sf)) : [];
@@ -395,14 +437,26 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
     for (const d of [...compilerErrors].slice(0, MAX_REPORTED_DIAGNOSTICS)) diagnostics.push(`warn: ${d}`);
   }
 
+  // Own-module loads: targets no program has, and build output that no source maps to.
+  for (const [target, loads] of pendingLoads) {
+    diagnostics.push(`info: ${loads.map((l) => `${l.file}:${l.line + 1}:${l.col + 1}`).join(', ')} load ${toRepoRel(target)}, which is in no TypeScript program (nothing to seed)`);
+  }
+  for (const g of ownLoads.gaps) {
+    const where = `${g.file}:${g.line + 1}:${g.col + 1}`;
+    if (g.scope === 'test' || g.scope === 'docs') {
+      diagnostics.push(`warn: ${where} loads '${g.spec}', the package's own build output with no source (${g.scope} file, not a counted consumer; status unaffected)`);
+      continue;
+    }
+    const diag = `error: ${where} loads '${g.spec}', the package's own unbuilt build output, which no source maps to (what it uses is unknown)`;
+    markPartial(diag);
+    diagnostics.push(diag);
+  }
+  for (const l of ownLoads.loads) {
+    diagnostics.push(`info: ${l.file}:${l.line + 1}:${l.col + 1} loads own module ${l.targets.map(toRepoRel).join(', ')} ('${l.spec}'${l.kind === 'string' ? ', a string entry' : ''})`);
+  }
+
   // Code files no program indexes (scip-typescript indexes exactly each config's
   // root files) and SFC files (never indexed).
-  const walked = walkPackageFiles({
-    repoRoot: input.repoRoot,
-    pkgDir: input.pkgDir,
-    nestedPackageDirs: input.nestedPackageDirs,
-    ...(input.ignoredDirs !== undefined ? { ignoredDirs: input.ignoredDirs } : {}),
-  });
   const scanned = scanUnindexedImports({
     repoRoot: input.repoRoot,
     pkgDir: input.pkgDir,
@@ -511,10 +565,15 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
   // declarations already on the export surface (and their namespace members)
   // stay ordinary exports.
   const exportedAt = new Set(exports.map((e) => `${e.file}:${e.line}:${e.col}`));
-  const entrySymbols = ambient
-    .filter((a) => !(a.dts !== undefined && exportedAt.has(a.dts)))
-    .map(({ file, line, col, name }) => ({ file, line, col, name, kind: 'ambient' as const }))
-    .sort((a, b) => cmp(a.file, b.file) || a.line - b.line || a.col - b.col);
+  const entryAt = new Map<string, EntrySymbol>();
+  for (const { file, line, col, name } of ambient.filter((a) => !(a.dts !== undefined && exportedAt.has(a.dts)))) {
+    entryAt.set(`${file}:${line}:${col}`, { file, line, col, name, kind: 'ambient' });
+  }
+  // Declarations an own-module load hands to a runtime or tool (runtime wins over ambient).
+  for (const { file, line, col, name } of loadEntrySymbols) entryAt.set(`${file}:${line}:${col}`, { file, line, col, name, kind: 'runtime' });
+  const entrySymbols = [...entryAt.values()].sort((a, b) => cmp(a.file, b.file) || a.line - b.line || a.col - b.col);
+  const refKey = (r: ShorthandRef): string => `${r.file}:${r.line}:${r.col}:${r.targetFile}:${r.targetLine}:${r.targetCol}`;
+  const shorthandRefs = [...new Map([...consumer.shorthandRefs, ...loadRefs].map((r) => [refKey(r), r])).values()];
   return {
     sidecar: {
       packageId: input.packageId,
@@ -525,7 +584,7 @@ export function computeExportSurface(input: ExportSurfaceInput): ExportSurfaceRe
       unresolvedImports: consumer.unresolvedImports,
       flags,
       namespaceMemberRefs: consumer.namespaceMemberRefs,
-      shorthandRefs: consumer.shorthandRefs,
+      shorthandRefs,
       namespaceSpreadRefs: consumer.namespaceSpreadRefs,
       unindexedImports,
       generatedFiles,
@@ -987,6 +1046,129 @@ function collectDeepImportExports(
     ts.forEachChild(node, visit);
   };
   for (const sf of files) visit(sf);
+}
+
+/**
+ * Own-module loads (consumer-checks scanOwnModuleLoads) of the package's walked code
+ * files plus its runtime entries that the walk does not return (extension-less bins).
+ */
+function collectOwnLoads(
+  input: ExportSurfaceInput, walked: readonly string[], isOwnFile: (f: string) => boolean,
+): { loads: OwnModuleLoad[]; gaps: OwnLoadGap[] } {
+  const files = new Set(walked.map((f) => path.resolve(f)));
+  for (const e of input.runtimeEntryPoints ?? []) {
+    const abs = path.resolve(input.repoRoot, ...e.split('/'));
+    if (!files.has(abs) && isOwnFile(abs) && existsSync(abs)) files.add(abs);
+  }
+  return scanOwnModuleLoads({
+    repoRoot: input.repoRoot,
+    pkgDir: input.pkgDir,
+    nestedPackageDirs: input.nestedPackageDirs,
+    files: [...files].sort(cmp),
+    selfName: input.packageName ?? null,
+  });
+}
+
+interface OwnLoadContext {
+  isOwnFile: (fileName: string) => boolean;
+  toRepoRel: (abs: string) => string;
+  pkgDir: string;
+  selfName: string | null;
+  diagnostics: string[];
+  /** Whether a reference from this (repo-relative) file can land (the file is an indexed document). */
+  refsFrom: (file: string) => boolean;
+  /** Whether the load hands the module to a runtime or tool: its exports become runtime entry symbols. */
+  isEntryLoad: (load: OwnModuleLoad) => boolean;
+  entrySymbols: Array<SourcePosition & { name: string }>;
+  refs: ShorthandRef[];
+}
+
+/**
+ * The declarations the loads of one own module `sf` take: the named exports (`default`
+ * for a default import), or every export when a load names none. Each becomes a
+ * reference from the loading position (a `shorthandRefs` record, when the loading file is
+ * an indexed document and the package has a name) and, for a runtime or tool load
+ * (a string entry, a load by an entry / bin / runtime file or by a file no index has),
+ * a runtime entry symbol: the runtime calls it, so it is no export surface and gets no
+ * verdict, and its declaration keeps the module (its top-level code) reachable. A module
+ * with no exports: its top-level declarations are the entry symbols, so its code still
+ * counts as run.
+ */
+function resolveOwnLoads(sf: ts.SourceFile, loads: readonly OwnModuleLoad[], checker: ts.TypeChecker, ctx: OwnLoadContext): void {
+  const mod = checker.getSymbolAtLocation(sf);
+  let members: ts.Symbol[] = [];
+  if (mod !== undefined) {
+    try {
+      members = checker.getExportsOfModule(mod);
+    } catch {
+      members = [];
+    }
+  }
+  const pkgRel = (abs: string): string => path.relative(ctx.pkgDir, abs).split(path.sep).join(path.posix.sep);
+  /** Own declarations of an export: [declared name, position]. */
+  const declsOf = (exp: ts.Symbol): Array<{ name: string; at: SourcePosition; abs: string }> => {
+    const target = exp.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exp) : exp;
+    const out: Array<{ name: string; at: SourcePosition; abs: string }> = [];
+    for (const decl of expandAliasDeclarations(target.declarations ?? [], checker)) {
+      if (ts.isSourceFile(decl) || ts.isBindingElement(decl) || isExpandoDeclaration(decl)) continue;
+      const declSf = decl.getSourceFile();
+      if (!ctx.isOwnFile(declSf.fileName)) continue;
+      const { node, name, note } = nameOf(decl, target);
+      if (note !== undefined) continue; // an anonymous default: no SCIP definition to name
+      out.push({ name, at: position(declSf, node.getStart(declSf), ctx.toRepoRel), abs: path.resolve(declSf.fileName) });
+    }
+    return out;
+  };
+  for (const load of loads) {
+    const entry = ctx.isEntryLoad(load);
+    const refs = load.kind === 'import' && ctx.selfName !== null && ctx.refsFrom(load.file);
+    const wanted: Array<{ name: string; at: SourcePosition }> = load.names !== undefined
+      ? load.names.map(({ name, file, line, col }) => ({ name, at: { file, line, col } }))
+      : members.map((m) => ({ name: m.name, at: { file: load.file, line: load.line, col: load.col } }));
+    let found = 0;
+    for (const w of wanted) {
+      const exp = members.find((m) => m.name === w.name);
+      if (exp === undefined) continue;
+      for (const d of declsOf(exp)) {
+        found += 1;
+        if (entry) ctx.entrySymbols.push({ ...d.at, name: d.name });
+        if (refs) {
+          ctx.refs.push({
+            file: w.at.file, line: w.at.line, col: w.at.col, member: w.name, targetPackage: ctx.selfName!,
+            targetFile: pkgRel(d.abs), targetLine: d.at.line, targetCol: d.at.col,
+          });
+        }
+      }
+    }
+    if (members.length === 0 && entry) {
+      for (const d of topLevelDeclarations(sf, ctx.toRepoRel)) {
+        ctx.entrySymbols.push(d);
+        found += 1;
+      }
+    }
+    if (found === 0 && load.names !== undefined) {
+      ctx.diagnostics.push(`warn: ${load.file}:${load.line + 1}:${load.col + 1} loads ${load.names.map((n) => n.name).join(', ')} from ${ctx.toRepoRel(path.resolve(sf.fileName))} ('${load.spec}'), which does not export them`);
+    }
+  }
+}
+
+/** Named top-level declarations of a file (functions, classes, variables, types, enums, namespaces). */
+function topLevelDeclarations(sf: ts.SourceFile, toRepoRel: (abs: string) => string): Array<SourcePosition & { name: string }> {
+  const out: Array<SourcePosition & { name: string }> = [];
+  const add = (n: ts.Identifier): void => {
+    out.push({ ...position(sf, n.getStart(sf), toRepoRel), name: n.text });
+  };
+  for (const s of sf.statements) {
+    if (ts.isVariableStatement(s)) {
+      for (const d of s.declarationList.declarations) if (ts.isIdentifier(d.name)) add(d.name);
+    } else if (
+      (ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s) || ts.isInterfaceDeclaration(s) || ts.isTypeAliasDeclaration(s)
+        || ts.isEnumDeclaration(s) || ts.isModuleDeclaration(s)) && s.name !== undefined && ts.isIdentifier(s.name)
+    ) {
+      add(s.name);
+    }
+  }
+  return out;
 }
 
 /** True when an org module specifier reaches into the package's `dist/` (`hono/dist/types/router`). */

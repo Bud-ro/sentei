@@ -230,6 +230,26 @@ describe('M1 acceptance: full pipeline on fixtures/org-small', () => {
     expect(lines.some((l) => l.includes('claimed as their own by two packages'))).toBe(false);
     expect(existsSync(path.join(org, 'repos/lib-dual/packages/dual-script/tsconfig.sentei-runtime.json'))).toBe(false);
 
+    // Fix round 8d. dual-cli's bin imports its own unbuilt `../dist/cli.mjs` and
+    // `import('../dist/tasks.js')`: mapped to src/, the names it takes are runtime entry
+    // symbols it references (runCli: no DEPRECATE / deletion; runTasks and its helper:
+    // not private_dead). dual-integration's `serverEntrypoint: '@acme/dual-integration/server.js'`
+    // makes src/server.ts's exports runtime entries. Neither package is opaque.
+    expect(rows.filter((x) => ['runCli', 'cliHelper', 'runTasks', 'taskHelper', 'renderToStaticMarkup', 'check', 'render'].includes(x.symbol))).toEqual([]);
+    await withCtx(org, async (ctx) => {
+      expect(ctx.db.prepare(`SELECT package_id, flag FROM package_flags WHERE package_id IN
+        ('npm:acme/lib-dual:@acme/dual-cli', 'npm:acme/lib-dual:@acme/dual-integration')`).all()).toEqual([]);
+      expect(ctx.db.prepare(`SELECT s.name, e.kind FROM entry_symbols e JOIN symbols s USING (symbol_id)
+        WHERE s.package_id IN ('npm:acme/lib-dual:@acme/dual-cli', 'npm:acme/lib-dual:@acme/dual-integration') ORDER BY s.name`).all()).toEqual([
+        { name: 'check', kind: 'runtime' }, { name: 'renderToStaticMarkup', kind: 'runtime' }, { name: 'runCli', kind: 'runtime' }, { name: 'runTasks', kind: 'runtime' },
+      ]);
+      // The bin's references (shorthandRefs) landed from its document.
+      expect(ctx.db.prepare(`SELECT s.name, o.file FROM occurrences o JOIN symbols s USING (symbol_id)
+        WHERE s.name IN ('runCli', 'runTasks') AND (o.role & 1) = 0 AND o.file LIKE '%/bin/cli.mjs' ORDER BY s.name`).all()).toEqual([
+        { name: 'runCli', file: 'packages/dual-cli/bin/cli.mjs' }, { name: 'runTasks', file: 'packages/dual-cli/bin/cli.mjs' },
+      ]);
+    });
+
     // Views: filters over the base findings.
     const names = (xs: Array<{ package_id: string; symbol: string }>): string[] => xs.map((f) => `${f.package_id}#${f.symbol}`);
     const widgets = 'npm:acme/lib-widgets:@acme/widgets';

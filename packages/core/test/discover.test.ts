@@ -103,7 +103,9 @@ describe('discoverLocal on fixtures/org-small', () => {
       { package_id: 'npm:acme/lib-dual:@acme/dual', repo: 'acme/lib-dual', path: 'packages/dual', manager: 'npm', name: '@acme/dual', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual/src/index.ts"]' },
       { package_id: 'npm:acme/lib-dual:@acme/dual-app', repo: 'acme/lib-dual', path: 'packages/dual-app', manager: 'npm', name: '@acme/dual-app', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-app/src/main.ts"]' },
       // Electron + webpack (fix round 6): main.js, the inline require of index.html (renderer.js; dist/main.js → webpack's default entry src/index.js)
+      { package_id: 'npm:acme/lib-dual:@acme/dual-cli', repo: 'acme/lib-dual', path: 'packages/dual-cli', manager: 'npm', name: '@acme/dual-cli', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual-cli/src/cli.ts"]' },
       { package_id: 'npm:acme/lib-dual:@acme/dual-electron', repo: 'acme/lib-dual', path: 'packages/dual-electron', manager: 'npm', name: '@acme/dual-electron', version: '1.0.0', visibility: 'private', is_library: 0, entry_points: '["packages/dual-electron/main.js","packages/dual-electron/renderer.js","packages/dual-electron/src/index.js"]' },
+      { package_id: 'npm:acme/lib-dual:@acme/dual-integration', repo: 'acme/lib-dual', path: 'packages/dual-integration', manager: 'npm', name: '@acme/dual-integration', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual-integration/src/index.ts","packages/dual-integration/src/server.ts"]' },
       { package_id: 'npm:acme/lib-dual:@acme/dual-legacy', repo: 'acme/lib-dual', path: 'packages/dual-legacy', manager: 'npm', name: '@acme/dual-legacy', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual-legacy/src/index.ts"]' },
       // exports + runtime entries outside its tsconfig program: `npm start` = node scripts/serve.mjs, Next.js next.config.mjs (the bin is runtime-only)
       { package_id: 'npm:acme/lib-dual:@acme/dual-script', repo: 'acme/lib-dual', path: 'packages/dual-script', manager: 'npm', name: '@acme/dual-script', version: '1.0.0', visibility: 'private', is_library: 1, entry_points: '["packages/dual-script/next.config.mjs","packages/dual-script/scripts/serve.mjs","packages/dual-script/src/index.ts"]' },
@@ -987,7 +989,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 38 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 40 }]);
   });
 });
 

@@ -23,7 +23,8 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, SCRIPT_GLOBS, TEST_GLOBS, matchGlob } from '@sentei/core';
+import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, listFiles, SCRIPT_GLOBS, sourceForBuildOutput, TEST_GLOBS, matchGlob } from '@sentei/core';
+import { distLayoutSource } from './scip-typescript.ts';
 import type {
   ConsumerFlag,
   ConsumerPolicy,
@@ -1400,6 +1401,296 @@ function isInside(abs: string, dir: string): boolean {
 
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Own-module loads by build-output path or by string (Phase 3 fix round 8d)
+// ---------------------------------------------------------------------------
+
+/**
+ * One load of the package's own module that no index links: a module specifier naming
+ * the package's own build output (`import('./dist/index.js')` in create-astro's bin,
+ * `import { runCli } from '../dist/cli.mjs'` in @nuxt/scripts-cli's), or a string literal
+ * a framework or tool resolves at runtime (`serverEntrypoint: '@astrojs/preact/server.js'`,
+ * `require.resolve('@trpc/upgrade/transforms/provider')`, `new URL('./worker.ts',
+ * import.meta.url)`).
+ */
+export interface OwnModuleLoad extends SourcePosition {
+  /** The specifier / string as written (position: the literal). */
+  spec: string;
+  /**
+   * Absolute own source files it names (realpath; several when `exports` conditions
+   * map to different sources).
+   */
+  targets: string[];
+  /**
+   * The exports it takes, each with the position of its name in the loading file
+   * (`import { runCli }`, `const { main } = await import(…)`, `.then(({ main }) => …)`);
+   * undefined: every export (a namespace, a bare `import()` / `require()`, a string
+   * entry). `default` for a default import.
+   */
+  names?: Array<SourcePosition & { name: string }>;
+  /** `import`: a module specifier; `string`: any other string literal (a runtime or tool entry). */
+  kind: 'import' | 'string';
+  /** The loading file's scope (unindexedScope): test / docs loads are references only. */
+  scope?: UnindexedImport['scope'];
+}
+
+/** A module specifier naming the package's own build output that no source maps to. */
+export interface OwnLoadGap extends SourcePosition {
+  spec: string;
+  scope?: UnindexedImport['scope'];
+}
+
+export interface OwnLoadScanInput {
+  repoRoot: string;
+  /** Absolute package dir (realpath). */
+  pkgDir: string;
+  /** Absolute dirs of nested packages (their files are not ours). */
+  nestedPackageDirs: readonly string[];
+  /** Absolute own files to read: code files (walkPackageFiles) plus extension-less runtime entries (bins). */
+  files: readonly string[];
+  /** The package's npm name: `<name>/<subpath>` strings are its own modules. */
+  selfName: string | null;
+}
+
+/** First path segment of a build-output dir (as in core's distToSrc conventions). */
+const BUILD_OUTPUT = /^(?:dist|build|out|lib)\//;
+/** A module path that is code (or extension-less, Node-probed). */
+const LOADABLE = /(?:^|\/)[^/.]+$|\.(?:[cm]?[jt]s|[jt]sx)$/;
+/** A string literal that could name an own module: relative with a code extension, or `<self>/<subpath>`. */
+const RELATIVE_CODE = /^\.\.?\/.*\.(?:[cm]?[jt]s|[jt]sx)$/;
+
+/**
+ * Own-module loads no index links (OwnModuleLoad) and the gaps among them, by an AST
+ * scan of `files` (parse only, no program: the files may be outside every program):
+ *  - a relative module specifier (import / export `from`, `import x = require()`,
+ *    `import()`, `require()`, `require.resolve()`) that names no existing file, lies in
+ *    the package, and whose package-relative path core's sourceForBuildOutput maps to a
+ *    source file (tsconfig outDir → rootDir, dist → src): a load of that file. With no
+ *    mapping, a code-looking path under `dist/`, `build/`, `out/` or `lib/` is a gap
+ *    (the package's own unbuilt output, loaded by its bin or a script: its exports and
+ *    everything they use would look dead);
+ *  - a specifier or string `<selfName>/<subpath>`: the subpath through the manifest's
+ *    `exports` (an exact key or a `*` pattern; every condition), else the path itself,
+ *    each target mapped like a declared entry (the file, then sourceForBuildOutput, then
+ *    the dist layout);
+ *  - any other string literal that is a relative path with a code extension
+ *    (`'./src/routeData.ts'`, `new URL('./worker.js', import.meta.url)`) naming an own
+ *    code file, relative to the file's dir, else to the package dir, directly or through
+ *    the dist → src mapping.
+ * Existing files named by a module specifier are ordinary imports (TypeScript links
+ * them) and are skipped.
+ */
+export function scanOwnModuleLoads(input: OwnLoadScanInput): { loads: OwnModuleLoad[]; gaps: OwnLoadGap[] } {
+  const loads: OwnModuleLoad[] = [];
+  const gaps: OwnLoadGap[] = [];
+  const pkgDir = path.resolve(input.pkgDir);
+  const nested = input.nestedPackageDirs.map((d) => path.resolve(d));
+  const toRepoRel = (abs: string): string => path.relative(input.repoRoot, abs).split(path.sep).join(path.posix.sep);
+  const pkgRepoRel = toRepoRel(pkgDir) || '.';
+  const pkgLocation: PackageLocation = { manager: 'npm', path: pkgRepoRel };
+  const inPkg = (abs: string): boolean => isInside(abs, pkgDir) && !abs.split(path.sep).includes('node_modules') && !nested.some((d) => isInside(abs, d));
+  let repoFiles: string[] | undefined;
+  /** Own source file for a package-relative build-output (or source) path, else undefined. */
+  const mapBuilt = (rel: string): string | undefined => {
+    repoFiles ??= listFiles(input.repoRoot);
+    const src = sourceForBuildOutput(input.repoRoot, pkgRepoRel, rel, repoFiles) ?? distLayoutSource(pkgDir, rel);
+    if (src === null || !CODE_FILE.test(src) || /\.d\.[cm]?ts$/.test(src)) return undefined;
+    const abs = path.join(pkgDir, ...src.split('/'));
+    return inPkg(abs) ? realpathOr(abs) : undefined;
+  };
+  let manifest: Record<string, unknown> | null | undefined;
+  const selfTargets = (sub: string): string[] => {
+    if (manifest === undefined) {
+      try {
+        manifest = JSON.parse(readFileSync(path.join(pkgDir, 'package.json'), 'utf8')) as Record<string, unknown>;
+      } catch {
+        manifest = null;
+      }
+    }
+    const out = new Set<string>();
+    for (const leaf of subpathTargets(manifest?.['exports'], sub)) {
+      const rel = leaf.replace(/^\.\//, '');
+      if (rel.startsWith('../') || rel.startsWith('/')) continue;
+      const direct = resolveRelative(pkgDir, `./${rel}`);
+      const abs = direct !== undefined && !/\.d\.[cm]?ts$/.test(direct) && inPkg(direct) ? direct : mapBuilt(rel);
+      if (abs !== undefined) out.add(abs);
+    }
+    return [...out].sort(cmp);
+  };
+  for (const abs of input.files) {
+    if (SFC_FILE.test(abs)) continue;
+    let text: string;
+    try {
+      if (statSync(abs).size > 2_000_000) continue;
+      text = readFileSync(abs, 'utf8');
+    } catch {
+      continue;
+    }
+    const self = input.selfName;
+    if (!/['"`]\.\.?\//.test(text) && (self === null || !text.includes(`${self}/`))) continue;
+    const file = toRepoRel(abs);
+    const scope = unindexedScope(file, pkgLocation);
+    const kind = /\.[cm]?tsx?$/.test(abs) ? (abs.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS) : abs.endsWith('x') ? ts.ScriptKind.JSX : ts.ScriptKind.JS;
+    const sf = ts.createSourceFile(abs, text, ts.ScriptTarget.Latest, true, kind);
+    const pos = (node: ts.Node): SourcePosition => {
+      const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+      return { file, line, col: character };
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isStringLiteralLike(node)) {
+        handle(node);
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    const handle = (lit: ts.StringLiteralLike): void => {
+      const spec = lit.text;
+      const imported = importedNames(lit, pos);
+      const isImport = imported !== null;
+      const at = pos(lit);
+      const push = (targets: string[]): void => {
+        if (targets.length === 0) return;
+        const names = isImport && imported !== undefined && imported.length > 0 ? imported : undefined;
+        loads.push({ ...at, spec, targets, ...(names !== undefined ? { names } : {}), kind: isImport ? 'import' : 'string', ...(scope !== undefined ? { scope } : {}) });
+      };
+      if (self !== null && spec.startsWith(`${self}/`) && spec.length > self.length + 1) {
+        push(selfTargets(spec.slice(self.length + 1)));
+        return;
+      }
+      if (!spec.startsWith('./') && !spec.startsWith('../')) return;
+      const clean = spec.replace(/[?#].*$/, '');
+      if (isImport) {
+        if (resolveRelative(path.dirname(abs), clean) !== undefined) return; // an ordinary import
+        const target = path.resolve(path.dirname(abs), clean);
+        if (!inPkg(target)) return;
+        const rel = path.relative(pkgDir, target).split(path.sep).join(path.posix.sep);
+        const src = mapBuilt(rel);
+        if (src !== undefined) push([src]);
+        else if (BUILD_OUTPUT.test(rel) && LOADABLE.test(rel)) gaps.push({ ...at, spec, ...(scope !== undefined ? { scope } : {}) });
+        return;
+      }
+      if (!RELATIVE_CODE.test(clean)) return;
+      for (const base of [path.dirname(abs), pkgDir]) {
+        const direct = resolveRelative(base, clean);
+        if (direct !== undefined) {
+          if (inPkg(direct) && !/\.d\.[cm]?ts$/.test(direct) && direct !== realpathOr(abs)) push([direct]);
+          return;
+        }
+        const target = path.resolve(base, clean);
+        if (!inPkg(target)) continue;
+        const src = mapBuilt(path.relative(pkgDir, target).split(path.sep).join(path.posix.sep));
+        if (src !== undefined) {
+          push([src]);
+          return;
+        }
+      }
+    };
+    visit(sf);
+  }
+  const key = (x: SourcePosition & { spec: string }): string => `${x.file}\0${x.line}\0${x.col}\0${x.spec}`;
+  const sortBy = (a: SourcePosition & { spec: string }, b: SourcePosition & { spec: string }): number =>
+    cmp(a.file, b.file) || a.line - b.line || a.col - b.col || cmp(a.spec, b.spec);
+  const dedupe = <T extends SourcePosition & { spec: string }>(xs: T[]): T[] => [...new Map(xs.map((x) => [key(x), x])).values()].sort(sortBy);
+  return { loads: dedupe(loads), gaps: dedupe(gaps) };
+}
+
+/**
+ * For a module-specifier literal: the export names it takes (with the position of each
+ * name in the loading file), undefined for every export (a namespace import, a bare
+ * `import()` / `require()` whose result is used as a whole, `export *`), [] for a
+ * side-effect import. null when the literal is not a module specifier.
+ */
+function importedNames(lit: ts.StringLiteralLike, pos: (n: ts.Node) => SourcePosition): Array<SourcePosition & { name: string }> | undefined | null {
+  const p = lit.parent;
+  const named = (name: string, node: ts.Node): SourcePosition & { name: string } => ({ ...pos(node), name });
+  if (ts.isImportDeclaration(p) && p.moduleSpecifier === lit) {
+    const clause = p.importClause;
+    if (clause === undefined) return [];
+    const out: Array<SourcePosition & { name: string }> = [];
+    if (clause.name !== undefined) out.push(named('default', clause.name));
+    const b = clause.namedBindings;
+    if (b !== undefined && ts.isNamespaceImport(b)) return undefined;
+    for (const el of b?.elements ?? []) out.push(named((el.propertyName ?? el.name).text, el.propertyName ?? el.name));
+    return out;
+  }
+  if (ts.isExportDeclaration(p) && p.moduleSpecifier === lit) {
+    const clause = p.exportClause;
+    if (clause === undefined || !ts.isNamedExports(clause)) return undefined; // export * / export * as ns
+    return clause.elements.map((el) => named((el.propertyName ?? el.name).text, el.propertyName ?? el.name));
+  }
+  if (ts.isExternalModuleReference(p)) return undefined;
+  if (ts.isCallExpression(p) && p.arguments[0] === lit) {
+    const callee = p.expression;
+    const isImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+    const isRequire = ts.isIdentifier(callee) && callee.text === 'require';
+    const isResolve = ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === 'require' && callee.name.text === 'resolve';
+    if (isResolve) return null; // a path for someone else to load: a string entry
+    if (!isImport && !isRequire) return null;
+    // `const { a, b } = await import(…)` / `= require(…)`
+    let e: ts.Node = p;
+    if (ts.isAwaitExpression(e.parent)) e = e.parent;
+    if (ts.isVariableDeclaration(e.parent) && e.parent.initializer === e && ts.isObjectBindingPattern(e.parent.name)) {
+      return bindingNames(e.parent.name, named);
+    }
+    // `import(…).then(({ a }) => …)`
+    const then = p.parent;
+    if (ts.isPropertyAccessExpression(then) && then.name.text === 'then' && ts.isCallExpression(then.parent)) {
+      const cb = then.parent.arguments[0];
+      const param = cb !== undefined && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) ? cb.parameters[0] : undefined;
+      if (param !== undefined && ts.isObjectBindingPattern(param.name)) return bindingNames(param.name, named);
+    }
+    // `import(…).a` / `require(…).a`
+    if (ts.isPropertyAccessExpression(p.parent) && p.parent.expression === p && p.parent.name.text !== 'then') return [named(p.parent.name.text, p.parent.name)];
+    return undefined;
+  }
+  return null;
+}
+
+/** Property names of an object binding pattern; undefined (every export) for a rest element or a computed key. */
+function bindingNames(
+  pattern: ts.ObjectBindingPattern, named: (name: string, node: ts.Node) => SourcePosition & { name: string },
+): Array<SourcePosition & { name: string }> | undefined {
+  const out: Array<SourcePosition & { name: string }> = [];
+  for (const el of pattern.elements) {
+    if (el.dotDotDotToken !== undefined) return undefined;
+    const key = el.propertyName ?? el.name;
+    if (ts.isIdentifier(key) || ts.isStringLiteral(key)) out.push(named(key.text, key));
+    else return undefined;
+  }
+  return out;
+}
+
+/**
+ * The target leaves (`./dist/x.js`, possibly with `*` substituted) a package's `exports`
+ * gives the subpath `sub` (every condition of an exact key, else of the `*` pattern with
+ * the longest prefix); without `exports`, the subpath itself.
+ */
+function subpathTargets(exports: unknown, sub: string): string[] {
+  const spec = `./${sub}`;
+  if (exports === undefined || exports === null) return [spec];
+  if (typeof exports !== 'object' || Array.isArray(exports)) return [];
+  const keys = Object.keys(exports).filter((k) => k.startsWith('.'));
+  const leaves = (v: unknown, star?: string): string[] => {
+    if (typeof v === 'string') return [star === undefined ? v : v.replaceAll('*', star)];
+    if (Array.isArray(v)) return v.flatMap((x) => leaves(x, star));
+    if (typeof v === 'object' && v !== null) return Object.values(v).flatMap((x) => leaves(x, star));
+    return [];
+  };
+  const map = exports as Record<string, unknown>;
+  if (keys.includes(spec)) return leaves(map[spec]);
+  let best: { key: string; star: string } | undefined;
+  for (const k of keys) {
+    const i = k.indexOf('*');
+    if (i < 0) continue;
+    const pre = k.slice(0, i);
+    const post = k.slice(i + 1);
+    if (spec.length >= pre.length + post.length && spec.startsWith(pre) && spec.endsWith(post) && (best === undefined || pre.length > best.key.indexOf('*'))) {
+      best = { key: k, star: spec.slice(pre.length, spec.length - post.length) };
+    }
+  }
+  return best === undefined ? [] : leaves(map[best.key], best.star);
 }
 
 /**

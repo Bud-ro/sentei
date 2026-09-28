@@ -1,0 +1,71 @@
+# sentei scip snapshot: scip-typescript 0.4.0
+# positions are 0-based line:character (UTF-16); symbol versions normalised to `.`
+
+## bin/cli.mjs
+  #!/usr/bin/env node
+//^ definition scip-typescript npm @acme/dual-cli . bin/`cli.mjs`/ enclosing [4:0-8:0]
+  // The bin loads the package's own build output, which is not built in the checkout
+  // (withastro create-astro, @nuxt/scripts-cli). dist/cli.mjs maps to src/cli.ts and
+  // dist/tasks.js to src/tasks.ts: what the bin takes from them is a runtime entry.
+  import { runCli } from '../dist/cli.mjs';
+//         ^^^^^^ reference local 0
+
+  process.exitCode = runCli(process.argv.slice(2));
+//^^^^^^^ reference local 4
+//        ^^^^^^^^ reference local 3
+//                   ^^^^^^ reference local 0
+//                          ^^^^^^^ reference local 4
+  void import('../dist/tasks.js').then(({ runTasks }) => runTasks());
+//                                ^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Promise#then().
+//                                        ^^^^^^^^ definition local 11
+//                                                       ^^^^^^^^ reference local 11
+
+## src/cli.ts
+  // Export surface of @acme/dual-cli (`exports` → dist/cli.mjs → src/cli.ts), also the
+//^ definition scip-typescript npm @acme/dual-cli . src/`cli.ts`/ enclosing [4:0-15:0]
+  // module its bin imports as ../dist/cli.mjs.
+
+  // Expected: alive, no finding (the bin calls it: a runtime entry, not an unused export).
+  export function runCli(args: string[]): number {
+//                ^^^^^^ definition scip-typescript npm @acme/dual-cli . src/`cli.ts`/runCli(). enclosing [4:0-6:1]
+//                       ^^^^ definition scip-typescript npm @acme/dual-cli . src/`cli.ts`/runCli().(args)
+    return cliHelper(args);
+//         ^^^^^^^^^ reference scip-typescript npm @acme/dual-cli . src/`cli.ts`/cliHelper().
+//                   ^^^^ reference scip-typescript npm @acme/dual-cli . src/`cli.ts`/runCli().(args)
+  }
+
+  // Expected: alive (runCli uses it).
+  function cliHelper(args: string[]): number {
+//         ^^^^^^^^^ definition scip-typescript npm @acme/dual-cli . src/`cli.ts`/cliHelper(). enclosing [9:0-11:1]
+//                   ^^^^ definition scip-typescript npm @acme/dual-cli . src/`cli.ts`/cliHelper().(args)
+    return args.length;
+//         ^^^^ reference scip-typescript npm @acme/dual-cli . src/`cli.ts`/cliHelper().(args)
+//              ^^^^^^ reference scip-typescript npm typescript . lib/`lib.es5.d.ts`/Array#length.
+  }
+
+  // Expected: deletion_candidate, reasons ["no_refs"] (the bin does not take it).
+  export function cliUnused(): void {}
+//                ^^^^^^^^^ definition scip-typescript npm @acme/dual-cli . src/`cli.ts`/cliUnused(). enclosing [14:0-14:36]
+
+## src/tasks.ts
+  // Not an entry point: only the bin's `import('../dist/tasks.js')` loads it.
+//^ definition scip-typescript npm @acme/dual-cli . src/`tasks.ts`/ enclosing [3:0-16:0]
+
+  // Expected: alive (runTasks uses it; without the dist → src load it was private_dead).
+  function taskHelper(): number {
+//         ^^^^^^^^^^ definition scip-typescript npm @acme/dual-cli . src/`tasks.ts`/taskHelper(). enclosing [3:0-5:1]
+    return 1;
+  }
+
+  // Expected: alive, no finding (destructured by the bin's dynamic import).
+  export function runTasks(): number {
+//                ^^^^^^^^ definition scip-typescript npm @acme/dual-cli . src/`tasks.ts`/runTasks(). enclosing [8:0-10:1]
+    return taskHelper();
+//         ^^^^^^^^^^ reference scip-typescript npm @acme/dual-cli . src/`tasks.ts`/taskHelper().
+  }
+
+  // Expected: private_dead, reasons ["already_unreachable"].
+  function taskDead(): number {
+//         ^^^^^^^^ definition scip-typescript npm @acme/dual-cli . src/`tasks.ts`/taskDead(). enclosing [13:0-15:1]
+    return 2;
+  }

@@ -291,7 +291,12 @@ export const scipTypescript: Indexer = {
   // +sentei.9: SFC loads (aliases, <script src>, import.meta.glob), `unresolved`
   // load records and the Astro / Nuxt convention seeds of Phase 3 round 8c: cached
   // indexes must be redone for them to appear.
-  version: '0.4.0+sentei.9',
+  // +sentei.10 (round 8d): own-module loads (a bin / script importing the package's
+  //   unbuilt `dist/`, mapped to src: shorthandRefs + runtime entrySymbols; a string
+  //   entry `<self>/<subpath>` or `./x.ts`: runtime entrySymbols; unmapped build output:
+  //   partial with a cause), dist-layout manifests in the shadow package (drizzle-orm),
+  //   MDX fenced / inline code imports nothing.
+  version: '0.4.0+sentei.10',
 
   // Every npm package: one with no TypeScript/JavaScript sources at all gets an
   // empty index (status ok, `warn:`) in `run`, since it cannot hide a reference
@@ -1640,7 +1645,7 @@ function rewriteTarget(dir: string, target: string, roots: readonly string[] = [
     }
     return null;
   }
-  const cand = distLayoutSource(dir, rel, roots);
+  const cand = distLayoutSource(dir, rel, roots, (c) => targetExists(dir, c));
   return cand === null ? null : (dot ? './' : '') + cand;
 }
 
@@ -1655,12 +1660,16 @@ const LAYOUT_SOURCE_EXTS = ['.ts', '.tsx', '.mts', '.cts'];
  * sources are the same path under the source root. For each root of `roots` (the
  * tsconfig `rootDir`s, then `src`; sourceRoots): a built file (`index.cjs`,
  * `pg-core/index.js`, `index.d.ts`) → `<root>/<path minus its build extension>.ts`
- * (`.tsx`, `.mts`, `.cts`); an extension-less path → `<root>/<path>.ts` or
- * `<root>/<path>/index.ts`; any other file → `<root>/<path>` when it exists. `*`
- * patterns are rewritten textually (checked by targetExists). Package-relative;
- * null when nothing exists.
+ * (`.tsx`, `.mts`, `.cts`); an extension-less path (or a `*` pattern) →
+ * `<root>/<path>.ts` or `<root>/<path>/index.ts`; any other file → `<root>/<path>`.
+ * `exists` decides (package-relative; default: a file exists there; the shadow
+ * package passes one that also matches `*` patterns). Package-relative; null when
+ * nothing exists.
  */
-export function distLayoutSource(dir: string, rel: string, roots: readonly string[] = sourceRoots(dir)): string | null {
+export function distLayoutSource(
+  dir: string, rel: string, roots: readonly string[] = sourceRoots(dir),
+  exists: (rel: string) => boolean = (r) => isFile(path.join(dir, ...r.split('/'))),
+): string | null {
   const clean = rel.replace(/^\.\//, '');
   if (clean === '' || clean.startsWith('../') || clean.startsWith('/')) return null;
   for (const root of roots) {
@@ -1671,9 +1680,7 @@ export function distLayoutSource(dir: string, rel: string, roots: readonly strin
       : path.posix.extname(clean) === '' || clean.includes('*')
         ? [...LAYOUT_SOURCE_EXTS.map((e) => stem + e), ...LAYOUT_SOURCE_EXTS.map((e) => `${stem}/index${e}`)]
         : [stem];
-    for (const c of cands) {
-      if (c.includes('*') ? targetExists(dir, c) : isFile(path.join(dir, ...c.split('/')))) return c;
-    }
+    for (const c of cands) if (exists(c)) return c;
   }
   return null;
 }
