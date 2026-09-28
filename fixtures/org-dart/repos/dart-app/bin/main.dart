@@ -15,4 +15,5 @@ void main() {
   print(partUsed()); // declared in a part file
   print(pubUsed());
   print(Handle.wrap(7).raw); // extension type: primary constructor and representation field
+  print(shoutAll(['acme'])); // uses unnamed extensions inside acme_x
 }

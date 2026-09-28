@@ -77,6 +77,15 @@
       "sites": []
     },
     {
+      "col": 15,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "Plain",
+      "file": "lib/src/handle.dart",
+      "line": 19,
+      "name": "Plain",
+      "sites": []
+    },
+    {
       "col": 4,
       "entry": "lib/acme_x.dart",
       "exportedAs": "docOnly",
@@ -251,6 +260,15 @@
       "file": "lib/mocks/fake_clock.dart",
       "line": 5,
       "name": "FakeClock",
+      "sites": []
+    },
+    {
+      "col": 7,
+      "entry": "lib/acme_x.dart",
+      "exportedAs": "shoutAll",
+      "file": "lib/src/impl.dart",
+      "line": 20,
+      "name": "shoutAll",
       "sites": []
     },
     {

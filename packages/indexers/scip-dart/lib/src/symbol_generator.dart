@@ -143,10 +143,16 @@ class SymbolGenerator {
       return _localSymbolFor(element);
     }
 
-    // Local functions stay local even with --private-symbols: their
-    // descriptor has no enclosing scope and could collide with a top-level.
-    if (element.isPrivate &&
-        (!Flags.instance.privateSymbols || element is LocalFunctionElement)) {
+    // A local function is local, public or private (sentei patch 15): its
+    // descriptor (`<file>/name().`) has no enclosing scope, so upstream gave
+    // `twoDigits` inside a method the symbol of a top-level function of that
+    // name, which could collide with a real one and was reported as an unused
+    // top-level declaration. Uses inside it are uses by the enclosing member.
+    if (element is LocalFunctionElement) {
+      return _localSymbolFor(element);
+    }
+
+    if (element.isPrivate && !Flags.instance.privateSymbols) {
       return _localSymbolFor(element);
     }
 
@@ -162,9 +168,9 @@ class SymbolGenerator {
       descriptor = _getDescriptor(element);
     } on _NamelessElement {
       // The element (or an element its descriptor is built from) has no name:
-      // an unnamed extension and its members, a closure, a type parameter or
-      // named parameter of a generic function type. No global symbol can
-      // address it, so it is document-local.
+      // a closure, a type parameter or named parameter of a generic function
+      // type. No global symbol can address it, so it is document-local. (An
+      // unnamed extension has a synthetic name, see [_ownerName].)
       return _localSymbolFor(element);
     } on _NoPackage {
       // Declared in a file that belongs to no pub package at all: no global
@@ -311,11 +317,11 @@ class SymbolGenerator {
     if (element is InterfaceElement || // class, mixin, enum, extension type
         element is TypeAliasElement ||
         element is ExtensionElement) {
-      return '$namespace/${_name(element.name)}#';
+      return '$namespace/${_ownerName(element)}#';
     }
 
     if (element is ConstructorElement) {
-      final className = _name(element.enclosingElement.name);
+      final className = _ownerName(element.enclosingElement);
       final constructorName = element.name != null && element.name != 'new'
           ? _name(element.name)
           : '`<constructor>`';
@@ -323,7 +329,8 @@ class SymbolGenerator {
     }
 
     if (element is MethodElement) {
-      final className = _name(element.enclosingElement?.name);
+      final enclosing = element.enclosingElement;
+      final className = enclosing == null ? _name(null) : _ownerName(enclosing);
       return '$namespace/$className#${_name(element.name)}().';
     }
 
@@ -359,7 +366,7 @@ class SymbolGenerator {
 
     if (element is PropertyAccessorElement) {
       final parent = element.enclosingElement;
-      final parentName = parent is LibraryElement ? null : _name(parent.name);
+      final parentName = parent is LibraryElement ? null : _ownerName(parent);
 
       var prefix = '';
       if (element is GetterElement) {
@@ -397,6 +404,29 @@ class SymbolGenerator {
     final descriptor = _getDescriptor(encEle);
     if (descriptor == null) throw const _NamelessElement();
     return descriptor;
+  }
+
+  /// The descriptor name of a type-like declaration that owns members: its
+  /// name ([_name]), or for an unnamed extension (`extension on Duration {
+  /// ... }`) the synthetic `<extension on Duration, line 328>` (sentei patch
+  /// 15). Upstream made such an extension and all its members `local`, so
+  /// nothing they used had a global user: VeryGoodOpenSource's
+  /// `_ignoredDirectories` (used only by `extension on Set<String> {
+  /// excludes }`) came out private_dead. An unnamed extension is visible only
+  /// in its own library, so every reference is resolved in the same index
+  /// run as its definition and sees the same name; the declaring line keeps
+  /// two unnamed extensions on one type in a file apart.
+  String _ownerName(Element element) {
+    if (element is ExtensionElement &&
+        (element.name == null || element.name!.isEmpty)) {
+      final fragment = element.firstFragment;
+      final line = fragment.libraryFragment.lineInfo
+          .getLocation(fragment.offset)
+          .lineNumber;
+      final on = element.extendedType.getDisplayString();
+      return _escaped('<extension on $on, line $line>');
+    }
+    return _name(element.name);
   }
 
   /// A descriptor name per the SCIP grammar: a simple identifier as is,

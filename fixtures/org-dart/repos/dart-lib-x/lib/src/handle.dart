@@ -9,3 +9,15 @@ extension type Handle.wrap(int raw) {
   // Expected: no finding (member of a live extension type).
   bool get isNull => raw == 0;
 }
+
+// An extension type with an UNNAMED primary constructor. The fork defined the
+// constructor at the type name, the type's own definition position, so the export
+// surface (matched by position) went to the constructor: the report showed an
+// export named `<constructor>` and the type itself was unexported (VeryGoodOpenSource
+// `AndroidApplicationId(String value)`). Fork patch 15 defines it at the `(`.
+// Expected: deletion_candidate, reasons ["no_refs"] (exported, used nowhere); no
+// `<constructor>` row.
+extension type Plain(int raw) {
+  // Expected: no finding (member of an exported extension type).
+  int get twice => raw * 2;
+}

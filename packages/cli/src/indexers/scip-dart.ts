@@ -12,7 +12,8 @@
 //     enclosing range covers its type annotation; the parts of every indexed
 //     library are indexed, build_runner's .dart_tool/build/generated/ output
 //     included; an extension type's representation field and primary
-//     constructor are definitions);
+//     constructor are definitions; an unnamed extension is named
+//     `<extension on T, line N>`, a local function is always local);
 //   - packages/indexers/dart-surface: the export-surface sidecar (SCIP carries
 //     no export information), same JSON shape as the TypeScript sidecar
 //     (`--batch`: every package of a pub workspace in one run).
@@ -126,7 +127,11 @@ export const scipDart: Indexer = {
   // `exports` and the `main` / `hybridMain` of libraries named by `package:`
   // URI literals in `entrySymbols`; the generated-header sniff reads every
   // leading comment block (Web IDL, protoc "Do not modify").
-  version: '1.7.0+sentei.14',
+  // sentei.15: fork patch 15 (unnamed extensions get a synthetic name, so
+  // their members are global symbols; local functions are always local; an
+  // unnamed primary constructor is defined at its `(`); pub get runs with
+  // `--no-example`, and a failed pub get stays the recorded cause.
+  version: '1.7.0+sentei.15',
 
   detect({ repo, pkg }) {
     return pkg.manager === 'pub' && existsSync(path.join(packageDir(repo, pkg), 'pubspec.yaml'));

@@ -3,7 +3,7 @@
 Vendored from <https://github.com/Workiva/scip-dart> at tag `1.7.0`,
 commit `8d017a25874efb8513617e85e508a573692cbb63` (Apache-2.0, see `LICENSE`).
 sentei's adapter (`packages/cli/src/indexers/scip-dart.ts`) reports this copy as
-`1.7.0+sentei.14` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 9 below, pub workspaces resolved once at the root, a package with `lib/` code but no `lib/` document fails, and dart-surface finds a re-exported `main`; sentei.10: patches 10 to 12 below, every public library under `lib/` is an entry point, dart-surface records the `main` of every library and the Flutter plugin classes named in pubspec.yaml; sentei.11: patch 13 below; sentei.12: patch 14 below, the adapter's sidecar `generatedFiles`, and dart-surface's grinder task entry symbols; sentei.13: the adapter no longer passes part files to dart-surface as `--entry`; sentei.14: dart-surface records re-exports of same-repo org packages and URI-named `hybridMain` / `main` entry symbols, the adapter's header sniff reads every leading comment block): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
+`1.7.0+sentei.15` (sentei.2: dart-surface gained `entrySymbols`; sentei.3: the sidecar gained `shorthandRefs`; sentei.4: patch 3 below, manager-prefixed output file names, and dart-surface's Dart entry conventions; sentei.5: the adapter treats ignored nested manifests as not ours, and missing parts outside `lib/`/`bin/` no longer make a package partial; sentei.6: the adapter sets `entrySymbols[].kind` to `runtime`; sentei.7: patch 4 below, and dart-surface's `--pub-get-failed`; sentei.8: patch 5 below, dart-surface's `--sdk-path`/`--package-name`, and Flutter packages resolved with `flutter pub get`; sentei.9: patches 6 to 9 below, pub workspaces resolved once at the root, a package with `lib/` code but no `lib/` document fails, and dart-surface finds a re-exported `main`; sentei.10: patches 10 to 12 below, every public library under `lib/` is an entry point, dart-surface records the `main` of every library and the Flutter plugin classes named in pubspec.yaml; sentei.11: patch 13 below; sentei.12: patch 14 below, the adapter's sidecar `generatedFiles`, and dart-surface's grinder task entry symbols; sentei.13: the adapter no longer passes part files to dart-surface as `--entry`; sentei.14: dart-surface records re-exports of same-repo org packages and URI-named `hybridMain` / `main` entry symbols, the adapter's header sniff reads every leading comment block; sentei.15: patch 15 below, and the adapter's `pub get --no-example` and dart-surface's framework entry conventions): bump the `+sentei.N` patch level whenever this directory or dart-surface changes output.
 
 Kept from upstream: `bin/`, `lib/`, `pubspec.yaml`, `LICENSE`, `README.md`.
 Dropped (not needed to run): tests/snapshots, `tool/`, CI config, `Makefile`,
@@ -1639,6 +1639,187 @@ vendored file, header included):
 +        range: _lineInfo.getRange(nameOffset, nameLength),
          symbol: symbol,
          symbolRoles: SymbolRole.Definition.value,
+```
+
+## 15. Unnamed extensions are named; local functions are local; an unnamed primary constructor is defined at its `(` (`lib/src/symbol_generator.dart`, `lib/src/scip_visitor.dart`)
+
+Evaluation batches C and D (VeryGoodOpenSource, bluefireteam,
+fluttercommunity; tool at f25900a, adapter `+sentei.14`).
+
+**Unnamed extensions (fail-open).** `extension on Set<String> { bool
+excludes(...) }` has no name, so `_getDescriptor` threw `_NamelessElement`
+for the extension and every member, and all of them became `local N`
+symbols. Local symbols are not ingested, so the references made inside the
+members had no global user: everything used only from an unnamed extension
+came out private_dead (VeryGoodOpenSource very_good_cli `_ignoredDirectories`,
+27 of 32 PRIV-DEAD rows in that class; fluttercommunity `_colorToJson`). An
+unnamed extension now gets the synthetic descriptor name
+`<extension on T, line N>` (backtick-escaped: the extended type's display
+string and the 1-based line of its `extension` keyword; `_ownerName`), used
+for the extension itself and as the owner of its methods, accessors, fields
+and type parameters. It is unambiguous and consistent: an unnamed extension is
+visible only in its own library, so every reference is resolved in the same
+run as its definition and sees the same element, and the line keeps two
+unnamed extensions on one type in a file apart. Ingest's parent rule makes
+the members children of the extension, so a used member keeps the extension
+(and its siblings) reachable, and an extension none of whose members is used
+is one private_dead row with a readable name.
+
+**Local functions are always local.** Upstream gave a public local function
+(`String twoDigits(int n) => ...` inside a method) the descriptor of a
+top-level function of that file (`<file>/twoDigits().`): it could collide
+with a real top-level of the same name, and because the function was
+referenced only from inside its (then local) enclosing member it came out
+private_dead as if it were an unused top-level function (very_good_cli
+`flutter_cli.dart` `twoDigits`). A `LocalFunctionElement` is now `local`
+whatever its name (private ones already were, patch 2); the references inside
+it belong to the enclosing member (ingest's innermost global enclosing range).
+
+**Unnamed primary constructors.** Patch 14 defined an unnamed primary
+constructor (`extension type AndroidApplicationId(String value)`) at the type
+name, which is also where the type is defined. Ingest matches the export
+surface by definition position, so the export went to the constructor: the
+report had an UNEXPORT row named `<constructor>` (VeryGoodOpenSource
+very_good_core_hooks, 5 rows) and the type itself was not exported. It is now
+defined at the `(` of its parameter list (length 1); a named one stays at its
+name.
+
+Snapshots: every unnamed extension and its members change from `local N` to
+`` `<extension on T, line N>`# `` symbols, public local functions become
+`local N`, unnamed primary constructors move to the `(`. Fixture:
+`dart-lib-x/lib/src/impl.dart` (`shoutAll`, unnamed extensions) and `Plain` in `lib/src/handle.dart`
+(fixtures/org-dart/README.md).
+
+Diff against the state after patch 14:
+
+```diff
+--- a/lib/src/scip_visitor.dart
++++ b/lib/src/scip_visitor.dart
+@@ -163,10 +163,24 @@ class ScipVisitor extends GeneralizingAstVisitor {
+   /// A primary constructor (`extension type E._(int p)`, `extension type
+   /// E(int p)`) is not a [Declaration] node, so upstream defined no symbol
+   /// for it while `E._(1)` / `E(1)` referenced `E#_().` / `E#<constructor>().`
+-  /// (sentei patch 14). Defined at its name (the type name when unnamed).
++  /// (sentei patch 14). Defined at its name; an unnamed one at the `(` of its
++  /// parameter list (sentei patch 15): at the type name it shared the type's
++  /// definition position, so the export surface (matched by position) went
++  /// to the constructor, which was reported as an export named
++  /// `<constructor>` while the type itself was not exported.
+   void _visitPrimaryConstructor(PrimaryConstructorDeclaration node) {
+     final element = node.declaredFragment?.element;
+     if (element == null) return;
++    if (node.constructorName == null) {
++      final paren = node.formalParameters.leftParenthesis;
++      _registerAsDefinition(
++        element,
++        node,
++        offset: paren.offset,
++        length: paren.length,
++      );
++      return;
++    }
+     _registerAsDefinition(element, node);
+   }
+ 
+--- a/lib/src/symbol_generator.dart
++++ b/lib/src/symbol_generator.dart
+@@ -143,10 +143,16 @@ class SymbolGenerator {
+       return _localSymbolFor(element);
+     }
+ 
+-    // Local functions stay local even with --private-symbols: their
+-    // descriptor has no enclosing scope and could collide with a top-level.
+-    if (element.isPrivate &&
+-        (!Flags.instance.privateSymbols || element is LocalFunctionElement)) {
++    // A local function is local, public or private (sentei patch 15): its
++    // descriptor (`<file>/name().`) has no enclosing scope, so upstream gave
++    // `twoDigits` inside a method the symbol of a top-level function of that
++    // name, which could collide with a real one and was reported as an unused
++    // top-level declaration. Uses inside it are uses by the enclosing member.
++    if (element is LocalFunctionElement) {
++      return _localSymbolFor(element);
++    }
++
++    if (element.isPrivate && !Flags.instance.privateSymbols) {
+       return _localSymbolFor(element);
+     }
+ 
+@@ -162,9 +168,9 @@ class SymbolGenerator {
+       descriptor = _getDescriptor(element);
+     } on _NamelessElement {
+       // The element (or an element its descriptor is built from) has no name:
+-      // an unnamed extension and its members, a closure, a type parameter or
+-      // named parameter of a generic function type. No global symbol can
+-      // address it, so it is document-local.
++      // a closure, a type parameter or named parameter of a generic function
++      // type. No global symbol can address it, so it is document-local. (An
++      // unnamed extension has a synthetic name, see [_ownerName].)
+       return _localSymbolFor(element);
+     } on _NoPackage {
+       // Declared in a file that belongs to no pub package at all: no global
+@@ -311,11 +317,11 @@ class SymbolGenerator {
+     if (element is InterfaceElement || // class, mixin, enum, extension type
+         element is TypeAliasElement ||
+         element is ExtensionElement) {
+-      return '$namespace/${_name(element.name)}#';
++      return '$namespace/${_ownerName(element)}#';
+     }
+ 
+     if (element is ConstructorElement) {
+-      final className = _name(element.enclosingElement.name);
++      final className = _ownerName(element.enclosingElement);
+       final constructorName = element.name != null && element.name != 'new'
+           ? _name(element.name)
+           : '`<constructor>`';
+@@ -323,7 +329,8 @@ class SymbolGenerator {
+     }
+ 
+     if (element is MethodElement) {
+-      final className = _name(element.enclosingElement?.name);
++      final enclosing = element.enclosingElement;
++      final className = enclosing == null ? _name(null) : _ownerName(enclosing);
+       return '$namespace/$className#${_name(element.name)}().';
+     }
+ 
+@@ -359,7 +366,7 @@ class SymbolGenerator {
+ 
+     if (element is PropertyAccessorElement) {
+       final parent = element.enclosingElement;
+-      final parentName = parent is LibraryElement ? null : _name(parent.name);
++      final parentName = parent is LibraryElement ? null : _ownerName(parent);
+ 
+       var prefix = '';
+       if (element is GetterElement) {
+@@ -399,6 +406,29 @@ class SymbolGenerator {
+     return descriptor;
+   }
+ 
++  /// The descriptor name of a type-like declaration that owns members: its
++  /// name ([_name]), or for an unnamed extension (`extension on Duration {
++  /// ... }`) the synthetic `<extension on Duration, line 328>` (sentei patch
++  /// 15). Upstream made such an extension and all its members `local`, so
++  /// nothing they used had a global user: VeryGoodOpenSource's
++  /// `_ignoredDirectories` (used only by `extension on Set<String> {
++  /// excludes }`) came out private_dead. An unnamed extension is visible only
++  /// in its own library, so every reference is resolved in the same index
++  /// run as its definition and sees the same name; the declaring line keeps
++  /// two unnamed extensions on one type in a file apart.
++  String _ownerName(Element element) {
++    if (element is ExtensionElement &&
++        (element.name == null || element.name!.isEmpty)) {
++      final fragment = element.firstFragment;
++      final line = fragment.libraryFragment.lineInfo
++          .getLocation(fragment.offset)
++          .lineNumber;
++      final on = element.extendedType.getDisplayString();
++      return _escaped('<extension on $on, line $line>');
++    }
++    return _name(element.name);
++  }
++
+   /// A descriptor name per the SCIP grammar: a simple identifier as is,
+   /// anything else (operators `==`, `[]=`, `<=`, `~/`, ...) backtick-escaped.
+   /// A missing or empty name has no global symbol ([_NamelessElement]).
 ```
 
 ## Trim: no dev dependencies (`pubspec.yaml`)

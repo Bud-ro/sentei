@@ -270,6 +270,26 @@
 //                     ^^^ reference scip-dart pub acme_x . lib/src/`handle.dart`/Handle#raw.
   }
 
+  // An extension type with an UNNAMED primary constructor. The fork defined the
+  // constructor at the type name, the type's own definition position, so the export
+  // surface (matched by position) went to the constructor: the report showed an
+  // export named `<constructor>` and the type itself was unexported (VeryGoodOpenSource
+  // `AndroidApplicationId(String value)`). Fork patch 15 defines it at the `(`.
+  // Expected: deletion_candidate, reasons ["no_refs"] (exported, used nowhere); no
+  // `<constructor>` row.
+  extension type Plain(int raw) {
+//               ^^^^^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Plain# enclosing [19:0-22:1]
+//                    ^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Plain#`<constructor>`(). enclosing [19:15-19:29]
+//                     ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//                         ^^^ definition local 1 enclosing [19:21-19:28]
+//                         ^^^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Plain#raw. enclosing [19:21-19:28]
+    // Expected: no finding (member of an exported extension type).
+    int get twice => raw * 2;
+//  ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
+//          ^^^^^ definition scip-dart pub acme_x . lib/src/`handle.dart`/Plain#`<get>twice`. enclosing [21:2-21:27]
+//                   ^^^ reference scip-dart pub acme_x . lib/src/`handle.dart`/Plain#raw.
+  }
+
 ## lib/src/impl.dart
   // Re-exported whole by lib/acme_x.dart (`export 'src/impl.dart';`).
 //^ definition scip-dart pub acme_x . lib/src/`impl.dart`/
@@ -289,6 +309,69 @@
   int shownOnly() => 6;
 //^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 //    ^^^^^^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/shownOnly(). enclosing [10:0-10:21]
+
+  // Unnamed extensions (`extension on T { ... }`), usable only inside this library.
+  // The fork made them and their members `local` symbols, so nothing they used had a
+  // global user: VeryGoodOpenSource very_good_cli `_ignoredDirectories` (used only by
+  // `extension on Set<String> { excludes }`) and fluttercommunity `_colorToJson` came
+  // out private_dead. Fork patch 15 names an unnamed extension
+  // `<extension on T, line N>`, so its members are global symbols with their uses.
+
+  // Expected: alive, no finding (external ref from acme_app bin/main.dart).
+  String shoutAll(List<String> words) => words.map((w) => w.loud).join(' ');
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/shoutAll(). enclosing [20:0-20:74]
+//                ^^^^ reference scip-dart pub dart:core . dart:core/`list.dart`/List#
+//                     ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                             ^^^^^ definition local 0 enclosing [20:16-20:34]
+//                                       ^^^^^ reference local 0
+//                                             ^^^ reference scip-dart pub dart:core . dart:core/`iterable.dart`/Iterable#map().
+//                                                  ^ definition local 1 enclosing [20:50-20:51]
+//                                                        ^ reference local 1
+//                                                          ^^^^ reference scip-dart pub acme_x . lib/src/`impl.dart`/`<extension on String, line 23>`#`<get>loud`.
+//                                                                ^^^^ reference scip-dart pub dart:core . dart:core/`iterable.dart`/Iterable#join().
+
+  extension on String {
+//^ definition scip-dart pub acme_x . lib/src/`impl.dart`/`<extension on String, line 23>`# enclosing [22:0-29:1]
+//             ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+    // Expected: no finding (member of a live unnamed extension).
+    String get loud {
+//  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//             ^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/`<extension on String, line 23>`#`<get>loud`. enclosing [24:2-28:3]
+      // A local function stays local (fork patch 15): uses inside it are uses by `loud`.
+      String bang(String s) => '$s!';
+//    ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//           ^^^^ definition local 2 enclosing [26:4-26:35]
+//                ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                       ^ definition local 3 enclosing [26:16-26:24]
+//                               ^ reference local 3
+      return bang(_upper(this));
+//           ^^^^ reference local 2
+//                ^^^^^^ reference scip-dart pub acme_x . lib/src/`impl.dart`/_upper().
+    }
+  }
+
+  // Expected: alive, no finding (used only by the unnamed extension's `loud`).
+  String _upper(String s) => s.toUpperCase();
+//^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//       ^^^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/_upper(). enclosing [32:0-32:43]
+//              ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
+//                     ^ definition local 4 enclosing [32:14-32:22]
+//                           ^ reference local 4
+//                             ^^^^^^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#toUpperCase().
+
+  // Expected: private_dead, reasons ["already_unreachable"], named
+  // `<extension on bool, line 38>`: none of its members is used.
+  // ignore: unused_element
+  extension on bool {
+//^ definition scip-dart pub acme_x . lib/src/`impl.dart`/`<extension on bool, line 38>`# enclosing [37:0-41:1]
+//             ^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+    // Expected: no finding (member of an unused extension: the extension's row covers it).
+    // ignore: unused_element
+    bool get flipped => !this;
+//  ^^^^ reference scip-dart pub dart:core . dart:core/`bool.dart`/bool#
+//           ^^^^^^^ definition scip-dart pub acme_x . lib/src/`impl.dart`/`<extension on bool, line 38>`#`<get>flipped`. enclosing [40:2-40:28]
+  }
 
 ## lib/src/part_a.dart
   // Part of the entry library: lives under lib/src/ but its public names are on the
@@ -428,14 +511,14 @@
 //                                     ^ reference scip-dart pub acme_x . lib/`syntax.dart`/Vec#x.
   }
 
-  // No finding: an unnamed extension has no name, so it and its members get
-  // local symbols (never verdict subjects). Used by labelOf below.
+  // No finding: an unnamed extension, named `<extension on String, line 30>` by the
+  // fork (patch 15; never on the export surface). Used by labelOf below.
   extension on String {
-//^ definition local 3 enclosing [29:0-31:1]
+//^ definition scip-dart pub acme_x . lib/`syntax.dart`/`<extension on String, line 30>`# enclosing [29:0-31:1]
 //             ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
     String get shout => toUpperCase();
 //  ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
-//             ^^^^^ definition local 4 enclosing [30:2-30:36]
+//             ^^^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/`<extension on String, line 30>`#`<get>shout`. enclosing [30:2-30:36]
 //                      ^^^^^^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#toUpperCase().
   }
 
@@ -444,9 +527,9 @@
   // global symbol.
   typedef Mapper = T Function<T>(T value, {int? times});
 //        ^^^^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/Mapper# enclosing [36:0-36:54]
-//                 ^ reference local 5
-//                            ^ definition local 5 enclosing [36:28-36:29]
-//                               ^ reference local 5
+//                 ^ reference local 3
+//                            ^ definition local 3 enclosing [36:28-36:29]
+//                               ^ reference local 3
 //                                         ^^^ reference scip-dart pub dart:core . dart:core/`int.dart`/int#
 
   // Expected: alive, no finding (external ref from acme_app bin/shapes.dart).
@@ -454,13 +537,13 @@
 //^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
 //       ^^^^^^^ definition scip-dart pub acme_x . lib/`syntax.dart`/labelOf(). enclosing [39:0-39:61]
 //               ^^^^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/Mapper#
-//                      ^ definition local 6 enclosing [39:15-39:23]
-//                            ^ reference local 6
+//                      ^ definition local 4 enclosing [39:15-39:23]
+//                            ^ reference local 4
 //                              ^^^^^^ reference scip-dart pub dart:core . dart:core/`string.dart`/String#
 //                                      ^ reference local 0
 //                                        ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#`<constructor>`().
 //                                                ^^^^^ reference scip-dart pub acme_x . lib/src/`shown.dart`/Shown#label.
-//                                                      ^^^^^ reference local 4
+//                                                      ^^^^^ reference scip-dart pub acme_x . lib/`syntax.dart`/`<extension on String, line 30>`#`<get>shout`.
 
 ## lib/testing.dart
   // Entry point for acme_x's test-support API (lib/*.dart). The files it exports have

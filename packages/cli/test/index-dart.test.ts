@@ -139,7 +139,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       expect(r.packages[0]).toMatchObject({
         packageId: `pub:${pkg}`,
         indexer: 'scip-dart',
-        indexerVersion: '1.7.0+sentei.14',
+        indexerVersion: '1.7.0+sentei.15',
         status: 'ok',
         scip: `pub__${pkg}.scip`,
         exports: `pub__${pkg}.exports.json`,
@@ -182,6 +182,8 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       ['AcmeTiny', 'AcmeTiny', 'lib/acme_x.dart', 52, 10],
       ['Handle', 'Handle', 'lib/src/handle.dart', 7, 15],
       ['IntTimes', 'IntTimes', 'lib/acme_x.dart', 31, 10],
+      // Fork patch 15: the type, not its unnamed primary constructor (defined at the `(`).
+      ['Plain', 'Plain', 'lib/src/handle.dart', 19, 15],
       ['Shown', 'Shown', 'lib/src/shown.dart', 3, 6],
       ['docOnly', 'docOnly', 'lib/acme_x.dart', 39, 4],
       ['implUnused', 'implUnused', 'lib/src/impl.dart', 6, 4],
@@ -189,6 +191,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
       ['inExample', 'inExample', 'lib/acme_x.dart', 60, 4],
       ['partUnused', 'partUnused', 'lib/src/part_a.dart', 8, 4],
       ['partUsed', 'partUsed', 'lib/src/part_a.dart', 5, 4],
+      ['shoutAll', 'shoutAll', 'lib/src/impl.dart', 20, 7],
       ['shownOnly', 'shownOnly', 'lib/src/impl.dart', 10, 4],
       ['unusedFn', 'unusedFn', 'lib/acme_x.dart', 17, 4],
       ['usedBySample', 'usedBySample', 'lib/acme_x.dart', 65, 4],
@@ -240,7 +243,7 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(defs).toContain('tool/dart_dev/config.dart:5:6 scip-dart pub acme_x 1.0.0 tool/dart_dev/`config.dart`/config.');
   });
 
-  it('emits only valid SCIP symbols: operators backticked, nameless elements and import prefixes local (fork patch 3)', () => {
+  it('emits only valid SCIP symbols: operators backticked, nameless elements and import prefixes local (fork patch 3), unnamed extensions named (patch 15)', () => {
     const symbolsOf = (file: string) => {
       const idx = readScipIndex(path.join(work, 'index', file));
       return idx.documents.flatMap((d) => d.occurrences.map((o) => ({ file: d.relativePath, def: (o.symbolRoles & 1) === 1, symbol: o.symbol, line: o.range[0]! })));
@@ -259,9 +262,20 @@ describe.skipIf(!HAS_DART)('index stage with scip-dart on fixtures/org-dart', ()
     expect(defsAt(17)).toEqual([`${X}Vec#\`==\`().`, 'local 1']); // operator == (and its parameter)
     expect(defsAt(24)).toEqual([`${X}Vec#\`[]\`().`, 'local 2']); // operator []
     expect(defsAt(6)).toEqual(['local 0']); // import prefix `p`: not a declaration
-    expect(defsAt(29)).toEqual(['local 3']); // unnamed extension
-    expect(defsAt(30)).toEqual(['local 4']); // its getter
-    expect(defsAt(36)).toEqual([`${X}Mapper#`, 'local 5']); // typedef; T of the generic function type
+    // Unnamed extension and its getter: `<extension on T, line N>` (fork patch 15; was local).
+    expect(defsAt(29)).toEqual([`${X}\`<extension on String, line 30>\`#`]);
+    expect(defsAt(30)).toEqual([`${X}\`<extension on String, line 30>\`#\`<get>shout\`.`]);
+    expect(defsAt(36)).toEqual([`${X}Mapper#`, 'local 3']); // typedef; T of the generic function type
+    // A local function is local (patch 15), and the unnamed extension in impl.dart is
+    // named after its own line.
+    const impl = all.filter((o) => o.file === 'lib/src/impl.dart');
+    const I = 'scip-dart pub acme_x 1.0.0 lib/src/`impl.dart`/';
+    expect(impl.filter((o) => o.line === 26 && o.def).map((o) => o.symbol)).toEqual([expect.stringMatching(/^local \d+$/), expect.stringMatching(/^local \d+$/)]);
+    expect(impl.filter((o) => o.def && !o.symbol.startsWith('local ')).map((o) => o.symbol)).toEqual(expect.arrayContaining([
+      `${I}\`<extension on String, line 23>\`#`, `${I}\`<extension on String, line 23>\`#\`<get>loud\`.`,
+      `${I}\`<extension on bool, line 38>\`#`, `${I}_upper().`,
+    ]));
+    expect(all.some((o) => o.symbol.includes('bang'))).toBe(false);
     // Every operator anywhere is backticked.
     for (const { symbol } of all) expect(symbol).not.toMatch(/#(==|\[\]=?|<=?|>=?|[%*\/~^|&])\(\)\./);
   });
@@ -1738,20 +1752,20 @@ describe.skipIf(!HAS_DART)('scip-dart adapter on temp packages', () => {
   it('pub get does not resolve example/ (--no-example): a broken example does not make its package partial', async () => {
     // fluttercommunity firestore_helpers (pre-null-safety example), Baseflow service_manager (SSH git dep).
     write({
-      'withex/pubspec.yaml': pubspec('acme_withex', '1.0.0'),
-      'withex/lib/acme_withex.dart': 'int w() => 1;\n',
-      'withex/example/pubspec.yaml': "name: acme_withex_example\npublish_to: none\nenvironment:\n  sdk: '>=2.7.0 <3.0.0'\ndependencies:\n  acme_withex:\n    path: ..\n",
-      'withex/example/lib/main.dart': "import 'package:acme_withex/acme_withex.dart';\n\nvoid main() => w();\n",
+      'noexample/pubspec.yaml': pubspec('acme_noexample', '1.0.0'),
+      'noexample/lib/acme_noexample.dart': 'int w() => 1;\n',
+      'noexample/example/pubspec.yaml': "name: acme_noexample_example\npublish_to: none\nenvironment:\n  sdk: '>=2.7.0 <3.0.0'\ndependencies:\n  acme_noexample:\n    path: ..\n",
+      'noexample/example/lib/main.dart': "import 'package:acme_noexample/acme_noexample.dart';\n\nvoid main() => w();\n",
     });
-    const repo = repoOf(root, 'withex', pubPackage('acme_withex', ['lib/acme_withex.dart']));
-    repo.localPath = path.join(root, 'withex');
+    const repo = repoOf(root, 'noexample', pubPackage('acme_noexample', ['lib/acme_noexample.dart']));
+    repo.localPath = path.join(root, 'noexample');
     repo.ignoredManifests = [{ path: 'example' }];
-    const out = path.join(root, 'out-withex');
+    const out = path.join(root, 'out-noexample');
     mkdirSync(out);
     const r = await scipDart.run(inputFor([repo], repo), out);
     expect(r.status, r.diagnostics.join('\n')).toBe('ok');
     expect(r.diagnostics).toContain('info: ran dart pub get --offline --no-example');
-    expect(existsSync(path.join(root, 'withex/example/.dart_tool'))).toBe(false);
+    expect(existsSync(path.join(root, 'noexample/example/.dart_tool'))).toBe(false);
   }, 300_000);
 
   it("keeps pubspec.yaml's own dependency_overrides when it source-links an org dep: pub get resolves", async () => {

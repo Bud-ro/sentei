@@ -163,10 +163,24 @@ class ScipVisitor extends GeneralizingAstVisitor {
   /// A primary constructor (`extension type E._(int p)`, `extension type
   /// E(int p)`) is not a [Declaration] node, so upstream defined no symbol
   /// for it while `E._(1)` / `E(1)` referenced `E#_().` / `E#<constructor>().`
-  /// (sentei patch 14). Defined at its name (the type name when unnamed).
+  /// (sentei patch 14). Defined at its name; an unnamed one at the `(` of its
+  /// parameter list (sentei patch 15): at the type name it shared the type's
+  /// definition position, so the export surface (matched by position) went
+  /// to the constructor, which was reported as an export named
+  /// `<constructor>` while the type itself was not exported.
   void _visitPrimaryConstructor(PrimaryConstructorDeclaration node) {
     final element = node.declaredFragment?.element;
     if (element == null) return;
+    if (node.constructorName == null) {
+      final paren = node.formalParameters.leftParenthesis;
+      _registerAsDefinition(
+        element,
+        node,
+        offset: paren.offset,
+        length: paren.length,
+      );
+      return;
+    }
     _registerAsDefinition(element, node);
   }
 

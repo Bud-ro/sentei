@@ -25,8 +25,8 @@ class Vec {
   int operator [](int i) => i == 0 ? x : 0;
 }
 
-// No finding: an unnamed extension has no name, so it and its members get
-// local symbols (never verdict subjects). Used by labelOf below.
+// No finding: an unnamed extension, named `<extension on String, line 30>` by the
+// fork (patch 15; never on the export surface). Used by labelOf below.
 extension on String {
   String get shout => toUpperCase();
 }
