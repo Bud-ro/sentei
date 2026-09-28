@@ -109,12 +109,39 @@ opens pull requests.
   subprocess input), is such an entry too. So are browser / bundler inputs: the
   `<script src>` and the modules an inline `<script>` body `require`s / `import`s
   in a package-root HTML file or in one an Electron window opens
-  (`loadFile('index.html')`, ``loadURL(`file://${__dirname}/x.html`)``), the
+  (`loadFile('index.html')`, ``loadURL(`file://${__dirname}/x.html`)``,
+  `loadURL(url.format({ pathname: path.join(__dirname, 'index.html') }))`), the
   `input` of `vite.config.*` / `rollup.config.*`, and the `entry` of
   `webpack.config.*` / `webpack.<x>.config.*` (webpack's default
   `./src/index.{js,ts,jsx,tsx}` without one). A script that loads build output
   (`./dist/main.js`) is mapped to its source like a declared entry, or to the
   webpack entry its `[name].js` names.
+- Framework and tool conventions add runtime entries the same way:
+  Docusaurus (`docusaurus.config.*`, `sidebars.*`, `src/theme/**`, `src/pages/**`,
+  `src/plugins/**`), VitePress (with a `vitepress` dependency:
+  `.vitepress/config.*`, `.vitepress/theme/**`, `*.data.*` loaders), Astro (with an
+  `astro.config.*`: the config, `src/pages/**`, `src/middleware*`,
+  `src/actions/**`, the content config), Nuxt (with a `nuxt.config.*`: the config,
+  `app.config.*`, `app/**`, `pages/`, `layouts/`, `middleware/`, `plugins/`,
+  `server/`, `composables/`, `utils/`, `stores/`, `components/`, `modules/`,
+  `shared/`), and every own file one of these configs names with a relative path;
+  jscodeshift codemods (a `jscodeshift` dependency or a `*-codemods` dir:
+  `transforms/**`, `codemods/**` and transform modules; their `parser` export is
+  kept by name); a Firebase Functions source (a `firebase.json`
+  `functions.source`: its main and the modules it re-exports, whose exports are all
+  deployed); a terraform `entry_point = "name"` (that export of the repo's
+  packages); React Native platform modules (`x.ios.js`, `x.android.js`, … of an
+  imported `./x`, and root `index.<platform>.*`). A React Native / Expo package's
+  native code (`android/`, `ios/`, `macos/`, `windows/`, and Java / Kotlin / Swift
+  / Objective-C / C++ anywhere in it) never makes it an unindexed consumer.
+- Build output maps back to source through the tsconfig outDirs, the dist→src
+  convention, leading output segments (`dist/<a>/<b>/x.js` → `src/b/x.*`,
+  `src/x.*`), a `src/` under the output dir (`dist/esm/src/index.d.ts`), build-format
+  dirs dropped anywhere (`lib/typescript/commonjs/index.d.ts`,
+  `dist/default-entry/esm/server.js`), and a bundler's named input (`input: {
+  internal: 'src/node/internalIndex.ts' }` → `dist/node/internal.js`); a top-level
+  `main` / `types` that maps nowhere is fine when `source` / `react-native` names the
+  source (react-native-builder-bob).
 - Own code that single-file components and bundlers load where no index sees it
   keeps its top-level declarations alive (all of them: sentei cannot see which
   names are used): relative imports in `.vue` / `.svelte` / `.astro` / `.marko` /
@@ -266,7 +293,9 @@ Rules, first match wins:
    below (a forced archived, forked, huge or Python repo is cloned), so
    `--exclude '*' --include 'h3*'` clones just the `h3*` repos.
 2. Empty repos (no commit on the default branch) and repos disabled by GitHub.
-3. Archived repos (`--include-archived`), forks (`--include-forks`), templates.
+3. Archived repos (`--include-archived`), forks (`--include-forks`), templates. A
+   template repo's git tree is still probed (one request), so the warning about
+   excluded repos with manifests (possible consumers) names it.
 4. `repos.maxSizeMb` (default 500) against the **HEAD size**: the sum of the blob
    sizes in the default branch's tree, about what a shallow clone checks out. The
    API `size` (the packed full history: supabase/cli is 301 MB there, 26 MB at
@@ -429,7 +458,7 @@ keys and wrong types are errors, so a typo cannot silently fail open.
 | `countDocsAsConsumers` | false | references from docs files count as uses |
 | `closedOrg` | false | the org **asserts** that nothing outside it depends on its published packages: their unused exports are `delete` (deletion candidates, witness still required), not `deprecate`. sentei cannot check this; the summary's policy line, `report.json` `assertions` and SARIF state it. No re-index (see [Views](#views)) |
 | `keep` | `[]` | never report these: `"npm:@acme/foo#sym"` (every package named `@acme/foo`), `"npm:acme/foo:@acme/foo#sym"` (only the one in repo `acme/foo`), `"pub:bar#*"` |
-| `ignoreManifestDirs` | built-in list | directory names (fixtures, templates, examples, test, ...) whose manifests are not org packages; replaces the default. A name matching any *ancestor* of the manifest's dir always ignores it; matching the manifest's *own* dir ignores it unless that dir is a monorepo member: its parent is `pkgs`, `packages`, `apps`, `libs` or `modules` (`pkgs/test` is the `test` package), or it is a pub `workspace:` / npm `workspaces` member (or has `resolution: workspace`) whose parent dir holds no manifest (a package's own `example/` stays ignored). **Examples and benchmarks of another repo are consumers:** an ignored manifest whose ignored dirs are all example-like (`example(s)`, `sample(s)`, `demo(s)`, `benchmark(s)`, `bench`, `playground(s)`, `sandbox`) and that has a regular (non-dev) dependency on an org package of ANOTHER repo is indexed as a private consumer package (no export surface; `discover` logs `promoted ignored-dir manifest … : example app depends on <package id> (repo <repo>)`). Its uses of other repos' packages count like any consumer's (the docs globs match paths below its own root, so its files are not docs files); its uses of its own repo's packages count as docs uses (`only_docs_refs`). An ignored manifest that uses only its own repo's packages never counts: the witness notes its uses (`note:used by …`) without changing a verdict. Test / fixture / template dirs are never promoted |
+| `ignoreManifestDirs` | built-in list | directory names (fixtures, templates, examples, test, ...) whose manifests are not org packages; replaces the default. A name matching any *ancestor* of the manifest's dir always ignores it; matching the manifest's *own* dir ignores it unless that dir is a monorepo member: its parent is `pkgs`, `packages`, `apps`, `libs` or `modules` (`pkgs/test` is the `test` package), or it is a pub `workspace:` / npm `workspaces` member (or has `resolution: workspace`) whose parent dir holds no manifest (a package's own `example/` stays ignored). **Examples and benchmarks of another repo are consumers:** an ignored manifest whose ignored dirs are all example-like (`example(s)`, `sample(s)`, `demo(s)`, `benchmark(s)`, `bench`, `playground(s)`, `sandbox`) and that has a regular (non-dev) dependency on an org package of ANOTHER repo is indexed as a private consumer package (no export surface; `discover` logs `promoted ignored-dir manifest … : example app depends on <package id> (repo <repo>)`). Its uses of other repos' packages count like any consumer's (the docs globs match paths below its own root, so its files are not docs files); its uses of its own repo's packages count as docs uses (`only_docs_refs`). An ignored manifest that uses only its own repo's packages never counts: the witness notes its uses (`note:used by …`) without changing a verdict. Test / fixture / template dirs are never promoted. Whatever this list says, scaffold templates are never packages: a manifest under a generator's `files/` (`generators/<name>/files/`, `schematics/<name>/files/`), mason's `__brick__` or a `.template` dir, or one whose name is a placeholder (`<%= name %>`, `{{name}}`) |
 | `ignoreManifests` | `[]` | globs `"<repo>/<manifest path>"` (repo name without the org), e.g. `"vscode/package.json"`, `"over_react/app/**"`: those manifests are not org packages (never indexed, never a blocker, not a counted consumer; the text witness still scans their code, fail closed). The report lists every one in a warning. Use it for a package that cannot be indexed and that nothing depends on (a pre-Dart-2.12 example app, a repo-internal demo); a blocker's hint gives the exact entry. It also keeps an example app of another repo from being promoted to a consumer package (e.g. one that fails to index and would block what it uses) |
 | `repos` | `{}` | which GitHub repos to clone, see [Choosing repos](#choosing-repos) |
 
@@ -511,7 +540,8 @@ else about the world goes in, so every way of reading the result is a
 `private_dead` is reported only for a package whose entry set is credible: it has
 a declared or convention entry point (an export, a manifest `main` / `exports` /
 `bin`, a runtime entry: scripts, Dockerfile `CMD`, HTML / bundler client entries,
-Next.js / Nuxt / SvelteKit routes, wrangler `main`, a Dart `main` or builder) and
+Next.js / Nuxt / SvelteKit / Astro / Docusaurus / VitePress conventions, wrangler
+`main`, a Dart `main` or builder) and
 none of its own loads went unresolved (an alias or `import.meta.glob` naming no
 file, a loaded file that is not indexed). Seeds from single-file components alone
 do not count: an Astro site with no entry point (its roots are file-routed pages)
@@ -740,7 +770,10 @@ assertion as a footnote); then
 repo's tsconfig first" list (the top 10; all of them are in `report.json`),
 followed by a "What to do:" line per blocker (`report.json` `blockers[].hint`):
 the first error line and the index log for a failed or partial index (a
-pre-2.12 Dart SDK constraint is named as such), the `ignoreManifests` entry
+pre-2.12 Dart SDK constraint is named as such; a failed install shows its error
+code, `pnpm install failed (exit 1): ERR_PNPM_…`, not the command line; a missing
+`.nuxt/tsconfig.json` says to run `nuxi prepare` or exclude the package; a
+package-name tsconfig `extends` that is not installed names the package), the `ignoreManifests` entry
 that removes a blocker nothing depends on, the unresolved entry point, the
 candidates of an ambiguous dependency with the `ignoreManifests` entries to drop
 the wrong ones (there is no way to pin a dependency to one package id), or the

@@ -4333,3 +4333,199 @@ The mason hooks packages being private turns their former DEPRECATE rows into
 UNEXPORT / DELETE rows (a hooks `lib/` used only by its own `pre_gen.dart` is
 `internal_refs_only`); not measured. Snapshot byte identity on Dart 3.11.3 was
 not re-checked.
+
+### Phase 3 fix round 8e: framework entry conventions; build-output layouts; npm platform dirs; hints
+
+From evaluation batches A–D (tool at `f25900a`). **Measured** by re-running
+`discoverRepos` over each batch's read-only clones (the repo list, head shas and org
+config of its `discover.json` / `sentei.json`), with the base commit (`5b05f1c`) and
+with this branch, and comparing per package: entry points, runtime entry points,
+runtime entry symbols, unresolved entry points and discover flags (scripts
+`disc.ts`, `cmp.mjs`, `flags.mjs` in `$TMPDIR/r8e/`). The hint changes were measured
+by running `failureDetail` over the flag reasons in the batch DBs (`hints.ts`). No
+batch was re-indexed: what the new entries do to the findings is shown on the fixture
+(below), not on the orgs.
+
+| org | packages without an entry point | opaque (discover) | unindexed_consumer | packages whose entries, entry symbols or flags changed |
+|---|---|---|---|---|
+| trpc | 4 → 4 | 2 → 2 | 0 → 0 | 2 (`www` 8 → 22 entries; `@trpc/upgrade` `parser`) |
+| vitejs | 21 → 12 | 2 → 0 | 0 → 0 | 11 |
+| withastro | 31 → 13 | 8 → 8 | 0 → 0 | 26 |
+| nuxt | 48 → 36 | 3 → 3 | 1 → 1 | 45 |
+| tanstack | 383 → 380 (813 → 812 packages) | 11 → 6 | 4 → 2 | 10 |
+| invertase | 7 → 7 | 13 → 1 | 12 → 0 | 19 |
+| bluefireteam | 12 → 12 (65 → 64 packages) | 2 → 2 | 0 → 0 | 1 |
+| drizzle-team | 23 → 18 | 26 → 26 | 2 → 2 | 5 |
+
+Discover time on the clones: tanstack 4.5 → 4.8 s, withastro 1.3 → 1.4 s, nuxt 1.0 →
+1.1 s (with a test run in parallel, so noisy).
+
+**1. Framework and tool entry conventions (manifests.ts; runtime entries, never
+surface).** New `RUNTIME_ENTRY_CONVENTIONS` rows, and a convention's `files`
+condition may now be a glob:
+- Docusaurus (`docusaurus.config.*`): the config, `sidebars.*`, `src/theme/**`,
+  `src/pages/**`, `src/plugins/**`;
+- VitePress (a `vitepress` dependency): `**/.vitepress/config.*`,
+  `**/.vitepress/theme/**`, `**/*.data.*` (`.vitepress` is the one dot dir a
+  convention may reach; its `cache/` and `dist/` are not);
+- Astro (`astro.config.*`, not the `astro` dependency: integrations depend on astro
+  and are libraries): the config, `src/pages/**`, `src/middleware.*`,
+  `src/middleware/**`, `src/actions/**`, `src/content.config.*`,
+  `src/content/config.*`, `src/live.config.*`;
+- Nuxt (`nuxt.config.*`: apps and layers; the old `nuxt`-dependency row for
+  `pages/` and `server/` stays): the config, `app.config.*`, `app/**` (Nuxt 4's
+  srcDir), `pages`, `layouts`, `middleware`, `plugins`, `server`, `composables`,
+  `utils`, `stores`, `components`, `modules`, `shared`;
+- every own code file one of these configs names with a relative literal
+  (`require.resolve('./sidebars.js')`, `require('./mdxToJsx')`, Starlight's
+  `routeMiddleware: './src/routeData.ts'`, Nuxt `plugins: ['./x']`);
+- jscodeshift codemods (a `jscodeshift` / `@types/jscodeshift` dependency, or a
+  `codemods` / `*-codemods` dir): `transforms/**`, `codemods/**` (also under `src/`)
+  and every module that looks like a transform (`export const parser`,
+  `module.exports = (file, api) =>`, `export default function (file, api)`); `parser`
+  is a runtime entry symbol (jscodeshift reads it by name; trpc's two DEPRECATE rows
+  were `parser` exports of surface files);
+- Firebase Functions: a package dir a `firebase.json` anywhere in the repo names as
+  `functions.source` (an object or an array of codebases; `functions` by default):
+  its surface entry files and the modules they re-export from by a relative path are
+  runtime entries **while staying surface** (the one case where a surface file is
+  also in `runtimeEntryPoints`), so ingest makes all their exports entry symbols;
+- terraform: `entry_point = "name"` in any `*.tf` of the repo is a runtime entry
+  symbol of every npm package of the repo (ingest matches it only in entry files);
+- React Native platform modules (in a React Native / Expo package, see 4):
+  `x.{ios,android,native,web,windows,macos,visionos}.*` whose base `x` some file of
+  the package imports by a relative specifier, and the root `index.<platform>.*`.
+  **Which option:** runtime entries when the base module is imported. The ingest
+  `conditionalImports`-style seeding would need the sidecar to record the unresolved
+  `./x` import (another unit's files); a runtime entry keeps all of a variant's
+  exports alive, which is the fail-closed over-approximation of that edge;
+- Electron: the `loadURL(…)` argument is read to its balanced `)` (it was cut at the
+  first `)` on the line), and `path.join|resolve(__dirname, 'a', 'b.html')` inside
+  it names the HTML file (`loadURL(url.format({ pathname: path.join(__dirname,
+  "index.html"), … }))`, bluefireteam SpritesheetMapper, whose `src/app/index.js`
+  renderer is now an entry).
+
+Measured: trpc `www` gains the config, the five files it names by path and the
+swizzled theme (8 → 22 entries); vitejs' nine VitePress sites (devtools-docs,
+docs-cn/de/es/fa/ko/pt, monorepo-docs, vite-plugin-registry) had none and now have
+2–9; withastro 18 Astro sites without an entry point gain one (storefront, marlo
+web 0 → 17, astro.new, the three benchmark projects, …) and 8 others gain entries
+(docs 6 → 18, starlight docs 3 → 5, …); nuxt 45 packages (nuxt.com 70 → 124, @nuxt/ui-docs 49 → 102, nuxi-eve 0 →
+52, learn.nuxt.com 1 → 12, 12 without an entry point before); drizzle-team's five
+Astro sites (3310snake, orm-drizzle-docs-astro, gateway-, tento-, waddler-website);
+tanstack query-codemods 0 → 7 and ai-codemods 1 → 3 entries plus `parser`; invertase
+two Functions sources (cloud-team-mre js-template, tanstack-query-firebase
+functions), `translateText` (extensions-terraform) and the apple-authentication
+button (3 variants) and example app (6 `index` / `app` variants). Round 8c's
+Astro/Nuxt seeds from the SFC scan stay (they are loads, not entry points); with
+these conventions the sites have a credible entry set, so `private_dead` is judged
+for them again instead of a skipped note (org-small `app-astro`: `orphanHelper` is
+now `private_dead`).
+
+**2. Build-output layouts (manifests.ts `distToSrcGroups`, `sourceForBuildOutput`).**
+After the existing rules, each guarded by existence: (c) leading output segments
+stripped one at a time (`dist/a/b/x.js` → `src/b/x.*`, then `src/x.*`), each only
+while `src/<seg>` is free, never down to a bare `index.*` past the old one-segment
+strip (in `dist/esm/gone/index.js` the `gone` dir names the module); (d) a `src/`
+(or a tsconfig rootDir) under the output dir (`dist/esm/src/index.d.ts`); (e)
+build-format dirs dropped anywhere (`esm`, `cjs`, `es`, `umd`, `mjs`, `commonjs`,
+`module`, `typescript`, `types`), then a–d again (bob `lib/typescript/commonjs/
+index.d.ts` → `lib/index.d.ts` → `src/index.ts`, tanstack
+`dist/default-entry/esm/server.js` → `src/default-entry/server.ts`, not the
+package's `src/server.tsx`); (f) a bundler named input: `input:` / `entry:` of a
+package-root `rolldown|rollup|tsdown|tsup|vite` config (also `<tool>.<x>.config.*`
+and `<tool>.config.<x>.*`), an object's keys naming its literals and an array's
+literals named by file stem, maps `dist/[<dir>/][<format>/]<name>.js`
+(`./dist/node/internal.js` → `src/node/internalIndex.ts`); deeper paths are other
+modules. And `source` / `react-native` (top level, or the conditions of a
+resolving `.` export) are declared leaves: when one resolves, a top-level `main` /
+`module` / `types` / `typings` that maps nowhere is a build of that source, not an
+unresolved entry. Measured: invertase's 12 react-native-builder-bob packages (11 in
+react-native-google-mobile-ads, react-native-coverage) are no longer opaque; vite
+(`internal.js`, `module-runner.js`) and @vitejs/devtools (`cli.js`, `config.js`,
+`cli-commands.js`); tanstack react-start, solid-start, vue-start, react-start-rsc
+and devtools-utils (16 unresolved leaves, e.g. `./dist/react/esm/index.js`, and
+`./dist/solid-class/esm/class.js` through `vite.config.solid-class.ts`'s `entry`).
+The known gap `dist/gone/index.js` → `src/index.ts` (round 1) is unchanged, and
+format dropping never re-creates it (org-small's
+`@acme/dual-legacy/dist/esm/internal/gone` still has no source).
+Left opaque in tanstack: the Angular packages (ng-packagr's
+`dist/fesm2022/<pkg>.mjs` / `dist/types/<pkg>.d.ts`, whose source is
+`ng-package.json`'s `lib.entryFile`) and `@tanstack/create`'s generated worker
+pattern; not in the brief.
+
+**3. Templates (manifests.ts `isTemplateManifestPath`, `isTemplatedName`).** A
+manifest under an Nx / Angular generator's `files/` (`generators|generator|
+schematics/<name>/files/`), mason's `__brick__`, or a `.template` / `.templates` dir
+is ignored like an ignoreManifestDirs hit (byDir: witness-scanned, never promoted,
+whatever the configured list says); a manifest whose name contains `<%` or `{{` is
+ignored wherever it sits, npm and pub alike (one log line per repo). Measured:
+tanstack's `<%= name %>` package and bluefireteam's `bricks/dashbook_gallery/
+__brick__/gallery` pubspec are no longer packages. An unparsable template
+package.json still aborts discover (round 8b's fix, not in this base).
+
+**4. npm platform dirs (discover.ts `NPM_RN_PLATFORM_DIRS`, `NPM_RN_NATIVE_EXTS`).**
+For a React Native / Expo npm package (manifests `isReactNativePackage`: a
+`react-native` or `expo` dependency in any block, a `react-native.config.js`, or an
+`app.json` with an `expo` key), files under its top-level `android/`, `ios/`,
+`macos/`, `windows/`, `visionos/`, and Java / Kotlin (incl. Gradle `.kts`) / Swift /
+Objective-C / C / C++ files anywhere in it, are not unindexed consumers; other
+languages (Python, Ruby, Go, …) still flag it, and so does native code of any other
+npm package. **Deviation (a little wider than the brief):** the native-language
+part covers the react-native-google-mobile-ads monorepo root, flagged for its
+`build.gradle.kts`. Measured: invertase 12 → 0 flagged packages (react-native-google-
+mobile-ads' ten adapter packages and its adapter template, with `android/**/*.java`
+and `ios/*.m`, its monorepo root, and react-native-coverage's example app with
+`ios/*.swift`), tanstack 4 → 2 (db's two React
+Native examples; a Go shell and a Tauri `.rs` app still flag theirs).
+
+**5. Template repos (repo-select.ts `decideRepo`).** A template repo gets
+`needsProbe` like an explicitly matched repo: one tree request, the decision stays
+"template repository", and its manifests are recorded, so the excluded-repo warning
+("may consume org packages") names it (`acme/starter (template, 1 manifest)`).
+Archived repos and forks are still not probed. **Not verified live:** trpc's nine
+`examples-*` repos were not re-probed (that needs the API); the fake-API test covers
+the flow.
+
+**6. Hints (report.ts `failureDetail`).** The first line of an index failure is
+rewritten when it is not the cause: an install command (`npm exec … pnpm install …
+exited with code 1: Error: ERR_PNPM_…`) becomes `pnpm install failed (exit 1):
+ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK | …` (from the first error code: `ERR_*`,
+`npm error code X`, `YNnnnn`, `error TSnnnn`, a few `E…` codes); TS5083 on a
+`.nuxt/tsconfig.json` says it is generated by `nuxi prepare` (never run: installs
+are script-free) and to run it in the checkout or exclude the package, with its
+`ignoreManifests` entry; TS6053 on a package-name `extends`
+(`@tsconfig/node16/tsconfig.json`, `astro/tsconfigs/strict`) names the package that
+is not installed (a relative one keeps the old line). Measured on the batch DBs:
+vitejs 37 packages (36 `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK`, 1
+`ERR_PNPM_NO_LOCKFILE`), tanstack 43, nuxt 32 (TS5083), drizzle-team 16 (6 TS6053,
+7 `ERR_PNPM_OUTDATED_LOCKFILE`, 3 `ERR_PNPM_FETCH_404`), withastro, invertase and
+bluefireteam 1 each (`npm error code E403` / `EUSAGE`).
+
+**Fixture.** org-small gains the repo `frameworks` (fixtures/README.md): one private
+package per convention with the code it keeps alive and one dead helper that must
+stay `private_dead`. On the same fixture the base commit gives: docs-site, vp-docs,
+nuxt-app and codemods no `private_dead` at all (skipped: no known entry points);
+`translateText`, `ping`, `onSignup` deletion candidates; `drawSheet`, `sheetSize`
+private_dead; bundled and rn-lib opaque (their exports blocked) and rn-lib's
+`android/` + `ios/` blocking `@acme/core`. This branch: 12 rows (the dead helpers,
+and bundled / rn-lib / cloudfn's unused exports as deletion candidates). New
+snapshot files, plus app-astro's (its runtime entries are now echoed and exported
+in the sidecar); no adapter code changed. The fixture's VitePress site sits at its
+package root (like docs-ko): in a first version under `docs/` (DOCS_GLOBS
+`**/docs/**`, like vite's own `docs/.vitepress`) its dead helper got no row at all,
+so for such sites the conventions only make the entry set credible.
+
+**Not verified / open (for routing).**
+- No batch was re-indexed or re-analyzed; the numbers above are discover-level.
+- `sourceForBuildOutput` (used by the TS adapter for deep dist imports) maps more
+  paths now; a cached sidecar keeps the old links until `index --force` or the next
+  adapter version bump (scip-typescript.ts is another unit's; the new runtime
+  entries themselves are adapter input and should miss the cache on their own if
+  the cache key covers discover's entry lists).
+- Ingest / adapter (optional, more precise than the runtime entries of item 1): a
+  relative import `./x` that TypeScript leaves unresolved, where `x.<platform>.*`
+  exist, could be recorded by the sidecar as a load of each variant (like Dart
+  conditional imports), so only the names the importer uses are seeds.
+- ng-packagr (Angular) build layouts, and round 8a's proposed `ALWAYS_SKIP_DIRS`
+  additions (`.nx`, `.turbo`, `.yarn`, `.pnpm-store`), are not done.
