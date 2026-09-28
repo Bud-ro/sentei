@@ -7,7 +7,22 @@
     "packages/docs-site/src/pages/index.ts",
     "packages/docs-site/src/theme/Footer.ts"
   ],
-  "entrySymbols": [],
+  "entrySymbols": [
+    {
+      "col": 13,
+      "file": "packages/docs-site/sidebars.ts",
+      "kind": "runtime",
+      "line": 0,
+      "name": "sidebars"
+    },
+    {
+      "col": 16,
+      "file": "packages/docs-site/remark-plugin.ts",
+      "kind": "runtime",
+      "line": 3,
+      "name": "remarkPlugin"
+    }
+  ],
   "exports": [
     {
       "col": 13,
