@@ -999,7 +999,7 @@ describe('discoverLocal on a synthetic org', () => {
     const bad = discoverLocal({ orgDir: FIXTURE });
     bad.repos[0]!.packages[0]!.visibility = 'bogus' as never;
     expect(() => writeDiscoverToDb(db, bad)).toThrow();
-    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 43 }]);
+    expect(all('SELECT count(*) AS n FROM packages')).toEqual([{ n: 44 }]);
   });
 });
 

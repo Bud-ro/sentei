@@ -109,6 +109,11 @@ describe('scanUnindexedImports: SFC aliases, <script src>, import.meta.glob, fra
         '```',
       ].join('\n'),
       'shared/helpers.ts': 'export const shared = 1;\n',
+      // Build caches an install leaves behind (round 9a BUILD_CACHE_DIRS): copies of built
+      // code, never consumers (react-native-google-mobile-ads' `.nx/cache/**`).
+      'app/.nx/cache/1a2b/packages/core/lib/commonjs/index.js': "const core = require('@acme/core');\n",
+      'app/.parcel-cache/entry.js': "import { core } from '@acme/core';\n",
+      'app/.turbo/daemon/log.js': "import '@acme/core';\n",
     });
     const pkgDir = path.join(root, 'app');
     const out = scanUnindexedImports({

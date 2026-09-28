@@ -23,7 +23,7 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, listFiles, SCRIPT_GLOBS, sourceForBuildOutput, TEST_GLOBS, matchGlob } from '@sentei/core';
+import { BUILD_CACHE_DIRS, DOCS_GLOBS, GENERATED_GLOBS, inSurfaceDir, inVendoredDir, listFiles, SCRIPT_GLOBS, sourceForBuildOutput, TEST_GLOBS, matchGlob } from '@sentei/core';
 import { distLayoutSource } from './scip-typescript.ts';
 import type {
   ConsumerFlag,
@@ -837,8 +837,9 @@ const RELATIVE_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx', '.
  * tool output (generated, never hand-written consumers).
  */
 const UNINDEXED_SKIP_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'coverage', 'out',
-  '.yarn', '.pnpm-store', '.turbo', '.next', '.nuxt', '.output', '.svelte-kit', '.wrangler', '.vercel', '.cache',
+  ...BUILD_CACHE_DIRS, // node_modules, .nx, .turbo, .cache, .parcel-cache, .yarn, .pnpm-store
+  '.git', 'dist', 'build', 'coverage', 'out',
+  '.next', '.nuxt', '.output', '.svelte-kit', '.wrangler', '.vercel',
 ]);
 
 /**
