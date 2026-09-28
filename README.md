@@ -544,7 +544,8 @@ Dart symbol only when its file exports Dart to JS (`@JSExport`).
 Test, docs, generated and script files are recognized by path
 (`packages/core/src/globs.ts`: `test/`, `tests/`, `__tests__/`, `*.test.*`,
 `*.spec.*`, `*_test.dart`, `mocks/`, `fixtures/`, `e2e/`, `type-tests/`,
-`cypress/`, `playwright/`, Flutter `test_driver/` and `integration_test/`, ...),
+`cypress/`, `playwright/`, Flutter `test_driver/` and `integration_test/`,
+`test-utils.*`, `test_utils.*`, `test_util.*`, `testutils.*`, ...),
 except that nothing under a pub package's `lib/` is ever one of them: every file
 there is importable library code. TypeScript files are also generated when a
 comment in their first 20 lines says so (`@generated`, "do not edit", "do not

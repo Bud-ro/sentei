@@ -180,7 +180,10 @@ WHERE package_id || char(0) || file NOT IN (SELECT package_id || char(0) || file
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB '*.e2e.*'
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'vitest.setup.*'
     OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'jest.setup.*'
-    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'setupTests.*');
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'setupTests.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'test_utils.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'test_util.*'
+    OR substr(file, length(rtrim(file, replace(file, '/', ''))) + 1) GLOB 'testutils.*');
 
 -- Docs globs: docs and in-package examples / demos. `rel` is the repo-relative path,
 -- except for a package promoted from an ignored-dir manifest (promoted_packages: an

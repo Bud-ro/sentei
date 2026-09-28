@@ -122,6 +122,28 @@ describe('test/docs/generated/script globs: analyze.sql and globs.ts agree', () 
     for (const p of tests) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(true);
     for (const p of not) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(false);
   });
+
+  it('fix round 8a globs: test_utils / test_util / testutils files, in the view and the witness alike', () => {
+    const tests = ['typescript/utils/test_utils.ts', 'src/test_util.js', 'testutils.ts', 'pkg/src/testutils.mts'];
+    const not = ['src/utils.ts', 'src/my_test_utils_extra/a.ts', 'src/test_utilsx.ts', 'src/attest_utils.ts', 'src/testutil/a.ts'];
+    for (const p of tests) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(true);
+    for (const p of not) expect(TEST_GLOBS.some((g) => matchGlob(g, p)), p).toBe(false);
+    const db = openDb(':memory:');
+    try {
+      db.exec("INSERT INTO repos (repo) VALUES ('acme/a')");
+      db.exec("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('npm:acme/a:a', 'acme/a', '.', 'npm', 'a', 'private')");
+      db.exec("INSERT INTO packages (package_id, repo, path, manager, name, visibility) VALUES ('pub:acme/a:p', 'acme/a', 'dart', 'pub', 'p', 'published-public')");
+      const ins = db.prepare("INSERT INTO documents (package_id, file) VALUES ('npm:acme/a:a', ?)");
+      for (const p of [...tests, ...not]) ins.run(p);
+      // A pub package's lib/ is its surface: lib/test_utils.dart stays library code.
+      db.exec("INSERT INTO documents (package_id, file) VALUES ('pub:acme/a:p', 'dart/lib/test_utils.dart')");
+      db.exec(analyzeSql());
+      const inView = (db.prepare('SELECT file FROM test_files ORDER BY file').all() as Array<{ file: string }>).map((r) => r.file);
+      expect(inView).toEqual([...tests].sort());
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('SURFACE_DIRS: nothing under a pub package lib/ is a test, docs or script file', () => {

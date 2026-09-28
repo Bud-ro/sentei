@@ -50,6 +50,11 @@ export const TEST_GLOBS: readonly string[] = Object.freeze([
   '**/vitest.setup.*',
   '**/jest.setup.*',
   '**/setupTests.*',
+  // Phase 3 fix round 8a (material-color-utilities `utils/test_utils.ts` came out
+  // private dead): the snake_case and run-together spellings of test-utils.
+  '**/test_utils.*',
+  '**/test_util.*',
+  '**/testutils.*',
 ]);
 
 /**
