@@ -130,3 +130,36 @@ orphaned upstream, but sentei does not know it as a type test).
 
 The `org_dead` view is still written to `report.json` (every view) although
 the default report no longer uses it.
+
+## Phase 3 rerun at `13d2cd1` (2026-09-28, after fix round 9)
+
+withastro and invertase rerun on the tool after round 9 (9a, 9b), same lockfiles.
+nuxt and VeryGoodOpenSource were not rerun (round 9 measured no discover-level
+change for them; VeryGoodOpenSource's one failed index, the docs site with an
+unresolvable `extends`, indexes `ok` on a re-index of that package alone).
+
+| org | packages | index ok / partial / failed | index | DELETE | DEPRECATE | UNEXPORT | PRIV-DEAD | REVIEW | BLOCKED | skew | opaque |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| withastro | 134 | 100 / 32 / 2 | 12 min | 0 | 53 | 77 | 29 | 0 | 624 | 4 | 49 |
+| invertase | 42 | 38 / 4 / 0 | 2 min | 2 | 72 | 47 | 124 | 0 | 215 | 0 | 7 |
+
+Against `840cd97`: every wrong row the spot checks found in the fixed classes is
+gone (houston-discord's `tsm` script, flue's error classes, docs.page's lazy
+dialog and dot-directory route). invertase's twelve Expo config plugins and
+@tanstack-query-firebase/react index now (opaque 19 → 7); the new rows are that
+package's published API in DEPRECATE (60 rows: nothing in the org uses it) and
+its test helpers in PRIV-DEAD (`vitest/utils.ts`, `src/auth/utils.ts`: used by
+tests only, the policy class above), plus the adapter `_template` package's two
+unused exports in DELETE and three rows from its committed bob output
+(`lib/typescript/commonjs/index.d.ts`, a built declaration file sentei still
+takes as surface). withastro's marlo desktop app resolves (`dist-electron/` →
+`src/electron/`), so its 386 blocked rows now cite the app's `.astro`
+components as unindexed consumers instead (62 rows unblocked).
+
+Still open after round 9: a bob-layout `main: lib/module/index.js` that no
+consumer can resolve (react-native-coverage: three RN packages stay opaque);
+`.astro` components as unindexed consumers (the largest withastro blocker);
+astro's own package (`jsx-runtime.d.ts` re-exports its unbuilt `dist/`,
+`components/index.ts` re-exports `.astro` files); a `vitest/` helper directory
+as test support; committed build output as surface; the policy items listed
+above.

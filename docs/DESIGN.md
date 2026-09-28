@@ -5066,3 +5066,13 @@ packages).
 - report.ts: the TS6053 hint for a package-name `extends` now fires only when a
   resolvable parent itself extends something missing.
 - No org was fully re-indexed; the witness was not re-run on the measured DBs.
+
+### Phase 3 verification rerun at `13d2cd1` (after round 9)
+
+withastro and invertase rerun on the merged rounds 9a and 9b (docs/EVAL.md "Phase 3
+rerun at `13d2cd1`"): the fixed classes' rows are gone, invertase's opaque packages
+fell from 19 to 7 and its blocked rows from 274 to 215, withastro's blocked rows from
+679 to 624. The `.nx/cache` consumer flag needed round 9a's list applied to the
+adapter's own unindexed-file walk as well (commit 13d2cd1). Remaining items are listed
+in EVAL.md; the largest are a bob-layout `main` under `lib/module/` that consumers
+cannot resolve and `.astro` components as unindexed consumers.
